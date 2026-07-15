@@ -10,8 +10,10 @@ mettle can eventually redistribute.
 the conformance harness (Net 0 `expect`-mining, verdict/count comparison
 against the pinned oracle) but **are not committed to git**. `/corpus/` is
 listed in `.gitignore`. Everything under `corpus/` is reproducible from the
-commands recorded below — re-run them to regenerate the tree from scratch on
-any machine.
+commands recorded below — or in one command: **`scripts/fetch-corpora.sh`**
+(mt-009) implements this manifest verbatim, with `--verify` checking the
+tree against `scripts/corpora.sha256` (byte-level). If script and manifest
+ever disagree, the manifest is design intent and the script has a bug.
 
 This manifest follows the same evidence-based style as
 [alloy6-reference.md §2](alloy6-reference.md): licenses are *recorded*, not
@@ -278,16 +280,24 @@ curl -sL -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML
    (`after,always,before,enabled,eventually,historically,invariant,modifies,
    once,releases,since,steps,triggered,until,var`) wherever they occur as a
    substring (this is a blind global substitution in the original `sed`
-   script too — reproduced exactly, including that bluntness), plus 3
-   model-specific patches (`dbs_inst.als` open-path casing, bitwidth bump
-   for `tso_transistency_*` files, comment out two unsupported assertions in
-   `birthday.als`).
+   script too — reproduced exactly, including that bluntness), plus **4**
+   model-specific patches (`dbs_inst.als` open-path casing; bitwidth bump
+   for `tso_transistency_*` files; comment out 3 line-ranges covering 2
+   unsupported assertions + their commands in `birthday.als`, exact
+   1-indexed ranges 50–53, 61, 64–68; and `predtotalOrder` →
+   `pred/totalOrder` in both vendored copies of `trace.als` — an upstream
+   scraping typo. This section originally said "3 patches"; the fourth was
+   surfaced during mt-009 by diffing pinned-commit originals through the
+   pipeline against the vendored tree).
 3. Remove the 11 top-level models Portus doesn't support (per
    `remove-unsupported.py`'s hardcoded list, each with its stated reason —
    e.g. `(*f).(*g)` composition, higher-order quantification, fields bound
    by `univ`).
 4. Drop dependency files no longer referenced by any surviving top-level
-   model (mirrors `compile-top-level-file-list.py`'s second pass).
+   model (mirrors `compile-top-level-file-list.py`'s second pass). Note:
+   the real pipeline leaves the resulting empty directories on disk (e.g.
+   `algorithms/synchronsation/`, `models/firewire/`) — do not prune them
+   if byte/tree-identical reproduction matters.
 
 Result: **63 top-level supported models** (written to
 `corpus/portus-63/models-supported.txt`, one path per line) + 10 shared

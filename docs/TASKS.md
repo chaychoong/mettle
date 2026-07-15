@@ -26,8 +26,8 @@ Lightweight, git-tracked, greppable task "beads" — no external tool dependency
   Done 2026-07-15: alloytools-models (94 .als @ the jar's build commit), alloy4fun (Zenodo 10.5281/zenodo.17390557, CC-BY-4.0), portus-63 (63 models, licensing hot spot) vendored into git-ignored `corpus/`; kodkod investigated → no `.als`, not vendored. Provenance manifest committed: [reference/corpora.md](reference/corpora.md). Corpus files stay uncommitted until mt-008.
 - ✔ **mt-008** · P0 · Resolve licensing posture (ADR)
   Done 2026-07-15, owner-decided → [ADR-0006](adr/0006-licensing-posture.md): mettle = **MPL-2.0** (root LICENSE + workspace manifest); stdlib `util/*.als` = **clean-room rewrite** (bead mt-015, never copy upstream text); corpora = local-only forever (git-ignored, reproducible via manifest + mt-009 script); jar stays ignored. PORTING_RULES legal-hygiene section updated per the ADR.
-- ◐ **mt-009** · P0 · Reproducible corpus fetch script (delegated → sonnet, in flight)
-  `scripts/fetch-corpora.sh` + checksum manifest: one command reproduces git-ignored `corpus/` from the pins in [reference/corpora.md](reference/corpora.md); `--with-alloy4fun` for the 374 MB dataset, `--verify` mode. Acceptance: byte-identical to the existing tree.
+- ✔ **mt-009** · P0 · Reproducible corpus fetch script (delegated → sonnet, tech-lead reviewed)
+  Done 2026-07-15: `scripts/fetch-corpora.sh` (+ `corpora.sha256`, 192 files) reproduces `corpus/` byte-identically from the [reference/corpora.md](reference/corpora.md) pins in ~15s (alloy4fun optional via `--with-alloy4fun`); `--verify` re-checked independently: 192/192 pass, shellcheck clean. Bonus: surfaced and fixed an under-documented 4th upstream patch (`trace.als`) — manifest corrected.
 
 ## Next (Rung 1 — syntax)
 - ▢ **mt-010** · R1 · Lexer + spans (temporal tokens included) ← **next on "proceed"** (with mt-011; AST contract = `als-syntax::ast`, ADR-0005)

@@ -19,7 +19,7 @@
 - Toolchains in this VM: Rust stable (`~/.cargo/bin`) and OpenJDK 21.
 
 ## In flight (delegated, background)
-- **mt-009** (sonnet): `scripts/fetch-corpora.sh` + checksum manifest reproducing `corpus/` from the manifest pins. Acceptance: byte-identical re-fetch + passing `--verify`. If found incomplete on resume: the spec is in TASKS.md mt-009; only `scripts/**` should be touched; review + commit is the tech lead's.
+- _None._ All delegations complete, reviewed, merged (latest: mt-009 fetch script).
 
 ## Not yet started
 - Rung 1: lexer, parser, pretty-printer, diagnostics, fuzzer (mt-010..mt-014).
