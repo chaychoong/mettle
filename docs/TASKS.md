@@ -34,7 +34,8 @@ Lightweight, git-tracked, greppable task "beads" — no external tool dependency
   Done 2026-07-15: raw-token lexer per the pinned contract ([reference/alloy6-grammar.md](reference/alloy6-grammar.md) §1, [ADR-0007](adr/0007-rung1-lexer-parser-architecture.md)); typed `LexError` with caret-ready spans; **167/167 corpus files lex clean**. Review caught + jar-verified two divergences (number maximal-run rule: `1_000`/`0x123`/`0b12` illegal; string-follow class includes digits/quotes) — spec §1.5–1.6 corrected to match.
 - ✔ **mt-011** · R1 · Parser + arena AST (delegated → opus, tech-lead reviewed)
   Done 2026-07-15: full surface grammar → arena AST; `cook.rs` (F1–F4) + `parser.rs` (recursive descent + Pratt, 21 levels, binder rule, min-BP-gated prefixes). **167/167 corpus parse rate.** Review caught 2 real bugs pre-merge (`;`-grouping semantics; prefix over-acceptance) + approved `Expect::Other(i32)`. Deferred: steps-scope build checks → resolve (LIMITATIONS).
-- ▢ **mt-012** · R1 · Pretty-printer + parse→print→parse round-trip ← **next on "proceed"** (insta snapshots, U2; plus a `mettle parse` CLI subcommand = the Rung-1 human-testable build)
+- ✔ **mt-012** · R1 · Pretty-printer + parse→print→parse round-trip (delegated → opus, tech-lead reviewed)
+  Done 2026-07-15: minimal-paren precedence-aware printer as `Display` (R9d) sharing one bp table with the parser (new `prec` module — no drift possible); span-free `dump` as round-trip witness; insta snapshots (U2, first dev-dep per P1); **corpus round-trip 167/167** (parse→print→reparse→dump-equal + print idempotence); `mettle parse <file> [--ast]` CLI (hand-rolled args; `file:line:col` errors to stderr per E3) = the Rung-1 human-testable build. Review trims: dropped gratuitous Vec clones, `prec` made pub(crate) (S4). No parser bugs surfaced.
 - ▢ **mt-013** · R1 · Diagnostics (caret errors) + Alloy4Fun error-quality pass
 - ▢ **mt-014** · R1 · Mutation fuzzer over corpora (parser robustness)
 
