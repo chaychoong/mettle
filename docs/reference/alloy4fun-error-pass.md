@@ -209,6 +209,11 @@ session (see `LIMITATIONS.md` for the permanent record):
   Documented in `LIMITATIONS.md` as a known over-acceptance, flagged as a
   good target for mt-014's mutation fuzzer or a dedicated follow-up bead.
 
+  **Resolved in mt-014** — the exact per-level rule was mapped (≈220 jar
+  probes) and implemented as a "binder-composition budget"; see
+  `docs/reference/fuzzing.md` §2 for the probe table and rule, and
+  `LIMITATIONS.md` for the current (now empty, on this point) status.
+
 ## 5. Position/message comparison (both-reject set)
 
 Recomputed after both fixes, over the final **14,560** unique codes both

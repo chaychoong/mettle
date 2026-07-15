@@ -164,7 +164,7 @@ productions).
 | # | Operators | Assoc / shape |
 |---|---|---|
 | 1 | `;` (formula sequencing) | right; `a ; b` ≡ `a && after b` — keep as a `Seq` node in the AST |
-| 2 | `let`, quantifiers `all no some lone one sum` + decls + `\|`/block | body extends maximally right; a binder may appear as the **rightmost operand of any operator below** (see §3.1) |
+| 2 | `let`, quantifiers `all no some lone one sum` + decls + `\|`/block | body extends maximally right; a binder may appear as a **rightmost operand, subject to the one-hop budget rule** (see §3.1) |
 | 3 | `\|\|` `or` | left |
 | 4 | `<=>` `iff` | left |
 | 5 | `=>` `implies` (optional `else`) | right; `else` binds to the nearest unmatched `implies` (dangling-else) |
@@ -194,13 +194,31 @@ prefix on the current minimum binding power. Binders are the one
 exception — see §3.1.
 
 ### 3.1 Binder-as-rightmost-operand
-At every binary level, the *right* operand may be a full binder (`let`/
+The *right* operand of a binary operator may be a full binder (`let`/
 quantifier), which then consumes everything to the end of the enclosing
 expression: `a + sum x: A \| f[x]` parses with the `sum … \| …` as the whole
-right operand of `+`. In recursive descent: when parsing any right operand,
-if the next tokens begin a binder (per F4 / `let`), parse the binder there.
-Postfix `'` may likewise attach to a binder (`… .(let x = e \| b)'` shape is
-grammatical).
+right operand of `+`. Postfix `'` may likewise attach to a binder
+(`… .(let x = e \| b)'` shape is grammatical).
+
+**This does NOT compose freely across nested precedence levels** (mt-014
+correction — the original statement "at every binary level" was too
+permissive; ~220 jar probes, table in
+[fuzzing.md](fuzzing.md) §2). The jar-verified rule, implemented as
+`crate::prec::child_binder_budget` (shared by parser and printer):
+- From a fresh expression start, a binder may be the rightmost operand of
+  exactly **one** enclosing-operator "hop"; same-tier chains
+  (`q and r and all …`) count as one hop (left-assoc nests leftward).
+- A second hop (`q or r and all …`) is a syntax error — unless the
+  enclosing operator is a bare `implies`/`=>` (no `else`) or the **else**
+  branch of `implies … else`, each of which grants its branch a fresh
+  budget. The **then** branch of `implies … else` never accepts a bare
+  binder.
+- Comparisons (`= in < > =< >=`, negated or not) and the set-test prefixes
+  (`no some lone one set seq`) never accept a bare binder operand.
+- Other prefixes (`!`, temporal unaries, `# sum int`, `~ ^ *`) are
+  transparent: they pass the ambient budget through unchanged.
+- Parentheses, block/brace bodies, box-join arguments, and decl bounds all
+  re-enter as fresh expression starts.
 
 ### 3.2 Special dot/bracket targets
 - `disj[a,b,…]`, `pred/totalOrder[a,b,…]`, `int[e,…]`, `sum[e,…]` are box

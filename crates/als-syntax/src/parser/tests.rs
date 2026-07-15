@@ -335,6 +335,201 @@ fn closure_prefix_starting_a_new_formula_takes_the_next_quantifier() {
     };
 }
 
+// -- Binder-composition budget (mt-014 Part 2) ----------------------------
+//
+// Resolves the LIMITATIONS.md over-acceptance found by mt-013: mettle's
+// original uniformly-recursive `parse_operand` let a binder compose through
+// an unbounded chain of enclosing operators, but the jar allows only one
+// "hop" (refreshed to two hops specifically by `implies`), and never any
+// hop at all through a comparison or a set-test prefix. Rule + probe table:
+// `docs/reference/fuzzing.md` section 2.
+
+/// The exact bug shape from LIMITATIONS.md must now be a precise, typed
+/// error, not a silent over-acceptance: `all x: A | body` absorbs as the
+/// rightmost operand of `and`, itself absorbing as the rightmost operand of
+/// `or` -- two hops of *different* enclosing operators, jar-rejected.
+#[test]
+fn two_hop_composition_across_different_operators_is_rejected() {
+    let err = err_of("run { q or r and all x: A | x in x }");
+    assert!(
+        matches!(err, ParseError::BinderNeedsParens { .. }),
+        "expected BinderNeedsParens, got {err:?}"
+    );
+}
+
+/// Single-hop absorption (any one enclosing operator, directly) must keep
+/// working for every formula-level connective -- these are the "single-hop
+/// variants" LIMITATIONS.md already noted the jar accepts.
+#[test]
+fn single_hop_composition_still_parses_for_every_formula_operator() {
+    for op in ["or", "iff", "implies", "and", "until", "releases"] {
+        let src = format!("run {{ q {op} all x: A | x in x }}");
+        ast_of(&src);
+    }
+}
+
+/// A left-associative chain of the *same* operator is a single application
+/// (the binder is the rightmost operand of the outermost use), not extra
+/// hops -- `q and r and binder` must keep parsing regardless of how many
+/// `and`s precede the binder.
+#[test]
+fn same_tier_chain_is_a_single_hop_not_extra_hops() {
+    ast_of("run { q and r and s and all x: A | x in x }");
+}
+
+/// `implies` (no `else`) is jar-verified to grant its then-branch a second
+/// hop: it may itself be an ordinary operator's own binder absorption, not
+/// just a bare binder.
+#[test]
+fn implies_grants_one_extra_hop_to_its_then_branch() {
+    for op in ["and", "until", "releases"] {
+        let src = format!("run {{ q implies r {op} all x: A | x in x }}");
+        ast_of(&src);
+    }
+    // But the extra hop does not itself compose further: implies -> and ->
+    // until -> binder is three hops, jar-rejected.
+    let err = err_of("run { q implies r and s until all x: A | x in x }");
+    assert!(matches!(err, ParseError::BinderNeedsParens { .. }));
+    // And the bonus hop is not granted at all when `implies` itself is
+    // reached from an *ineligible* (already-nested) context.
+    let err = err_of("run { q or r implies s and all x: A | x in x }");
+    assert!(matches!(err, ParseError::BinderNeedsParens { .. }));
+}
+
+/// The `implies … else` then-branch (an `else` DOES follow) never gets any
+/// extra hop -- not even the bare-binder single hop that plain `implies`
+/// (no `else`) grants. The else-branch, being the true rightmost operand of
+/// the whole construct, keeps the normal (ambient) budget.
+#[test]
+fn implies_else_then_branch_never_absorbs_a_binder() {
+    let err = err_of("run { q implies all x: A | x in x else r }");
+    assert!(matches!(err, ParseError::BinderNeedsParens { .. }));
+    let err = err_of("run { q implies r and all x: A | x in x else s }");
+    assert!(matches!(err, ParseError::BinderNeedsParens { .. }));
+}
+
+#[test]
+fn implies_else_else_branch_absorbs_a_binder_normally() {
+    ast_of("run { q implies r else all x: A | x in x }");
+    ast_of("run { q implies r else s and all x: A | x in x }");
+}
+
+/// Comparisons never accept a binder as their operand, at any budget --
+/// grammar-doc's tier 9 groups comparisons with the set-test prefixes
+/// (below), and both are hard-blocked, jar-verified.
+#[test]
+fn comparisons_never_absorb_a_binder() {
+    for op in ["=", "in", "<", ">", "<=", ">=", "!=", "!in"] {
+        let src = format!("run {{ A {op} all x: A | x in x }}");
+        let err = err_of(&src);
+        assert!(
+            matches!(err, ParseError::BinderNeedsParens { .. }),
+            "expected BinderNeedsParens for {src:?}, got {err:?}"
+        );
+    }
+}
+
+/// The set-test prefixes (`no some lone one set seq`) never accept a binder
+/// as their operand, unlike every other prefix (`!`/temporal unaries/`#`) --
+/// jar-verified: `no all x: A | x in x` is rejected even though the plain
+/// quantifier `no x: A | x in x` (a decl-led quantifier, not this prefix)
+/// parses fine.
+#[test]
+fn set_test_prefixes_never_absorb_a_binder() {
+    for src in [
+        "some all x: A | x in x",
+        "lone all x: A | x in x",
+        "one all x: A | x in x",
+        "set all x: A | x in x",
+    ] {
+        let err = err_of(&format!("run {{ {src} }}"));
+        assert!(
+            matches!(err, ParseError::BinderNeedsParens { .. }),
+            "expected BinderNeedsParens for {src:?}, got {err:?}"
+        );
+    }
+}
+
+/// Every other prefix (not a set-test) is transparent: it passes its
+/// ambient budget through unchanged, so it may wrap an *already-composed*
+/// operator+binder operand, not just a bare binder.
+#[test]
+fn ordinary_prefixes_are_transparent_to_the_budget() {
+    ast_of("run { ! (q) }"); // sanity: unrelated to binders
+    ast_of("run { ! q and all x: A | x in x }");
+    ast_of("run { always q and all x: A | x in x }");
+}
+
+/// A parenthesized binder is unaffected by the budget at all -- parens
+/// re-enter the grammar fresh (`parse_atom`'s `LParen` arm), so this parses
+/// regardless of how many enclosing operators or comparisons surround it.
+#[test]
+fn parenthesized_binder_bypasses_the_budget_entirely() {
+    ast_of("run { q or r and (all x: A | x in x) }");
+    ast_of("run { A in (all x: A | x in x) }");
+    ast_of("run { no (all x: A | x in x) }");
+}
+
+// -- Deep-nesting guard (mt-014 Part 1) ------------------------------------
+//
+// mt-014's fuzzer found that pathological `(`/`{`/binder-chain nesting
+// stack-overflows a debug build (SIGABRT, unrecoverable) well within a
+// realistic fuzz budget. `MAX_EXPR_DEPTH` turns that into a precise typed
+// error instead (STYLE E5). A quantifier chain (`all x: A | all x: A | …`)
+// costs almost exactly one depth unit per level (unlike `(`/`{`, which each
+// cost two -- see `parser.rs`'s `MAX_EXPR_DEPTH` doc comment), so it is the
+// most direct way to test the boundary without over-fitting to incidental
+// call-graph shape.
+
+fn quantifier_chain(levels: u32) -> String {
+    let mut src = String::from("run { ");
+    for _ in 0..levels {
+        src.push_str("all x: A | ");
+    }
+    src.push_str("x in x }");
+    src
+}
+
+#[test]
+fn just_under_the_depth_limit_parses() {
+    ast_of(&quantifier_chain(super::MAX_EXPR_DEPTH - 10));
+}
+
+#[test]
+fn just_over_the_depth_limit_is_too_deep() {
+    let err = err_of(&quantifier_chain(super::MAX_EXPR_DEPTH + 10));
+    assert!(
+        matches!(err, ParseError::TooDeep { .. }),
+        "expected TooDeep, got {err:?}"
+    );
+}
+
+/// The other pathological shapes mt-014's fuzzer stressed (parens, nested
+/// blocks, closure-prefix chains) must also fail loudly rather than crash --
+/// each costs more than one depth unit per level (see `MAX_EXPR_DEPTH`'s doc
+/// comment), so a level count equal to the quantifier-chain bound is already
+/// comfortably past their own, smaller thresholds.
+#[test]
+fn other_pathological_nesting_shapes_are_too_deep_not_crashes() {
+    let levels = super::MAX_EXPR_DEPTH as usize;
+    let parens = format!("run {{ {}1=1{} }}", "(".repeat(levels), ")".repeat(levels));
+    let braces = format!(
+        "sig A {{}}\npred p[] {}1=1{}",
+        "{".repeat(levels),
+        "}".repeat(levels)
+    );
+    let closures = format!("run {{ {}r }}", "~".repeat(levels * 2));
+    for src in [parens, braces, closures] {
+        assert!(
+            matches!(
+                parse(&src, FileId::from_index(0)),
+                Err(ParseError::TooDeep { .. })
+            ),
+            "expected TooDeep for {levels} levels of nesting"
+        );
+    }
+}
+
 // -- Dangling else --------------------------------------------------------
 
 #[test]

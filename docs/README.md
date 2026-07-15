@@ -27,6 +27,7 @@ Every doc in the project is reachable from here. Nothing is orphaned. Superseded
   - **[reference/corpora.md](reference/corpora.md)** — conformance-corpus provenance manifest: exact pins, retrieval commands, license evidence per corpus (`corpus/` itself is git-ignored pending mt-008).
   - **[reference/alloy6-grammar.md](reference/alloy6-grammar.md)** — the pinned Alloy 6 surface-syntax contract (tokens, filter rewrites, 21-level precedence, grammar shapes) that mt-010/mt-011 implement; derived from the oracle build's grammar sources and jar-verified.
   - **[reference/alloy4fun-error-pass.md](reference/alloy4fun-error-pass.md)** — mt-013's differential parse pass over the 150k-unique-code alloy4fun corpus against the reference jar: methodology, the divergence table, fixes shipped, and what's documented-not-fixed.
+  - **[reference/fuzzing.md](reference/fuzzing.md)** — mt-014's mutation fuzzer over the front end (design, budgets, seeds, bugs found) and the jar-mapped binder-composition-budget rule (probe table + fix) that resolves the mt-013 over-acceptance finding.
 - **[../baselines/](../baselines/README.md)** — cached reference-jar verdicts over the corpora (the answers mettle must match), with triage notes on expect-mismatches and engine-limitation errors.
 
 ## Operating guide

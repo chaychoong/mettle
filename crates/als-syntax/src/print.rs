@@ -35,7 +35,8 @@ use crate::ast::{
     Quant, Scope, ScopeEnd, ScopeTarget, SigDecl, SigMult, SigParent, TypeScope, UnOp,
 };
 use crate::prec::{
-    arrow_bp, binary_bp, cmp_bp, ARROW_BP, BP_ATOM, BP_IMPLIES_R, BP_NOT, BP_NUMUNOP,
+    arrow_bp, binary_bp, child_binder_budget, cmp_bp, BinderOperator, ARROW_BP, BINDER_BUDGET_HOP,
+    BINDER_BUDGET_NONE, BINDER_BUDGET_TOP, BP_ATOM, BP_IMPLIES_R, BP_NOT, BP_NUMUNOP,
     BP_PRIME_CLOSURE, BP_TEST, CMP_BP, JOIN_BP, TIER_TEST,
 };
 
@@ -290,7 +291,7 @@ impl Pretty<'_> {
         w.write_str(&f.name.text)?;
         self.write_params(w, &f.params)?;
         w.write_str(": ")?;
-        self.write_expr(w, f.returns, 0, true)?;
+        self.write_expr(w, f.returns, 0, true, BINDER_BUDGET_TOP)?;
         w.write_char(' ')?;
         self.write_body_block(w, f.body, 0)
     }
@@ -333,7 +334,7 @@ impl Pretty<'_> {
             self.write_block_body(w, forms, 0)
         } else {
             w.write_str(" = ")?;
-            self.write_expr(w, m.body, 0, true)
+            self.write_expr(w, m.body, 0, true, BINDER_BUDGET_TOP)
         }
     }
 
@@ -447,26 +448,33 @@ impl Pretty<'_> {
         {
             let inner = *expr;
             w.write_str(" = ")?;
-            self.write_expr(w, inner, indent, true)
+            self.write_expr(w, inner, indent, true, BINDER_BUDGET_TOP)
         } else {
             w.write_str(": ")?;
             if decl.is_bound_disj {
                 w.write_str("disj ")?;
             }
-            self.write_expr(w, decl.bound, indent, true)
+            self.write_expr(w, decl.bound, indent, true, BINDER_BUDGET_TOP)
         }
     }
 
     // -- Expressions ------------------------------------------------------
 
     /// Writes `e`. `rightmost` is true when nothing in the enclosing
-    /// expression follows `e` (so a binder here needs no parens).
+    /// expression follows `e` (so a binder here is a syntactic candidate for
+    /// going bare); `budget` is `e`'s binder-composition budget (mt-014
+    /// Part 1/2, `crate::prec::child_binder_budget`) — the *same* value the
+    /// parser would have had available when it parsed whatever occupies
+    /// this slot. Both must independently allow it (see `needs_parens`):
+    /// `rightmost` alone is not enough once a binder has already spent its
+    /// one composition hop through an enclosing operator.
     fn write_expr<W: Write>(
         &self,
         w: &mut W,
         e: ExprId,
         indent: usize,
         rightmost: bool,
+        budget: u8,
     ) -> fmt::Result {
         match &self.ast.exprs[e].kind {
             ExprKind::Num(n) => write!(w, "{n}"),
@@ -482,11 +490,11 @@ impl Pretty<'_> {
                 w.write_char('@')?;
                 write_qualname(w, q)
             }
-            ExprKind::Unary { .. } => self.write_unary(w, e, indent, rightmost),
-            ExprKind::Binary { .. } => self.write_binary(w, e, indent, rightmost),
-            ExprKind::Arrow { .. } => self.write_arrow(w, e, indent, rightmost),
+            ExprKind::Unary { .. } => self.write_unary(w, e, indent, rightmost, budget),
+            ExprKind::Binary { .. } => self.write_binary(w, e, indent, rightmost, budget),
+            ExprKind::Arrow { .. } => self.write_arrow(w, e, indent, rightmost, budget),
             ExprKind::Compare { .. } => self.write_compare(w, e, indent, rightmost),
-            ExprKind::IfThenElse { .. } => self.write_ite(w, e, indent, rightmost),
+            ExprKind::IfThenElse { .. } => self.write_ite(w, e, indent, rightmost, budget),
             ExprKind::BoxJoin { .. } => self.write_boxjoin(w, e, indent),
             ExprKind::Quant { .. } => self.write_quant(w, e, indent, rightmost),
             ExprKind::Comprehension { .. } => self.write_comprehension(w, e, indent),
@@ -498,6 +506,16 @@ impl Pretty<'_> {
     /// Writes `e` in an operand slot the parent will re-parse at `min_bp`
     /// (`is_left` = the slot is the parent's *left* operand), wrapping in
     /// parens exactly when a bare `e` would not re-parse to itself there.
+    /// Inside a freshly-opened paren, content is always a fresh expression
+    /// start (`BINDER_BUDGET_TOP`), matching `Parser::parse_atom`'s
+    /// `LParen` arm (`parse_expr`, budget `TOP`).
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "mirrors Parser::parse_operand's own (min_bp, budget) pair plus the printer's \
+                  own (is_left, rightmost) placement flags (mt-014 Part 2) -- splitting these \
+                  into a struct would obscure the 1:1 correspondence with the parser this \
+                  module's own doc comment promises"
+    )]
     fn write_operand<W: Write>(
         &self,
         w: &mut W,
@@ -505,25 +523,36 @@ impl Pretty<'_> {
         min_bp: u8,
         is_left: bool,
         rightmost: bool,
+        budget: u8,
         indent: usize,
     ) -> fmt::Result {
-        if self.needs_parens(e, min_bp, is_left, rightmost) {
+        if self.needs_parens(e, min_bp, is_left, rightmost, budget) {
             w.write_char('(')?;
-            self.write_expr(w, e, indent, true)?;
+            self.write_expr(w, e, indent, true, BINDER_BUDGET_TOP)?;
             w.write_char(')')
         } else {
-            self.write_expr(w, e, indent, rightmost)
+            self.write_expr(w, e, indent, rightmost, budget)
         }
     }
 
-    fn needs_parens(&self, e: ExprId, min_bp: u8, is_left: bool, rightmost: bool) -> bool {
+    fn needs_parens(
+        &self,
+        e: ExprId,
+        min_bp: u8,
+        is_left: bool,
+        rightmost: bool,
+        budget: u8,
+    ) -> bool {
         // Binders (`let`/quantifier) extend to the end of the enclosing
-        // expression; they are safe bare only in tail position.
+        // expression; they are safe bare only in tail position (`rightmost`)
+        // *and* only while the composition budget still allows a bare
+        // binder here (mt-014 Part 2) -- either condition alone can force
+        // parens.
         if matches!(
             self.ast.exprs[e].kind,
             ExprKind::Quant { .. } | ExprKind::Let { .. }
         ) {
-            return !rightmost;
+            return !rightmost || budget < BINDER_BUDGET_HOP;
         }
         let (lp, rp) = self.lp_rp(e);
         let edge = if is_left { rp } else { lp };
@@ -584,12 +613,26 @@ impl Pretty<'_> {
         }
     }
 
+    /// `budget` is `e`'s own composition budget (see `write_expr`). Every
+    /// prefix here is *transparent*: it passes `budget` straight through to
+    /// its operand unchanged, matching `Parser::parse_prefix`'s handling of
+    /// every prefix tier except the set-tests, which instead hard-block
+    /// (`BINDER_BUDGET_NONE`) regardless of `budget` -- jar-verified (mt-014
+    /// Part 2): `no all x: A | …` is a syntax error even though `! all x: A
+    /// | …` and `# all x: A | …` are fine.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one match arm per UnOp variant (STYLE S2 soft-cap exception, same rationale \
+                  as lexer.rs's operator table): splitting the table would only obscure the 1:1 \
+                  correspondence with UnOp's variants"
+    )]
     fn write_unary<W: Write>(
         &self,
         w: &mut W,
         e: ExprId,
         indent: usize,
         rightmost: bool,
+        budget: u8,
     ) -> fmt::Result {
         let ExprKind::Unary { op, expr } = &self.ast.exprs[e].kind else {
             debug_assert!(false, "write_unary on non-unary node");
@@ -598,67 +641,132 @@ impl Pretty<'_> {
         let (op, inner) = (*op, *expr);
         match op {
             UnOp::Prime => {
-                self.write_operand(w, inner, BP_PRIME_CLOSURE, true, false, indent)?;
+                self.write_operand(w, inner, BP_PRIME_CLOSURE, true, false, budget, indent)?;
                 w.write_char('\'')
             }
-            UnOp::Transpose => self.write_closure(w, '~', inner, indent),
-            UnOp::Closure => self.write_closure(w, '^', inner, indent),
-            UnOp::ReflexiveClosure => self.write_closure(w, '*', inner, indent),
+            UnOp::Transpose => self.write_closure(w, '~', inner, indent, budget),
+            UnOp::Closure => self.write_closure(w, '^', inner, indent, budget),
+            UnOp::ReflexiveClosure => self.write_closure(w, '*', inner, indent, budget),
             UnOp::Not => {
                 w.write_char('!')?;
-                self.write_operand(w, inner, BP_NOT, false, rightmost, indent)
+                self.write_operand(w, inner, BP_NOT, false, rightmost, budget, indent)
             }
-            UnOp::Always => self.write_word_prefix(w, "always", inner, BP_NOT, indent, rightmost),
+            UnOp::Always => {
+                self.write_word_prefix(w, "always", inner, BP_NOT, indent, rightmost, budget)
+            }
             UnOp::Eventually => {
-                self.write_word_prefix(w, "eventually", inner, BP_NOT, indent, rightmost)
+                self.write_word_prefix(w, "eventually", inner, BP_NOT, indent, rightmost, budget)
             }
-            UnOp::After => self.write_word_prefix(w, "after", inner, BP_NOT, indent, rightmost),
-            UnOp::Before => self.write_word_prefix(w, "before", inner, BP_NOT, indent, rightmost),
+            UnOp::After => {
+                self.write_word_prefix(w, "after", inner, BP_NOT, indent, rightmost, budget)
+            }
+            UnOp::Before => {
+                self.write_word_prefix(w, "before", inner, BP_NOT, indent, rightmost, budget)
+            }
             UnOp::Historically => {
-                self.write_word_prefix(w, "historically", inner, BP_NOT, indent, rightmost)
+                self.write_word_prefix(w, "historically", inner, BP_NOT, indent, rightmost, budget)
             }
-            UnOp::Once => self.write_word_prefix(w, "once", inner, BP_NOT, indent, rightmost),
+            UnOp::Once => {
+                self.write_word_prefix(w, "once", inner, BP_NOT, indent, rightmost, budget)
+            }
             // Set tests and their bound-marker twins share surface spellings
             // (`some A` / `some A`): the reference's `mult()` distinguishes
-            // them by context, so the printed text is identical.
-            UnOp::No => self.write_word_prefix(w, "no", inner, BP_TEST, indent, rightmost),
-            UnOp::Some | UnOp::SomeOf => {
-                self.write_word_prefix(w, "some", inner, BP_TEST, indent, rightmost)
-            }
-            UnOp::Lone | UnOp::LoneOf => {
-                self.write_word_prefix(w, "lone", inner, BP_TEST, indent, rightmost)
-            }
-            UnOp::One | UnOp::OneOf => {
-                self.write_word_prefix(w, "one", inner, BP_TEST, indent, rightmost)
-            }
-            UnOp::SetOf => self.write_word_prefix(w, "set", inner, BP_TEST, indent, rightmost),
-            UnOp::SeqOf => self.write_word_prefix(w, "seq", inner, BP_TEST, indent, rightmost),
+            // them by context, so the printed text is identical. Hard
+            // `BINDER_BUDGET_NONE`, not `budget` -- mt-014 Part 2.
+            UnOp::No => self.write_word_prefix(
+                w,
+                "no",
+                inner,
+                BP_TEST,
+                indent,
+                rightmost,
+                BINDER_BUDGET_NONE,
+            ),
+            UnOp::Some | UnOp::SomeOf => self.write_word_prefix(
+                w,
+                "some",
+                inner,
+                BP_TEST,
+                indent,
+                rightmost,
+                BINDER_BUDGET_NONE,
+            ),
+            UnOp::Lone | UnOp::LoneOf => self.write_word_prefix(
+                w,
+                "lone",
+                inner,
+                BP_TEST,
+                indent,
+                rightmost,
+                BINDER_BUDGET_NONE,
+            ),
+            UnOp::One | UnOp::OneOf => self.write_word_prefix(
+                w,
+                "one",
+                inner,
+                BP_TEST,
+                indent,
+                rightmost,
+                BINDER_BUDGET_NONE,
+            ),
+            UnOp::SetOf => self.write_word_prefix(
+                w,
+                "set",
+                inner,
+                BP_TEST,
+                indent,
+                rightmost,
+                BINDER_BUDGET_NONE,
+            ),
+            UnOp::SeqOf => self.write_word_prefix(
+                w,
+                "seq",
+                inner,
+                BP_TEST,
+                indent,
+                rightmost,
+                BINDER_BUDGET_NONE,
+            ),
             UnOp::Card => {
                 w.write_char('#')?;
-                self.write_operand(w, inner, BP_NUMUNOP, false, rightmost, indent)
+                self.write_operand(w, inner, BP_NUMUNOP, false, rightmost, budget, indent)
             }
-            UnOp::IntOf => self.write_word_prefix(w, "int", inner, BP_NUMUNOP, indent, rightmost),
-            UnOp::SumOf => self.write_word_prefix(w, "sum", inner, BP_NUMUNOP, indent, rightmost),
+            UnOp::IntOf => {
+                self.write_word_prefix(w, "int", inner, BP_NUMUNOP, indent, rightmost, budget)
+            }
+            UnOp::SumOf => {
+                self.write_word_prefix(w, "sum", inner, BP_NUMUNOP, indent, rightmost, budget)
+            }
             // `= e` is only reachable via a decl bound (handled in write_decl);
-            // this arm keeps the match total.
+            // this arm keeps the match total. A decl bound is a fresh
+            // `parse_expr()` context in the parser, so `BINDER_BUDGET_TOP`.
             UnOp::ExactlyOf => {
                 w.write_str("= ")?;
-                self.write_expr(w, inner, indent, rightmost)
+                self.write_expr(w, inner, indent, rightmost, BINDER_BUDGET_TOP)
             }
         }
     }
 
+    /// Self-recursive (`~~~~~x`) like `Parser::parse_closure`, so it takes
+    /// its own `budget` and threads it through unchanged (transparent).
     fn write_closure<W: Write>(
         &self,
         w: &mut W,
         sym: char,
         inner: ExprId,
         indent: usize,
+        budget: u8,
     ) -> fmt::Result {
         w.write_char(sym)?;
-        self.write_operand(w, inner, BP_PRIME_CLOSURE, false, false, indent)
+        self.write_operand(w, inner, BP_PRIME_CLOSURE, false, false, budget, indent)
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "shared helper for every word-spelled prefix (STYLE S1 -- one nameable thing: \
+                  write `word operand`), each caller passing its own operand tier/eligibility; \
+                  see write_operand's #[allow] for why a struct would obscure more than it helps"
+    )]
     fn write_word_prefix<W: Write>(
         &self,
         w: &mut W,
@@ -667,10 +775,11 @@ impl Pretty<'_> {
         operand_bp: u8,
         indent: usize,
         rightmost: bool,
+        budget: u8,
     ) -> fmt::Result {
         w.write_str(word)?;
         w.write_char(' ')?;
-        self.write_operand(w, inner, operand_bp, false, rightmost, indent)
+        self.write_operand(w, inner, operand_bp, false, rightmost, budget, indent)
     }
 
     fn write_binary<W: Write>(
@@ -679,6 +788,7 @@ impl Pretty<'_> {
         e: ExprId,
         indent: usize,
         rightmost: bool,
+        budget: u8,
     ) -> fmt::Result {
         let ExprKind::Binary { op, lhs, rhs } = &self.ast.exprs[e].kind else {
             debug_assert!(false, "write_binary on non-binary node");
@@ -687,15 +797,26 @@ impl Pretty<'_> {
         let (op, lhs, rhs) = (*op, *lhs, *rhs);
         if matches!(op, BinOp::Join) {
             let (lbp, _) = JOIN_BP;
-            self.write_operand(w, lhs, lbp, true, false, indent)?;
+            self.write_operand(w, lhs, lbp, true, false, budget, indent)?;
             w.write_char('.')?;
-            // The dot's right operand is a tight term (closure/prime/atom).
-            return self.write_operand(w, rhs, BP_PRIME_CLOSURE, false, false, indent);
+            // The dot's right operand is a tight term (closure/prime/atom);
+            // an ordinary (non-`implies`) composition hop, mt-014 Part 2.
+            let dot_budget = child_binder_budget(budget, BinderOperator::Ordinary);
+            return self.write_operand(w, rhs, BP_PRIME_CLOSURE, false, false, dot_budget, indent);
         }
         let (lbp, rbp) = binary_bp(op);
-        self.write_operand(w, lhs, lbp, true, false, indent)?;
+        self.write_operand(w, lhs, lbp, true, false, budget, indent)?;
         write!(w, " {} ", binop_str(op))?;
-        self.write_operand(w, rhs, rbp, false, rightmost, indent)
+        // `implies` (no `else` -- that shape is `IfThenElse`, `write_ite`
+        // below) refreshes the budget to `TOP`; every other binary operator
+        // gets one ordinary hop (mt-014 Part 2, `child_binder_budget`).
+        let class = if matches!(op, BinOp::Implies) {
+            BinderOperator::Implies
+        } else {
+            BinderOperator::Ordinary
+        };
+        let rhs_budget = child_binder_budget(budget, class);
+        self.write_operand(w, rhs, rbp, false, rightmost, rhs_budget, indent)
     }
 
     fn write_arrow<W: Write>(
@@ -704,6 +825,7 @@ impl Pretty<'_> {
         e: ExprId,
         indent: usize,
         rightmost: bool,
+        budget: u8,
     ) -> fmt::Result {
         let ExprKind::Arrow {
             lhs,
@@ -716,7 +838,7 @@ impl Pretty<'_> {
             return Ok(());
         };
         let (lhs, lhs_mult, rhs_mult, rhs) = (*lhs, *lhs_mult, *rhs_mult, *rhs);
-        self.write_operand(w, lhs, ARROW_BP.0, true, false, indent)?;
+        self.write_operand(w, lhs, ARROW_BP.0, true, false, budget, indent)?;
         w.write_char(' ')?;
         if let Some(m) = lhs_mult {
             w.write_str(mult_word(m))?;
@@ -728,7 +850,8 @@ impl Pretty<'_> {
             w.write_str(mult_word(m))?;
         }
         w.write_char(' ')?;
-        self.write_operand(w, rhs, ARROW_BP.1, false, rightmost, indent)
+        let rhs_budget = child_binder_budget(budget, BinderOperator::Ordinary);
+        self.write_operand(w, rhs, ARROW_BP.1, false, rightmost, rhs_budget, indent)
     }
 
     fn write_compare<W: Write>(
@@ -749,9 +872,23 @@ impl Pretty<'_> {
             return Ok(());
         };
         let (op, negated, lhs, rhs) = (*op, *negated, *lhs, *rhs);
-        self.write_operand(w, lhs, CMP_BP.0, true, false, indent)?;
+        // A comparison's own left/right operand budget doesn't matter for
+        // the left side (`is_left` already forces parens on any bare
+        // binder there); its own incoming budget is otherwise irrelevant to
+        // `lhs` since `is_left=true` slots are never rightmost.
+        self.write_operand(w, lhs, CMP_BP.0, true, false, BINDER_BUDGET_NONE, indent)?;
         write!(w, " {} ", cmp_str(op, negated))?;
-        self.write_operand(w, rhs, CMP_BP.1, false, rightmost, indent)
+        // Comparisons never accept a binder as their operand, at any
+        // ambient budget (mt-014 Part 2, jar-verified) -- hard `NONE`.
+        self.write_operand(
+            w,
+            rhs,
+            CMP_BP.1,
+            false,
+            rightmost,
+            BINDER_BUDGET_NONE,
+            indent,
+        )
     }
 
     fn write_ite<W: Write>(
@@ -760,6 +897,7 @@ impl Pretty<'_> {
         e: ExprId,
         indent: usize,
         rightmost: bool,
+        budget: u8,
     ) -> fmt::Result {
         let ExprKind::IfThenElse {
             cond,
@@ -771,7 +909,7 @@ impl Pretty<'_> {
             return Ok(());
         };
         let (cond, then_branch, else_branch) = (*cond, *then_branch, *else_branch);
-        self.write_operand(w, cond, 11, true, false, indent)?;
+        self.write_operand(w, cond, 11, true, false, budget, indent)?;
         w.write_str(" => ")?;
         // Dangling-else guard: a bare `=>` (no else) in the then-branch would
         // capture this else on re-parse, so wrap it even though precedence
@@ -784,13 +922,39 @@ impl Pretty<'_> {
             }
         ) {
             w.write_char('(')?;
-            self.write_expr(w, then_branch, indent, true)?;
+            self.write_expr(w, then_branch, indent, true, BINDER_BUDGET_TOP)?;
             w.write_char(')')?;
         } else {
-            self.write_operand(w, then_branch, BP_IMPLIES_R, false, false, indent)?;
+            // `implies … else`'s then-branch never accepts a binder operand
+            // at all, jar-verified (mt-014 Part 2) -- hard `NONE`,
+            // independent of `budget` (unlike a bare `implies` with no
+            // `else`, whose then-branch is `write_binary`'s `Implies` case
+            // above and *does* get the refreshed `TOP` budget).
+            self.write_operand(
+                w,
+                then_branch,
+                BP_IMPLIES_R,
+                false,
+                false,
+                BINDER_BUDGET_NONE,
+                indent,
+            )?;
         }
         w.write_str(" else ")?;
-        self.write_operand(w, else_branch, BP_IMPLIES_R, false, rightmost, indent)
+        // The else-branch is the true rightmost operand of the whole
+        // construct, so it gets the same `Implies`-refreshed budget a bare
+        // `implies`'s then-branch would (jar-verified: `q implies r else s
+        // and all x: A | …` parses).
+        let else_budget = child_binder_budget(budget, BinderOperator::Implies);
+        self.write_operand(
+            w,
+            else_branch,
+            BP_IMPLIES_R,
+            false,
+            rightmost,
+            else_budget,
+            indent,
+        )
     }
 
     fn write_boxjoin<W: Write>(&self, w: &mut W, e: ExprId, indent: usize) -> fmt::Result {
@@ -798,14 +962,27 @@ impl Pretty<'_> {
             debug_assert!(false, "write_boxjoin on non-boxjoin node");
             return Ok(());
         };
-        self.write_operand(w, *target, JOIN_BP.0, true, false, indent)?;
+        // The target inherits whatever budget got us here (transparent,
+        // like an `is_left` operand); it is never itself a bare Quant/Let
+        // in valid source (`is_left` positions always force parens), so the
+        // exact value only matters for consistency.
+        self.write_operand(
+            w,
+            *target,
+            JOIN_BP.0,
+            true,
+            false,
+            BINDER_BUDGET_NONE,
+            indent,
+        )?;
         w.write_char('[')?;
         for (i, &arg) in args.iter().enumerate() {
             if i > 0 {
                 w.write_str(", ")?;
             }
-            // Each argument is a full expression delimited by `,`/`]`.
-            self.write_operand(w, arg, 0, false, true, indent)?;
+            // Each argument is a full expression delimited by `,`/`]` --
+            // a fresh `parse_expr()` context in the parser, `BINDER_BUDGET_TOP`.
+            self.write_operand(w, arg, 0, false, true, BINDER_BUDGET_TOP, indent)?;
         }
         w.write_char(']')
     }
@@ -825,7 +1002,12 @@ impl Pretty<'_> {
         w.write_char(' ')?;
         self.write_inline_decls(w, decls, indent)?;
         w.write_str(" | ")?;
-        self.write_expr(w, *body, indent, rightmost)
+        // A binder's body is a fresh `parse_quant_body`/`parse_expr` context
+        // in the parser (`BINDER_BUDGET_TOP`), independent of whatever
+        // budget got us to this Quant/Let node itself (that was already
+        // resolved by the caller's `needs_parens` before it decided to
+        // print this node bare vs. parenthesized).
+        self.write_expr(w, *body, indent, rightmost, BINDER_BUDGET_TOP)
     }
 
     fn write_comprehension<W: Write>(&self, w: &mut W, e: ExprId, indent: usize) -> fmt::Result {
@@ -840,7 +1022,8 @@ impl Pretty<'_> {
         let empty_body = matches!(&self.ast.exprs[body].kind, ExprKind::Block(v) if v.is_empty());
         if !empty_body {
             w.write_str(" | ")?;
-            self.write_expr(w, body, indent, true)?;
+            // Also a fresh `parse_quant_body` context, `BINDER_BUDGET_TOP`.
+            self.write_expr(w, body, indent, true, BINDER_BUDGET_TOP)?;
         }
         w.write_str(" }")
     }
@@ -863,10 +1046,17 @@ impl Pretty<'_> {
             }
             w.write_str(&b.name.text)?;
             w.write_str(" = ")?;
-            self.write_operand(w, b.value, 0, false, false, indent)?;
+            // Deliberately conservative (not `BINDER_BUDGET_TOP`, though a
+            // binding value is a fresh `parse_expr()` context): `rightmost`
+            // is hardcoded `false` here regardless, since a bare binder
+            // here would greedily read through the rest of this `let`'s
+            // own bindings/body on re-parse (pre-dates mt-014; unaffected
+            // either way since `rightmost=false` alone already forces
+            // parens on any Quant/Let, whatever budget is passed).
+            self.write_operand(w, b.value, 0, false, false, BINDER_BUDGET_NONE, indent)?;
         }
         w.write_str(" | ")?;
-        self.write_expr(w, *body, indent, rightmost)
+        self.write_expr(w, *body, indent, rightmost, BINDER_BUDGET_TOP)
     }
 
     fn write_inline_decls<W: Write>(
@@ -894,7 +1084,7 @@ impl Pretty<'_> {
             debug_assert!(false, "paragraph body is not a Block");
             w.write_str("{\n")?;
             write_indent(w, indent + 1)?;
-            self.write_expr(w, body, indent + 1, true)?;
+            self.write_expr(w, body, indent + 1, true, BINDER_BUDGET_TOP)?;
             w.write_char('\n')?;
             write_indent(w, indent)?;
             w.write_char('}')
@@ -914,7 +1104,7 @@ impl Pretty<'_> {
         w.write_str("{\n")?;
         for &f in forms {
             write_indent(w, indent + 1)?;
-            self.write_expr(w, f, indent + 1, true)?;
+            self.write_expr(w, f, indent + 1, true, BINDER_BUDGET_TOP)?;
             w.write_char('\n')?;
         }
         write_indent(w, indent)?;

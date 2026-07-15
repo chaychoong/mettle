@@ -89,3 +89,70 @@ pub(crate) fn cmp_bp(_op: CmpOp) -> (u8, u8) {
 pub(crate) fn arrow_bp(_lhs: Option<Mult>, _rhs: Option<Mult>) -> (u8, u8) {
     ARROW_BP
 }
+
+// -- Binder-composition budget (mt-014 Part 2) -----------------------------
+//
+// Grammar-doc section 3.1 says a binder may be the rightmost operand of "any
+// operator below" level 2, but the reference's LALR grammar does not let
+// that compose freely across MULTIPLE enclosing operators the way a naive
+// uniformly-recursive implementation (mt-011/mt-013) does. Jar-verified over
+// ~220 probes (docs/reference/fuzzing.md section 2; LIMITATIONS.md): a
+// binder may be absorbed as the rightmost operand of exactly ONE enclosing
+// operator "hop"; a second hop is rejected UNLESS the enclosing operator is
+// a bare `implies` (`=>` with no `else`) or the `else` branch of
+// `implies … else`, either of which grants a fresh two-hop budget to its own
+// branch. Comparisons (`= in < > <= >= …`) never accept a binder as their
+// operand at all, at any budget (the set-test prefixes `no some lone one set
+// seq` are equally hard-blocked, but that gate lives in
+// `crate::parser::parse_prefix` -- there is no printer-side equivalent since
+// those prefixes never themselves *have* a right-hand binder operand to
+// re-print through this table).
+//
+// This lives here, not in `parser.rs`, for exactly the reason the rest of
+// this module does (see the module doc): the parser enforces this budget
+// and the printer must independently re-derive the *same* answer (does this
+// position need parens around a binder?) to stay round-trip-safe. A single
+// shared function is the only way the two can never drift.
+
+/// `TOP` marks a fresh expression start (may itself be a bare binder, and
+/// grants the generous two-hop budget to whichever operator it meets); `HOP`
+/// marks one ordinary operator's own rightmost operand (may itself be a bare
+/// binder, but grants NO further budget to a nested operator); `NONE` means
+/// a bare binder is not allowed here at all.
+pub(crate) const BINDER_BUDGET_NONE: u8 = 0;
+pub(crate) const BINDER_BUDGET_HOP: u8 = 1;
+pub(crate) const BINDER_BUDGET_TOP: u8 = 2;
+
+/// How an enclosing infix operator affects the binder-composition budget of
+/// its right operand -- the only three classes [`child_binder_budget`]
+/// distinguishes (every operator not named here, including `Arrow`/`Join`,
+/// is [`BinderOperator::Ordinary`]).
+#[derive(Clone, Copy)]
+pub(crate) enum BinderOperator {
+    /// `=>` with no trailing `else` (or the `else` branch of `implies …
+    /// else`) -- refreshes the budget to `TOP`.
+    Implies,
+    /// A comparison (`= in < > <= >= …`, negated or not) -- hard-blocks a
+    /// binder operand regardless of the ambient budget.
+    Comparison,
+    /// Every other infix operator (`or iff and until… + - & -> <: :> .` …).
+    Ordinary,
+}
+
+/// The budget an infix operator's own right operand receives, given the
+/// ambient budget of the call that is about to consume it. Only a `TOP`
+/// ambient budget grants anything; every operator gets one ordinary `HOP`
+/// except `implies` (refreshed to `TOP`, jar-verified) and comparisons
+/// (hard `NONE`, jar-verified — comparisons sit at grammar-doc's tier 9
+/// alongside the set-test prefixes, which are equally hard-blocked in
+/// `crate::parser::parse_prefix`).
+pub(crate) fn child_binder_budget(budget: u8, op: BinderOperator) -> u8 {
+    if budget < BINDER_BUDGET_TOP {
+        return BINDER_BUDGET_NONE;
+    }
+    match op {
+        BinderOperator::Implies => BINDER_BUDGET_TOP,
+        BinderOperator::Comparison => BINDER_BUDGET_NONE,
+        BinderOperator::Ordinary => BINDER_BUDGET_HOP,
+    }
+}

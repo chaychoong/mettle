@@ -115,6 +115,30 @@ pub enum ParseError {
         /// Span of the offending number.
         span: Span,
     },
+    /// A `let`/quantifier binder used as the rightmost operand where the
+    /// jar's grammar does not permit it: as the operand of a comparison or a
+    /// set-test prefix (`no some lone one set seq`), as a second hop of
+    /// enclosing-operator composition (e.g. `q or r and all x: A | body`),
+    /// or as the `then`-branch of `implies … else` (mt-014 Part 2 —
+    /// `docs/reference/fuzzing.md` section 2 has the full jar-verified
+    /// rule). Wrapping the binder in parentheses always fixes it, since a
+    /// parenthesized expression re-enters the grammar fresh.
+    #[error("a quantified formula here must be parenthesized")]
+    BinderNeedsParens {
+        /// Span of the offending binder (or, for the `implies … else`
+        /// then-branch case, the whole then-branch).
+        span: Span,
+    },
+    /// Expression-nesting recursion exceeded [`MAX_EXPR_DEPTH`] (mt-014
+    /// Part 1) — a precise, recoverable error in place of a native stack
+    /// overflow, which the reference jar suffers on the same pathological
+    /// input (a deliberate, better-than-reference divergence; see
+    /// `LIMITATIONS.md` and `docs/reference/fuzzing.md` section 3).
+    #[error("expression nesting is too deep (limit: {MAX_EXPR_DEPTH} levels)")]
+    TooDeep {
+        /// Span of the token at which the limit was exceeded.
+        span: Span,
+    },
 }
 
 impl ParseError {
@@ -135,7 +159,9 @@ impl ParseError {
             | Self::QualifiedDeclName { span }
             | Self::EmptyEnum { span }
             | Self::ModuleHeaderNotFirst { span }
-            | Self::BadScopeNumber { span } => *span,
+            | Self::BadScopeNumber { span }
+            | Self::BinderNeedsParens { span }
+            | Self::TooDeep { span } => *span,
         }
     }
 }
@@ -165,7 +191,37 @@ struct Parser<'src> {
     source: &'src str,
     pos: usize,
     ast: Ast,
+    /// Current expression-nesting recursion depth, guarded against
+    /// [`MAX_EXPR_DEPTH`] by [`Parser::parse_operand`]/[`Parser::parse_closure`]
+    /// (mt-014 Part 1).
+    depth: u32,
 }
+
+/// Maximum expression-nesting recursion depth before the parser fails
+/// loudly with [`ParseError::TooDeep`] instead of risking a native stack
+/// overflow (STYLE E5: a precise typed error beats a crash). Chosen well
+/// above anything a real model approaches (the vendored corpora never
+/// exceed a handful of nesting levels) but comfortably below the
+/// stack-overflow threshold mt-014's fuzzer measured empirically —
+/// deliberately against the *worst case* recursion path and the *smallest*
+/// relevant stack:
+/// - Nested `(…)`/`{…}` is the worst case: each level crosses roughly nine
+///   stacked call frames (`parse_operand` -> `parse_prefix` -> … ->
+///   `parse_atom` -> `parse_expr` -> back to `parse_operand`), costing 2
+///   units of this counter, vs. 1-2 stacked frames (1 unit) for e.g. a
+///   `~`/`^`/`*` chain.
+/// - A `cargo test` worker thread's stack can be considerably smaller than
+///   the OS default a `mettle parse` subprocess gets (measured 16 MiB on
+///   this machine's main thread). A **debug** build, deliberately run on an
+///   explicit 1 MiB thread (`docs/reference/fuzzing.md` section 3 has the
+///   full measurement table), survives unguarded `(`/`{` recursion only to
+///   ~212 real nesting levels (424 of this counter) before SIGABRT.
+///
+/// `256` fires at 128 real `(`/`{` levels — well under the measured 212 —
+/// while still being two orders of magnitude past any real model; verified
+/// safe (no crash) even against 100,000 levels of adversarial `(`/`{`/`~`
+/// nesting on an explicit 1 MiB debug thread.
+const MAX_EXPR_DEPTH: u32 = 256;
 
 // -- Precedence table (grammar-doc section 3) -----------------------------
 //
@@ -180,7 +236,20 @@ struct Parser<'src> {
 // with the pretty-printer (mt-012) so parser precedence and printer parens
 // can never drift.
 
-use crate::prec::{arrow_bp, binary_bp, cmp_bp, BP_NOT, BP_NUMUNOP, BP_TEST, TIER_TEST};
+use crate::prec::{
+    arrow_bp, binary_bp, child_binder_budget, cmp_bp, BinderOperator, BINDER_BUDGET_HOP,
+    BINDER_BUDGET_NONE, BINDER_BUDGET_TOP, BP_NOT, BP_NUMUNOP, BP_TEST, TIER_TEST,
+};
+
+/// Maps a Pratt-loop [`Infix`] to the [`BinderOperator`] class
+/// [`child_binder_budget`] (shared with the printer, `crate::prec`) needs.
+fn binder_operator_class(infix: Infix) -> BinderOperator {
+    match infix {
+        Infix::Implies => BinderOperator::Implies,
+        Infix::Cmp(..) => BinderOperator::Comparison,
+        Infix::Arrow(..) | Infix::Bin(_) => BinderOperator::Ordinary,
+    }
+}
 
 /// One infix operator classified for the Pratt loop.
 #[derive(Copy, Clone)]
@@ -256,6 +325,7 @@ impl<'src> Parser<'src> {
             source,
             pos: 0,
             ast: Ast::default(),
+            depth: 0,
         }
     }
 
@@ -1148,33 +1218,83 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_expr_no_seq(&mut self) -> Result<ExprId, ParseError> {
-        self.parse_operand(0)
+        self.parse_operand(0, BINDER_BUDGET_TOP)
     }
 
-    /// The precedence-climbing core. A binder (`let`/quantifier) may open any
-    /// operand and then consumes maximally right (grammar-doc section 3.1);
-    /// binders are exempt from the prefix tier gate below.
-    fn parse_operand(&mut self, min_bp: u8) -> Result<ExprId, ParseError> {
+    /// The precedence-climbing core. A binder (`let`/quantifier) may open
+    /// this operand (per `budget`, see the binder-budget block above) and
+    /// then consumes maximally right (grammar-doc section 3.1); binders are
+    /// exempt from the prefix tier gate below.
+    fn parse_operand(&mut self, min_bp: u8, budget: u8) -> Result<ExprId, ParseError> {
+        self.enter_depth()?;
+        let result = self.parse_operand_at_depth(min_bp, budget);
+        self.depth -= 1;
+        result
+    }
+
+    /// [`Parser::parse_operand`]'s actual body, run one recursion level
+    /// deeper than its caller (mt-014 Part 1 depth guard; see
+    /// [`MAX_EXPR_DEPTH`]). Split out so the guard's increment/decrement
+    /// pair is textually obvious and always balanced, including across the
+    /// `?`-propagated error paths below.
+    fn parse_operand_at_depth(&mut self, min_bp: u8, budget: u8) -> Result<ExprId, ParseError> {
         if self.starts_binder() {
-            return self.parse_binder();
+            return self.binder_if_budgeted(budget);
         }
-        let mut lhs = self.parse_prefix(min_bp)?;
+        let mut lhs = self.parse_prefix(min_bp, budget)?;
         while let Some((lbp, rbp, infix)) = classify_infix(self.cur()) {
             if lbp < min_bp {
                 break;
             }
             self.bump();
-            lhs = self.build_infix(infix, lhs, rbp)?;
+            let child_budget = child_binder_budget(budget, binder_operator_class(infix));
+            lhs = self.build_infix(infix, lhs, rbp, child_budget)?;
         }
         Ok(lhs)
     }
 
-    /// Builds one infix application whose operator was just consumed.
-    fn build_infix(&mut self, infix: Infix, lhs: ExprId, rbp: u8) -> Result<ExprId, ParseError> {
+    /// Increments the depth counter, failing loudly (mt-014 Part 1,
+    /// [`ParseError::TooDeep`]) rather than recursing further towards a
+    /// native stack overflow. Every caller matches this with exactly one
+    /// `self.depth -= 1` on its way back out (see
+    /// [`Parser::parse_operand`]/[`Parser::parse_closure`]).
+    fn enter_depth(&mut self) -> Result<(), ParseError> {
+        if self.depth >= MAX_EXPR_DEPTH {
+            return Err(ParseError::TooDeep {
+                span: self.cur_span(),
+            });
+        }
+        self.depth += 1;
+        Ok(())
+    }
+
+    /// Consumes a binder at the cursor if `budget` allows one here, else a
+    /// precise typed error (mt-014 Part 2) rather than falling through to
+    /// the generic "expected an expression".
+    fn binder_if_budgeted(&mut self, budget: u8) -> Result<ExprId, ParseError> {
+        if budget >= BINDER_BUDGET_HOP {
+            self.parse_binder()
+        } else {
+            Err(ParseError::BinderNeedsParens {
+                span: self.cur_span(),
+            })
+        }
+    }
+
+    /// Builds one infix application whose operator was just consumed;
+    /// `budget` is this operator's right operand's binder-composition budget
+    /// (already resolved by [`child_binder_budget`] at the call site).
+    fn build_infix(
+        &mut self,
+        infix: Infix,
+        lhs: ExprId,
+        rbp: u8,
+        budget: u8,
+    ) -> Result<ExprId, ParseError> {
         match infix {
-            Infix::Implies => self.build_implies(lhs, rbp),
+            Infix::Implies => self.build_implies(lhs, rbp, budget),
             Infix::Arrow(lhs_mult, rhs_mult) => {
-                let rhs = self.parse_operand(rbp)?;
+                let rhs = self.parse_operand(rbp, budget)?;
                 let span = self.espan(lhs).merge(self.espan(rhs));
                 Ok(self.alloc(
                     ExprKind::Arrow {
@@ -1187,7 +1307,7 @@ impl<'src> Parser<'src> {
                 ))
             }
             Infix::Cmp(op, negated) => {
-                let mut rhs = self.parse_operand(rbp)?;
+                let mut rhs = self.parse_operand(rbp, budget)?;
                 if matches!(op, CmpOp::In) {
                     rhs = self.apply_mult(rhs);
                 }
@@ -1203,7 +1323,7 @@ impl<'src> Parser<'src> {
                 ))
             }
             Infix::Bin(op) => {
-                let rhs = self.parse_operand(rbp)?;
+                let rhs = self.parse_operand(rbp, budget)?;
                 let span = self.espan(lhs).merge(self.espan(rhs));
                 Ok(self.alloc(ExprKind::Binary { op, lhs, rhs }, span))
             }
@@ -1212,10 +1332,32 @@ impl<'src> Parser<'src> {
 
     /// `a => b` or `a => b else c` (dangling `else` binds to the nearest
     /// unmatched `=>`, right-assoc).
-    fn build_implies(&mut self, cond: ExprId, rbp: u8) -> Result<ExprId, ParseError> {
-        let then_branch = self.parse_operand(rbp)?;
+    ///
+    /// The then-branch's budget depends on whether an `else` follows, which
+    /// isn't known until after it's parsed (jar-verified: `implies … else`'s
+    /// then-branch is hard `NONE` regardless of ambient budget, but a bare
+    /// `implies` with no `else` gets `budget`, mt-014 Part 2). So: try the
+    /// (far more common) restricted `NONE` parse first; only on failure
+    /// backtrack and retry at `budget`, remembering whether the extra
+    /// allowance was actually needed. Backtracking re-parses into the same
+    /// append-only arena (STYLE A2); the first attempt's nodes, if any, are
+    /// simply left unreferenced — harmless, and this path is rare.
+    fn build_implies(&mut self, cond: ExprId, rbp: u8, budget: u8) -> Result<ExprId, ParseError> {
+        let saved_pos = self.pos;
+        let (then_branch, then_used_extra_budget) =
+            if let Ok(e) = self.parse_operand(rbp, BINDER_BUDGET_NONE) {
+                (e, false)
+            } else {
+                self.pos = saved_pos;
+                (self.parse_operand(rbp, budget)?, true)
+            };
         if self.eat(&TokenKind::Else) {
-            let else_branch = self.parse_operand(rbp)?;
+            if then_used_extra_budget {
+                return Err(ParseError::BinderNeedsParens {
+                    span: self.espan(then_branch),
+                });
+            }
+            let else_branch = self.parse_operand(rbp, budget)?;
             let span = self.espan(cond).merge(self.espan(else_branch));
             Ok(self.alloc(
                 ExprKind::IfThenElse {
@@ -1249,7 +1391,7 @@ impl<'src> Parser<'src> {
     /// the demanded `min_bp` cannot start this operand — exactly the
     /// reference's production stratification, where e.g. `!` produces a
     /// `UnaryExpr` and so cannot appear where a `ShiftExpr` is required.
-    fn parse_prefix(&mut self, min_bp: u8) -> Result<ExprId, ParseError> {
+    fn parse_prefix(&mut self, min_bp: u8, budget: u8) -> Result<ExprId, ParseError> {
         let start = self.cur_span();
         let (op, tier, rbp) = match self.cur() {
             TokenKind::Not => (UnOp::Not, BP_NOT, BP_NOT),
@@ -1274,7 +1416,7 @@ impl<'src> Parser<'src> {
             TokenKind::Sum if !matches!(self.peek(1), Some(TokenKind::LBracket)) => {
                 (UnOp::SumOf, BP_NUMUNOP, BP_NUMUNOP)
             }
-            _ => return self.parse_postfix(),
+            _ => return self.parse_postfix(budget),
         };
         if tier < min_bp {
             return Err(
@@ -1282,20 +1424,38 @@ impl<'src> Parser<'src> {
             );
         }
         self.bump();
-        let operand = self.parse_operand(rbp)?;
+        // The set-test prefixes (tier `TIER_TEST`: no/some/lone/one/set/seq)
+        // never accept a binder as their operand, jar-verified (mt-014 Part
+        // 2) — a hard `NONE`, independent of the ambient budget. Every other
+        // prefix (`!`/temporal unaries/`#`/`sum`/`int`) is transparent: it
+        // passes the ambient budget through unchanged (jar-verified: `! (a
+        // and all x: A | …)` parses fine, so a prefix does not itself spend
+        // a hop).
+        let operand_budget = if tier == TIER_TEST {
+            BINDER_BUDGET_NONE
+        } else {
+            budget
+        };
+        let operand = self.parse_operand(rbp, operand_budget)?;
         let span = start.merge(self.espan(operand));
         Ok(self.alloc(ExprKind::Unary { op, expr: operand }, span))
     }
 
     /// Dot join and box join, left-associative and interleaved (tier 19).
-    fn parse_postfix(&mut self) -> Result<ExprId, ParseError> {
-        let mut lhs = self.parse_unop()?;
+    fn parse_postfix(&mut self, budget: u8) -> Result<ExprId, ParseError> {
+        let mut lhs = self.parse_unop(budget)?;
         loop {
             match self.cur() {
                 TokenKind::LBracket => lhs = self.parse_box_join(lhs)?,
                 TokenKind::Dot => {
                     self.bump();
-                    let rhs = self.parse_dot_rhs()?;
+                    // `.`'s right operand is an ordinary (non-`implies`)
+                    // "hop" per the same budget rule as any other infix
+                    // (mt-014 Part 2); box-join args are unaffected (they
+                    // always re-enter via `parse_expr`, budget `TOP`, see
+                    // `parse_box_join`/`parse_expr_list`).
+                    let dot_budget = child_binder_budget(budget, BinderOperator::Ordinary);
+                    let rhs = self.parse_dot_rhs(dot_budget)?;
                     let span = self.espan(lhs).merge(self.espan(rhs));
                     lhs = self.alloc(
                         ExprKind::Binary {
@@ -1328,15 +1488,15 @@ impl<'src> Parser<'src> {
 
     /// The right operand of `.`: a builtin keyword name, a binder, or a
     /// tier-20 term (`a.~r`, `a.b'`).
-    fn parse_dot_rhs(&mut self) -> Result<ExprId, ParseError> {
+    fn parse_dot_rhs(&mut self, budget: u8) -> Result<ExprId, ParseError> {
         let span = self.cur_span();
         match self.cur() {
             TokenKind::Disj => Ok(self.synth_after_bump("disj", span)),
             TokenKind::TotalOrder => Ok(self.synth_after_bump("pred/totalOrder", span)),
             TokenKind::IntCast => Ok(self.synth_after_bump("int", span)),
             TokenKind::Sum => Ok(self.synth_after_bump("sum", span)),
-            _ if self.starts_binder() => self.parse_binder(),
-            _ => self.parse_unop(),
+            _ if self.starts_binder() => self.binder_if_budgeted(budget),
+            _ => self.parse_unop(budget),
         }
     }
 
@@ -1347,8 +1507,8 @@ impl<'src> Parser<'src> {
 
     /// Prefix closure operators `~ ^ *` (bind tighter than dot) with postfix
     /// `'` applied afterwards, so `~a'` ≡ `(~a)'`.
-    fn parse_unop(&mut self) -> Result<ExprId, ParseError> {
-        let mut e = self.parse_closure()?;
+    fn parse_unop(&mut self, budget: u8) -> Result<ExprId, ParseError> {
+        let mut e = self.parse_closure(budget)?;
         while self.at(&TokenKind::Prime) {
             let prime = self.bump();
             let span = self.espan(e).merge(prime.span);
@@ -1371,7 +1531,18 @@ impl<'src> Parser<'src> {
     /// time — mt-013 alloy4fun pass, `docs/reference/alloy4fun-error-pass.md`).
     /// Every other prefix tier already gets this via `parse_operand`
     /// (§1157); this one recurses locally so it needs its own check.
-    fn parse_closure(&mut self) -> Result<ExprId, ParseError> {
+    /// Transparent w.r.t. `budget` (mt-014 Part 2), like every other prefix.
+    /// Self-recursive (`~~~~~x`) rather than going back through
+    /// `parse_operand`, so it carries its own depth guard (mt-014 Part 1,
+    /// [`MAX_EXPR_DEPTH`]) rather than relying on `parse_operand`'s.
+    fn parse_closure(&mut self, budget: u8) -> Result<ExprId, ParseError> {
+        self.enter_depth()?;
+        let result = self.parse_closure_at_depth(budget);
+        self.depth -= 1;
+        result
+    }
+
+    fn parse_closure_at_depth(&mut self, budget: u8) -> Result<ExprId, ParseError> {
         let start = self.cur_span();
         let op = match self.cur() {
             TokenKind::Tilde => UnOp::Transpose,
@@ -1381,9 +1552,9 @@ impl<'src> Parser<'src> {
         };
         self.bump();
         let inner = if self.starts_binder() {
-            self.parse_binder()?
+            self.binder_if_budgeted(budget)?
         } else {
-            self.parse_closure()?
+            self.parse_closure(budget)?
         };
         let span = start.merge(self.espan(inner));
         Ok(self.alloc(ExprKind::Unary { op, expr: inner }, span))
