@@ -33,7 +33,7 @@ Test: <path to the conformance test>
 ## Corners that NEED entries (tracked; not yet written)
 These are known to be behavior-defining and version-sensitive. Each becomes a numbered, verified, approved entry before the code that depends on it ships.
 
-- **Integer overflow** — drafted as [LEDGER-001](#ledger-001--integer-overflow-default-forbid-overflows--nooverflow) above; awaiting owner approval of the canonical default.
+- **Integer overflow** — done: [LEDGER-001](#ledger-001--integer-overflow-default-forbid-overflows--nooverflow) above, `approved` 2026-07-15 (canonical default = forbid).
 - **Integer wraparound & bitwidth** — two's-complement semantics, default bitwidth, `Int` sig.
 - **`util/ordering`** — the relations/bounds it induces (`first`/`next`/`last`, total order pinned to atom order).
 - **Cardinality `#`** — typing, coercion to `Int`, interaction with overflow.
