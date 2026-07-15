@@ -13,3 +13,9 @@ workspace = true
 # Display/Error impls for a growing enum, nothing std doesn't already do by
 # hand, just less of it. Version pinned to match als-conform's existing use.
 thiserror = "1"
+
+[dev-dependencies]
+# insta: snapshot testing for the pretty-printer (STYLE U2) -- reviewable
+# `.snap` files beat hand-written giant `assert_eq!` string blobs, and the
+# tool is the ecosystem standard. Test-only, so it never ships in the binary.
+insta = "1"

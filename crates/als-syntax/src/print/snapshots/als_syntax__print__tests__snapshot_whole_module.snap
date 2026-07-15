@@ -1,0 +1,38 @@
+---
+source: crates/als-syntax/src/print/tests.rs
+expression: printed
+---
+module util/ordering[exactly Elem]
+
+open util/integer as ui
+
+abstract sig Node {
+  var edges: set Node,
+  val: one Int
+}
+
+one sig Root extends Node {} {
+  no edges
+}
+
+enum Color { R, G, B }
+
+fact wellformed {
+  all n: Node | n !in n.^edges
+}
+
+pred reachable[a, b: Node] {
+  b in a.*edges
+}
+
+fun degree[n: Node]: Int {
+  #n.edges
+}
+
+assert acyclic {
+  no n: Node | n in n.^edges
+}
+
+check acyclic for 5 but exactly 1 Root expect 0
+
+run reachable for 4 Node

@@ -1,0 +1,13 @@
+---
+source: crates/als-syntax/src/print/tests.rs
+expression: printed
+---
+pred p {
+  a + b & c = d
+  all x: A | x.field' in x.field
+  always eventually done
+  (a => b) => c
+  x = -1
+  f[a, b].g
+  no disj a, b: S | a & b != none
+}

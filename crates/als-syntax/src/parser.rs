@@ -175,24 +175,12 @@ struct Parser<'src> {
 // use `l > r`. Prefix operators bind their operand at a fixed right power so
 // that, e.g., `!` (looser than comparisons) grabs `a = b` while `#` (tighter
 // than `+`) does not grab `... + b`.
+//
+// The numbers themselves live in one place, `crate::prec`, shared verbatim
+// with the pretty-printer (mt-012) so parser precedence and printer parens
+// can never drift.
 
-/// Prefix binding power for `!`/`not` and the unary temporal connectives —
-/// looser than comparisons (`!a = b` ≡ `!(a = b)`), tighter than `&&`.
-const BP_NOT: u8 = 16;
-/// Prefix binding power for the set tests `no some lone one set seq` — binds a
-/// shift-level operand, so `no a = b` ≡ `(no a) = b`.
-const BP_TEST: u8 = 20;
-/// *Tier* of the set tests: they sit at the comparison level, so they may
-/// open the operand of anything looser than a comparison (`! no a`,
-/// `a until no b`) but not a comparison's own right operand (`x in one A`
-/// is jar-rejected) nor their own operand (`no no a` is jar-rejected —
-/// hence tier < [`BP_TEST`]).
-const TIER_TEST: u8 = 18;
-/// Prefix binding power for `# sum int` — tighter than `+`, so `#a + b` ≡
-/// `(#a) + b`.
-const BP_NUMUNOP: u8 = 26;
-/// Right binding power of `=>`/`else` (right-assoc, dangling-else).
-const BP_IMPLIES_R: u8 = 10;
+use crate::prec::{arrow_bp, binary_bp, cmp_bp, BP_NOT, BP_NUMUNOP, BP_TEST, TIER_TEST};
 
 /// One infix operator classified for the Pratt loop.
 #[derive(Copy, Clone)]
@@ -208,48 +196,57 @@ enum Infix {
 }
 
 /// Binding powers + classification for an infix operator, or `None` if the
-/// token does not continue an expression.
+/// token does not continue an expression. The numbers come from
+/// [`crate::prec`] (keyed on the resulting operator), the same table the
+/// pretty-printer reads.
 fn classify_infix(kind: &TokenKind) -> Option<(u8, u8, Infix)> {
-    let out = match kind {
-        TokenKind::Or => (6, 7, Infix::Bin(BinOp::Or)),
-        TokenKind::Iff => (8, 9, Infix::Bin(BinOp::Iff)),
-        TokenKind::Implies => (11, BP_IMPLIES_R, Infix::Implies),
-        TokenKind::And => (12, 13, Infix::Bin(BinOp::And)),
-        TokenKind::Until => (14, 15, Infix::Bin(BinOp::Until)),
-        TokenKind::Releases => (14, 15, Infix::Bin(BinOp::Releases)),
-        TokenKind::Since => (14, 15, Infix::Bin(BinOp::Since)),
-        TokenKind::Triggered => (14, 15, Infix::Bin(BinOp::Triggered)),
-        TokenKind::Equals => (18, 19, Infix::Cmp(CmpOp::Eq, false)),
-        TokenKind::NotEquals => (18, 19, Infix::Cmp(CmpOp::Eq, true)),
-        TokenKind::In => (18, 19, Infix::Cmp(CmpOp::In, false)),
-        TokenKind::NotIn => (18, 19, Infix::Cmp(CmpOp::In, true)),
-        TokenKind::Lt => (18, 19, Infix::Cmp(CmpOp::Lt, false)),
-        TokenKind::NotLt => (18, 19, Infix::Cmp(CmpOp::Lt, true)),
-        TokenKind::Gt => (18, 19, Infix::Cmp(CmpOp::Gt, false)),
-        TokenKind::NotGt => (18, 19, Infix::Cmp(CmpOp::Gt, true)),
-        TokenKind::Lte => (18, 19, Infix::Cmp(CmpOp::Le, false)),
-        TokenKind::NotLte => (18, 19, Infix::Cmp(CmpOp::Le, true)),
-        TokenKind::Gte => (18, 19, Infix::Cmp(CmpOp::Ge, false)),
-        TokenKind::NotGte => (18, 19, Infix::Cmp(CmpOp::Ge, true)),
-        TokenKind::Shl => (20, 21, Infix::Bin(BinOp::Shl)),
-        TokenKind::Sha => (20, 21, Infix::Bin(BinOp::Sha)),
-        TokenKind::Shr => (20, 21, Infix::Bin(BinOp::Shr)),
-        TokenKind::Plus => (22, 23, Infix::Bin(BinOp::Union)),
-        TokenKind::Minus => (22, 23, Infix::Bin(BinOp::Diff)),
-        TokenKind::FunAdd => (22, 23, Infix::Bin(BinOp::IntAdd)),
-        TokenKind::FunSub => (22, 23, Infix::Bin(BinOp::IntSub)),
-        TokenKind::FunMul => (24, 25, Infix::Bin(BinOp::IntMul)),
-        TokenKind::FunDiv => (24, 25, Infix::Bin(BinOp::IntDiv)),
-        TokenKind::FunRem => (24, 25, Infix::Bin(BinOp::IntRem)),
-        TokenKind::PlusPlus => (28, 29, Infix::Bin(BinOp::Override)),
-        TokenKind::Ampersand => (30, 31, Infix::Bin(BinOp::Intersect)),
-        TokenKind::Arrow => (33, 32, Infix::Arrow(None, None)),
-        TokenKind::ArrowMult { lhs, rhs } => (33, 32, Infix::Arrow(*lhs, *rhs)),
-        TokenKind::DomRestrict => (34, 35, Infix::Bin(BinOp::DomRestrict)),
-        TokenKind::RangeRestrict => (36, 37, Infix::Bin(BinOp::RanRestrict)),
+    let infix = match kind {
+        TokenKind::Or => Infix::Bin(BinOp::Or),
+        TokenKind::Iff => Infix::Bin(BinOp::Iff),
+        TokenKind::Implies => Infix::Implies,
+        TokenKind::And => Infix::Bin(BinOp::And),
+        TokenKind::Until => Infix::Bin(BinOp::Until),
+        TokenKind::Releases => Infix::Bin(BinOp::Releases),
+        TokenKind::Since => Infix::Bin(BinOp::Since),
+        TokenKind::Triggered => Infix::Bin(BinOp::Triggered),
+        TokenKind::Equals => Infix::Cmp(CmpOp::Eq, false),
+        TokenKind::NotEquals => Infix::Cmp(CmpOp::Eq, true),
+        TokenKind::In => Infix::Cmp(CmpOp::In, false),
+        TokenKind::NotIn => Infix::Cmp(CmpOp::In, true),
+        TokenKind::Lt => Infix::Cmp(CmpOp::Lt, false),
+        TokenKind::NotLt => Infix::Cmp(CmpOp::Lt, true),
+        TokenKind::Gt => Infix::Cmp(CmpOp::Gt, false),
+        TokenKind::NotGt => Infix::Cmp(CmpOp::Gt, true),
+        TokenKind::Lte => Infix::Cmp(CmpOp::Le, false),
+        TokenKind::NotLte => Infix::Cmp(CmpOp::Le, true),
+        TokenKind::Gte => Infix::Cmp(CmpOp::Ge, false),
+        TokenKind::NotGte => Infix::Cmp(CmpOp::Ge, true),
+        TokenKind::Shl => Infix::Bin(BinOp::Shl),
+        TokenKind::Sha => Infix::Bin(BinOp::Sha),
+        TokenKind::Shr => Infix::Bin(BinOp::Shr),
+        TokenKind::Plus => Infix::Bin(BinOp::Union),
+        TokenKind::Minus => Infix::Bin(BinOp::Diff),
+        TokenKind::FunAdd => Infix::Bin(BinOp::IntAdd),
+        TokenKind::FunSub => Infix::Bin(BinOp::IntSub),
+        TokenKind::FunMul => Infix::Bin(BinOp::IntMul),
+        TokenKind::FunDiv => Infix::Bin(BinOp::IntDiv),
+        TokenKind::FunRem => Infix::Bin(BinOp::IntRem),
+        TokenKind::PlusPlus => Infix::Bin(BinOp::Override),
+        TokenKind::Ampersand => Infix::Bin(BinOp::Intersect),
+        TokenKind::Arrow => Infix::Arrow(None, None),
+        TokenKind::ArrowMult { lhs, rhs } => Infix::Arrow(*lhs, *rhs),
+        TokenKind::DomRestrict => Infix::Bin(BinOp::DomRestrict),
+        TokenKind::RangeRestrict => Infix::Bin(BinOp::RanRestrict),
         _ => return None,
     };
-    Some(out)
+    let (lbp, rbp) = match infix {
+        Infix::Bin(op) => binary_bp(op),
+        Infix::Cmp(op, _) => cmp_bp(op),
+        Infix::Arrow(lhs, rhs) => arrow_bp(lhs, rhs),
+        // `=>` is right-associative with the dangling-else right power.
+        Infix::Implies => binary_bp(BinOp::Implies),
+    };
+    Some((lbp, rbp, infix))
 }
 
 impl<'src> Parser<'src> {

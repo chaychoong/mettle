@@ -1,0 +1,20 @@
+---
+source: crates/als-syntax/src/print/tests.rs
+expression: dump(&ast)
+---
+Ast
+  Sig [A] abstract=false var=false private=false mult=-
+    parent None
+    decl [f] disj=false bound_disj=false var=false private=false
+      Unary SetOf
+        Arrow lhs_mult=None rhs_mult=Some(One)
+          Name A
+          Name B
+  Fact -
+    Block
+      Compare In negated=true
+        Name a
+        Binary Join
+          Name b
+          Unary Closure
+            Name c
