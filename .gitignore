@@ -2,9 +2,11 @@
 /target
 **/*.rs.bk
 
-# Vendored reference oracle (large binaries — pinned by SHA in docs, never committed)
-/oracle/*.jar
-/oracle/**/*.jar
+# Local reference oracle: the pinned Alloy jar, scratch models, extracted
+# license texts, and third-party source kept only for reference. Fully
+# reproducible from docs/reference/alloy6-reference.md (jar pinned by SHA).
+# Never committed — also keeps third-party Java source out of our tree (legal hygiene).
+/oracle/
 
 # OS cruft
 .DS_Store

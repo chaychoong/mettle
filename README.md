@@ -26,4 +26,4 @@ _Coming at Rung 5._ Planned: `cargo install mettle`, `brew install mettle`, and 
 Start at **[docs/README.md](docs/README.md)** (index) or **[docs/ROADMAP.md](docs/ROADMAP.md)** (the plan).
 
 ## License & attribution
-Permissive (Apache-2.0 planned). Carries attribution/NOTICE for AlloyTools (Apache-2.0) and Kodkod (MIT); the `util/*.als` standard library is vendored verbatim with headers intact. See ADRs under [docs/adr/](docs/adr/).
+mettle's own code will be permissive (Apache-2.0 planned). Attribution/NOTICE for the reference implementation is being finalized — upstream Alloy's own license is currently in transition (its repo says so), and the `util/*.als` standard library ships without headers; Kodkod is MIT. The exact posture and how the standard library is vendored will be settled in a licensing ADR before any derived text ships. See [docs/adr/](docs/adr/).

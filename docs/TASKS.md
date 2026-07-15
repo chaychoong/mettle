@@ -12,8 +12,8 @@ Lightweight, git-tracked, greppable task "beads" — no external tool dependency
 
 - ✔ **mt-001** · P0 · Documentation & decision spine
   CLAUDE.md, docs index, STATE, ROADMAP, this ledger, ADRs 0001–0004, LIMITATIONS, Ledger scaffold.
-- ◐ **mt-002** · P0 · Pin the conformance oracle (delegated → sonnet)
-  Download + verify latest Alloy 6 jar; prove headless verdict/count/`symmetryBreaking=0`/overflow-default/SAT4J. → `docs/reference/alloy6-reference.md`; fold SHA/version into ADR-0002. *(agent running)*
+- ✔ **mt-002** · P0 · Pin the conformance oracle (delegated → sonnet)
+  Downloaded + verified Alloy 6.2.0 jar (SHA-256 pinned); proved headless verdict/count/`symmetryBreaking=0`/overflow-default/SAT4J, and found+documented a CLI bug (`-y`/`--ymmetry` is a no-op — use the `A4Options` API instead). → `docs/reference/alloy6-reference.md`; SHA/version folded into ADR-0002.
 - ✔ **mt-003** · P0 · Draft steering rubrics (delegated → opus)
   STYLE.md + PORTING_RULES.md — tech-lead reviewed and accepted as binding rubrics.
 - ▢ **mt-004** · P0 · Cargo workspace + `als-*` crate skeleton
@@ -21,9 +21,11 @@ Lightweight, git-tracked, greppable task "beads" — no external tool dependency
 - ▢ **mt-005** · P0 · Hand-designed core IR type skeleton
   Typed-index arena IDs + core relational IR types (bones only; agents fill flesh). Depends on mt-004.
 - ▢ **mt-006** · P0 · Conformance harness (`als-conform`) v0
-  Drive the pinned jar; produce a scorecard artifact. Cross-check against `expect` annotations (Net 0). Depends on mt-002, mt-004.
+  Drive the pinned jar; produce a scorecard artifact. Cross-check against `expect` annotations (Net 0). **Drive via a compiled `A4Options` Java shim (see `oracle/Harness.java`), NOT `exec -y` (that CLI flag is a confirmed no-op in 6.2.0); force `-s sat4j` for zero native deps; run in a temp workdir (exec litters an output dir named after the model into CWD).** Depends on mt-002, mt-004.
 - ▢ **mt-007** · P0 · Vendor corpora
   AlloyTools examples, Alloy4Fun/NoviceAlloyModels, Portus 63, Kodkod tests — with licenses/headers. Depends on mt-002.
+- ▢ **mt-008** · P0 · Resolve licensing posture (ADR)
+  Upstream Alloy's own license is unsettled (repo `LICENSE` says "NOT VALID YET / currently MIT"; per-file headers + jar manifest say MIT; bundled `LICENSE.txt` is Apache-2.0). Kodkod=MIT, SAT4J=LGPL-2.1 (oracle-only, not shipped in product). `util/*.als` carry **no** license header. Decide mettle's own license + attribution/NOTICE and how to vendor `util/*.als`; write a licensing ADR. See reference doc §2. *Blocks shipping any vendored corpus/stdlib.*
 
 ## Next (Rung 1 — syntax)
 - ▢ **mt-010** · R1 · Lexer + spans (temporal tokens included)

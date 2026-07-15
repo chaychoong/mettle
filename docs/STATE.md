@@ -10,10 +10,11 @@
 - Repo initialized at `~/repos/mettle` (git, not yet published to a remote).
 - Documentation spine: `CLAUDE.md`, `docs/` (this index, STATE, ROADMAP, TASKS, ADRs 0001–0004), `LIMITATIONS.md`, `SEMANTICS_LEDGER.md` scaffold.
 - **Binding steering rubrics:** `STYLE.md` + `PORTING_RULES.md` (drafted by an Opus agent, tech-lead reviewed and accepted; numbered rules D#/I#/E#/R# citable in review).
+- **Pinned conformance oracle:** Alloy **6.2.0**, jar SHA-256 `6b8c1cb5…edb78d`, recorded in [ADR-0002](adr/0002-conformance-oracle.md) + [reference/alloy6-reference.md](reference/alloy6-reference.md). Headless invocation empirically proven (verdict, count, SB=0 via `A4Options` API, SAT4J zero-native-deps, `expect` semantics). Jar lives in git-ignored `oracle/`.
 - Toolchains installed in this VM: **Rust stable** (rustup, `~/.cargo/bin`) and **OpenJDK 21** (to drive the reference oracle).
 
 ## In flight (delegated, background)
-- **Oracle reference brief** (`general-purpose`, `sonnet`) → downloading + empirically verifying the pinned Alloy 6 jar and the exact headless command lines (verdict, counting, `symmetryBreaking=0`, overflow default, SAT4J). Output: `docs/reference/alloy6-reference.md`. *On completion: tech-lead review, then fold exact version/SHA into [ADR-0002](adr/0002-conformance-oracle.md).*
+- _None._ Both Pre-Rung-1 delegations (steering docs, oracle brief) are complete and reviewed.
 
 ## Not yet started
 - Rust workspace + `als-*` crate skeleton and hand-designed core IR types.
@@ -21,11 +22,11 @@
 - Corpora vendoring (AlloyTools examples, Alloy4Fun, Portus 63, Kodkod tests).
 
 ## Next chunk (planned)
-1. Review the two in-flight agent outputs; fold oracle facts into ADR-0002; make the steering docs binding.
-2. Lay down the Cargo workspace + empty `als-*` crates matching the DAG in [ROADMAP.md](ROADMAP.md) / plan §3, with CI (fmt + clippy) green.
-3. Begin the conformance harness against the pinned jar → first scorecard (of the jar against itself / `expect` annotations) — pure plumbing, not surfaced to the human.
+1. Lay down the Cargo workspace + empty `als-*` crates matching the DAG in [ROADMAP.md](ROADMAP.md) / plan §3, with CI (fmt + clippy) green. (mt-004 → mt-005)
+2. Begin the conformance harness against the pinned jar → first scorecard (jar vs. `expect` annotations, Net 0) — pure plumbing, not surfaced to the human. Build on the `A4Options` Java shim, not the buggy `exec -y` flag (see mt-006 note). (mt-006, mt-007)
 
 Then: **Rung 1** (parser) is the first build the human is asked to try.
 
 ## Open questions for the human (non-blocking)
-None currently blocking — the tech lead has taken the standing technical forks (see ADR-0002, ADR-0003). The human is pulled in at Rung 1.
+- **LEDGER-001 — overflow default.** Alloy 6.2.0's overflow default differs by entry point (GUI = forbid, headless = allow). mettle must pick one canonical default. Tech lead recommends **forbid** (match the GUI users know); awaiting product-owner blessing. Not blocking until Rung 3 (integers). See [SEMANTICS_LEDGER.md](../SEMANTICS_LEDGER.md).
+- **Licensing (mt-008).** Upstream Alloy's license is unsettled; mettle's own attribution/NOTICE + how `util/*.als` is vendored need a licensing ADR before any derived text ships. Not blocking pre-corpus work.

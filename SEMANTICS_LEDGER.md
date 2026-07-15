@@ -19,10 +19,21 @@ Test: <path to the conformance test>
 
 ---
 
+## Entries
+
+### LEDGER-001 — integer overflow default ("forbid overflows" / `noOverflow`)
+**Rule (proposed):** mettle treats integer/cardinality arithmetic exceeding the bitwidth as **forbidden by default** — an overflowing term excludes the instance (matching the Alloy GUI's default "Prevent overflows" = on) — and exposes a flag to switch to allow/wraparound semantics.
+**Status:** `proposed` — facts below are `verified`; the canonical default awaits **product-owner approval**. *(Do not implement against this until `approved`.)*
+**Evidence:** Alloy 6.2.0's default is **entry-point-dependent** (verified 2026-07-15, see [reference/alloy6-reference.md](docs/reference/alloy6-reference.md) §3(c) — reproduced by tech lead): GUI default = forbid (`noOverflow=true`); headless jar / `A4Options` default = allow/wraparound (`noOverflow=false`). Decisive test: `run { plus[7,7] < 0 } for 4 int` → **SAT** (allow) by default, **UNSAT** under `-n` (forbid). Default bitwidth = 4 (range −8..7).
+**Decision needed from owner:** pick mettle's canonical default. *Recommendation: forbid,* to match the GUI users know. Either way the conformance harness sets the oracle's `noOverflow` to mettle's choice so the scorecard compares like-for-like.
+**Test:** _(added with the Rung-3 integer work)_
+
+---
+
 ## Corners that NEED entries (tracked; not yet written)
 These are known to be behavior-defining and version-sensitive. Each becomes a numbered, verified, approved entry before the code that depends on it ships.
 
-- **Integer overflow / `forbid overflow` default** — how overflowing arithmetic/cardinality affects the *verdict* (see [ADR-0003](docs/adr/0003-supported-subset-sequencing.md)). *Highest priority; needed at Rung 3.*
+- **Integer overflow** — drafted as [LEDGER-001](#ledger-001--integer-overflow-default-forbid-overflows--nooverflow) above; awaiting owner approval of the canonical default.
 - **Integer wraparound & bitwidth** — two's-complement semantics, default bitwidth, `Int` sig.
 - **`util/ordering`** — the relations/bounds it induces (`first`/`next`/`last`, total order pinned to atom order).
 - **Cardinality `#`** — typing, coercion to `Int`, interaction with overflow.
