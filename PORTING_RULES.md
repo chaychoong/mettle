@@ -158,10 +158,11 @@ Rule R8: any loop that influences numbering/CNF/output uses `IndexMap`/`BTreeMap
 
 - Reimplementing **behavior** and **APIs** from reading the Java is fine — behavior and interfaces are not copyrightable. That is the whole method (STYLE §12): read, state the behavior in one sentence, test, reimplement idiomatically.
 - The risk is porting **verbatim structure** — copying class layouts, method decomposition, or line-by-line logic. Idiomatic reimplementation (enums, arenas, `Result`) is precisely what keeps mettle's non-derivative posture clean. If a Rust file mirrors a Java file class-for-class, that's a red flag in review.
-- Attribution obligations to keep in mind:
-  - Reference analyzer (Alloy) is Apache-2.0 — behavior may be studied and reimplemented; do not copy source. Preserve required notices where any Apache-2.0-derived text is retained.
+- Attribution obligations to keep in mind (updated per [ADR-0006](docs/adr/0006-licensing-posture.md)):
+  - Reference analyzer (Alloy): upstream's license is **unsettled** (MIT/Apache-2.0 transition in progress; see the reference brief §2) — behavior may be studied and reimplemented; never copy source text, and never assume a settled upstream license.
   - Kodkod is MIT — same posture; reimplement, don't copy.
-  - Vendored standard-library models (`util/*.als`) are shipped **verbatim with their original license headers intact**; do not rewrite or restyle them.
+  - Standard-library models (`util/*.als`) are a **clean-room rewrite** (ADR-0006): implement from the documented module interfaces + Ledger-pinned behavior. Never copy from — or write with open — upstream's `util/*.als` text; the copies under `corpus/alloytools-models/models/util/` are conformance test *inputs*, off-limits as source material.
+  - mettle's own code is MPL-2.0 (root `LICENSE`); corpora are local-only and never redistributed.
 - When unsure whether something is behavior (OK to reimplement) or expression (do not copy), treat it as expression and reimplement from a one-sentence behavioral spec.
 
 ---

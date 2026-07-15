@@ -9,9 +9,10 @@
 /oracle/
 
 # Conformance corpora (mt-007): vendored .als models used as the conformance
-# oracle's test corpus. Not committed until mt-008 (licensing) resolves.
-# Fully reproducible from docs/reference/corpora.md (each corpus pinned by
-# commit SHA / DOI / release tag).
+# oracle's test corpus. Never committed (ADR-0006: local-only — portus-63
+# aggregates GPL-3.0 and no-license sources). Fully reproducible from
+# docs/reference/corpora.md (each corpus pinned by commit SHA / DOI / tag)
+# via scripts/fetch-corpora.sh.
 /corpus/
 
 # OS cruft

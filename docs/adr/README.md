@@ -11,5 +11,6 @@ Each ADR captures one non-trivial decision, its context, and its consequences. A
 | [0003](0003-supported-subset-sequencing.md) | Supported-subset sequencing (cardinality, overflow, ordering, fuzzer) | Accepted |
 | [0004](0004-docs-and-task-system.md) | Documentation & task-tracking system | Accepted |
 | [0005](0005-core-ir-type-skeleton.md) | Core IR type skeleton (arenas, AST, relational IR, CNF boundary) | Accepted |
+| [0006](0006-licensing-posture.md) | Licensing posture: MPL-2.0 code, clean-room stdlib, local-only corpora | Accepted |
 
 Template for new ADRs: **Context → Decision → Consequences → Alternatives considered**, with `Status:` and `Date:` headers, and a `Supersedes` / `Superseded by` line when relevant.

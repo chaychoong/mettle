@@ -417,6 +417,13 @@ corpus/                                    (git-ignored; not committed)
 
 ## Follow-ups for mt-008
 
+> **Resolved 2026-07-15 by [ADR-0006](../adr/0006-licensing-posture.md):**
+> `corpus/` is local-only **permanently** (never committed/redistributed);
+> the stdlib is a clean-room rewrite (upstream `util/*.als` copies here are
+> test inputs only, off-limits as source material); mettle itself is
+> MPL-2.0. The bullets below are preserved as the evidence that drove the
+> decision.
+
 - `portus-63` is the clear licensing hot spot: two GPL-3.0 sources
   (`hkhojasteh/CANBus`, `naorinh/TransForm`) and six no-license sources mean
   this corpus likely **cannot** be redistributed as part of mettle's own

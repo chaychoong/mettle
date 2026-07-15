@@ -19,7 +19,7 @@
 - Toolchains in this VM: Rust stable (`~/.cargo/bin`) and OpenJDK 21.
 
 ## In flight (delegated, background)
-- _None._ Both this session's delegations (mt-006 harness, mt-007 corpora) completed, were tech-lead reviewed, and are merged.
+- **mt-009** (sonnet): `scripts/fetch-corpora.sh` + checksum manifest reproducing `corpus/` from the manifest pins. Acceptance: byte-identical re-fetch + passing `--verify`. If found incomplete on resume: the spec is in TASKS.md mt-009; only `scripts/**` should be touched; review + commit is the tech lead's.
 
 ## Not yet started
 - Rung 1: lexer, parser, pretty-printer, diagnostics, fuzzer (mt-010..mt-014).
@@ -30,9 +30,10 @@
 Also ready when useful: a full-corpus oracle baseline run (`conform corpus/alloytools-models` etc.) to cache jar verdicts for later comparison — cheap, delegable, not blocking.
 
 ## Recent decisions
+- **ADR-0006 — licensing (mt-008, owner-decided 2026-07-15):** mettle = **MPL-2.0** (root LICENSE, workspace manifest); `util/*.als` stdlib = **clean-room rewrite** (bead mt-015 — never copy upstream text; corpus copies are test inputs only); corpora local-only forever; PORTING_RULES legal-hygiene updated accordingly.
 - **ADR-0005** — core IR type skeleton: shared arena/ID infra in `als-syntax`; unified surface `Expr` vs three-sorted IR; BTree-ordered bounds; dependency-free `als-solve`; overflow semantics live in the translator, not the types.
 - **LEDGER-001 — overflow default = FORBID** (approved 2026-07-15). Harness already sets the oracle to match (`no_overflow=true` default, `--allow-overflow` to flip).
 - Shim source lives **inside the crate** (`crates/als-conform/shim/`), not git-ignored `oracle/` — our own code must survive a fresh clone; only the re-downloadable jar stays ignored.
 
 ## Open questions for the human (non-blocking)
-- **Licensing (mt-008).** Now with full evidence in [reference/corpora.md](reference/corpora.md): portus-63 contains GPL-3.0 and no-license sources (local-use-only is the safe assumption); alloy4fun is CC-BY-4.0 (cleanest); alloytools-models inherits upstream's MIT/Apache ambiguity. Needs a licensing ADR before any corpus/stdlib text ships in the repo or a release. Blocks committing `corpus/` and vendoring `util/*.als` into the product — blocks nothing in Rung 1.
+- _None._ (mt-008 licensing resolved via ADR-0006; next owner touchpoint is the Rung-1 build to try.)

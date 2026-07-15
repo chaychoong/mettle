@@ -24,8 +24,10 @@ Lightweight, git-tracked, greppable task "beads" — no external tool dependency
   Done 2026-07-15: `crates/als-conform/shim/OracleShim.java` drives the jar via the `A4Options` API (symmetry/noOverflow/solver always explicit; LEDGER-001 default); Rust side = typed outcomes, timeout-killed JVM per file, Net 0 expect-mining, deterministic scorecard (text+JSON), `conform` bin. 87/1129 enumeration facts pinned by integration tests (skip cleanly sans jar). Review fixes: shim source moved into the crate (was in git-ignored `oracle/`); unknown solver = hard error, no silent default.
 - ✔ **mt-007** · P0 · Vendor corpora (delegated → sonnet, tech-lead reviewed)
   Done 2026-07-15: alloytools-models (94 .als @ the jar's build commit), alloy4fun (Zenodo 10.5281/zenodo.17390557, CC-BY-4.0), portus-63 (63 models, licensing hot spot) vendored into git-ignored `corpus/`; kodkod investigated → no `.als`, not vendored. Provenance manifest committed: [reference/corpora.md](reference/corpora.md). Corpus files stay uncommitted until mt-008.
-- ▢ **mt-008** · P0 · Resolve licensing posture (ADR)
-  Upstream Alloy's own license is unsettled (repo `LICENSE` says "NOT VALID YET / currently MIT"; per-file headers + jar manifest say MIT; bundled `LICENSE.txt` is Apache-2.0). Kodkod=MIT, SAT4J=LGPL-2.1 (oracle-only, not shipped in product). `util/*.als` carry **no** license header. Decide mettle's own license + attribution/NOTICE and how to vendor `util/*.als`; write a licensing ADR. See reference doc §2. *Blocks shipping any vendored corpus/stdlib.*
+- ✔ **mt-008** · P0 · Resolve licensing posture (ADR)
+  Done 2026-07-15, owner-decided → [ADR-0006](adr/0006-licensing-posture.md): mettle = **MPL-2.0** (root LICENSE + workspace manifest); stdlib `util/*.als` = **clean-room rewrite** (bead mt-015, never copy upstream text); corpora = local-only forever (git-ignored, reproducible via manifest + mt-009 script); jar stays ignored. PORTING_RULES legal-hygiene section updated per the ADR.
+- ◐ **mt-009** · P0 · Reproducible corpus fetch script (delegated → sonnet, in flight)
+  `scripts/fetch-corpora.sh` + checksum manifest: one command reproduces git-ignored `corpus/` from the pins in [reference/corpora.md](reference/corpora.md); `--with-alloy4fun` for the 374 MB dataset, `--verify` mode. Acceptance: byte-identical to the existing tree.
 
 ## Next (Rung 1 — syntax)
 - ▢ **mt-010** · R1 · Lexer + spans (temporal tokens included) ← **next on "proceed"** (with mt-011; AST contract = `als-syntax::ast`, ADR-0005)
@@ -36,3 +38,6 @@ Lightweight, git-tracked, greppable task "beads" — no external tool dependency
 
 ## Backlog (later rungs)
 Tracked at rung granularity in [ROADMAP.md](ROADMAP.md); expanded into beads when a rung becomes "Next".
+
+- ▢ **mt-015** · R2 · Clean-room `util/*` stdlib rewrite ([ADR-0006](adr/0006-licensing-posture.md))
+  Write mettle's own `util/{ordering,integer,boolean,...}.als` from documented interfaces + Ledger-pinned behavior; **never** from upstream's text (corpus copies are test inputs only). Lands with Rung-2 `open` resolution; `util/ordering`'s analyzer special-casing (exact bounds/symmetry) needs its own Ledger entries.
