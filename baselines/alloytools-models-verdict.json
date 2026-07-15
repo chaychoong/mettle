@@ -1,0 +1,3109 @@
+{
+  "files": [
+    {
+      "file": "corpus/alloytools-models/models/book/appendixA/addressBook1.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "show",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/appendixA/addressBook2.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Default",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/appendixA/barbers.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Default",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/appendixA/closure.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Equivalence",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/appendixA/distribution.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "union",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/appendixA/phones.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Default",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/appendixA/prison.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "show",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/appendixA/properties.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "show",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "ReformulateNonEmptinessOK",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/appendixA/ring.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "isRing",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/appendixA/spanning.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "show",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/appendixA/tree.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "isTree",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/appendixA/tube.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "show",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/appendixA/undirected.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "acyclic",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/appendixE/p300-hotel.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "NoIntruder",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/appendixE/p303-hotel.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "NoIntruder",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "NoIntruder",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/appendixE/p306-hotel.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "NoIntruder",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "NoIntruder",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "NoIntruder",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter2/addressBook1a.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "show",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter2/addressBook1b.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "show",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter2/addressBook1c.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "show",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter2/addressBook1d.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "show",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter2/addressBook1e.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "add",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter2/addressBook1f.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "showAdd",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter2/addressBook1g.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "delUndoesAdd",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter2/addressBook1h.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "show",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "showAdd",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "delUndoesAdd",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "delUndoesAdd",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 4,
+            "label": "addIdempotent",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 5,
+            "label": "addLocal",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter2/addressBook2a.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "show",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter2/addressBook2b.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "show",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter2/addressBook2c.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "show",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter2/addressBook2d.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "show",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter2/addressBook2e.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "delUndoesAdd",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "addIdempotent",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "addLocal",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "lookupYields",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter2/addressBook3a.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "show",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter2/addressBook3b.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "delUndoesAdd",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "addIdempotent",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "addLocal",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "lookupYields",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter2/addressBook3c.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "delUndoesAdd",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "addIdempotent",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "addLocal",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "lookupYields",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter2/addressBook3d.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "delUndoesAdd",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "addIdempotent",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "addLocal",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "lookupYields",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 4,
+            "label": "lookupYields",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter4/filesystem.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "SomeDir",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "RootTop",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "FileInDir",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter4/grandpa1.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "NoSelfFather",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "ownGrandpa",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "NoSelfGrandpa",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter4/grandpa2.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "NoSelfFather",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "ownGrandpa",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter4/grandpa3.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "NoSelfFather",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "ownGrandpa",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "Same",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter4/lights.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Safe",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter5/addressBook.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "add",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "addLocal",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter5/lists.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "FalseAssertion",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter5/sets1.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Closed",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter5/sets2.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Closed",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter6/hotel1.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "NoBadEntry",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter6/hotel2.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "NoBadEntry",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "NoBadEntry",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "NoBadEntry",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter6/hotel3.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "NoBadEntry",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter6/hotel4.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "NoBadEntry",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter6/mediaAssets.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "HidePreservesInv",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "CutPaste",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "PasteCut",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "PasteNotAffectHidden",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter6/memory/abstractMemory.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "WriteRead",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "WriteIdempotent",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter6/memory/cacheMemory.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "LoadNotObservable",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter6/memory/checkCache.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "ReadOK",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "WriteOK",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "LoadOK",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "FlushOK",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter6/memory/checkFixedSize.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "initOk",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "readOk",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "writeOk",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter6/memory/fixedSizeMemory.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Default",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter6/memory/fixedSizeMemory_H.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Default",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter6/ringElection1.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "show",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "AtMostOneElected",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "AtLeastOneElected",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/book/chapter6/ringElection2.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "show",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "AtMostOneElected",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "AtLeastOneElected",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "looplessPath",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 4,
+            "label": "looplessPath",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/examples/algorithms/dijkstra.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Deadlock",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "ShowDijkstra",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "DijkstraPreventsDeadlocks",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/examples/algorithms/messaging.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "SomeState",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "OutOfOrder",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/examples/algorithms/opt_spantree.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "SuccessfulRun",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "BadLivenessTrace",
+            "check": false,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "Closure",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/examples/algorithms/peterson.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "TwoRun",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "ThreeRun",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "Safety",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "NotStuck",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/examples/algorithms/ringlead.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "NeverFindLeader",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "Liveness",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "OneLeader",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "SomeLeader",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 4,
+            "label": "LeaderHighest",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/examples/algorithms/s_ringlead.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "BadLivenessTrace",
+            "check": false,
+            "expects": false,
+            "outcome": {
+              "type": "error",
+              "kind": "command",
+              "message": "Analysis cannot be performed since it requires higher-order quantification that could not be skolemized."
+            }
+          },
+          {
+            "index": 1,
+            "label": "SomeLeader",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "error",
+              "kind": "command",
+              "message": "Analysis cannot be performed since it requires higher-order quantification that could not be skolemized."
+            }
+          },
+          {
+            "index": 2,
+            "label": "Safety",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "error",
+              "kind": "command",
+              "message": "Analysis cannot be performed since it requires higher-order quantification that could not be skolemized."
+            }
+          },
+          {
+            "index": 3,
+            "label": "AltTrans",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "error",
+              "kind": "command",
+              "message": "Analysis cannot be performed since it requires higher-order quantification that could not be skolemized."
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/examples/algorithms/stable_mutex_ring.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "TraceShorterThanMaxSimpleLoop",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "TwoPrivileged",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "Closure",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/examples/algorithms/stable_orient_ring.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "SomeState",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "Closure",
+            "check": true,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/examples/algorithms/stable_ringlead.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "ConvergingRun",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "DTraceWithoutLoop",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "DBadLivenessTrace",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "CTraceWithoutLoop",
+            "check": false,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 4,
+            "label": "CBadLivenessTrace",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 5,
+            "label": "CMustConverge",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/examples/case_studies/chord.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Same1",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "Same2",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "SameFC",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "ShowMeFC",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 4,
+            "label": "SameCPF",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 5,
+            "label": "SameCPF1",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 6,
+            "label": "SameCPF2",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 7,
+            "label": "ShowMeCPF",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 8,
+            "label": "FPisActive",
+            "check": true,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 9,
+            "label": "SameFP",
+            "check": true,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 10,
+            "label": "SameFP1",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 11,
+            "label": "SameFP2",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 12,
+            "label": "ShowMe1Node",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 13,
+            "label": "ShowMe1",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 14,
+            "label": "ShowMe2",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 15,
+            "label": "InjectiveIds",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 16,
+            "label": "FindSuccessorWorks",
+            "check": true,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/examples/case_studies/chord2.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "FindSuccessorWorks",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/examples/case_studies/chordbugmodel.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "ShowMe1Node",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "ShowMeGood",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "ShowMeCorrectSuccessorEg",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "ShowMe3",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 4,
+            "label": "FindSuccessorWorks",
+            "check": false,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 5,
+            "label": "StrongerFindSuccessorWorks",
+            "check": true,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/examples/case_studies/com.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Theorem1",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "Theorem2",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "Theorem3",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "Theorem4a",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 4,
+            "label": "Theorem4b",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/examples/case_studies/firewire.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Execution",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "ElectionHappens",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "NoRepeats",
+            "check": false,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "NoRepeats",
+            "check": false,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 4,
+            "label": "NoOverflow",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 5,
+            "label": "AtMostOneElected",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 6,
+            "label": "OneEventuallyElected",
+            "check": true,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/examples/case_studies/ins.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Default",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "error",
+              "kind": "command",
+              "message": "Analysis cannot be performed since it requires higher-order quantification that could not be skolemized."
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/examples/puzzles/handshake.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "P10",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "P12",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "P14",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "P16",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/examples/systems/file_system.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "check$1",
+            "check": true,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "check$2",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/examples/systems/javatypes_soundness.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "TypeSoundness",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "TypeSoundness",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/examples/systems/lists.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "reflexive",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "symmetric",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "empties",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "show",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/examples/systems/marksweepgc.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Soundness1",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "Soundness2",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "Completeness",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/examples/systems/views.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "zippishOK",
+            "check": true,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/examples/temporal/buffer.als",
+      "outcome": {
+        "type": "timeout"
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/examples/temporal/leader.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "run$1",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "example",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "safety",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "liveness",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/examples/temporal/leader_events.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "run$1",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "example",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "safety",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "liveness",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/examples/temporal/trash.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "example",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "restoreAfterDelete",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "restoreAfterDelete",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "error",
+              "kind": "command",
+              "message": "Bounded engines do not support complete model checking."
+            }
+          },
+          {
+            "index": 3,
+            "label": "deleteAll",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 4,
+            "label": "Exercise1",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 5,
+            "label": "Exercise2",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 6,
+            "label": "Exercise3",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 7,
+            "label": "Exercise4",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 8,
+            "label": "restoreIsPossibleBeforeEmpty",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "error",
+              "kind": "command",
+              "message": "Bounded engines do not support complete model checking."
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/examples/toys/ceilingsAndFloors.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "BelowToo",
+            "check": true,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "BelowToo\"",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "BelowToo\"",
+            "check": true,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "BelowToo\"\"",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 4,
+            "label": "BelowToo\"\"",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/examples/toys/numbering.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "PreserveForest",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "AddNeverReduces",
+            "check": true,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/examples/tutorial/farmer.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "solvePuzzle",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "NoQuantumObjects",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/util/boolean.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Default",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/util/graph.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Default",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/util/integer.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Default",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/util/natural.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Default",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/util/ordering.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "run$1",
+            "check": false,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "run$2",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "run$3",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "run$4",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 4,
+            "label": "run$5",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 5,
+            "label": "correct",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 6,
+            "label": "correct",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 7,
+            "label": "correct",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 8,
+            "label": "correct",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 9,
+            "label": "correct",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 10,
+            "label": "correct",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/util/relation.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Default",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/util/seqrel.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Default",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/util/sequence.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Default",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/util/sequniv.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Default",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/util/ternary.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Default",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/alloytools-models/models/util/time.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Default",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "totals": {
+    "commands": 234,
+    "with_expect": 94,
+    "matches": 91,
+    "mismatches": 3,
+    "timeouts": 1,
+    "errors": 7
+  }
+}

@@ -26,6 +26,7 @@ Every doc in the project is reachable from here. Nothing is orphaned. Superseded
   - **[reference/alloy6-reference.md](reference/alloy6-reference.md)** — the pinned Alloy 6.2.0 oracle: provenance, licenses, and empirically-proven headless invocation.
   - **[reference/corpora.md](reference/corpora.md)** — conformance-corpus provenance manifest: exact pins, retrieval commands, license evidence per corpus (`corpus/` itself is git-ignored pending mt-008).
   - **[reference/alloy6-grammar.md](reference/alloy6-grammar.md)** — the pinned Alloy 6 surface-syntax contract (tokens, filter rewrites, 21-level precedence, grammar shapes) that mt-010/mt-011 implement; derived from the oracle build's grammar sources and jar-verified.
+- **[../baselines/](../baselines/README.md)** — cached reference-jar verdicts over the corpora (the answers mettle must match), with triage notes on expect-mismatches and engine-limitation errors.
 
 ## Operating guide
 - **[../CLAUDE.md](../CLAUDE.md)** — lean agent operating guide (roles, cadence, delegation, principles). Progressive-disclosure hub.
