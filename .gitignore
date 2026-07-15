@@ -1,0 +1,10 @@
+# Rust build output
+/target
+**/*.rs.bk
+
+# Vendored reference oracle (large binaries — pinned by SHA in docs, never committed)
+/oracle/*.jar
+/oracle/**/*.jar
+
+# OS cruft
+.DS_Store
