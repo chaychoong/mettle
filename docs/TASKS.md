@@ -30,8 +30,10 @@ Lightweight, git-tracked, greppable task "beads" — no external tool dependency
   Done 2026-07-15: `scripts/fetch-corpora.sh` (+ `corpora.sha256`, 192 files) reproduces `corpus/` byte-identically from the [reference/corpora.md](reference/corpora.md) pins in ~15s (alloy4fun optional via `--with-alloy4fun`); `--verify` re-checked independently: 192/192 pass, shellcheck clean. Bonus: surfaced and fixed an under-documented 4th upstream patch (`trace.als`) — manifest corrected.
 
 ## Next (Rung 1 — syntax)
-- ▢ **mt-010** · R1 · Lexer + spans (temporal tokens included) ← **next on "proceed"** (with mt-011; AST contract = `als-syntax::ast`, ADR-0005)
-- ▢ **mt-011** · R1 · Parser + arena AST (temporal syntax included)
+- ◐ **mt-010** · R1 · Lexer + spans (temporal tokens included)
+  Contract pinned in [reference/alloy6-grammar.md](reference/alloy6-grammar.md) + [ADR-0007](adr/0007-rung1-lexer-parser-architecture.md); AST extended to grammar parity (SigParent::Eq, macros, ParaName, scope ranges, int ops, ExactlyOf). Implementation delegated (sonnet); gauge = 100% corpus lex rate.
+- ◐ **mt-011** · R1 · Parser + arena AST (temporal syntax included)
+  Same contract; recursive descent + Pratt over the 21-level table, filter rewrites F1–F4 as parser lookahead/cooking pass. Delegated (opus) after mt-010 merges; gauge = corpus parse rate.
 - ▢ **mt-012** · R1 · Pretty-printer + parse→print→parse round-trip
 - ▢ **mt-013** · R1 · Diagnostics (caret errors) + Alloy4Fun error-quality pass
 - ▢ **mt-014** · R1 · Mutation fuzzer over corpora (parser robustness)

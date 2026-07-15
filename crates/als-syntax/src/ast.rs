@@ -83,8 +83,8 @@ pub struct ModuleHeader {
 /// One module type parameter.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ModuleParam {
-    /// Parameter name.
-    pub name: Ident,
+    /// Parameter name (the grammar allows qualified names here).
+    pub name: QualName,
     /// `exactly` marker.
     pub is_exact: bool,
 }
@@ -119,8 +119,25 @@ pub enum Para {
     Fun(FunDecl),
     /// `assert` paragraph.
     Assert(AssertDecl),
+    /// Top-level `let` macro.
+    Macro(MacroDecl),
     /// `run`/`check` command.
     Cmd(CmdDecl),
+}
+
+/// Name of a `fact`/`assert` paragraph: an identifier or a string literal
+/// (string names are accepted by the reference grammar).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum ParaName {
+    /// `fact cycle_free { .. }`.
+    Ident(Ident),
+    /// `fact "no cycles" { .. }` — stored unescaped.
+    Str {
+        /// The literal's unescaped value.
+        value: String,
+        /// Where it was written.
+        span: Span,
+    },
 }
 
 /// `[qualifiers] sig A, B extends P { fields } { appended-fact }`.
@@ -173,6 +190,8 @@ pub enum SigParent {
     Extends(QualName),
     /// `in P + Q + ...` — (non-disjoint) subset sig of a union of sig refs.
     In(Vec<QualName>),
+    /// `= P + Q + ...` — subset sig equal to a union of sig refs.
+    Eq(Vec<QualName>),
 }
 
 /// `enum Name { A, B, C }`.
@@ -189,12 +208,18 @@ pub struct EnumDecl {
 
 /// A declaration: sig field, quantifier binding, or pred/fun parameter.
 ///
-/// `[private] [var] [disj] a, b : bound` — the bound expression carries any
-/// multiplicity/`seq` marker as a unary [`ExprKind::Unary`] node.
+/// `[var] [private] [disj] a, b : [disj] bound` — the bound expression
+/// carries any multiplicity/`seq` marker as a unary [`ExprKind::Unary`]
+/// node; a defined decl (`a = e`) carries [`UnOp::ExactlyOf`].
 #[derive(Clone, PartialEq, Eq, Debug)]
+// The grammar defines four independent, freely combinable markers; encoding
+// them as anything but four bools would misstate the syntax.
+#[allow(clippy::struct_excessive_bools)]
 pub struct Decl {
     /// `disj` marker — declared names are pairwise disjoint.
     pub is_disj: bool,
+    /// `disj` marker after the `:` — a separate flag in the grammar.
+    pub is_bound_disj: bool,
     /// `var` marker (Alloy 6 mutable field).
     pub is_var: bool,
     /// `private` marker (fields only).
@@ -210,8 +235,8 @@ pub struct Decl {
 /// `fact [name] { body }`.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct FactDecl {
-    /// Optional fact name.
-    pub name: Option<Ident>,
+    /// Optional fact name (identifier or string literal).
+    pub name: Option<ParaName>,
     /// Body formula.
     pub body: ExprId,
     /// Span of the whole paragraph.
@@ -257,10 +282,29 @@ pub struct FunDecl {
 /// `assert [name] { body }`.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct AssertDecl {
-    /// Assertion name (needed to `check` it, but grammatically optional).
-    pub name: Option<Ident>,
+    /// Assertion name (needed to `check` it, but grammatically optional;
+    /// may be a string literal, which no command can reference).
+    pub name: Option<ParaName>,
     /// Body formula.
     pub body: ExprId,
+    /// Span of the whole paragraph.
+    pub span: Span,
+}
+
+/// Top-level macro: `[private] let name [params] (= expr | { body })`.
+///
+/// Parameters are plain names (no bounds). A block body is stored as a
+/// [`ExprKind::Block`] expression; `= expr` bodies as the expression itself.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct MacroDecl {
+    /// Macro name.
+    pub name: Ident,
+    /// Parameter names (empty for `let m = e` and `let m [] = e` alike).
+    pub params: Vec<Ident>,
+    /// Macro body.
+    pub body: ExprId,
+    /// `private` marker.
+    pub is_private: bool,
     /// Span of the whole paragraph.
     pub span: Span,
 }
@@ -278,6 +322,9 @@ pub struct CmdDecl {
     pub scope: Option<Scope>,
     /// `expect 0|1` annotation.
     pub expect: Option<Expect>,
+    /// Chained onto the previous command via `=>`/`implies` (rare,
+    /// undocumented, but grammatical).
+    pub is_followup: bool,
     /// Span of the whole paragraph.
     pub span: Span,
 }
@@ -309,30 +356,44 @@ pub enum Expect {
     Unsat,
 }
 
-/// `for N [but ...] [M steps]` scope clause.
+/// `for N [but entries] | for entries` scope clause. Trace-length scopes
+/// (`for 1..10 steps`) are ordinary entries with [`ScopeTarget::Steps`].
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Scope {
     /// Overall default scope (`for 3`), absent in the `for 3 A, 4 B` form.
     pub default: Option<u32>,
-    /// Per-target scopes (`but exactly 2 A, 4 int`).
+    /// Per-target scopes (`but exactly 2 A, 4 int, 1..10 steps`).
     pub entries: Vec<TypeScope>,
-    /// Trace-length scope (`for 1..10 steps`, Alloy 6).
-    pub steps: Option<StepsScope>,
     /// Span of the whole clause.
     pub span: Span,
 }
 
-/// One `[exactly] N target` scope entry.
+/// One `[exactly] N[..M][:I] target` scope entry.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct TypeScope {
     /// `exactly` marker.
     pub is_exact: bool,
-    /// Scope bound.
-    pub count: u32,
+    /// Starting scope bound.
+    pub start: u32,
+    /// End of the bound range.
+    pub end: ScopeEnd,
+    /// `:I` growth increment, if written.
+    pub increment: Option<u32>,
     /// What it bounds.
     pub target: ScopeTarget,
     /// Span of the entry.
     pub span: Span,
+}
+
+/// The range form of a [`TypeScope`] bound.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ScopeEnd {
+    /// `N` — no range written.
+    Same,
+    /// `N..M`.
+    Bounded(u32),
+    /// `N..` — unbounded growth.
+    Unbounded,
 }
 
 /// The subject of a [`TypeScope`].
@@ -340,21 +401,14 @@ pub struct TypeScope {
 pub enum ScopeTarget {
     /// A sig reference.
     Sig(QualName),
-    /// `int` — bitwidth.
+    /// `int`/`Int` — bitwidth.
     Int,
     /// `seq` — maximum sequence length.
     Seq,
-}
-
-/// Trace-length scope: `N steps`, `N..M steps`, or `N.. steps` (unbounded).
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct StepsScope {
-    /// Minimum trace length, absent when only a maximum is written.
-    pub min: Option<u32>,
-    /// Maximum trace length; `None` = unbounded (`N.. steps`).
-    pub max: Option<u32>,
-    /// Span of the entry.
-    pub span: Span,
+    /// `String` — string-atom scope.
+    Str,
+    /// `steps` — trace length (Alloy 6).
+    Steps,
 }
 
 /// An expression (or formula — surface syntax does not distinguish).
@@ -380,7 +434,11 @@ pub enum ExprKind {
     Const(Const),
     /// `this` (inside sig facts and receivers).
     This,
-    /// A (possibly qualified) name reference.
+    /// A (possibly qualified) name reference. Also carries builtin names the
+    /// grammar spells with keywords (`univ`-as-sigref is [`Const`], but
+    /// `Int`, `String`, `steps`, `seq/Int`, `disj`, `pred/totalOrder`,
+    /// `int`/`sum` as call targets, and `fun/min|max|next` are synthesized
+    /// `Name`s with exactly that text; resolution keys on it).
     Name(QualName),
     /// `@name` — suppresses the implicit `this.` expansion in sig facts.
     AtName(QualName),
@@ -553,13 +611,16 @@ pub enum UnOp {
     Closure,
     /// `*e` — reflexive-transitive closure.
     ReflexiveClosure,
+    /// `= e` defined-decl marker (defined fields); decl bounds only.
+    ExactlyOf,
     // Integer.
     /// `#e` — cardinality.
     Card,
-    /// `int[e]` — the integer value of a set of `Int` atoms.
-    IntValueOf,
-    /// `Int[ie]` — the `Int` atom for an integer value.
-    IntAtomOf,
+    /// `int e` — the summed integer value of `e`'s `Int` atoms.
+    IntOf,
+    /// `sum e` — same operation, `sum` spelling (distinct node for
+    /// round-trip fidelity; `sum x: A | ie` is [`Quant`] instead).
+    SumOf,
     // Temporal (Alloy 6), future and past.
     /// `always`.
     Always,
@@ -615,13 +676,23 @@ pub enum BinOp {
     DomRestrict,
     /// `:>` — range restriction.
     RanRestrict,
-    // Integer (shift; other arithmetic arrives via `util/integer` functions).
+    // Integer.
     /// `<<` — shift left.
     Shl,
     /// `>>` — sign-extending shift right.
     Sha,
     /// `>>>` — zero-extending shift right.
     Shr,
+    /// `fun/add` — integer addition.
+    IntAdd,
+    /// `fun/sub` — integer subtraction.
+    IntSub,
+    /// `fun/mul` — integer multiplication.
+    IntMul,
+    /// `fun/div` — integer division.
+    IntDiv,
+    /// `fun/rem` — integer remainder.
+    IntRem,
 }
 
 /// Comparison operators (each may carry a `!`/`not` prefix, see
@@ -691,6 +762,7 @@ mod tests {
         });
         let decl = ast.decls.alloc(Decl {
             is_disj: false,
+            is_bound_disj: false,
             is_var: false,
             is_private: false,
             names: vec![Ident {
