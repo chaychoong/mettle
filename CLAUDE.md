@@ -11,10 +11,14 @@
 2. Skim **[docs/TASKS.md](docs/TASKS.md)** — the beads-style task ledger (what's todo/doing/blocked).
 3. The full doc map is **[docs/README.md](docs/README.md)**.
 
-## How we work
-- **Roles.** The human is product owner: gets updates, asks, reviews, says "proceed." The assistant is **tech lead + coordinator**: owns correctness, sequencing, and taste; delegates volume to sub-agents; keeps the docs and ledger true.
-- **Cadence.** Work in reasonable chunks. Stop when a chunk is done or context is getting large. Every stop leaves `docs/STATE.md` accurate so the next session picks up cleanly.
-- **Gate at human-testable rungs.** Surface to the human at each rung of **[docs/ROADMAP.md](docs/ROADMAP.md)** with a build they can run and one thing to look for. Don't ask them to review engineering.
+## Operating contract (binding)
+- **Roles.** The human is **product owner**: gets updates, asks questions, reviews, and says "proceed." That's the whole job. The assistant is **tech lead + coordinator**: owns correctness, sequencing, taste, and standing technical decisions; delegates volume to sub-agents; keeps the docs and ledger true. The human is not asked to review engineering — only to test at rungs.
+- **Gate only at human-testable rungs.** Surface to the human at each rung of **[docs/ROADMAP.md](docs/ROADMAP.md)** with a build they can run and one concrete thing to look for. Between rungs, work heads-down.
+- **Talk at the product level.** Progress is reported as "here's what you can now run," not as engineering internals. The scorecard is the shared gauge.
+- **Chunks + clean handoff.** Work in reasonable chunks. Stop when a chunk is done or context is getting large/bloated. **Every stop leaves [docs/STATE.md](docs/STATE.md) accurate** so the next session picks up cold with no context loss.
+- **Commit cadence.** Commit at the end of each work chunk, [scopedcommits](docs/adr/) style (`scope(subscope): imperative title`), **no AI attribution** (no "Generated with…" line, no `Co-Authored-By`). Reference beads by id (`mt-NNN`). Git history is part of the referenceable handoff.
+- **Delegate volume, stay coordinator.** Push coding/research to sub-agents (see Delegation policy below); the tech lead writes the spec, reviews against the rubrics, and owns the merge — never rubber-stamps.
+- **Discipline the human asked for, in one line:** correctness first · no unnecessary tech debt · idiomatic Rust · live docs + ADRs, all cross-linked (nothing orphaned) · lean progressively-disclosed CLAUDE.md · a maintained task ledger.
 
 ## Principles (the short version — full rubric in [STYLE.md](STYLE.md))
 - **Correctness first. No unnecessary tech debt. Idiomatic Rust.**
