@@ -1,0 +1,19 @@
+[package]
+name = "als-instance"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# als-syntax: evaluator and REPL support work over parsed expressions.
+als-syntax = { path = "../als-syntax" }
+# als-types: decoding/evaluation need resolved sig/type information.
+als-types = { path = "../als-types" }
+# als-core: decoding maps assignments back through the core translation's bounds/IR.
+als-core = { path = "../als-core" }
+# als-solve: the decoder consumes als-solve's Assignment type.
+als-solve = { path = "../als-solve" }

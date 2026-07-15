@@ -16,10 +16,10 @@ Lightweight, git-tracked, greppable task "beads" — no external tool dependency
   Downloaded + verified Alloy 6.2.0 jar (SHA-256 pinned); proved headless verdict/count/`symmetryBreaking=0`/overflow-default/SAT4J, and found+documented a CLI bug (`-y`/`--ymmetry` is a no-op — use the `A4Options` API instead). → `docs/reference/alloy6-reference.md`; SHA/version folded into ADR-0002.
 - ✔ **mt-003** · P0 · Draft steering rubrics (delegated → opus)
   STYLE.md + PORTING_RULES.md — tech-lead reviewed and accepted as binding rubrics.
-- ◐ **mt-004** · P0 · Cargo workspace + `als-*` crate skeleton (delegated → sonnet)
-  Empty crates per the DAG (plan §3); CI green (fmt + clippy). Binary crate is package `mettle` (fulfils the plan's `als-cli` role, named for `cargo install mettle`). Depends on mt-003.
-- ▢ **mt-005** · P0 · Hand-designed core IR type skeleton
-  Typed-index arena IDs + core relational IR types (bones only; agents fill flesh). Depends on mt-004.
+- ✔ **mt-004** · P0 · Cargo workspace + `als-*` crate skeleton (delegated → sonnet)
+  8 crates on the hand-designed DAG; binary crate = package `mettle` (fulfils the plan's `als-cli` role). CI green (build/fmt/clippy -D warnings/test), tech-lead re-verified. `Cargo.lock` committed.
+- ◐ **mt-005** · P0 · Hand-designed core IR type skeleton (tech-lead-authored, NOT delegated)
+  Typed-index arena IDs + core AST/relational IR types (bones only; agents fill flesh). The load-bearing design pass. Depends on mt-004.
 - ▢ **mt-006** · P0 · Conformance harness (`als-conform`) v0
   Drive the pinned jar; produce a scorecard artifact. Cross-check against `expect` annotations (Net 0). **Drive via a compiled `A4Options` Java shim (see `oracle/Harness.java`), NOT `exec -y` (that CLI flag is a confirmed no-op in 6.2.0); force `-s sat4j` for zero native deps; run in a temp workdir (exec litters an output dir named after the model into CWD).** Depends on mt-002, mt-004.
 - ▢ **mt-007** · P0 · Vendor corpora

@@ -1,0 +1,27 @@
+[package]
+name = "mettle"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "mettle"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+# als-syntax: the CLI parses source for check/run/eval/serve.
+als-syntax = { path = "../als-syntax" }
+# als-solve: the CLI selects and drives a Solver backend.
+als-solve = { path = "../als-solve" }
+# als-types: the CLI resolves/type-checks parsed models.
+als-types = { path = "../als-types" }
+# als-core: the CLI drives bounds/IR/CNF translation for check/run.
+als-core = { path = "../als-core" }
+# als-instance: the CLI decodes and evaluates instances for run/eval.
+als-instance = { path = "../als-instance" }
+# als-sterling: the CLI's `serve` subcommand speaks the Sterling protocol.
+als-sterling = { path = "../als-sterling" }

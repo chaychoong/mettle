@@ -1,0 +1,26 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/als-syntax",
+    "crates/als-solve",
+    "crates/als-types",
+    "crates/als-core",
+    "crates/als-instance",
+    "crates/als-sterling",
+    "crates/als-conform",
+    "crates/mettle",
+]
+
+[workspace.package]
+edition = "2021"
+version = "0.0.0"
+license = "Apache-2.0"
+repository = "https://github.com/mettle-lang/mettle"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }

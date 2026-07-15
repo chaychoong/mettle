@@ -1,0 +1,13 @@
+[package]
+name = "als-types"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# als-syntax: name resolution and the type checker operate over the parser's AST.
+als-syntax = { path = "../als-syntax" }

@@ -1,0 +1,13 @@
+[package]
+name = "als-conform"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# als-syntax: conformance cases are parsed with the same front end being conformance-tested.
+als-syntax = { path = "../als-syntax" }

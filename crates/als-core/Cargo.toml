@@ -1,0 +1,17 @@
+[package]
+name = "als-core"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# als-syntax: translation reads the AST produced by the parser.
+als-syntax = { path = "../als-syntax" }
+# als-types: bounds/IR construction relies on the resolved sig hierarchy and checker output.
+als-types = { path = "../als-types" }
+# als-solve: Tseitin->CNF output is expressed in als-solve's CNF interface types.
+als-solve = { path = "../als-solve" }
