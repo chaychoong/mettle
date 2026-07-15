@@ -8,6 +8,19 @@ repository.workspace = true
 [lints]
 workspace = true
 
+[[bin]]
+name = "conform"
+path = "src/bin/conform.rs"
+
 [dependencies]
-# als-syntax: conformance cases are parsed with the same front end being conformance-tested.
-als-syntax = { path = "../als-syntax" }
+# thiserror: typed per-crate error enum (STYLE E1) for the harness's own
+# infra failures (jar missing, javac failure, process I/O) -- boilerplate
+# Display/Error impls for a growing enum, nothing std doesn't already do
+# by hand, just less of it.
+thiserror = "1"
+# serde + serde_json: the oracle shim's stdout is a JSON Lines protocol and
+# the Scorecard artifact is JSON; serde_json is the standard decoder/encoder
+# for both directions and keeps us from hand-rolling a JSON parser to
+# consume an external (Java-side) protocol.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
