@@ -7,6 +7,11 @@ Every doc in the project is reachable from here. Nothing is orphaned. Superseded
 - **[ROADMAP.md](ROADMAP.md)** — the North Star and the human-testable rungs.
 - **[TASKS.md](TASKS.md)** — beads-style task ledger.
 
+## Session routines
+- Pickup: **[../CLAUDE.md](../CLAUDE.md)** → "Start here" (what "proceed" means).
+- Wrap-up: **[SESSION_WRAP.md](SESSION_WRAP.md)** — the end-of-session checklist.
+- **[LESSONS.md](LESSONS.md)** — cross-cutting lessons learned.
+
 ## Steering documents (enforced as review rubrics)
 - **[../STYLE.md](../STYLE.md)** — engineering principles + concrete Rust norms.
 - **[../PORTING_RULES.md](../PORTING_RULES.md)** — Java→Rust translation rules.

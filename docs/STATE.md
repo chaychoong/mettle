@@ -9,7 +9,7 @@
 
 ## What exists
 - Repo initialized at `~/repos/mettle` (git, not yet published to a remote).
-- Documentation spine: `CLAUDE.md`, `docs/` (this index, STATE, ROADMAP, TASKS, ADRs 0001–0004), `LIMITATIONS.md`, `SEMANTICS_LEDGER.md` scaffold.
+- Documentation spine: `CLAUDE.md`, `docs/` (this index, STATE, ROADMAP, TASKS, ADRs 0001–0004), `LIMITATIONS.md`, `SEMANTICS_LEDGER.md`. Session routines: pickup in `CLAUDE.md` → "Start here"; close via `docs/SESSION_WRAP.md`; lessons in `docs/LESSONS.md`.
 - **Binding steering rubrics:** `STYLE.md` + `PORTING_RULES.md` (drafted by an Opus agent, tech-lead reviewed and accepted; numbered rules D#/I#/E#/R# citable in review).
 - **Pinned conformance oracle:** Alloy **6.2.0**, jar SHA-256 `6b8c1cb5…edb78d`, recorded in [ADR-0002](adr/0002-conformance-oracle.md) + [reference/alloy6-reference.md](reference/alloy6-reference.md). Headless invocation empirically proven (verdict, count, SB=0 via `A4Options` API, SAT4J zero-native-deps, `expect` semantics). Jar lives in git-ignored `oracle/`.
 - **Cargo workspace skeleton (mt-004):** 8 crates on the hand-designed DAG — `als-syntax`, `als-solve` (no deps); `als-types`→syntax; `als-core`→syntax/types/solve; `als-instance`→syntax/types/core/solve; `als-sterling`→types/instance; `als-conform`→syntax; `mettle` binary→all six libs. Workspace lints forbid `unsafe`, deny `clippy::all`, warn `pedantic`. CI at `.github/workflows/ci.yml`. All gates green.
