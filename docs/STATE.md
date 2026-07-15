@@ -2,10 +2,10 @@
 
 > The live "where are we" doc. Update this at the end of every work chunk. On pickup, read this first.
 
-**Last updated:** 2026-07-15 (fourth session of this date)
-**Current rung:** **Rung 1 (syntax) in progress** — mt-010 lexer + mt-011 parser + mt-012 printer + mt-013 diagnostics DONE; mt-014 fuzzer closes the rung (see [ROADMAP.md](ROADMAP.md))
-**Conformance scorecard:** harness exists (Net 0 live); mettle-side solving not yet implemented. Rung-1 gauge: **corpus lex, parse, AND round-trip rate 167/167** (alloytools-models + portus-63). Oracle baseline committed: `baselines/` (234 jar verdicts over alloytools-models, triaged).
-**Builds:** `cargo build/fmt/clippy/test` all green workspace-wide (~175 tests). **Human-testable now:** `cargo build -p mettle && ./target/debug/mettle parse <file.als>` pretty-prints any Alloy 6 model (`--ast` for the structural dump).
+**Last updated:** 2026-07-15 (fifth session of this date)
+**Current rung:** **Rung 1 (syntax) COMPLETE** — mt-010 lexer + mt-011 parser + mt-012 printer + mt-013 diagnostics + mt-014 fuzzer all done (see [ROADMAP.md](ROADMAP.md)). **Owner touchpoint due:** `cargo build -p mettle && ./target/debug/mettle parse <file.als>` on any real `.als` model; one concrete thing to try — a malformed model (missing `}`, a bad quantifier shape) to see the rustc-style caret diagnostic.
+**Conformance scorecard:** harness exists (Net 0 live); mettle-side solving not yet implemented. Rung-1 gauge: **corpus lex, parse, AND round-trip rate 167/167** (alloytools-models + portus-63), plus mt-014's mutation fuzzer (default 4,248 mutants/~5s in CI, verified to 88,500 mutants offline) — zero panics, sane spans, round-trip holds. Oracle baseline committed: `baselines/` (234 jar verdicts over alloytools-models, triaged).
+**Builds:** `cargo build/fmt/clippy/test` all green workspace-wide (~180 tests + the fuzzer). **Human-testable now:** `cargo build -p mettle && ./target/debug/mettle parse <file.als>` pretty-prints any Alloy 6 model (`--ast` for the structural dump); malformed input and pathologically-deep nesting both render precise caret diagnostics, never a crash.
 
 ## What exists
 - Repo initialized at `~/repos/mettle` (git, not yet published to a remote).
@@ -21,18 +21,20 @@
 - **Parser (mt-011):** `als-syntax::{cook,parser}` — F1–F4 cooking pass + recursive-descent/Pratt parser into the arena AST; typed `ParseError` with the reference's parse-time checks; 167/167 corpus parse rate (`tests/corpus_parse.rs`).
 - **Pretty-printer (mt-012):** `als-syntax::print` — minimal-paren precedence-aware `Display` printer + span-free structural `dump` (round-trip witness); `als-syntax::prec` is the single binding-power table shared by parser and printer. 167/167 corpus round-trip (`tests/corpus_roundtrip.rs`: parse→print→reparse→dump-equal + idempotence); insta snapshots (first dev-dep). CLI: `mettle parse <file.als> [--ast]` (canonical source or dump to stdout).
 - **Diagnostics + alloy4fun pass (mt-013):** rustc-style caret errors in `crates/mettle/src/diagnostics.rs` (CLI-only per E3); differential parse pass vs. the jar over 150,891 unique alloy4fun codes via batch `crates/als-conform/shim/ParseOnlyShim.java` — zero jar-accepts+mettle-rejects, 99.79% exact error-position match, 2 parser bugs fixed w/ regression tests, 2 narrow divergences documented in LIMITATIONS. Evidence: [reference/alloy4fun-error-pass.md](reference/alloy4fun-error-pass.md).
+- **Mutation fuzzer + binder-composition resolution (mt-014):** `als-syntax::tests::fuzz_mutations` — zero-dep hand-rolled SplitMix64 PRNG, byte/token/splice mutation classes + deep-nesting/long-chain stressors, three properties (no panic, sane spans, round-trip). Found + fixed a real printer round-trip bug (post-Part-2 under-parenthesization) and documented a genuine, deliberately-out-of-scope printer/dumper recursion-depth finding (candidate follow-up bead). **Deep-nesting guard shipped** (`MAX_EXPR_DEPTH = 256`, new `ParseError::TooDeep`) — required, not optional: unguarded pathological `(`/`{` nesting SIGABRTs a debug build well within fuzz reach; verified safe to 100,000 adversarial levels. **Binder-composition rule resolved** (the mt-013 LIMITATIONS entry): ~220 jar probes mapped the exact rule (one composition hop, refreshed by bare `implies`, hard-blocked by comparisons/set-test prefixes) → `crate::prec::child_binder_budget`, shared by parser (new `ParseError::BinderNeedsParens`) and printer so the two can never drift. 167/167 corpus preserved; full workspace gauntlet green. Evidence: [reference/fuzzing.md](reference/fuzzing.md).
 - **Oracle baseline (`baselines/`):** 234 per-command jar verdicts over alloytools-models at LEDGER-001 defaults, with triage (3 stale upstream expects, 7 genuine engine-limit errors, 1 timeout) — the comparison set once mettle solves.
 - Toolchains in this VM: Rust stable (`~/.cargo/bin`) and OpenJDK 21.
 
 ## In flight (delegated, background)
-- _None._ All delegations complete, reviewed, merged (latest: mt-013 diagnostics).
+- _None._ All delegations complete, reviewed, merged (latest: mt-014 fuzzer — **Rung 1 complete**).
 
 ## Not yet started
-- Rung 1 remainder: mutation fuzzer (mt-014) — the last bead before the Rung-1 owner touchpoint.
 - Extending the scorecard to run mettle-side once anything parses/solves.
+- A follow-up bead for printer/dumper recursion-depth safety on pathologically long flat operator chains (found by mt-014's fuzzer, deliberately out of that bead's parser-robustness scope — see [reference/fuzzing.md](reference/fuzzing.md) §1's "second finding"). Not urgent (no real model approaches it); worth a Ledger/ADR note before Rung 2 if it's going to be fixed properly (touches `Ast::pretty`/`pretty_to_string`'s public, currently-infallible signature).
+- Rung 2 planning (name resolution, `open`, the `util/*` clean-room stdlib rewrite per mt-015/ADR-0006) — not started; awaits the owner touchpoint below.
 
 ## Next chunk (planned)
-**On "proceed", start mt-014: mutation fuzzer over the corpora.** Deterministic (seeded, D4) mutation of corpus + alloy4fun sources — token-level splices, deletions, duplications, truncations, random byte noise — asserting the front end never panics, never loops, and always produces a spanned, typed error or a valid AST; plus a round-trip check on every mutant that still parses (parse→print→reparse→dump-equal, extending mt-012's oracle). Priority target from mt-013: the binder-composition over-acceptance documented in LIMITATIONS (jar-map the exact per-level rule, then decide fix vs. keep-documented, with a Ledger entry if behavior is pinned). After mt-014 lands, **Rung 1 is complete → owner touchpoint** with the `mettle parse` build and one concrete thing to try.
+**Rung 1 is complete.** The next step is the **owner touchpoint**: hand the product owner `cargo build -p mettle && ./target/debug/mettle parse <file.als>` on a real model, plus a deliberately-broken one to see the caret diagnostic. On "proceed" after that touchpoint, start Rung 2 (name/type resolution) — see [ROADMAP.md](ROADMAP.md) for the rung's shape; no beads filed yet, file mt-01x beads as the rung's own first chunk.
 
 ## Key syntax facts pinned this session (details in [reference/alloy6-grammar.md](reference/alloy6-grammar.md))
 - The public grammar appendix is NOT the truth; the reference's `Alloy.lex`/`Alloy.cup`/`CompFilter` at the jar's build commit are, plus jar probes for anything ambiguous.
