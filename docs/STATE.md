@@ -27,6 +27,8 @@
 
 Then: **Rung 1** (parser) is the first build the human is asked to try.
 
+## Recent decisions
+- **LEDGER-001 — overflow default = FORBID** (approved 2026-07-15, matches the Alloy GUI experience). Build toward this; `--[no-]overflow` flag toggles it. Harness sets the oracle to match.
+
 ## Open questions for the human (non-blocking)
-- **LEDGER-001 — overflow default.** Alloy 6.2.0's overflow default differs by entry point (GUI = forbid, headless = allow). mettle must pick one canonical default. Tech lead recommends **forbid** (match the GUI users know); awaiting product-owner blessing. Not blocking until Rung 3 (integers). See [SEMANTICS_LEDGER.md](../SEMANTICS_LEDGER.md).
 - **Licensing (mt-008).** Upstream Alloy's license is unsettled; mettle's own attribution/NOTICE + how `util/*.als` is vendored need a licensing ADR before any derived text ships. Not blocking pre-corpus work.

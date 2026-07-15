@@ -22,10 +22,10 @@ Test: <path to the conformance test>
 ## Entries
 
 ### LEDGER-001 — integer overflow default ("forbid overflows" / `noOverflow`)
-**Rule (proposed):** mettle treats integer/cardinality arithmetic exceeding the bitwidth as **forbidden by default** — an overflowing term excludes the instance (matching the Alloy GUI's default "Prevent overflows" = on) — and exposes a flag to switch to allow/wraparound semantics.
-**Status:** `proposed` — facts below are `verified`; the canonical default awaits **product-owner approval**. *(Do not implement against this until `approved`.)*
+**Rule:** mettle treats integer/cardinality arithmetic exceeding the bitwidth as **forbidden by default** — an overflowing term excludes the instance (matching the Alloy GUI's default "Prevent overflows" = on). A `--[no-]overflow` flag switches to allow/wraparound semantics.
+**Status:** `approved` (product owner, 2026-07-15). Facts below `verified`; safe to implement against.
 **Evidence:** Alloy 6.2.0's default is **entry-point-dependent** (verified 2026-07-15, see [reference/alloy6-reference.md](docs/reference/alloy6-reference.md) §3(c) — reproduced by tech lead): GUI default = forbid (`noOverflow=true`); headless jar / `A4Options` default = allow/wraparound (`noOverflow=false`). Decisive test: `run { plus[7,7] < 0 } for 4 int` → **SAT** (allow) by default, **UNSAT** under `-n` (forbid). Default bitwidth = 4 (range −8..7).
-**Decision needed from owner:** pick mettle's canonical default. *Recommendation: forbid,* to match the GUI users know. Either way the conformance harness sets the oracle's `noOverflow` to mettle's choice so the scorecard compares like-for-like.
+**Decision (approved 2026-07-15):** canonical default = **forbid overflow**, to match the Alloy GUI's default experience (the Alloy users actually run). The conformance harness sets the oracle's `noOverflow` to match mettle's active setting so the scorecard always compares like-for-like.
 **Test:** _(added with the Rung-3 integer work)_
 
 ---

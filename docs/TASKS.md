@@ -16,8 +16,8 @@ Lightweight, git-tracked, greppable task "beads" — no external tool dependency
   Downloaded + verified Alloy 6.2.0 jar (SHA-256 pinned); proved headless verdict/count/`symmetryBreaking=0`/overflow-default/SAT4J, and found+documented a CLI bug (`-y`/`--ymmetry` is a no-op — use the `A4Options` API instead). → `docs/reference/alloy6-reference.md`; SHA/version folded into ADR-0002.
 - ✔ **mt-003** · P0 · Draft steering rubrics (delegated → opus)
   STYLE.md + PORTING_RULES.md — tech-lead reviewed and accepted as binding rubrics.
-- ▢ **mt-004** · P0 · Cargo workspace + `als-*` crate skeleton
-  Empty crates per the DAG (plan §3); CI green (fmt + clippy). Depends on mt-003.
+- ◐ **mt-004** · P0 · Cargo workspace + `als-*` crate skeleton (delegated → sonnet)
+  Empty crates per the DAG (plan §3); CI green (fmt + clippy). Binary crate is package `mettle` (fulfils the plan's `als-cli` role, named for `cargo install mettle`). Depends on mt-003.
 - ▢ **mt-005** · P0 · Hand-designed core IR type skeleton
   Typed-index arena IDs + core relational IR types (bones only; agents fill flesh). Depends on mt-004.
 - ▢ **mt-006** · P0 · Conformance harness (`als-conform`) v0
