@@ -279,6 +279,62 @@ fn let_as_rightmost_operand_of_and() {
     assert!(matches!(kind(&a, rhs), ExprKind::Let { .. }));
 }
 
+/// mt-013 regression (docs/reference/alloy4fun-error-pass.md): `~`/`^`/`*`
+/// are tier-20 prefixes, but section 3.1's binder exception applies to
+/// *every* prefix tier, not just the ones routed through `parse_operand`.
+/// `parse_closure`'s self-recursion skipped the exception, so `^`/`*`/`~`
+/// directly in front of a quantifier/`let` wrongly failed with "expected an
+/// operand" instead of parsing the binder as the closure's operand
+/// (jar-verified: the reference accepts this grammatically and only rejects
+/// it later, at type-check, with "This expression failed to be
+/// typechecked" -- never a parse-time error). Found via two real alloy4fun
+/// submissions using postfix-looking `r^`/`r*` where the parser, after
+/// completing `r` as its own formula, treated the leftover `^`/`*` as the
+/// start of a new formula and walked straight into the next line's `all`.
+#[test]
+fn closure_prefix_as_rightmost_operand_of_binder() {
+    for src in [
+        "^ all x: A | x in x",
+        "* all x: A | x in x",
+        "~ all x: A | x in x",
+    ] {
+        let (a, id) = expr_ast(src);
+        let ExprKind::Unary { op, expr } = kind(&a, id) else {
+            panic!("expected a unary closure at top for {src:?}");
+        };
+        assert!(matches!(
+            op,
+            UnOp::Closure | UnOp::ReflexiveClosure | UnOp::Transpose
+        ));
+        assert!(
+            matches!(kind(&a, expr), ExprKind::Quant { .. }),
+            "expected the quantifier as the closure's operand for {src:?}"
+        );
+    }
+}
+
+/// The exact real-world shape (grammar-doc section 2's "formulas conjoined
+/// without a separator"): a leftover `^`/`*` at the end of one formula is
+/// itself the start of the *next* formula, whose operand is the following
+/// quantifier.
+#[test]
+fn closure_prefix_starting_a_new_formula_takes_the_next_quantifier() {
+    let ast = ast_of("pred p { r not in r.next^\n all x: A | x in x }");
+    let Para::Pred(pred) = &ast.paras[ast.paragraphs[0]] else {
+        panic!("expected a pred");
+    };
+    let ExprKind::Block(forms) = &ast.exprs[pred.body].kind else {
+        panic!("expected a block body");
+    };
+    assert_eq!(forms.len(), 2, "expected two conjoined formulas");
+    let ExprKind::Unary {
+        op: UnOp::Closure, ..
+    } = kind(&ast, forms[1])
+    else {
+        panic!("expected the second formula to be a closure");
+    };
+}
+
 // -- Dangling else --------------------------------------------------------
 
 #[test]
@@ -434,6 +490,33 @@ fn builtin_bracket_targets() {
         };
         assert_eq!(name_text(&a, target), want, "target of {src:?}");
         assert!(!args.is_empty());
+    }
+}
+
+/// mt-013 regression (docs/reference/alloy4fun-error-pass.md): `disj`/
+/// `pred/totalOrder` are box-join-only names (grammar-doc section 3.2), not
+/// general atoms like `int`/`sum`/`fun/min` (section 4.6) -- bare
+/// `disj a, b` (no `[`) is a syntax error in the reference too
+/// ("1 possible tokens: ["), but mettle used to accept `disj`/
+/// `pred/totalOrder` as a standalone atom and only fail a few tokens later,
+/// on real alloy4fun student code that mistakenly used bare `disj … :
+/// … | …` as if it were a quantifier. Position now matches the jar: right
+/// after the builtin name, not wherever the resulting cascade happens to
+/// give up.
+#[test]
+fn bare_disj_and_total_order_without_bracket_are_errors() {
+    for src in ["disj a, b : A | a != b", "pred/totalOrder a b c d"] {
+        let err = err_of(&format!("run {{ {src} }}"));
+        assert!(
+            matches!(
+                err,
+                ParseError::Expected {
+                    expected: "`[`",
+                    ..
+                }
+            ),
+            "expected a `[` error for {src:?}, got {err:?}"
+        );
     }
 }
 

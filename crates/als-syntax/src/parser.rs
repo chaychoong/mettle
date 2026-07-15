@@ -1363,6 +1363,14 @@ impl<'src> Parser<'src> {
         Ok(e)
     }
 
+    /// `~ ^ *` are tier-20 (tightest) prefixes, but per grammar-doc section
+    /// 3.1 binders are the one exception to every prefix's tier gate: their
+    /// operand may be a full `let`/quantifier binder, not just another
+    /// tier-20 term (jar-verified: `^ all x: A | …` type-checks the
+    /// quantifier as the closure's operand rather than erroring at parse
+    /// time — mt-013 alloy4fun pass, `docs/reference/alloy4fun-error-pass.md`).
+    /// Every other prefix tier already gets this via `parse_operand`
+    /// (§1157); this one recurses locally so it needs its own check.
     fn parse_closure(&mut self) -> Result<ExprId, ParseError> {
         let start = self.cur_span();
         let op = match self.cur() {
@@ -1372,7 +1380,11 @@ impl<'src> Parser<'src> {
             _ => return self.parse_atom(),
         };
         self.bump();
-        let inner = self.parse_closure()?;
+        let inner = if self.starts_binder() {
+            self.parse_binder()?
+        } else {
+            self.parse_closure()?
+        };
         let span = start.merge(self.espan(inner));
         Ok(self.alloc(ExprKind::Unary { op, expr: inner }, span))
     }
@@ -1404,8 +1416,8 @@ impl<'src> Parser<'src> {
             TokenKind::FunMin => Ok(self.synth_after_bump("fun/min", span)),
             TokenKind::FunMax => Ok(self.synth_after_bump("fun/max", span)),
             TokenKind::FunNext => Ok(self.synth_after_bump("fun/next", span)),
-            TokenKind::Disj => Ok(self.synth_after_bump("disj", span)),
-            TokenKind::TotalOrder => Ok(self.synth_after_bump("pred/totalOrder", span)),
+            TokenKind::Disj => self.builtin_box_join_target("disj", span),
+            TokenKind::TotalOrder => self.builtin_box_join_target("pred/totalOrder", span),
             TokenKind::IntCast => Ok(self.synth_after_bump("int", span)),
             TokenKind::Sum => Ok(self.synth_after_bump("sum", span)),
             TokenKind::Seq => self.seq_atom(span),
@@ -1436,6 +1448,24 @@ impl<'src> Parser<'src> {
     fn const_after_bump(&mut self, c: Const, span: Span) -> ExprId {
         self.bump();
         self.alloc(ExprKind::Const(c), span)
+    }
+
+    /// `disj`/`pred/totalOrder` as a bare (non-dot) atom (grammar-doc
+    /// section 3.2): unlike `int`/`sum`/`fun/min`/`fun/max`/`fun/next`
+    /// (general atoms per section 4.6), these two are box-join-only names
+    /// -- valid as `name[args]` or as a dot target (`a.disj`, handled
+    /// separately by `parse_dot_rhs`), but not standing alone. Jar-verified
+    /// (mt-013 alloy4fun pass): bare `disj`/`pred/totalOrder` not
+    /// immediately followed by `[` is "1 possible tokens: [", reported at
+    /// the position right after the name -- matched here by erroring at
+    /// the not-`[` token once `name` is consumed.
+    fn builtin_box_join_target(&mut self, text: &str, span: Span) -> Result<ExprId, ParseError> {
+        if matches!(self.peek(1), Some(TokenKind::LBracket)) {
+            Ok(self.synth_after_bump(text, span))
+        } else {
+            self.bump();
+            Err(self.expected("`[`"))
+        }
     }
 
     fn name_atom(&mut self) -> Result<ExprId, ParseError> {

@@ -7,13 +7,14 @@
 //! ```
 //!
 //! It parses a module and, on success, prints it back as canonical Alloy 6
-//! source (or, with `--ast`, the span-free structural dump). Parse/lex errors
-//! render to stderr as `<file>:<line>:<col>: error: <message>` with exit code
-//! 1; usage or I/O problems exit with code 2. Full caret diagnostics are a
-//! later bead (mt-013).
+//! source (or, with `--ast`, the span-free structural dump). Parse/lex
+//! errors render to stderr as a rustc-style caret-and-label block (mt-013,
+//! [`diagnostics`]) with exit code 1; usage or I/O problems exit with code 2.
 //!
 //! This crate is the only place that renders diagnostics or touches process
 //! exit codes (STYLE E3); `als-syntax` stays print-free.
+
+mod diagnostics;
 
 use std::process::ExitCode;
 
@@ -114,30 +115,11 @@ fn run_parse(args: &[String]) -> Result<(), ExitCode> {
             Ok(())
         }
         Err(err) => {
-            let (line, col) = line_col(&source, err.span().start);
-            eprintln!("{path}:{line}:{col}: error: {err}");
+            eprint!(
+                "{}",
+                diagnostics::render(&source, path, err.span(), &err.to_string())
+            );
             Err(ExitCode::from(1))
         }
     }
-}
-
-/// 1-based line and column of `byte_offset` within `source`, counting columns
-/// in Unicode scalar values (good enough for the Rung-1 message; caret-aligned
-/// diagnostics with tab handling are mt-013).
-fn line_col(source: &str, byte_offset: u32) -> (usize, usize) {
-    let offset = byte_offset as usize;
-    let mut line = 1;
-    let mut col = 1;
-    for (idx, ch) in source.char_indices() {
-        if idx >= offset {
-            break;
-        }
-        if ch == '\n' {
-            line += 1;
-            col = 1;
-        } else {
-            col += 1;
-        }
-    }
-    (line, col)
 }
