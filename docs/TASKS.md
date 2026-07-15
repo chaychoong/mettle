@@ -18,12 +18,12 @@ Lightweight, git-tracked, greppable task "beads" — no external tool dependency
   STYLE.md + PORTING_RULES.md — tech-lead reviewed and accepted as binding rubrics.
 - ✔ **mt-004** · P0 · Cargo workspace + `als-*` crate skeleton (delegated → sonnet)
   8 crates on the hand-designed DAG; binary crate = package `mettle` (fulfils the plan's `als-cli` role). CI green (build/fmt/clippy -D warnings/test), tech-lead re-verified. `Cargo.lock` committed.
-- ▢ **mt-005** · P0 · Hand-designed core IR type skeleton (tech-lead-authored, NOT delegated) ← **next on "proceed"**
-  Typed-index arena IDs + core AST/relational IR types (bones only; agents fill flesh). The load-bearing design pass; do it directly in a focused context. Depends on mt-004 (done).
-- ▢ **mt-006** · P0 · Conformance harness (`als-conform`) v0
+- ✔ **mt-005** · P0 · Hand-designed core IR type skeleton (tech-lead-authored, NOT delegated)
+  Done 2026-07-15: `Arena`/`ArenaId`/`define_id!` + `Span` in als-syntax; unified surface AST (temporal-first, spans required); three-sorted relational IR + `Universe`/`TupleSet`/`Bounds` in als-core; dependency-free `Var`/`Lit`/`Cnf`/`Solver` boundary in als-solve. Rationale: [ADR-0005](adr/0005-core-ir-type-skeleton.md).
+- ◐ **mt-006** · P0 · Conformance harness (`als-conform`) v0 (delegated → sonnet, in flight)
   Drive the pinned jar; produce a scorecard artifact. Cross-check against `expect` annotations (Net 0). **Drive via a compiled `A4Options` Java shim (see `oracle/Harness.java`), NOT `exec -y` (that CLI flag is a confirmed no-op in 6.2.0); force `-s sat4j` for zero native deps; run in a temp workdir (exec litters an output dir named after the model into CWD).** Depends on mt-002, mt-004.
-- ▢ **mt-007** · P0 · Vendor corpora
-  AlloyTools examples, Alloy4Fun/NoviceAlloyModels, Portus 63, Kodkod tests — with licenses/headers. Depends on mt-002.
+- ◐ **mt-007** · P0 · Vendor corpora (delegated → sonnet, in flight)
+  AlloyTools examples, Alloy4Fun/NoviceAlloyModels, Portus 63, Kodkod tests — with licenses/headers. Depends on mt-002. **Scope note (mt-008 gate):** downloads land in git-ignored `corpus/`; only the provenance manifest (`docs/reference/corpora.md`) + `.gitignore` are committed until licensing resolves.
 - ▢ **mt-008** · P0 · Resolve licensing posture (ADR)
   Upstream Alloy's own license is unsettled (repo `LICENSE` says "NOT VALID YET / currently MIT"; per-file headers + jar manifest say MIT; bundled `LICENSE.txt` is Apache-2.0). Kodkod=MIT, SAT4J=LGPL-2.1 (oracle-only, not shipped in product). `util/*.als` carry **no** license header. Decide mettle's own license + attribution/NOTICE and how to vendor `util/*.als`; write a licensing ADR. See reference doc §2. *Blocks shipping any vendored corpus/stdlib.*
 
