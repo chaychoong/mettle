@@ -32,9 +32,9 @@ Lightweight, git-tracked, greppable task "beads" — no external tool dependency
 ## Next (Rung 1 — syntax)
 - ✔ **mt-010** · R1 · Lexer + spans (delegated → sonnet, tech-lead reviewed)
   Done 2026-07-15: raw-token lexer per the pinned contract ([reference/alloy6-grammar.md](reference/alloy6-grammar.md) §1, [ADR-0007](adr/0007-rung1-lexer-parser-architecture.md)); typed `LexError` with caret-ready spans; **167/167 corpus files lex clean**. Review caught + jar-verified two divergences (number maximal-run rule: `1_000`/`0x123`/`0b12` illegal; string-follow class includes digits/quotes) — spec §1.5–1.6 corrected to match.
-- ◐ **mt-011** · R1 · Parser + arena AST (temporal syntax included) (delegated → opus, in flight)
-  Same contract (§2–§4); recursive descent + Pratt over the 21-level table; F1–F4 as a separate cooking pass; gauge = corpus parse rate, target 100% with every failure triaged against the jar.
-- ▢ **mt-012** · R1 · Pretty-printer + parse→print→parse round-trip
+- ✔ **mt-011** · R1 · Parser + arena AST (delegated → opus, tech-lead reviewed)
+  Done 2026-07-15: full surface grammar → arena AST; `cook.rs` (F1–F4) + `parser.rs` (recursive descent + Pratt, 21 levels, binder rule, min-BP-gated prefixes). **167/167 corpus parse rate.** Review caught 2 real bugs pre-merge (`;`-grouping semantics; prefix over-acceptance) + approved `Expect::Other(i32)`. Deferred: steps-scope build checks → resolve (LIMITATIONS).
+- ▢ **mt-012** · R1 · Pretty-printer + parse→print→parse round-trip ← **next on "proceed"** (insta snapshots, U2; plus a `mettle parse` CLI subcommand = the Rung-1 human-testable build)
 - ▢ **mt-013** · R1 · Diagnostics (caret errors) + Alloy4Fun error-quality pass
 - ▢ **mt-014** · R1 · Mutation fuzzer over corpora (parser robustness)
 
