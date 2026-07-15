@@ -6,10 +6,14 @@
 
 > This file is intentionally lean (progressive disclosure). It links to everything; it does not duplicate it.
 
-## Start here (context pickup)
-1. Read **[docs/STATE.md](docs/STATE.md)** — the live "where are we right now" doc. Always current.
-2. Skim **[docs/TASKS.md](docs/TASKS.md)** — the beads-style task ledger (what's todo/doing/blocked).
-3. The full doc map is **[docs/README.md](docs/README.md)**.
+## Start here — resuming, and what "proceed" means
+A bare **"proceed"** from the product owner (or any resume with no specifics) means: **do the "Next chunk" in [docs/STATE.md](docs/STATE.md).** Don't ask what to work on — STATE.md is authoritative and is kept current at every stop. Concretely, on cold pickup:
+1. Read **[docs/STATE.md](docs/STATE.md)** — the live "where are we" doc: current rung, what exists, decided vs. open questions, and the **Next chunk** to start. This is the single source of truth for "what now".
+2. Skim **[docs/TASKS.md](docs/TASKS.md)** — the beads ledger; the `◐ doing` bead and the next `▢` beads are the work, with dependencies.
+3. Before writing any code, obey the rubrics: **[STYLE.md](STYLE.md)**, **[PORTING_RULES.md](PORTING_RULES.md)**, and only `approved` entries in **[SEMANTICS_LEDGER.md](SEMANTICS_LEDGER.md)**.
+4. Full doc map: **[docs/README.md](docs/README.md)**. Recent decisions and rationale: **[docs/adr/](docs/adr/)**.
+
+Then just start the Next chunk and report at the product level when it's a meaningful checkpoint.
 
 ## Operating contract (binding)
 - **Roles.** The human is **product owner**: gets updates, asks questions, reviews, and says "proceed." That's the whole job. The assistant is **tech lead + coordinator**: owns correctness, sequencing, taste, and standing technical decisions; delegates volume to sub-agents; keeps the docs and ledger true. The human is not asked to review engineering — only to test at rungs.

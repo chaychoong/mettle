@@ -18,8 +18,8 @@ Lightweight, git-tracked, greppable task "beads" — no external tool dependency
   STYLE.md + PORTING_RULES.md — tech-lead reviewed and accepted as binding rubrics.
 - ✔ **mt-004** · P0 · Cargo workspace + `als-*` crate skeleton (delegated → sonnet)
   8 crates on the hand-designed DAG; binary crate = package `mettle` (fulfils the plan's `als-cli` role). CI green (build/fmt/clippy -D warnings/test), tech-lead re-verified. `Cargo.lock` committed.
-- ◐ **mt-005** · P0 · Hand-designed core IR type skeleton (tech-lead-authored, NOT delegated)
-  Typed-index arena IDs + core AST/relational IR types (bones only; agents fill flesh). The load-bearing design pass. Depends on mt-004.
+- ▢ **mt-005** · P0 · Hand-designed core IR type skeleton (tech-lead-authored, NOT delegated) ← **next on "proceed"**
+  Typed-index arena IDs + core AST/relational IR types (bones only; agents fill flesh). The load-bearing design pass; do it directly in a focused context. Depends on mt-004 (done).
 - ▢ **mt-006** · P0 · Conformance harness (`als-conform`) v0
   Drive the pinned jar; produce a scorecard artifact. Cross-check against `expect` annotations (Net 0). **Drive via a compiled `A4Options` Java shim (see `oracle/Harness.java`), NOT `exec -y` (that CLI flag is a confirmed no-op in 6.2.0); force `-s sat4j` for zero native deps; run in a temp workdir (exec litters an output dir named after the model into CWD).** Depends on mt-002, mt-004.
 - ▢ **mt-007** · P0 · Vendor corpora

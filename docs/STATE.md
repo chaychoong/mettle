@@ -24,8 +24,10 @@
 - Corpora vendoring (AlloyTools examples, Alloy4Fun, Portus 63, Kodkod tests).
 
 ## Next chunk (planned)
-1. **mt-005 — hand-design the core IR/AST types** (tech-lead-authored, not delegated): typed-index arena IDs and the core AST + relational-IR type skeletons across `als-syntax`/`als-core`. This is the load-bearing design pass; deserves a fresh, focused context. Per STYLE §6 (arena discipline) + PORTING_RULES R3.
-2. **mt-006/007 — conformance harness + corpora:** drive the pinned jar (via the `A4Options` shim, not the buggy `exec -y`; `-s sat4j`; temp workdir) → first scorecard (jar vs. `expect` annotations, Net 0). Pure plumbing, not surfaced to the human.
+**On "proceed", start mt-005 directly** (it's the tech-lead design pass, not delegable). mt-006/007 can run *concurrently* as background sub-agent delegations — they depend only on done mt-002/mt-004, not on mt-005 — but mt-005 is the priority and gets your own focus.
+
+1. **mt-005 — hand-design the core IR/AST types** (tech-lead-authored, do directly): typed-index arena IDs and the core AST + relational-IR type skeletons across `als-syntax`/`als-core`. The load-bearing design pass; deserves a fresh, focused context. Per STYLE §6 (arena discipline) + PORTING_RULES R3.
+2. **mt-006/007 — conformance harness + corpora** (delegable, in parallel): drive the pinned jar (via the `A4Options` shim, not the buggy `exec -y`; `-s sat4j`; temp workdir) → first scorecard (jar vs. `expect` annotations, Net 0). Pure plumbing, not surfaced to the human. (mt-007 corpora vendoring is gated by the mt-008 licensing question for anything shipped, but mining verdicts for the scorecard is fine.)
 
 Then: **Rung 1** (parser) is the first build the human is asked to try.
 
