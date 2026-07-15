@@ -354,6 +354,9 @@ pub enum Expect {
     Sat,
     /// `expect 0` — no instance may exist.
     Unsat,
+    /// `expect N` for any other integer — accepted by the reference,
+    /// no expectation is checked.
+    Other(i32),
 }
 
 /// `for N [but entries] | for entries` scope clause. Trace-length scopes

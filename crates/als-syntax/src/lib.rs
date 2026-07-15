@@ -10,11 +10,16 @@
 
 pub mod arena;
 pub mod ast;
+pub mod cook;
 pub mod lexer;
+pub mod parser;
 pub mod span;
 pub mod token;
 
 pub use arena::{Arena, ArenaId};
+pub use ast::Ast;
+pub use cook::cook;
 pub use lexer::{lex, LexError};
+pub use parser::{parse, ParseError};
 pub use span::{FileId, Span};
 pub use token::{Token, TokenKind};

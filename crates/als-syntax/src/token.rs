@@ -11,6 +11,7 @@
 //! allocation. The parser and lexer always operate over the same `&str`
 //! for one file, so slicing by span is always available where needed.
 
+use crate::ast::{Mult, Quant};
 use crate::span::Span;
 
 /// One lexical token: its kind plus the source range it was read from.
@@ -226,4 +227,55 @@ pub enum TokenKind {
     Triggered,
     /// `until`.
     Until,
+
+    // -- Cooked-only kinds (section 2) --------------------------------
+    // These are NEVER produced by [`crate::lexer::lex`]; the cooking pass
+    // in `cook.rs` synthesizes them from the raw stream (the reference's
+    // `CompFilter`). Keeping them in one `TokenKind` (rather than a second
+    // enum) is what lets the parser consume a single token type with no
+    // conversion of the ~90 pass-through kinds and lets an F3-folded
+    // negative literal reuse [`TokenKind::Number`] unchanged.
+    /// `!in` / `not in` — merged negated comparison (F2).
+    NotIn,
+    /// `!=` / `not =` — merged negated comparison (F2).
+    NotEquals,
+    /// `!<` / `not <` — merged negated comparison (F2).
+    NotLt,
+    /// `!<=` / `!=<` — merged negated comparison (F2).
+    NotLte,
+    /// `!>` — merged negated comparison (F2).
+    NotGt,
+    /// `!>=` — merged negated comparison (F2).
+    NotGte,
+    /// `pred/totalOrder` — merged builtin name (F2).
+    TotalOrder,
+    /// `fun/add` — integer binary operator (F2).
+    FunAdd,
+    /// `fun/sub` — integer binary operator (F2).
+    FunSub,
+    /// `fun/mul` — integer binary operator (F2).
+    FunMul,
+    /// `fun/div` — integer binary operator (F2).
+    FunDiv,
+    /// `fun/rem` — integer binary operator (F2).
+    FunRem,
+    /// `fun/min` — builtin integer constant (F2).
+    FunMin,
+    /// `fun/max` — builtin integer constant (F2).
+    FunMax,
+    /// `fun/next` — builtin integer constant (F2).
+    FunNext,
+    /// A `->` carrying its optional left/right multiplicities (F2). The
+    /// plain arrow `A -> B` stays [`TokenKind::Arrow`]; only annotated
+    /// arrows (`some ->`, `-> one`, …) become this. `set`-annotated sides
+    /// are unannotated (`None`) exactly as the reference collapses them.
+    ArrowMult {
+        /// Multiplicity written left of `->`, if any.
+        lhs: Option<Mult>,
+        /// Multiplicity written right of `->`, if any.
+        rhs: Option<Mult>,
+    },
+    /// One of `all no some lone one sum` disambiguated as a *quantifier*
+    /// (F4) rather than a unary test / multiplicity marker.
+    Quantifier(Quant),
 }

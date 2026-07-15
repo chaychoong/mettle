@@ -185,6 +185,14 @@ productions).
 | 20 | `'` postfix prime; prefix `~ ^ *` | prefix binds over an inner postfix: `~a'` ≡ `(~a)'` (CUP resolves the shift/reduce toward reduce) |
 | 21 | atoms (§4.6) | |
 
+### 3.0 Loose prefixes are NOT valid in tight operands
+A prefix operator may only start an operand where its own tier is
+grammatically reachable: `a & !b`, `a + no b`, `no !a`, `# no a`,
+`a -> !b` are all syntax errors in the jar (jar-verified for the first
+two), while `a => !b`, `!!a`, `! no a` are fine. In Pratt terms: gate each
+prefix on the current minimum binding power. Binders are the one
+exception — see §3.1.
+
 ### 3.1 Binder-as-rightmost-operand
 At every binary level, the *right* operand may be a full binder (`let`/
 quantifier), which then consumes everything to the end of the enclosing
@@ -225,16 +233,17 @@ grammatical).
   - **`= sigrefs`** (exact subset sig) is grammatical alongside `in` —
     AST: `SigParent::Eq`.
   - Field decls: see §4.4; trailing block = appended fact.
-- `enum Name { A, B, C }` — the reference grammar also accepts `enum Name {}`
-  (rejected later); mettle: parse, then precise error at the same place the
-  jar produces one.
+- `enum Name { A, B, C }` — `enum Name {}` is REJECTED by the jar
+  (jar-verified); mettle rejects it at parse with a precise error.
 
 ### 4.3 Facts, asserts, preds, funs, macros
 - `fact [name|string] block`, `assert [name|string] block` — the name can be
   a **string literal** (AST: `ParaName::{Ident,Str}`).
 - `[private] pred [SigRef .] name [( decls )|[ decls ]] block`
 - `[private] fun  [SigRef .] name [( decls )|[ decls ]] : result block`
-  — result is a full expr (multiplicity conversion per §4.4 applies).
+  — result is a full expr (multiplicity conversion per §4.4 applies). The
+  receiver is a *sigref*, so builtin-sig receivers are legal (jar-verified:
+  `fun String.cat[...]` parses).
 - Top-level macros: `[private] let name [( names )|[ names ]] (= expr | block)`
   — params are plain names, no bounds. (AST: `Para::Macro`.)
 
@@ -277,9 +286,13 @@ name,+ = expr                     -- "defined" decl (fields); AST: bound wrapped
     reproduces at parse): growing scope on `int`/`Int`/`seq` is an error;
     `exactly` on `int`/`Int`/`seq` is the "exactly keyword is redundant"
     error. `N..N` marks the scope exact even without `exactly`.
-- `expect 0|1` (any other number: the jar accepts any int here; `expect 2`
-  is grammatical — mettle should parse the number and let resolution
-  judge; Ledger when relevant).
+- `expect N` — the jar accepts ANY int; only 0 and 1 ever trigger an
+  expectation check (other values are carried and ignored). AST:
+  `Expect::{Sat,Unsat,Other(i32)}`.
+- Scope bound forms, jar-verified: `1:2 A` and `1..5:2 A` accepted;
+  `N:I` alone means "from N, unbounded, increment I". `1:2 steps` is
+  REJECTED by the jar (steps increments must be 1) — that check lives at
+  command-build, mettle defers it to resolve (see LIMITATIONS).
 
 ### 4.6 Expression atoms
 number (incl. F3-folded negatives) · string · `iden` · `this` · `univ` ·
