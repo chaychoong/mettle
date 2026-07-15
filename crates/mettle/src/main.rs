@@ -16,6 +16,7 @@
 
 mod diagnostics;
 
+use std::io::{self, Write as _};
 use std::process::ExitCode;
 
 // `ArenaId` brings `FileId::from_index` into scope.
@@ -64,6 +65,21 @@ fn print_usage() {
     );
 }
 
+/// Writes `text` to stdout, treating a closed pipe (`mettle parse … | head`)
+/// as a quiet early exit — code 141 (128 + SIGPIPE), what a default-disposition
+/// Unix tool reports — rather than the `print!` macro's panic.
+fn write_stdout(text: impl std::fmt::Display) -> Result<(), ExitCode> {
+    let mut out = io::stdout().lock();
+    match write!(out, "{text}").and_then(|()| out.flush()) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => Err(ExitCode::from(141)),
+        Err(e) => {
+            eprintln!("mettle: cannot write to stdout: {e}");
+            Err(ExitCode::from(2))
+        }
+    }
+}
+
 /// `mettle parse <file.als> [--ast]` — hand-rolled arg parsing (no clap), per
 /// the `als-conform` precedent (STYLE P1/P2, zero new deps).
 fn run_parse(args: &[String]) -> Result<(), ExitCode> {
@@ -108,11 +124,10 @@ fn run_parse(args: &[String]) -> Result<(), ExitCode> {
     match parse(&source, FileId::from_index(0)) {
         Ok(ast) => {
             if as_ast {
-                print!("{}", dump(&ast));
+                write_stdout(dump(&ast))
             } else {
-                print!("{}", ast.pretty());
+                write_stdout(ast.pretty())
             }
-            Ok(())
         }
         Err(err) => {
             eprint!(

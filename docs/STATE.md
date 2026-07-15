@@ -2,8 +2,8 @@
 
 > The live "where are we" doc. Update this at the end of every work chunk. On pickup, read this first.
 
-**Last updated:** 2026-07-15 (fifth session of this date)
-**Current rung:** **Rung 1 (syntax) COMPLETE** — mt-010 lexer + mt-011 parser + mt-012 printer + mt-013 diagnostics + mt-014 fuzzer all done (see [ROADMAP.md](ROADMAP.md)). **Owner touchpoint due:** `cargo build -p mettle && ./target/debug/mettle parse <file.als>` on any real `.als` model; one concrete thing to try — a malformed model (missing `}`, a bad quantifier shape) to see the rustc-style caret diagnostic.
+**Last updated:** 2026-07-15 (sixth session of this date)
+**Current rung:** **Rung 2 (names & types) — started.** Rung 1 owner touchpoint **passed** 2026-07-15 ("proceed" received after the demo). Rung-2 beads filed: mt-016 (pinned resolution/type contract) → mt-017 (module graph/`open`) + mt-015 (clean-room stdlib) → mt-018 (resolver/typechecker core) → mt-019 (`mettle check`) → mt-020 (differential gauge). Home crate: `als-types`.
 **Conformance scorecard:** harness exists (Net 0 live); mettle-side solving not yet implemented. Rung-1 gauge: **corpus lex, parse, AND round-trip rate 167/167** (alloytools-models + portus-63), plus mt-014's mutation fuzzer (default 4,248 mutants/~5s in CI, verified to 88,500 mutants offline) — zero panics, sane spans, round-trip holds. Oracle baseline committed: `baselines/` (234 jar verdicts over alloytools-models, triaged).
 **Builds:** `cargo build/fmt/clippy/test` all green workspace-wide (~180 tests + the fuzzer). **Human-testable now:** `cargo build -p mettle && ./target/debug/mettle parse <file.als>` pretty-prints any Alloy 6 model (`--ast` for the structural dump); malformed input and pathologically-deep nesting both render precise caret diagnostics, never a crash.
 
@@ -30,11 +30,11 @@
 
 ## Not yet started
 - Extending the scorecard to run mettle-side once anything parses/solves.
-- A follow-up bead for printer/dumper recursion-depth safety on pathologically long flat operator chains (found by mt-014's fuzzer, deliberately out of that bead's parser-robustness scope — see [reference/fuzzing.md](reference/fuzzing.md) §1's "second finding"). Not urgent (no real model approaches it); worth a Ledger/ADR note before Rung 2 if it's going to be fixed properly (touches `Ast::pretty`/`pretty_to_string`'s public, currently-infallible signature).
-- Rung 2 planning (name resolution, `open`, the `util/*` clean-room stdlib rewrite per mt-015/ADR-0006) — not started; awaits the owner touchpoint below.
+- Printer/dumper recursion-depth safety on long flat chains — now filed as backlog bead **mt-021** (needs a small ADR; not rung-gating).
+- All Rung-2 implementation beads (mt-017/015/018/019/020) — blocked on mt-016's contract.
 
 ## Next chunk (planned)
-**Rung 1 is complete.** The next step is the **owner touchpoint**: hand the product owner `cargo build -p mettle && ./target/debug/mettle parse <file.als>` on a real model, plus a deliberately-broken one to see the caret diagnostic. On "proceed" after that touchpoint, start Rung 2 (name/type resolution) — see [ROADMAP.md](ROADMAP.md) for the rung's shape; no beads filed yet, file mt-01x beads as the rung's own first chunk.
+**mt-016 — the pinned resolution & type-system contract.** Delegated to an opus sub-agent (foundational, subtle correctness); spec: study the reference's resolver/typechecker sources at commit `794226dd` (`CompUtil`/`CompModule.resolveAll`, `Type`, `ExprChoice`, A4Reporter warning taxonomy), verify every ambiguous point with jar probes, deliver `docs/reference/alloy6-resolution.md` + a draft ADR-0008 for tech-lead review. When mt-016 merges: mt-017 (module graph) and mt-015 (stdlib) in parallel, then mt-018 (resolver core), mt-019 (`mettle check`), mt-020 (differential gauge — the rung's exit).
 
 ## Key syntax facts pinned this session (details in [reference/alloy6-grammar.md](reference/alloy6-grammar.md))
 - The public grammar appendix is NOT the truth; the reference's `Alloy.lex`/`Alloy.cup`/`CompFilter` at the jar's build commit are, plus jar probes for anything ambiguous.

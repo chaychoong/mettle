@@ -2,8 +2,8 @@
 
 **Status:** living document · honest and current. This file shrinks as rungs are completed. It never silently lies: anything mettle cannot yet do exactly is listed here, and unsupported constructs fail loudly ("parsed, not yet solvable"), never wrongly.
 
-## Right now (Rung 1 in progress)
-mettle can lex and parse `.als` files (167/167 corpus rate) but has no user-facing entry point yet — the pretty-printer, diagnostics, and a `parse` CLI subcommand complete Rung 1. Everything past syntax (resolve, solve, visualize) is "not yet implemented"; see [docs/ROADMAP.md](docs/ROADMAP.md).
+## Right now (Rung 1 complete, Rung 2 in progress)
+mettle lexes, parses, and pretty-prints `.als` files (`mettle parse`, 167/167 corpus round-trip) with rustc-style caret diagnostics. Everything past syntax (resolve/typecheck, solve, visualize) is "not yet implemented" — Rung 2 (name & type resolution, `mettle check`) is in progress; see [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ### Known syntax-level divergences from the reference (tracked, deliberate)
 - **`steps`-scope validity checks deferred to resolve.** The jar rejects `for 1:2 steps` (increment must be 1) and unbounded steps not starting at 1 at command-build time; mettle currently parses these and will enforce the same checks when trace scopes are resolved (Rung 6). Never a wrong verdict — commands don't solve yet.
