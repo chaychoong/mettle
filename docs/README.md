@@ -22,7 +22,8 @@ Every doc in the project is reachable from here. Nothing is orphaned. Superseded
 - **[adr/](adr/)** — Architecture Decision Records. Index: [adr/README.md](adr/README.md).
 
 ## Reference material
-- **[reference/](reference/)** — verified briefs on the reference implementation (e.g. the pinned Alloy 6 oracle).
+- **[reference/](reference/)** — verified briefs on the reference implementation:
+  - **[reference/alloy6-reference.md](reference/alloy6-reference.md)** — the pinned Alloy 6.2.0 oracle: provenance, licenses, and empirically-proven headless invocation.
 
 ## Operating guide
 - **[../CLAUDE.md](../CLAUDE.md)** — lean agent operating guide (roles, cadence, delegation, principles). Progressive-disclosure hub.
