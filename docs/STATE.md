@@ -3,7 +3,7 @@
 > The live "where are we" doc. Update this at the end of every work chunk. On pickup, read this first.
 
 **Last updated:** 2026-07-15 (fourth session of this date)
-**Current rung:** **Rung 1 (syntax) in progress** — mt-010 lexer + mt-011 parser + mt-012 printer DONE; mt-013 diagnostics next (see [ROADMAP.md](ROADMAP.md))
+**Current rung:** **Rung 1 (syntax) in progress** — mt-010 lexer + mt-011 parser + mt-012 printer + mt-013 diagnostics DONE; mt-014 fuzzer closes the rung (see [ROADMAP.md](ROADMAP.md))
 **Conformance scorecard:** harness exists (Net 0 live); mettle-side solving not yet implemented. Rung-1 gauge: **corpus lex, parse, AND round-trip rate 167/167** (alloytools-models + portus-63). Oracle baseline committed: `baselines/` (234 jar verdicts over alloytools-models, triaged).
 **Builds:** `cargo build/fmt/clippy/test` all green workspace-wide (~175 tests). **Human-testable now:** `cargo build -p mettle && ./target/debug/mettle parse <file.als>` pretty-prints any Alloy 6 model (`--ast` for the structural dump).
 
@@ -19,19 +19,20 @@
 - **Pinned syntax contract (mt-010/011 spec, [reference/alloy6-grammar.md](reference/alloy6-grammar.md), [ADR-0007](adr/0007-rung1-lexer-parser-architecture.md)):** token set, filter rewrites F1–F4, 21-level precedence, grammar shapes — derived from the oracle build's grammar sources and jar-verified. AST extended to grammar parity in the same commit.
 - **Lexer (mt-010):** `als-syntax::{token,lexer}` — raw spanned tokens, typed `LexError`, 167/167 corpus lex rate (`tests/corpus_lex.rs`, skips without `corpus/`).
 - **Parser (mt-011):** `als-syntax::{cook,parser}` — F1–F4 cooking pass + recursive-descent/Pratt parser into the arena AST; typed `ParseError` with the reference's parse-time checks; 167/167 corpus parse rate (`tests/corpus_parse.rs`).
-- **Pretty-printer (mt-012):** `als-syntax::print` — minimal-paren precedence-aware `Display` printer + span-free structural `dump` (round-trip witness); `als-syntax::prec` is the single binding-power table shared by parser and printer. 167/167 corpus round-trip (`tests/corpus_roundtrip.rs`: parse→print→reparse→dump-equal + idempotence); insta snapshots (first dev-dep). CLI: `mettle parse <file.als> [--ast]` (canonical source or dump to stdout; `file:line:col` errors to stderr, exit 1).
+- **Pretty-printer (mt-012):** `als-syntax::print` — minimal-paren precedence-aware `Display` printer + span-free structural `dump` (round-trip witness); `als-syntax::prec` is the single binding-power table shared by parser and printer. 167/167 corpus round-trip (`tests/corpus_roundtrip.rs`: parse→print→reparse→dump-equal + idempotence); insta snapshots (first dev-dep). CLI: `mettle parse <file.als> [--ast]` (canonical source or dump to stdout).
+- **Diagnostics + alloy4fun pass (mt-013):** rustc-style caret errors in `crates/mettle/src/diagnostics.rs` (CLI-only per E3); differential parse pass vs. the jar over 150,891 unique alloy4fun codes via batch `crates/als-conform/shim/ParseOnlyShim.java` — zero jar-accepts+mettle-rejects, 99.79% exact error-position match, 2 parser bugs fixed w/ regression tests, 2 narrow divergences documented in LIMITATIONS. Evidence: [reference/alloy4fun-error-pass.md](reference/alloy4fun-error-pass.md).
 - **Oracle baseline (`baselines/`):** 234 per-command jar verdicts over alloytools-models at LEDGER-001 defaults, with triage (3 stale upstream expects, 7 genuine engine-limit errors, 1 timeout) — the comparison set once mettle solves.
 - Toolchains in this VM: Rust stable (`~/.cargo/bin`) and OpenJDK 21.
 
 ## In flight (delegated, background)
-- _None._ All delegations complete, reviewed, merged (latest: mt-012 printer).
+- _None._ All delegations complete, reviewed, merged (latest: mt-013 diagnostics).
 
 ## Not yet started
-- Rung 1 remainder: diagnostics (mt-013), mutation fuzzer (mt-014).
+- Rung 1 remainder: mutation fuzzer (mt-014) — the last bead before the Rung-1 owner touchpoint.
 - Extending the scorecard to run mettle-side once anything parses/solves.
 
 ## Next chunk (planned)
-**On "proceed", start mt-013: caret diagnostics + Alloy4Fun error-quality pass.** Turn `LexError`/`ParseError` spans into caret-and-label renders in the CLI (STYLE G3, E3 — rendering stays in `crates/mettle`; likely a small line-index helper over the source). Then drive error *quality* with the alloy4fun corpus (186k records under `corpus/alloy4fun/`, JSON-Lines — many contain student submissions with syntax errors): sample erroring models, compare mettle's message/position against the jar's, and fix the worst divergences. Exit criterion: every corpus-derived syntax error gets a correct span and a message at least as precise as the reference's. Then mt-014 (mutation fuzzer) closes the rung and the owner gets the Rung-1 build to try.
+**On "proceed", start mt-014: mutation fuzzer over the corpora.** Deterministic (seeded, D4) mutation of corpus + alloy4fun sources — token-level splices, deletions, duplications, truncations, random byte noise — asserting the front end never panics, never loops, and always produces a spanned, typed error or a valid AST; plus a round-trip check on every mutant that still parses (parse→print→reparse→dump-equal, extending mt-012's oracle). Priority target from mt-013: the binder-composition over-acceptance documented in LIMITATIONS (jar-map the exact per-level rule, then decide fix vs. keep-documented, with a Ledger entry if behavior is pinned). After mt-014 lands, **Rung 1 is complete → owner touchpoint** with the `mettle parse` build and one concrete thing to try.
 
 ## Key syntax facts pinned this session (details in [reference/alloy6-grammar.md](reference/alloy6-grammar.md))
 - The public grammar appendix is NOT the truth; the reference's `Alloy.lex`/`Alloy.cup`/`CompFilter` at the jar's build commit are, plus jar probes for anything ambiguous.
