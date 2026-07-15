@@ -24,6 +24,7 @@ Every doc in the project is reachable from here. Nothing is orphaned. Superseded
 ## Reference material
 - **[reference/](reference/)** — verified briefs on the reference implementation:
   - **[reference/alloy6-reference.md](reference/alloy6-reference.md)** — the pinned Alloy 6.2.0 oracle: provenance, licenses, and empirically-proven headless invocation.
+  - **[reference/corpora.md](reference/corpora.md)** — conformance-corpus provenance manifest: exact pins, retrieval commands, license evidence per corpus (`corpus/` itself is git-ignored pending mt-008).
 
 ## Operating guide
 - **[../CLAUDE.md](../CLAUDE.md)** — lean agent operating guide (roles, cadence, delegation, principles). Progressive-disclosure hub.

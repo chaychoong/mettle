@@ -8,5 +8,11 @@
 # Never committed — also keeps third-party Java source out of our tree (legal hygiene).
 /oracle/
 
+# Conformance corpora (mt-007): vendored .als models used as the conformance
+# oracle's test corpus. Not committed until mt-008 (licensing) resolves.
+# Fully reproducible from docs/reference/corpora.md (each corpus pinned by
+# commit SHA / DOI / release tag).
+/corpus/
+
 # OS cruft
 .DS_Store
