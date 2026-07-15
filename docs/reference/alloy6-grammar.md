@@ -91,22 +91,35 @@ spellings of the same tokens.
 
 ### 1.5 Number literals
 All are non-negative `i32` (`Integer.parseInt` range); out-of-range is a
-lex-time error. Underscores are digit separators and are stripped.
+lex-time error.
 
-- Decimal: `[0-9][0-9_]*` — `1_000` OK.
-- Hex: `0x` followed by one or more groups, each `_` or **a pair of hex
-  digits**: `0x12` and `0x_ff_01` OK, **`0x1` is an error** (odd digit —
-  falls through to the "name cannot start with a number" error).
-- Binary: `0b[01_]+`.
-- A number immediately followed by an identifier character is the error
-  "Name cannot start with a number." (so `3x` never lexes as `3`,`x`).
-- Negative literals do not exist in the lexer; see filter rule F4.
+The reference's JFlex longest-match + first-rule tie-breaking makes the
+raw patterns misleading; the **behavioral** rule (jar-verified 2026-07-15,
+all six cases below) is: starting at a digit, take the **maximal run of
+name-follow characters** — the ASCII class `[$0-9a-zA-Z_"]` exactly (a
+non-ASCII letter after a digit starts a fresh token instead) — then
+classify the whole run:
+
+- all decimal digits ⇒ decimal literal (**no underscores**: `1_000` is
+  REJECTED by the jar — the name-error rule wins the tie);
+- `0x` + a sequence of `_`s and **pairs of hex digits** consuming the entire
+  rest of the run ⇒ hex literal, underscores stripped (`0x12`, `0x_12`,
+  `0x_ff_01` OK; `0x1`, `0x123`, `0x1_2` REJECTED);
+- `0b` + `[01_]+` consuming the entire rest of the run ⇒ binary literal,
+  underscores stripped (`0b1_0` OK; `0b12` REJECTED);
+- anything else ⇒ the error "Name cannot start with a number." spanning the
+  whole run (so `3x`, `1_000`, `0x123`, `0b12` are all this error).
+
+Negative literals do not exist in the lexer; see filter rule F3.
 
 ### 1.6 String literals
 Supported (experimental is on in the pinned jar). `"..."` on one line;
 escapes exactly `\\`, `\n`, `\"`; empty string `""` is an error ("Empty
-string is not allowed…"); unterminated string and string-immediately-
-followed-by-identifier-char are errors. Value stored unescaped.
+string is not allowed…"); unterminated strings are errors. A closing quote
+immediately followed by any name-follow character (the same ASCII class as
+§1.5, **including digits and `"`**) is the error "String literal cannot be
+followed by a legal identifier character" — jar-verified: `"ab"9` and
+`"a""b"` are both rejected. Value stored unescaped.
 
 ---
 

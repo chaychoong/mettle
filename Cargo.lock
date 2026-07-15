@@ -45,6 +45,9 @@ dependencies = [
 [[package]]
 name = "als-syntax"
 version = "0.0.0"
+dependencies = [
+ "thiserror",
+]
 
 [[package]]
 name = "als-types"

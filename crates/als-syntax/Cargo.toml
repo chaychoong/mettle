@@ -9,3 +9,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+# thiserror: typed per-crate error enum (STYLE E1) for LexError -- boilerplate
+# Display/Error impls for a growing enum, nothing std doesn't already do by
+# hand, just less of it. Version pinned to match als-conform's existing use.
+thiserror = "1"
