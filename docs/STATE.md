@@ -27,7 +27,7 @@
 - Toolchains in this VM: Rust stable (`~/.cargo/bin`) and OpenJDK 21.
 
 ## In flight (delegated, background)
-- _None._ All delegations complete, reviewed, merged (latest: mt-014 fuzzer — **Rung 1 complete**).
+- **mt-017** (module graph + `open` resolution, → opus) and **mt-015** (clean-room `util/*` stdlib, → sonnet) running in parallel since 2026-07-16 — disjoint file sets (`crates/als-types/src/` vs `crates/als-types/stdlib/util/` + one test). At merge the tech lead wires mt-015's 11 files into mt-017's empty `stdlib::MODULES` include table. If resuming cold with no agent notification, check `git status` for their uncommitted output and review against the rubrics before merging.
 
 ## Not yet started
 - Extending the scorecard to run mettle-side once anything parses/solves.
