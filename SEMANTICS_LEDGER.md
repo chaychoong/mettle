@@ -14,8 +14,9 @@ Evidence: <how it was checked against the pinned jar>
 Test: <path to the conformance test>
 ```
 - `proposed` = drafted by an agent/tech lead, **not yet human-approved**.
-- `verified` = confirmed empirically against the pinned jar.
+- `verified` = confirmed empirically against the pinned jar, **with no open residual uncertainties** — every soft spot the drafting work flagged has been probed shut (or has amended the rule).
 - `approved` = product owner has blessed it as canonical. **Only `approved` rules are safe to implement against.**
+- Process rule (owner, 2026-07-16): an entry is put to the owner for approval **only at `verified`** — never with "re-derive later" caveats attached. If stating the rule wrong is a risk, the answer is more probes, not a caveated sign-off.
 
 ---
 
