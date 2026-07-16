@@ -31,7 +31,7 @@
 - Toolchains in this VM: Rust stable (`~/.cargo/bin`) and OpenJDK 21.
 
 ## In flight (delegated, background)
-- _None._ All delegations complete, reviewed, merged (latest: mt-020 differential gauge — **Rung 2 complete**).
+- **mt-022** (precise relevant-type propagation, → opus) running since 2026-07-16: precise §4 types + true top-down pass, re-enable all ADR-0009-reverted tightenings one at a time with gauge runs, target 100% alloy4fun agreement with 0 false rejects throughout. If resuming cold with no notification, check `git status` for uncommitted output and review against the rubrics (per-class before/after table is the review input).
 
 ## Not yet started
 - Rung 3 planning (relational translation, bounds, SAT solving, instances) — awaits the deferred owner touchpoint (after mt-022 + mt-023, per ADR-0010).
