@@ -11,8 +11,10 @@ pub mod bounds;
 pub mod bounds_builder;
 pub mod error;
 pub mod ir;
+pub mod lower;
 pub mod scope;
 
 pub use bounds_builder::{compute_bounds, BoundsResult};
 pub use error::TranslateError;
+pub use lower::{lower_command, GoalConjunct, LoweredGoal, Provenance};
 pub use scope::{compute_universe, MintedAtoms, ScopeTable, ScopedSig, ScopedUniverse};

@@ -203,6 +203,7 @@ impl Resolver<'_> {
             is_builtin: false,
             mult,
             fields: Vec::new(),
+            appended_fact,
             ty: Type::empty(),
         });
         self.mods[module.index()]

@@ -15,6 +15,7 @@
 
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
+pub mod choice;
 pub mod error;
 pub mod file;
 pub mod graph;
@@ -27,6 +28,10 @@ pub mod ty;
 pub mod warning;
 pub mod world;
 
+pub use choice::{
+    BuiltinCall, BuiltinValue, CallChoice, ChoiceTable, ExprChoice, MacroChoice, NameChoice,
+    SpineChoice,
+};
 pub use error::ResolveError;
 pub use file::{FileTable, LoadedFile};
 pub use graph::{ArgRef, ModuleGraph, ModuleId, ModuleInstance, OpenEdge, ParamBinding};
@@ -35,6 +40,7 @@ pub use resolve::{resolve, Resolved};
 pub use ty::{Product, Type};
 pub use warning::{jar_stem_class, ResolveWarning};
 pub use world::{
-    Builtins, CommandScope, FieldId, FuncId, MacroId, Param, ResolvedCommand, ResolvedField,
-    ResolvedFunc, ResolvedMacro, ResolvedSig, ResolvedWorld, SigId, SigKind,
+    Builtins, CmdTargetResolved, CommandScope, FieldId, FuncId, MacroId, Param, ResolvedCommand,
+    ResolvedFact, ResolvedField, ResolvedFunc, ResolvedMacro, ResolvedSig, ResolvedWorld, SigId,
+    SigKind,
 };

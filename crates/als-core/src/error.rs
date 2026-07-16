@@ -102,6 +102,38 @@ pub enum TranslateError {
         /// Span of the offending scope entry / command.
         span: Span,
     },
+
+    /// The command's goal contains a temporal operator (`always`/`until`/`'`/…
+    /// or a `var` relation). Well-typed, but bounded LTL→FOL solving is Rung 6
+    /// (ADR-0011): mettle lowers the operators faithfully into the IR but refuses
+    /// a verdict rather than returning a wrong one (STYLE T2).
+    #[error("temporal operators are parsed but not yet solvable (Rung 6): `{op}`")]
+    TemporalUnsupported {
+        /// The temporal construct encountered.
+        op: &'static str,
+        /// Span of the construct.
+        span: Span,
+    },
+
+    /// The command's goal references a String literal. String support beyond
+    /// membership is Rung 4 (ADR-0011); a typed defer, never a wrong verdict.
+    #[error("string literals are parsed but not yet solvable (Rung 4)")]
+    StringUnsupported {
+        /// Span of the literal.
+        span: Span,
+    },
+
+    /// A construct mettle cannot yet lower to a sound constraint (an exotic field
+    /// multiplicity shape, a higher-order macro whose body cannot be replayed, a
+    /// `run`/`check` target shape not yet handled). Deferred with a precise
+    /// message rather than lowered to a wrong constraint (STYLE E5/T2).
+    #[error("construct not yet lowerable (Rung 3): {what}")]
+    LoweringUnsupported {
+        /// A short description of the unsupported construct.
+        what: String,
+        /// Span of the construct.
+        span: Span,
+    },
 }
 
 impl TranslateError {
@@ -116,7 +148,10 @@ impl TranslateError {
             | TranslateError::LoneSigScope { span, .. }
             | TranslateError::SomeSigScope { span, .. }
             | TranslateError::MustSpecifyScope { span, .. }
-            | TranslateError::BitwidthTooLarge { span, .. } => *span,
+            | TranslateError::BitwidthTooLarge { span, .. }
+            | TranslateError::TemporalUnsupported { span, .. }
+            | TranslateError::StringUnsupported { span }
+            | TranslateError::LoweringUnsupported { span, .. } => *span,
         }
     }
 }

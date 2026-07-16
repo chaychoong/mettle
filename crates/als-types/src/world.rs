@@ -112,6 +112,10 @@ pub struct ResolvedSig {
     pub mult: Option<SigMult>,
     /// Fields declared in this sig, in source order.
     pub fields: Vec<FieldId>,
+    /// The sig's appended-fact block body (`sig A { … } { fact }`), if written —
+    /// an `ExprId` in this sig's [`Self::module`], resolved with an implicit
+    /// `this: A` binding (resolution-doc §3.3). mt-031 lowers it as a fact.
+    pub appended_fact: Option<als_syntax::ast::ExprId>,
     /// The unary type this sig denotes as an expression: `{self}` for a prim
     /// sig, the union of parent types for a subset sig (resolution-doc §4.1).
     pub ty: Type,
@@ -135,6 +139,14 @@ pub struct ResolvedField {
     pub is_private: bool,
     /// `f = e` defined field (resolved in the later pass).
     pub is_defined: bool,
+    /// The field's declaration bound expression — an `ExprId` in the owner
+    /// sig's module (mt-031 widening). For a non-defined field this is the type
+    /// bound (`set A`, `A -> one A`, …) whose multiplicity markers mt-031 turns
+    /// into synthesized field facts (translation-ref §2.5); for a **defined**
+    /// (`f = e`) field it is `= e` (an [`als_syntax::ast::UnOp::ExactlyOf`]
+    /// wrapping the value `e`), which mt-031 lowers as `all this: S | this.f =
+    /// e`.
+    pub bound: als_syntax::ast::ExprId,
 }
 
 /// One parameter of a func/pred (resolution-doc §3.5).
@@ -169,6 +181,10 @@ pub struct ResolvedFunc {
     /// `dom[r]: set ((r.univ).univ)` yields a tighter type at each call site).
     /// `None` for preds and receiver-less builtins.
     pub return_decl: Option<als_syntax::ast::ExprId>,
+    /// The body expression — an `ExprId` in [`Self::module`] (mt-031 widening).
+    /// A pred body is a formula; a fun body a relation/int. mt-031 inlines it at
+    /// each call site with parameters bound to the arguments.
+    pub body: als_syntax::ast::ExprId,
 }
 
 /// A registered top-level `let` macro (resolution-doc §3.7). Stored by
@@ -245,6 +261,51 @@ pub struct ResolvedCommand {
     /// mt-035 (gated on LEDGER-004) populates it; the scope layer already
     /// honors it, so the seam is live.
     pub additional_exact: Vec<SigId>,
+    /// The resolved command target (mt-031 widening): the pred/fun to run, the
+    /// assert to negate, or the inline block. mt-031 lowers this into the
+    /// command formula (translation-ref §2.5(3)).
+    pub target: CmdTargetResolved,
+}
+
+/// A resolved command target (translation-ref §2.5(3), mt-031 widening).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum CmdTargetResolved {
+    /// `run p` / `check p` on a named pred/fun: the matching overloads (usually
+    /// one). mt-031 inlines the body with parameters **existentially
+    /// quantified** over their bounds for a `run` (translation-ref §2.5(3)).
+    Named(Vec<FuncId>),
+    /// `check a` on a named assert: the assertion body (in `module`), lowered
+    /// **negated** for a `check`.
+    Assert {
+        /// The assertion body formula.
+        body: als_syntax::ast::ExprId,
+        /// The module the body lives in.
+        module: ModuleId,
+    },
+    /// `run { block }` / `check { block }`: the inline block body (in `module`).
+    Block {
+        /// The block body formula.
+        body: als_syntax::ast::ExprId,
+        /// The module the body lives in.
+        module: ModuleId,
+    },
+    /// The target could not be resolved to a single meaning (an over-loaded or
+    /// missing name a solvable model never reaches — resolution already rejects
+    /// it). mt-031 returns a typed error rather than guessing.
+    Unresolved,
+}
+
+/// A resolved free `fact` (module fact, resolution-doc §3.3, mt-031 widening).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ResolvedFact {
+    /// The module instance this fact was declared in.
+    pub module: ModuleId,
+    /// Optional fact name (diagnostics/provenance).
+    pub name: Option<String>,
+    /// Span of the fact paragraph.
+    pub span: Span,
+    /// The fact body formula (an `ExprId` in [`Self::module`]).
+    pub body: als_syntax::ast::ExprId,
 }
 
 /// The resolved world: arena-owned sigs, fields, funcs, macros, and commands,
@@ -262,6 +323,13 @@ pub struct ResolvedWorld {
     pub macros: Arena<MacroId, ResolvedMacro>,
     /// Every resolved command, in source order.
     pub commands: Vec<ResolvedCommand>,
+    /// Every free `fact` across every reachable module (mt-031 widening), in
+    /// module-then-source order — the goal conjoins them all (translation-ref
+    /// §2.5(2)).
+    pub facts: Vec<ResolvedFact>,
+    /// Resolution choices for every name/spine node (mt-031 widening): the seam
+    /// [`crate::choice`] documents, so the lowerer never re-derives §4.4.
+    pub choices: crate::choice::ChoiceTable,
     /// Builtin sig handles (resolution-doc §4.1).
     pub builtins: Builtins,
 }

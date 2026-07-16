@@ -12,8 +12,8 @@ use crate::graph::ModuleId;
 use crate::ty::Type;
 use crate::warning::ResolveWarning;
 use crate::world::{
-    CommandScope, FuncId, MacroId, Param, ResolvedCommand, ResolvedField, ResolvedFunc,
-    ResolvedMacro, SigId,
+    CmdTargetResolved, CommandScope, FuncId, MacroId, Param, ResolvedCommand, ResolvedField,
+    ResolvedFunc, ResolvedMacro, SigId,
 };
 
 use super::expr::Cx;
@@ -51,7 +51,15 @@ impl Resolver<'_> {
         is_pred: bool,
         is_private: bool,
     ) {
-        let span = para_span(&self.ast(module).paras[para]);
+        let para_ref = &self.ast(module).paras[para];
+        let span = para_span(para_ref);
+        // The body `ExprId` (mt-031 widening): a pred's/fun's body in this
+        // module's AST, inlined at each call site.
+        let body = match para_ref {
+            Para::Pred(p) => p.body,
+            Para::Fun(f) => f.body,
+            _ => ExprId::from_index(0),
+        };
         let id = FuncId::from_index(self.world.funcs.len());
         self.world.funcs.alloc(ResolvedFunc {
             name: name.to_owned(),
@@ -62,6 +70,7 @@ impl Resolver<'_> {
             params: Vec::new(),
             return_ty: Type::formula(),
             return_decl: None,
+            body,
         });
         self.mods[module.index()]
             .funcs
@@ -144,7 +153,7 @@ impl Resolver<'_> {
             .first()
             .map(|n| n.text.clone())
             .unwrap_or_default();
-        let (bound_ty, errs, warns) = {
+        let (bound_ty, errs, warns, choices) = {
             let mut cx = Cx::new(self, module);
             cx.rootsig = Some(sig);
             cx.no_calls = !defined;
@@ -152,10 +161,11 @@ impl Resolver<'_> {
             cx.env
                 .push(("this".to_owned(), self.world.sigs[sig].ty.clone()));
             let t = cx.run_bound(decl.bound);
-            (t, cx.errors, cx.warnings)
+            (t, cx.errors, cx.warnings, cx.choices)
         };
         self.errors.extend(errs);
         self.warnings.extend(warns);
+        self.world.choices.extend_from(choices);
 
         // Static-field var-mismatch warnings (resolution-doc §5.2 E(d)/E(e),
         // `resolveFieldDecl`). Both are independent `if`s in the reference.
@@ -214,6 +224,7 @@ impl Resolver<'_> {
                 is_var: decl.is_var,
                 is_private: decl.is_private,
                 is_defined: defined,
+                bound: decl.bound,
             });
             self.world.sigs[sig].fields.push(fid);
         }
@@ -263,9 +274,11 @@ impl Resolver<'_> {
     pub(super) fn resolve_func_decls(&mut self) {
         for k in 0..self.func_srcs.len() {
             let (fid, module, para) = self.func_srcs[k];
-            let (params, return_ty, errs, warns) = self.resolve_one_func_decl(fid, module, para);
+            let (params, return_ty, errs, warns, choices) =
+                self.resolve_one_func_decl(fid, module, para);
             self.errors.extend(errs);
             self.warnings.extend(warns);
+            self.world.choices.extend_from(choices);
             self.world.funcs[fid].params = params;
             self.world.funcs[fid].return_ty = return_ty;
             // Capture the return-decl expr for per-call specialization.
@@ -285,13 +298,22 @@ impl Resolver<'_> {
         Type,
         Vec<ResolveError>,
         Vec<ResolveWarningAlias>,
+        crate::choice::ChoiceTable,
     ) {
         let ast = self.ast(module);
         let is_pred = self.world.funcs[fid].is_pred;
         let (receiver, param_decls, returns) = match &ast.paras[para] {
             Para::Pred(p) => (p.receiver.as_ref(), &p.params, None),
             Para::Fun(f) => (f.receiver.as_ref(), &f.params, Some(f.returns)),
-            _ => return (Vec::new(), Type::formula(), Vec::new(), Vec::new()),
+            _ => {
+                return (
+                    Vec::new(),
+                    Type::formula(),
+                    Vec::new(),
+                    Vec::new(),
+                    crate::choice::ChoiceTable::new(),
+                )
+            }
         };
         let mut cx = Cx::new(self, module);
         cx.no_calls = true; // rootfunparam: params cannot call funcs/preds
@@ -337,7 +359,7 @@ impl Resolver<'_> {
         } else {
             Type::formula()
         };
-        (params, return_ty, cx.errors, cx.warnings)
+        (params, return_ty, cx.errors, cx.warnings, cx.choices)
     }
 
     // ---- bodies (phase 10) ----
@@ -349,21 +371,47 @@ impl Resolver<'_> {
         // Func/pred bodies.
         for k in 0..self.func_srcs.len() {
             let (fid, module, para) = self.func_srcs[k];
-            let (errs, warns) = self.resolve_func_body(fid, module, para);
+            let (errs, warns, choices) = self.resolve_func_body(fid, module, para);
             self.errors.extend(errs);
             self.warnings.extend(warns);
+            self.world.choices.extend_from(choices);
         }
 
-        // Facts (free + sig-appended) and asserts, per module in order.
+        // Facts (free + sig-appended) and asserts, per module in order. A free
+        // fact is also recorded in `world.facts` so the goal can conjoin them all
+        // (mt-031, translation-ref §2.5(2)).
         for m in 0..self.graph.modules.len() {
             let module = ModuleId::from_index(m);
             let ast = self.ast(module);
-            for &para_id in &ast.paragraphs {
-                match &ast.paras[para_id] {
-                    Para::Fact(f) => self.resolve_formula(module, None, f.body),
-                    Para::Assert(a) => self.resolve_formula(module, None, a.body),
-                    _ => {}
-                }
+            let facts: Vec<(Option<String>, ExprId, Span)> = ast
+                .paragraphs
+                .iter()
+                .filter_map(|&para_id| match &ast.paras[para_id] {
+                    Para::Fact(f) => Some((fact_name(f.name.as_ref()), f.body, f.span)),
+                    _ => None,
+                })
+                .collect();
+            for (name, body, span) in facts {
+                self.resolve_formula(module, None, body);
+                self.world.facts.push(crate::world::ResolvedFact {
+                    module,
+                    name,
+                    span,
+                    body,
+                });
+            }
+            // Asserts are resolved (records choices) but only lowered when a
+            // `check` targets them.
+            let asserts: Vec<ExprId> = ast
+                .paragraphs
+                .iter()
+                .filter_map(|&para_id| match &ast.paras[para_id] {
+                    Para::Assert(a) => Some(a.body),
+                    _ => None,
+                })
+                .collect();
+            for body in asserts {
+                self.resolve_formula(module, None, body);
             }
         }
         // Sig-appended facts (implicit `this`).
@@ -381,13 +429,17 @@ impl Resolver<'_> {
         fid: FuncId,
         module: ModuleId,
         para: ParaId,
-    ) -> (Vec<ResolveError>, Vec<ResolveWarningAlias>) {
+    ) -> (
+        Vec<ResolveError>,
+        Vec<ResolveWarningAlias>,
+        crate::choice::ChoiceTable,
+    ) {
         let ast = self.ast(module);
         let is_pred = self.world.funcs[fid].is_pred;
         let body = match &ast.paras[para] {
             Para::Pred(p) => p.body,
             Para::Fun(f) => f.body,
-            _ => return (Vec::new(), Vec::new()),
+            _ => return (Vec::new(), Vec::new(), crate::choice::ChoiceTable::new()),
         };
         let mut cx = Cx::new(self, module);
         for p in &self.world.funcs[fid].params {
@@ -416,12 +468,12 @@ impl Resolver<'_> {
                 });
             }
         }
-        (cx.errors, cx.warnings)
+        (cx.errors, cx.warnings, cx.choices)
     }
 
     /// Types a formula body (fact/assert/appended fact) and drains diagnostics.
     fn resolve_formula(&mut self, module: ModuleId, rootsig: Option<SigId>, body: ExprId) {
-        let (errs, warns) = {
+        let (errs, warns, choices) = {
             let mut cx = Cx::new(self, module);
             cx.rootsig = rootsig;
             if let Some(s) = rootsig {
@@ -429,10 +481,11 @@ impl Resolver<'_> {
                     .push(("this".to_owned(), self.world.sigs[s].ty.clone()));
             }
             cx.run_formula(body);
-            (cx.errors, cx.warnings)
+            (cx.errors, cx.warnings, cx.choices)
         };
         self.errors.extend(errs);
         self.warnings.extend(warns);
+        self.world.choices.extend_from(choices);
     }
 
     // ---- commands (phase 11) ----
@@ -464,25 +517,41 @@ impl Resolver<'_> {
         let span = cmd.span;
         let is_check = matches!(kind, als_syntax::ast::CmdKind::Check);
 
-        match &cmd.target {
+        // The resolved target (mt-031, translation-ref §2.5(3)).
+        let target = match &cmd.target {
             CmdTarget::Name(qn) => {
                 let segs: Vec<String> = qn.segments.iter().map(|s| s.text.clone()).collect();
-                let found = if is_check {
-                    self.lookup_assert(module, &segs)
+                if is_check {
+                    if let Some((amod, body)) = self.find_assert(module, &segs) {
+                        CmdTargetResolved::Assert { body, module: amod }
+                    } else {
+                        self.error(ResolveError::CommandTargetNotFound {
+                            name: segs.join("/"),
+                            span,
+                        });
+                        CmdTargetResolved::Unresolved
+                    }
                 } else {
-                    !self.lookup_run_target(module, &segs).is_empty()
-                };
-                if !found {
-                    self.error(ResolveError::CommandTargetNotFound {
-                        name: segs.join("/"),
-                        span,
-                    });
+                    let funcs = self.lookup_run_target(module, &segs);
+                    if funcs.is_empty() {
+                        self.error(ResolveError::CommandTargetNotFound {
+                            name: segs.join("/"),
+                            span,
+                        });
+                        CmdTargetResolved::Unresolved
+                    } else {
+                        CmdTargetResolved::Named(funcs)
+                    }
                 }
             }
             CmdTarget::Block(body) => {
                 self.resolve_formula(module, None, *body);
+                CmdTargetResolved::Block {
+                    body: *body,
+                    module,
+                }
             }
-        }
+        };
 
         // Scopes: resolve each entry, keeping the resolved data for the
         // translation-time scope computer (mt-029). `int`/`seq`/`String`/`steps`
@@ -543,7 +612,42 @@ impl Resolver<'_> {
             steps,
             scopes,
             additional_exact: Vec::new(),
+            target,
         });
+    }
+
+    /// A `check` target: the reachable assertion's body and its owning module,
+    /// by (qualified) name (mt-031 widening — mirrors [`Self::lookup_assert`]).
+    fn find_assert(&self, module: ModuleId, segs: &[String]) -> Option<(ModuleId, ExprId)> {
+        let landing_and_name = if segs.len() > 1 {
+            let refs: Vec<&str> = segs.iter().map(String::as_str).collect();
+            let (landing, consumed) = self.graph.walk_prefix(module, &refs, module);
+            if consumed == 0 || consumed >= segs.len() || segs.len() - consumed != 1 {
+                return None;
+            }
+            vec![(landing, segs[consumed].clone())]
+        } else {
+            let bare = &segs[segs.len() - 1];
+            self.reachable[module.index()]
+                .iter()
+                .map(|&rm| (rm, bare.clone()))
+                .collect()
+        };
+        for (rm, name) in landing_and_name {
+            if !self.mods[rm.index()].asserts.contains_key(&name) {
+                continue;
+            }
+            // Find the assert body in `rm`'s AST by name.
+            let ast = self.ast(rm);
+            for &para_id in &ast.paragraphs {
+                if let Para::Assert(a) = &ast.paras[para_id] {
+                    if matches!(&a.name, Some(ParaName::Ident(id)) if id.text == name) {
+                        return Some((rm, a.body));
+                    }
+                }
+            }
+        }
+        None
     }
 
     fn check_scope_sig(&mut self, sig: SigId, is_exact: bool, span: Span, segs: &[String]) {
@@ -567,29 +671,6 @@ impl Resolver<'_> {
                 });
             }
         }
-    }
-
-    /// A `check` target: a reachable assertion by (qualified) name.
-    fn lookup_assert(&self, module: ModuleId, segs: &[String]) -> bool {
-        if segs.len() > 1 {
-            let refs: Vec<&str> = segs.iter().map(String::as_str).collect();
-            let (landing, consumed) = self.graph.walk_prefix(module, &refs, module);
-            // A qualified name whose prefix matched no alias does not fall back
-            // to an unqualified search (mirrors the sig/func lookups).
-            if consumed == 0 {
-                return false;
-            }
-            if consumed < segs.len() {
-                let tail = &segs[consumed..];
-                return tail.len() == 1
-                    && self.mods[landing.index()].asserts.contains_key(&tail[0]);
-            }
-            return false;
-        }
-        let bare = &segs[segs.len() - 1];
-        self.reachable[module.index()]
-            .iter()
-            .any(|&rm| self.mods[rm.index()].asserts.contains_key(bare))
     }
 
     /// A `run` target: reachable funcs/preds by (qualified) name.
@@ -639,6 +720,16 @@ fn para_span(para: &Para) -> Span {
         Para::Assert(a) => a.span,
         Para::Macro(m) => m.span,
         Para::Cmd(c) => c.span,
+    }
+}
+
+/// A fact's name as a plain string (identifier or string literal), for
+/// provenance (mt-031).
+fn fact_name(name: Option<&ParaName>) -> Option<String> {
+    match name {
+        Some(ParaName::Ident(id)) => Some(id.text.clone()),
+        Some(ParaName::Str { value, .. }) => Some(value.clone()),
+        None => None,
     }
 }
 

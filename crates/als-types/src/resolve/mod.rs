@@ -117,6 +117,8 @@ impl<'g> Resolver<'g> {
             funcs: Arena::new(),
             macros: Arena::new(),
             commands: Vec::new(),
+            facts: Vec::new(),
+            choices: crate::choice::ChoiceTable::new(),
             // Placeholder builtins; seeded first thing in `run`.
             builtins: Builtins {
                 univ: SigId::from_index(0),
@@ -252,6 +254,7 @@ impl<'g> Resolver<'g> {
             is_builtin: true,
             mult: None,
             fields: Vec::new(),
+            appended_fact: None,
             ty: Type::unary(id),
         });
         id

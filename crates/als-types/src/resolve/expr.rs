@@ -30,11 +30,15 @@ use als_syntax::ast::{
 };
 use als_syntax::{ArenaId, Span};
 
+use crate::choice::{
+    BuiltinCall, BuiltinValue, CallChoice, ChoiceTable, ExprChoice, MacroChoice, NameChoice,
+    SpineChoice,
+};
 use crate::error::ResolveError;
 use crate::graph::ModuleId;
 use crate::ty::Type;
 use crate::warning::ResolveWarning;
-use crate::world::{FuncId, SigId};
+use crate::world::{FieldId, FuncId, SigId};
 
 use super::Resolver;
 
@@ -67,20 +71,67 @@ struct Cand {
     weight: i32,
     /// Human-readable origin (the reference's `reasons`), for the ambiguity msg.
     reason: String,
+    /// The resolved leaf (mt-031 choice recording): what this candidate *is*, so
+    /// the winning candidate is recorded for the lowerer.
+    origin: CandOrigin,
+}
+
+/// What a chosen name candidate resolves to, for choice recording (mt-031).
+#[derive(Clone)]
+enum CandOrigin {
+    /// A signature.
+    Sig(SigId),
+    /// A field relation, with whether a standalone reference inserts implicit
+    /// `this` (resolution-doc §3.3). Forced to `false` when the field is a join
+    /// base (the join arg is the receiver).
+    Field { field: FieldId, implicit_this: bool },
+    /// A 0-ary func/pred inlined as a value.
+    Call0(FuncId),
+    /// A `fun/…` builtin value.
+    Builtin(BuiltinValue),
+    /// A lexically-bound variable.
+    Var(String),
+}
+
+impl CandOrigin {
+    /// The [`NameChoice`] this origin records. `join_base` forces a field's
+    /// implicit `this` off (the join supplies the receiver).
+    fn to_choice(&self, join_base: bool) -> NameChoice {
+        match self {
+            CandOrigin::Sig(s) => NameChoice::Sig(*s),
+            CandOrigin::Field {
+                field,
+                implicit_this,
+            } => NameChoice::Field {
+                field: *field,
+                implicit_this: *implicit_this && !join_base,
+            },
+            CandOrigin::Call0(f) => NameChoice::Call0(*f),
+            CandOrigin::Builtin(b) => NameChoice::Builtin(*b),
+            CandOrigin::Var(n) => NameChoice::Var(n.clone()),
+        }
+    }
 }
 
 /// One materialized reading of a join/application spine — a candidate in the
 /// join-level `ExprChoice` (the reference's `Context.process` output).
+#[derive(Clone)]
 struct Reading {
     /// The reading's bottom-up (merged) result type.
     ty: Type,
     weight: i32,
     reason: String,
     fin: Fin,
+    /// The `ExprId` of the spine's rightmost base (mt-031 choice recording).
+    head_expr: ExprId,
+    /// The base name's resolved leaf, when it is a name (recorded so the lowerer
+    /// knows a join base's meaning without re-deriving §4.4).
+    head_choice: Option<CandOrigin>,
 }
 
 /// How to *finalize* a chosen [`Reading`]: resolve its operands against the
 /// slices derived from the relevant type, and emit any make-error.
+#[derive(Clone)]
 enum Fin {
     /// A leaf value already fully typed (sig/const/var/field-relation/this-join).
     Leaf,
@@ -95,6 +146,8 @@ enum Fin {
         right_ty: Type,
         right_expr: Option<ExprId>,
         span: Span,
+        /// The recordable structure of the join base (mt-031 choice recording).
+        base: Box<RecNode>,
     },
     /// A function/predicate call: resolve each arg against its parameter type.
     Call {
@@ -120,6 +173,37 @@ enum Fin {
     Unknown { name: String, span: Span },
 }
 
+/// The recordable structure of a join base (mt-031 choice recording): mirrors
+/// the spine tree of the *winning* reading so [`Cx::flush_rec`] can record each
+/// nested join node and base name without re-deriving §4.4.
+#[derive(Clone)]
+enum RecNode {
+    /// A leaf base name resolved to `choice`, recorded at `expr`.
+    Name {
+        /// The base name's `ExprId`.
+        expr: ExprId,
+        /// Its resolved leaf.
+        choice: CandOrigin,
+    },
+    /// A nested relational-join subspine node `expr` (join `arg . base`) whose
+    /// base name(s) are `base` and whose argument operand is `arg`.
+    Join {
+        /// The nested spine node's `ExprId`.
+        expr: ExprId,
+        /// Its argument operand (the join left) — resolved standalone at flush to
+        /// record its choices (it is never finalized in place, being buried as a
+        /// base of the outer spine).
+        arg: ExprId,
+        /// Its base.
+        base: Box<RecNode>,
+    },
+    /// A compound base (paren/closure/nested) resolved via the warning-only
+    /// pass; its inner choices are recorded there, so nothing to flush here.
+    Sub,
+    /// Nothing to record here.
+    Opaque,
+}
+
 /// The expression-typing context (see the module note). Borrows `&Resolver`
 /// immutably; the caller harvests `errors`/`warnings` after the borrow ends.
 pub(super) struct Cx<'a, 'g> {
@@ -135,6 +219,9 @@ pub(super) struct Cx<'a, 'g> {
     pub field_name: String,
     pub errors: Vec<ResolveError>,
     pub warnings: Vec<ResolveWarning>,
+    /// Resolution choices recorded for the lowerer (mt-031), keyed by this
+    /// context's [`Self::module`] and each node's `ExprId`.
+    pub choices: ChoiceTable,
     /// Remaining macro-substitution budget (resolution-doc §3.7, starts at 20).
     unroll: u32,
 }
@@ -150,7 +237,76 @@ impl<'a, 'g> Cx<'a, 'g> {
             field_name: String::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
+            choices: ChoiceTable::new(),
             unroll: 20,
+        }
+    }
+
+    // ---- choice recording (mt-031) ----
+
+    /// Records a bare-name resolution at `(module, expr)`.
+    fn record_name(&mut self, expr: ExprId, choice: NameChoice) {
+        self.choices
+            .record(self.module, expr, ExprChoice::Name(choice));
+    }
+
+    /// Records a spine (join/call/builtin/macro) resolution at `(module, expr)`.
+    fn record_spine(&mut self, expr: ExprId, choice: SpineChoice) {
+        self.choices
+            .record(self.module, expr, ExprChoice::Spine(choice));
+    }
+
+    /// Walks the winning reading's base structure, recording each nested join
+    /// node and base name (mt-031). Join bases never carry implicit `this`.
+    fn flush_rec(&mut self, rec: &RecNode) {
+        match rec {
+            RecNode::Name { expr, choice } => {
+                let nc = choice.to_choice(true);
+                self.record_name(*expr, nc);
+            }
+            RecNode::Join { expr, arg, base } => {
+                self.record_spine(*expr, SpineChoice::Join);
+                self.flush_rec(base);
+                // The nested join's argument is never finalized in place (it is
+                // buried as a base), so resolve it standalone to record its
+                // choices — discarding any errors/warnings (verdict-neutral, the
+                // node already resolved as part of the outer spine).
+                self.record_operand(*arg);
+            }
+            RecNode::Sub | RecNode::Opaque => {}
+        }
+    }
+
+    /// Resolves `arg` against its own bottom-up type solely to **record** its
+    /// resolution choices (mt-031), suppressing every error and warning so the
+    /// accept/reject verdict and warning set stay byte-identical.
+    fn record_operand(&mut self, arg: ExprId) {
+        let nerr = self.errors.len();
+        let nwarn = self.warnings.len();
+        let p = self.infer(arg).remove_bool_and_int(self.int_sig());
+        let _ = self.resolve(arg, &p);
+        self.errors.truncate(nerr);
+        self.warnings.truncate(nwarn);
+    }
+
+    /// The [`RecNode`] describing a base reading (its head name / nested join /
+    /// compound sub-expr), for recording the winning spine.
+    fn rec_of(reading: &Reading) -> RecNode {
+        match &reading.fin {
+            Fin::Leaf => match &reading.head_choice {
+                Some(origin) => RecNode::Name {
+                    expr: reading.head_expr,
+                    choice: origin.clone(),
+                },
+                None => RecNode::Opaque,
+            },
+            Fin::Join { left, base, .. } => RecNode::Join {
+                expr: reading.head_expr,
+                arg: *left,
+                base: base.clone(),
+            },
+            Fin::Sub(_) => RecNode::Sub,
+            Fin::Call { .. } | Fin::BadCall { .. } | Fin::Unknown { .. } => RecNode::Opaque,
         }
     }
 
@@ -472,8 +628,8 @@ impl<'a, 'g> Cx<'a, 'g> {
             ExprKind::Str(_) => R::ok(Type::unary(self.r.world.builtins.string)),
             ExprKind::Const(c) => R::ok(self.const_type(*c)),
             ExprKind::This => R::ok(self.infer_this()),
-            ExprKind::Name(qn) => self.resolve_name(qn, p, false),
-            ExprKind::AtName(qn) => self.resolve_name(qn, p, true),
+            ExprKind::Name(qn) => self.resolve_name(e, qn, p, false),
+            ExprKind::AtName(qn) => self.resolve_name(e, qn, p, true),
             ExprKind::Unary { op, expr } => self.unary_r(*op, *expr, span, p),
             ExprKind::Binary {
                 op: BinOp::Join, ..
@@ -1168,20 +1324,24 @@ impl<'a, 'g> Cx<'a, 'g> {
 
     // ---- names & candidates (§4.4) ----
 
-    fn resolve_name(&mut self, qn: &QualName, p: &Type, at_name: bool) -> R {
+    fn resolve_name(&mut self, e: ExprId, qn: &QualName, p: &Type, at_name: bool) -> R {
         let segs = super::strip_this(qn.segments.iter().map(|s| s.text.clone()).collect());
 
         if !at_name && segs.len() == 1 {
             if let Some(t) = self.env_get(&segs[0]) {
+                self.record_name(e, NameChoice::Var(segs[0].clone()));
                 return R::ok(t);
             }
         }
         if let Some(t) = self.builtin_value(&segs) {
+            if let Some(bv) = builtin_value_choice(&segs) {
+                self.record_name(e, NameChoice::Builtin(bv));
+            }
             return R::ok(t);
         }
         if let Some(mid) = self.lookup_macro(&segs) {
             if self.r.world.macros[mid].params.is_empty() {
-                return self.expand_macro(mid, &[], p);
+                return self.expand_macro(e, mid, &[], p);
             }
         }
 
@@ -1193,7 +1353,7 @@ impl<'a, 'g> Cx<'a, 'g> {
         if raw.len() == 2 && raw[0] == "this" {
             let own = self.own_candidates(&raw[1], at_name);
             if !own.is_empty() {
-                return self.pick_name(&own, p, &raw[1], qn.span);
+                return self.pick_name(e, &own, p, &raw[1], qn.span);
             }
         }
 
@@ -1212,21 +1372,30 @@ impl<'a, 'g> Cx<'a, 'g> {
             return R::bad();
         }
         // resolveHelper over the leaf candidates against p.
-        self.pick_name(&cands, p, &segs.join("/"), qn.span)
+        self.pick_name(e, &cands, p, &segs.join("/"), qn.span)
     }
 
     /// `ExprChoice.resolveHelper` over leaf name candidates (§4.4), on precise
     /// types (mt-022/025). Returns the resolved type, or an ambiguity/no-match
     /// reject at a definite position.
-    fn pick_name(&mut self, cands: &[Cand], p: &Type, name: &str, span: Span) -> R {
+    fn pick_name(&mut self, e: ExprId, cands: &[Cand], p: &Type, name: &str, span: Span) -> R {
         if let [only] = cands {
+            let nc = only.origin.to_choice(false);
+            self.record_name(e, nc);
             return R::ok(only.ty.clone());
         }
         let types: Vec<Type> = cands.iter().map(|c| c.ty.clone()).collect();
         let weights: Vec<i32> = cands.iter().map(|c| c.weight).collect();
         match self.resolve_helper(&types, &weights, p) {
-            Pick::One(i) => R::ok(cands[i].ty.clone()),
-            Pick::NoneArity(k) => R::ok(self.none_of_arity(k)),
+            Pick::One(i) => {
+                let nc = cands[i].origin.to_choice(false);
+                self.record_name(e, nc);
+                R::ok(cands[i].ty.clone())
+            }
+            Pick::NoneArity(k) => {
+                self.record_name(e, NameChoice::EmptyArity(k));
+                R::ok(self.none_of_arity(k))
+            }
             Pick::Ambiguous(idxs) => {
                 if self.lenient() {
                     return R::ok(cands[idxs[0]].ty.clone());
@@ -1340,8 +1509,17 @@ impl<'a, 'g> Cx<'a, 'g> {
         None
     }
 
-    /// Expands a macro by textual substitution (resolution-doc §3.7).
-    fn expand_macro(&mut self, mid: crate::world::MacroId, arg_exprs: &[ExprId], p: &Type) -> R {
+    /// Expands a macro by textual substitution (resolution-doc §3.7), recording
+    /// a replay record at the call-site node `e` (mt-031): the macro, its args,
+    /// and the body's choices resolved *for this site* (a nested table, since
+    /// the same body `ExprId` may resolve differently per call).
+    fn expand_macro(
+        &mut self,
+        e: ExprId,
+        mid: crate::world::MacroId,
+        arg_exprs: &[ExprId],
+        p: &Type,
+    ) -> R {
         if self.unroll == 0 {
             self.err(ResolveError::MacroTooDeep {
                 span: self.r.world.macros[mid].span,
@@ -1369,6 +1547,21 @@ impl<'a, 'g> Cx<'a, 'g> {
             sub.env.push((name.clone(), ty.clone()));
         }
         let mut r = sub.resolve(mac.body, p);
+        // Record the replay (mt-031): a `Name` node (0-param macro used as a
+        // value) records a `NameChoice::Macro`; a spine node a `SpineChoice`.
+        let mc = MacroChoice {
+            macro_id: mid,
+            body_module: mac.module,
+            args: arg_exprs.to_vec(),
+            arg_module: self.module,
+            body_choices: Box::new(std::mem::take(&mut sub.choices)),
+            lean,
+        };
+        if matches!(self.expr(e).kind, ExprKind::Name(_) | ExprKind::AtName(_)) {
+            self.record_name(e, NameChoice::Macro(mc));
+        } else {
+            self.record_spine(e, SpineChoice::Macro(mc));
+        }
         if lean {
             // Accept-lean: drop the body's errors AND mark the result errored so
             // the *caller's* sort/typecheck never rejects either (a higher-order
@@ -1423,6 +1616,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                 ty: self.r.world.sigs[sig].ty.clone(),
                 weight: 0,
                 reason: format!("sig {}", self.r.world.sigs[sig].name),
+                origin: CandOrigin::Sig(sig),
             });
         }
         for fid in self.lookup_funcs(segs) {
@@ -1436,6 +1630,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                     },
                     weight: 0,
                     reason: format!("{} {}", if f.is_pred { "pred" } else { "fun" }, f.name),
+                    origin: CandOrigin::Call0(fid),
                 });
             }
         }
@@ -1456,6 +1651,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                 ty: self.r.world.sigs[sig].ty.clone(),
                 weight: 0,
                 reason: format!("sig {}", self.r.world.sigs[sig].name),
+                origin: CandOrigin::Sig(sig),
             });
         }
         if let Some(fids) = m.funcs.get(tail) {
@@ -1470,16 +1666,17 @@ impl<'a, 'g> Cx<'a, 'g> {
                         },
                         weight: 0,
                         reason: format!("{} {}", if f.is_pred { "pred" } else { "fun" }, f.name),
+                        origin: CandOrigin::Call0(fid),
                     });
                 }
             }
         }
         // Fields owned by a sig declared in this module.
-        for (_fid, field) in self.r.world.fields.iter() {
+        for (fid, field) in self.r.world.fields.iter() {
             if field.name != tail || self.r.world.sigs[field.owner].module != self.module {
                 continue;
             }
-            self.push_field_cand(field, at_name, &mut out);
+            self.push_field_cand(fid, field, at_name, &mut out);
         }
         out
     }
@@ -1487,7 +1684,7 @@ impl<'a, 'g> Cx<'a, 'g> {
     /// Field candidates for a bare label (resolution-doc §3.3/§3.4, weights per
     /// `populate` resolution-mode 1).
     fn collect_field_cands(&self, label: &str, at_name: bool, out: &mut Vec<Cand>) {
-        for (_fid, field) in self.r.world.fields.iter() {
+        for (fid, field) in self.r.world.fields.iter() {
             if field.name != *label {
                 continue;
             }
@@ -1495,7 +1692,7 @@ impl<'a, 'g> Cx<'a, 'g> {
             if !self.reachable_contains(owner_mod) {
                 continue;
             }
-            self.push_field_cand(field, at_name, out);
+            self.push_field_cand(fid, field, at_name, out);
         }
     }
 
@@ -1503,6 +1700,7 @@ impl<'a, 'g> Cx<'a, 'g> {
     /// resolution-mode 1: implicit-`this`/bare 0, cross-branch 1).
     fn push_field_cand(
         &self,
+        fid: FieldId,
         field: &crate::world::ResolvedField,
         at_name: bool,
         out: &mut Vec<Cand>,
@@ -1511,11 +1709,22 @@ impl<'a, 'g> Cx<'a, 'g> {
             "field {} <: {}",
             self.r.world.sigs[field.owner].name, field.name
         );
+        // implicit `this` is inserted only for a bare (non-`@`) reference in a
+        // sig context whose `this` descends from the field owner (§3.3).
+        let implicit_this = match self.rootsig {
+            Some(root) => !at_name && self.r.world.sig_is_same_or_descendent(root, field.owner),
+            None => false,
+        };
+        let origin = CandOrigin::Field {
+            field: fid,
+            implicit_this,
+        };
         match self.rootsig {
             None => out.push(Cand {
                 ty: field.ty.clone(),
                 weight: 0,
                 reason,
+                origin,
             }),
             Some(root) if self.r.world.sig_is_same_or_descendent(root, field.owner) => {
                 if at_name {
@@ -1523,6 +1732,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                         ty: field.ty.clone(),
                         weight: 0,
                         reason,
+                        origin,
                     });
                 } else {
                     let this_ty = self.r.world.sigs[root].ty.clone();
@@ -1530,6 +1740,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                         ty: this_ty.join(&self.r.world, &field.ty),
                         weight: 0,
                         reason,
+                        origin,
                     });
                 }
             }
@@ -1537,6 +1748,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                 ty: field.ty.clone(),
                 weight: 1,
                 reason,
+                origin,
             }),
         }
     }
@@ -1614,6 +1826,12 @@ impl<'a, 'g> Cx<'a, 'g> {
                             self.typecheck_as_set(&mut r, self.expr(*a).span);
                             err |= r.err;
                         }
+                        self.record_spine(
+                            e,
+                            SpineChoice::Builtin {
+                                op: BuiltinCall::TotalOrder,
+                            },
+                        );
                         return R {
                             ty: self.formula(),
                             err,
@@ -1637,6 +1855,12 @@ impl<'a, 'g> Cx<'a, 'g> {
                             self.typecheck_as_set(&mut r, self.expr(*a).span);
                             err |= r.err;
                         }
+                        self.record_spine(
+                            e,
+                            SpineChoice::Builtin {
+                                op: BuiltinCall::Disj,
+                            },
+                        );
                         return R {
                             ty: self.formula(),
                             err,
@@ -1662,6 +1886,12 @@ impl<'a, 'g> Cx<'a, 'g> {
                             self.typecheck_as_set(&mut r, self.expr(a).span);
                             err |= r.err;
                         }
+                        self.record_spine(
+                            e,
+                            SpineChoice::Builtin {
+                                op: BuiltinCall::IntCast,
+                            },
+                        );
                         return R {
                             ty: self.small_int(),
                             err,
@@ -1673,6 +1903,12 @@ impl<'a, 'g> Cx<'a, 'g> {
                             let ap = self.infer(a);
                             err |= self.resolve(a, &ap).err;
                         }
+                        self.record_spine(
+                            e,
+                            SpineChoice::Builtin {
+                                op: BuiltinCall::IntAtom,
+                            },
+                        );
                         return R {
                             ty: Type::unary(self.r.world.builtins.int),
                             err,
@@ -1685,12 +1921,12 @@ impl<'a, 'g> Cx<'a, 'g> {
 
         // A parameterized macro applied via box join or `.`-spine.
         if let Some((mid, arg_exprs)) = self.collect_macro_spine(e) {
-            return self.expand_macro(mid, &arg_exprs, p);
+            return self.expand_macro(e, mid, &arg_exprs, p);
         }
 
         // Build the readings of this application spine and pick.
         let readings = self.build_readings(e, span);
-        self.pick_reading(readings, p, span)
+        self.pick_reading(e, readings, p, span)
     }
 
     /// Materializes the join-level `ExprChoice`: the candidate readings of an
@@ -1720,19 +1956,31 @@ impl<'a, 'g> Cx<'a, 'g> {
 
     /// The head readings of a spine operand: a bare name → its candidate readings
     /// (`spine_head`); a nested join/box → its own readings (`build_readings`);
-    /// anything else → a single sub-expr reading of its bottom-up type.
+    /// anything else → a single sub-expr reading of its bottom-up type. Every
+    /// reading records `head_expr = e` so the winning spine's base (mt-031) is
+    /// recorded at the right node.
     fn readings_of(&self, e: ExprId, span: Span) -> Vec<Reading> {
         match &self.expr(e).kind {
             ExprKind::Name(_) => self.spine_head(e),
             ExprKind::Binary {
                 op: BinOp::Join, ..
             }
-            | ExprKind::BoxJoin { .. } => self.build_readings(e, span),
+            | ExprKind::BoxJoin { .. } => {
+                // A nested spine: keep its readings but point `head_expr` at this
+                // node so `flush_rec` records it as `Spine(Join)`.
+                let mut rs = self.build_readings(e, span);
+                for r in &mut rs {
+                    r.head_expr = e;
+                }
+                rs
+            }
             _ => vec![Reading {
                 ty: self.infer(e),
                 weight: 0,
                 reason: "(expr)".to_owned(),
                 fin: Fin::Sub(e),
+                head_expr: e,
+                head_choice: None,
             }],
         }
     }
@@ -1745,6 +1993,9 @@ impl<'a, 'g> Cx<'a, 'g> {
         let argt = self.infer(arg);
         let mut out = Vec::with_capacity(base.len());
         for reading in base {
+            let head_expr = reading.head_expr;
+            let head_choice = reading.head_choice.clone();
+            let base_rec = Box::new(Self::rec_of(&reading));
             match reading.fin {
                 Fin::BadCall {
                     func,
@@ -1777,6 +2028,8 @@ impl<'a, 'g> Cx<'a, 'g> {
                                     args,
                                     span: cspan,
                                 },
+                                head_expr,
+                                head_choice,
                             });
                         } else {
                             out.push(Reading {
@@ -1789,6 +2042,8 @@ impl<'a, 'g> Cx<'a, 'g> {
                                     this_arg,
                                     span: cspan,
                                 },
+                                head_expr,
+                                head_choice,
                             });
                         }
                     } else {
@@ -1803,7 +2058,10 @@ impl<'a, 'g> Cx<'a, 'g> {
                                 right_ty: reading.ty.clone(),
                                 right_expr: None,
                                 span,
+                                base: base_rec,
                             },
+                            head_expr,
+                            head_choice,
                         });
                     }
                 }
@@ -1828,7 +2086,10 @@ impl<'a, 'g> Cx<'a, 'g> {
                             right_ty: reading.ty.clone(),
                             right_expr,
                             span,
+                            base: base_rec,
                         },
+                        head_expr,
+                        head_choice,
                     });
                 }
             }
@@ -1854,6 +2115,8 @@ impl<'a, 'g> Cx<'a, 'g> {
                             weight: 0,
                             reason: format!("var {}", segs[0]),
                             fin: Fin::Leaf,
+                            head_expr: e,
+                            head_choice: Some(CandOrigin::Var(segs[0].clone())),
                         });
                         return out;
                     }
@@ -1864,6 +2127,8 @@ impl<'a, 'g> Cx<'a, 'g> {
                         weight: 0,
                         reason: segs.join("/"),
                         fin: Fin::Leaf,
+                        head_expr: e,
+                        head_choice: builtin_value_choice(&segs).map(CandOrigin::Builtin),
                     });
                     return out;
                 }
@@ -1874,6 +2139,8 @@ impl<'a, 'g> Cx<'a, 'g> {
                         weight: c.weight,
                         reason: c.reason,
                         fin: Fin::Leaf,
+                        head_expr: e,
+                        head_choice: Some(c.origin),
                     });
                 }
                 // call/badcall readings.
@@ -1903,6 +2170,8 @@ impl<'a, 'g> Cx<'a, 'g> {
                                     this_arg: true,
                                     span: qn.span,
                                 },
+                                head_expr: e,
+                                head_choice: None,
                             });
                         }
                     }
@@ -1916,6 +2185,8 @@ impl<'a, 'g> Cx<'a, 'g> {
                             this_arg: false,
                             span: qn.span,
                         },
+                        head_expr: e,
+                        head_choice: None,
                     });
                 }
                 if out.is_empty() {
@@ -1926,6 +2197,8 @@ impl<'a, 'g> Cx<'a, 'g> {
                             weight: 0,
                             reason: segs.join("/"),
                             fin: Fin::Leaf,
+                            head_expr: e,
+                            head_choice: None,
                         });
                         return out;
                     }
@@ -1940,6 +2213,8 @@ impl<'a, 'g> Cx<'a, 'g> {
                             weight: 0,
                             reason: segs.join("/"),
                             fin: Fin::Leaf,
+                            head_expr: e,
+                            head_choice: None,
                         });
                     } else {
                         out.push(Reading {
@@ -1950,6 +2225,8 @@ impl<'a, 'g> Cx<'a, 'g> {
                                 name: segs.join("/"),
                                 span: qn.span,
                             },
+                            head_expr: e,
+                            head_choice: None,
                         });
                     }
                 }
@@ -1963,6 +2240,8 @@ impl<'a, 'g> Cx<'a, 'g> {
                 weight: 0,
                 reason: "(expr)".to_owned(),
                 fin: Fin::Sub(e),
+                head_expr: e,
+                head_choice: None,
             }],
         }
     }
@@ -2047,22 +2326,25 @@ impl<'a, 'g> Cx<'a, 'g> {
     /// Picks a reading of the join-level choice against relevant type `p`
     /// (`resolveHelper`), then finalizes it (resolve operands / args, emit
     /// errors).
-    fn pick_reading(&mut self, mut readings: Vec<Reading>, p: &Type, span: Span) -> R {
+    fn pick_reading(&mut self, e: ExprId, mut readings: Vec<Reading>, p: &Type, span: Span) -> R {
         if readings.is_empty() {
             return R::bad();
         }
         if readings.len() == 1 {
             let only = readings.swap_remove(0);
-            return self.finalize_reading(only, p);
+            return self.finalize_recorded(e, only, p);
         }
         let types: Vec<Type> = readings.iter().map(|r| r.ty.clone()).collect();
         let weights: Vec<i32> = readings.iter().map(|r| r.weight).collect();
         match self.resolve_helper(&types, &weights, p) {
             Pick::One(i) => {
                 let reading = readings.swap_remove(i);
-                self.finalize_reading(reading, p)
+                self.finalize_recorded(e, reading, p)
             }
-            Pick::NoneArity(k) => R::ok(self.none_of_arity(k)),
+            Pick::NoneArity(k) => {
+                self.record_spine(e, SpineChoice::Empty(k));
+                R::ok(self.none_of_arity(k))
+            }
             Pick::Ambiguous(idxs) => {
                 if self.lenient() {
                     let reading = readings.swap_remove(idxs[0]);
@@ -2106,10 +2388,39 @@ impl<'a, 'g> Cx<'a, 'g> {
                 } else {
                     // finalize the first reading to surface a precise join error.
                     let reading = readings.swap_remove(0);
-                    self.finalize_reading(reading, p)
+                    self.finalize_recorded(e, reading, p)
                 }
             }
         }
+    }
+
+    /// Records the winning spine reading's choice (mt-031) — the node as a
+    /// join / call, and (for a join) its base name — then finalizes it.
+    fn finalize_recorded(&mut self, e: ExprId, reading: Reading, p: &Type) -> R {
+        match &reading.fin {
+            Fin::Join { base, .. } => {
+                self.record_spine(e, SpineChoice::Join);
+                let base = base.clone();
+                self.flush_rec(&base);
+            }
+            Fin::Call {
+                func,
+                this_arg,
+                args,
+                ..
+            } => {
+                self.record_spine(
+                    e,
+                    SpineChoice::Call(CallChoice {
+                        func: *func,
+                        implicit_this: this_arg.is_some(),
+                        args: args.clone(),
+                    }),
+                );
+            }
+            Fin::Leaf | Fin::Sub(_) | Fin::BadCall { .. } | Fin::Unknown { .. } => {}
+        }
+        self.finalize_reading(reading, p)
     }
 
     /// Lenient finalize (a `$`-meta model): resolve the chosen reading but never
@@ -2141,6 +2452,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                 right_ty,
                 right_expr,
                 span,
+                base: _,
             } => {
                 // Resolve the left operand (which may itself be a join/choice).
                 // A compound right operand (`s.*next`, `x.(y.z)`) keeps its
@@ -2737,6 +3049,18 @@ impl<'a, 'g> Cx<'a, 'g> {
             }
             _ => false,
         }
+    }
+}
+
+/// The [`BuiltinValue`] a `fun/…` name denotes (resolution-doc §4.5), for choice
+/// recording (mt-031).
+fn builtin_value_choice(segs: &[String]) -> Option<BuiltinValue> {
+    match segs.join("/").as_str() {
+        "fun/min" => Some(BuiltinValue::IntMin),
+        "fun/max" => Some(BuiltinValue::IntMax),
+        "fun/next" => Some(BuiltinValue::IntNext),
+        "fun/prev" => Some(BuiltinValue::IntPrev),
+        _ => None,
     }
 }
 

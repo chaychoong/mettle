@@ -796,3 +796,49 @@ golden in `crates/als-core/tests/bounds.rs`.
 | B17 | any command, `Int` | bound exactly to the 16 int atoms `{-8..7}` |
 | B18 | `seq/Int` | `for 3` → `{0,1,2}`; no-overall (maxseq 4) → `{0,1,2,3}` |
 | B19 | `sig P {} sig C extends P {} run {} for exactly 2 P, exactly 3 C` | **accepted, SAT** — `ScopeComputer.computeLowerBound` silently *raises* `P`'s scope to the children's lower sum (2→3, exactness kept, §1.2); universe `{C$0,C$1,C$2}`, `P_remainder` upper empty, Kodkod goal = bare reflexive list (no size formula). Found in mt-030 review (tech lead); fixed in mt-029's walk (`scope.rs`), regression tests in `tests/scope.rs` + `tests/bounds.rs` |
+
+### 10.3 mt-031 lowering probe matrix (jar-verified 2026-07-16)
+
+Harness: `scratchpad/probe/DumpK2.java` (`edu.mit.csail.sdg.translator.DumpK2`)
+prints `A4Solution.debugExtractKInput()` — the **exact final Kodkod goal
+formula** for a command — at `symmetry=0`, `noOverflow=false`,
+`inferPartialInstance=false`. For ~15 small models spanning the §2 tables the
+dump was compared to mettle's lowered IR (`crates/als-core/tests/lower.rs`,
+which quotes each jar formula and asserts semantic congruence). The pinned
+facts below sharpen §2/§2.5; each maps to a committed golden.
+
+**Documented divergences (semantic congruence, not identity)** — mettle's IR is
+equal to the jar's goal *modulo*: (a) **no skolemization** (mettle quantifies
+directly; ADR-0011); (b) **n-ary vs balanced-binary `and`/`or`** (§2.2, the jar
+builds a left-nested binary tree, behaviorally associative); (c) **no reflexive
+`r = r` padding** (§2.5(4), a Kodkod solving detail, mt-033's job); (d) mettle
+**groups a field's domain + multiplicity constraints into one conjunct** where
+the jar emits them separately; (e) mettle **omits the jar's redundant
+per-arrow-column membership constraints** (`(v.f) in A`), which are entailed by
+the top-level `this.f in (A->B)`.
+
+| # | Case | Jar goal (relevant conjunct) | Pinned fact |
+|---|---|---|---|
+| L1 | `sig B { f: A }` (default field) | `all this: B \| one (this.f) and (this.f) in A` | a **default** (unmarked) unary field bound gets an **implicit `one`** plus bound-membership |
+| L2 | `f: set A` | `all this: B \| (this.f) in A` | `set` → membership only, no multiplicity |
+| L3 | any field | `(f . univ…) in owner` | every field also emits a **domain** constraint: the first column ⊆ owner (join `univ` `arity-1` times to project); mt-030's bounds do **not** emit this, so the lowerer owns it (no double-count) |
+| L4 | `f: A -> one A` | `all this: B \| (this.f) in (A->A) and (all v0: A \| one (v0.(this.f)) and (v0.(this.f)) in A) and (all v1: A \| ((this.f).v1) in A)` | a single arrow `A m -> n B` → membership `this.f in A->B` **plus per-column** `all a: A \| n (a.this.f)` and `all b: B \| m ((this.f).b)`; a `set`/absent column marker adds no cardinality. The per-column memberships are redundant (entailed) and mettle omits them |
+| L5 | `sig A { r: set A, s = r }` (defined field) | `all this: A \| (this.s) = (this.r)` | a defined field `f = e` → `all this: S \| this.f = e[this]` |
+| L6 | `sig A {…}{ φ }` (appended fact) | `all this: A \| φ` | a sig appended fact is universally quantified over the owner, with `this` bound to it (resolution §3.3) |
+| L7 | `a.n = 1`, `n: Int` | `(a.n) = Int[1]` | the **integer special case** (§2.2): a `=`/`in` with **one** small-int side (the literal `1`) and a relational side promotes the small-int via `Int[·]` (`IntToAtom`) and does a **set** compare; only when **both** sides are small-int casts (`#x = #y`, `int[x]=int[y]`) is it an `IntCompare` |
+| L8 | `pred sub[x] {…}` `… sub[a] …` | the call vanishes; body inlined with `x ↦ a` | a func/pred call is **inlined** (params substituted by the lowered args, a receiver by the caller's `this`); recursion is refused (`TranslateError::LoweringUnsupported`) |
+| L9 | `check a` (assert `a`) | `assertBody.not()` | a `check` **negates** the assertion body (SAT = counterexample); a block `check` negates the block; a `run` pred existentially quantifies its params (`some x: B \| body`) |
+| L10 | `a.*nx` | `nx + (iden restricted)` closure | `*` = reflexive-transitive closure (IR `ReflexiveClosure`); `^`/`~` map to `Closure`/`Transpose` |
+| L11 | `A <: f` / `f :> A` | product-pad-and-intersect | `A <: r` = `r & (A -> univ^{n-1})`; `r :> A` = `r & (univ^{n-1} -> A)`; a **unary** `r` reduces both to `r & A` (jar-consistent) |
+| L12 | `one sig Cfg { limit: one A }` | field relation `Cfg -> Cfg.limit` | a **`one`-sig** field is denoted `owner -> stored` (mt-030 seam), so `this.f` and a bare `Cfg.limit` both join the singleton owner back on (§1.4′ B13) |
+| L13 | `all disj x, y \| φ` | disjointness guard | a decl `disj` modifier adds pairwise `no (xi & xj)`: an **antecedent** for `all`/`no`, a **conjunct** for `some` and inside `one`/`lone`'s comprehension; `no x \| φ` ⇒ `all x \| ¬φ`; `one`/`lone x \| φ` ⇒ `one`/`lone { x \| φ }` (§2.3) |
+| L14 | `disj[A, B, C]` | `no (A&B) and no ((A+B)&C)` | the `disj[…]` builtin expands to the **staged** pairwise form (§2.2) |
+
+The choice-recording seam that makes this possible (mt-031 Part A,
+[reference/alloy6-resolution.md](alloy6-resolution.md) §4.4) is documented in
+`crates/als-types/src/choice.rs`: the mt-025 checker records, per
+`(ModuleId, ExprId)`, what every name/spine resolved to (sig / field + implicit
+`this` / call + overload + receiver / bound var / macro-with-nested-table), so
+the lowerer replays §4.4 rather than re-deriving it. The recording is additive
+and provably non-behavioral (the alloy4fun resolve gauge is **byte-identical**
+before/after over all 150,891 codes).
