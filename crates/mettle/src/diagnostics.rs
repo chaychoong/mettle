@@ -1,8 +1,9 @@
-//! Caret-and-label diagnostic rendering for parse/lex errors (mt-013,
-//! STYLE G3). Lives ONLY in this CLI crate (STYLE E3): `als-syntax`'s
-//! `LexError`/`ParseError` carry spans and a `Display` message but never
-//! render -- this module is the one place that turns a
-//! `(source, path, span, message)` tuple into a rustc-style caret block:
+//! Caret-and-label diagnostic rendering for parse/lex/resolve errors (mt-013,
+//! extended mt-019, STYLE G3). Lives ONLY in this CLI crate (STYLE E3):
+//! `als-syntax`'s `LexError`/`ParseError` and `als-types`'s `ResolveError`/
+//! `ResolveWarning` carry spans and a `Display` message but never render --
+//! this module is the one place that turns a `(source, path, span, label,
+//! message)` tuple into a rustc-style caret block:
 //!
 //! ```text
 //! error: syntax error: expected a name
@@ -11,10 +12,17 @@
 //! 12 | fact { some }
 //!    |        ^^^^
 //! ```
+//!
+//! `mettle check` (mt-019) reuses this same renderer for `warning:`-labeled
+//! [`als_types::ResolveWarning`]s (never fatal) and, for the rare case where
+//! no source text is recoverable for the offending file (a module-graph load
+//! failure whose span points into a file mettle has no table for -- see
+//! [`render_spanless`]), a location-free one-liner instead of a caret block.
 
 use std::fmt::Write as _;
 
 use als_syntax::Span;
+use als_types::ResolveWarning;
 
 /// A precomputed byte-offset index of line starts, so repeated line/column
 /// lookups over one source file don't rescan from the beginning each time.
@@ -79,12 +87,21 @@ impl LineIndex {
 }
 
 /// Renders one caret-and-label diagnostic block (trailing newline
-/// included). `path` is display-only; `span`/`message` come straight from
-/// a [`als_syntax::LexError`]/[`als_syntax::ParseError`].
+/// included), labeled `error:`. `path` is display-only; `span`/`message`
+/// come straight from a [`als_syntax::LexError`]/[`als_syntax::ParseError`]/
+/// [`als_types::ResolveError`].
 #[must_use]
 pub fn render(source: &str, path: &str, span: Span, message: &str) -> String {
+    render_label(source, path, span, "error", message)
+}
+
+/// Like [`render`], but with the severity label parameterized so `mettle
+/// check` (mt-019) can share this one renderer for non-fatal
+/// [`ResolveWarning`]s (`label = "warning"`) instead of hardcoding `error:`.
+#[must_use]
+pub fn render_label(source: &str, path: &str, span: Span, label: &str, message: &str) -> String {
     let index = LineIndex::new(source);
-    render_with_index(&index, source, path, span, message)
+    render_with_index(&index, source, path, span, label, message)
 }
 
 fn render_with_index(
@@ -92,6 +109,7 @@ fn render_with_index(
     source: &str,
     path: &str,
     span: Span,
+    label: &str,
     message: &str,
 ) -> String {
     let (line1, col1) = index.line_col(source, span.start);
@@ -138,7 +156,7 @@ fn render_with_index(
     let carets = "^".repeat(caret_len);
 
     let mut out = String::new();
-    let _ = writeln!(out, "error: {message}");
+    let _ = writeln!(out, "{label}: {message}");
     let _ = writeln!(out, "{blank_gutter}--> {path}:{line1}:{col1}");
     let _ = writeln!(out, "{blank_gutter} |");
     let _ = writeln!(out, "{line1:>gutter_width$} | {line_text}");
@@ -151,6 +169,42 @@ fn render_with_index(
         );
     }
     out
+}
+
+/// Renders a diagnostic with no caret, for the rare case where mettle has
+/// no source text to point into: a module-graph load failure (mt-019)
+/// whose [`als_syntax::Span`] names a `FileId` that isn't the root and was
+/// never returned to the caller (the graph the resolver would have used it
+/// against doesn't exist yet -- see `crates/mettle/src/main.rs`'s
+/// `render_load_error`). `path`, if known, is shown for context without a
+/// line/column (none is trustworthy here). Trailing newline included, like
+/// [`render`].
+#[must_use]
+pub fn render_spanless(label: &str, path: Option<&str>, message: &str) -> String {
+    match path {
+        Some(path) => format!("{label}: {message}\n  --> {path}\n"),
+        None => format!("{label}: {message}\n"),
+    }
+}
+
+/// The human-facing message for a [`ResolveWarning`] (mt-019). Warnings
+/// have no `Display`/`thiserror` impl in `als-types` (they're not errors);
+/// this is the CLI-only text mapping, the warning-side counterpart of
+/// `ResolveError`'s `#[error(...)]` messages.
+#[must_use]
+pub fn warning_message(warning: &ResolveWarning) -> String {
+    match warning {
+        ResolveWarning::UnusedVariable { name, .. } => {
+            format!("variable `{name}` is never used")
+        }
+        ResolveWarning::IrrelevantIntersection { .. } => {
+            "this intersection (`&`) is always empty; its operands are disjoint".to_owned()
+        }
+        ResolveWarning::VarStaticMismatch { detail, .. } => (*detail).to_owned(),
+        ResolveWarning::ReturnDisjoint { .. } => {
+            "function body's type is disjoint from its declared return type".to_owned()
+        }
+    }
 }
 
 #[cfg(test)]

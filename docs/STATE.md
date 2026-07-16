@@ -3,7 +3,7 @@
 > The live "where are we" doc. Update this at the end of every work chunk. On pickup, read this first.
 
 **Last updated:** 2026-07-16
-**Current rung:** **Rung 2 (names & types) — in progress.** mt-016 (contract) + mt-017 (module graph) + mt-015 (stdlib) + mt-018 (resolver/typechecker core) **done**; next mt-019 (`mettle check`) → mt-020 (differential gauge, the rung's exit). Home crate: `als-types`. Corpus gauge: **167/167 resolve + typecheck ACCEPT** end-to-end. Known interim over-acceptances recorded in LIMITATIONS per [ADR-0009](adr/0009-fused-resolve-pass-accept-lean.md).
+**Current rung:** **Rung 2 (names & types) — in progress.** mt-016/017/015/018/019 **done**; mt-020 (differential gauge — the rung's exit and the ADR-0009 tightening decider) is the last bead. Home crate: `als-types`. Corpus gauge: **167/167 resolve + typecheck ACCEPT**; 94/94 through the real binary. **Human-testable now:** `cargo build -p mettle && ./target/debug/mettle check <file.als>` — accepts real models (with `open`s) or renders a caret error in whichever file it lives in; warnings never fatal. Known interim over-acceptances in LIMITATIONS per [ADR-0009](adr/0009-fused-resolve-pass-accept-lean.md).
 **Conformance scorecard:** harness exists (Net 0 live); mettle-side solving not yet implemented. Rung-1 gauge: **corpus lex, parse, AND round-trip rate 167/167** (alloytools-models + portus-63), plus mt-014's mutation fuzzer (default 4,248 mutants/~5s in CI, verified to 88,500 mutants offline) — zero panics, sane spans, round-trip holds. Oracle baseline committed: `baselines/` (234 jar verdicts over alloytools-models, triaged).
 **Builds:** `cargo build/fmt/clippy/test` all green workspace-wide (~180 tests + the fuzzer). **Human-testable now:** `cargo build -p mettle && ./target/debug/mettle parse <file.als>` pretty-prints any Alloy 6 model (`--ast` for the structural dump); malformed input and pathologically-deep nesting both render precise caret diagnostics, never a crash.
 
@@ -30,7 +30,7 @@
 - Toolchains in this VM: Rust stable (`~/.cargo/bin`) and OpenJDK 21.
 
 ## In flight (delegated, background)
-- **mt-019** (`mettle check` CLI, → sonnet) running since 2026-07-16: load→resolve→caret-render wiring in `crates/mettle` only; the subtle part is multi-file diagnostics (span `FileId` → the right file's source/path from the graph's `FileTable`). If resuming cold with no notification, check `git status` for uncommitted `crates/mettle` output and review against the rubrics.
+- **mt-020** (differential resolve gauge, → opus) — the rung's exit: jar-vs-mettle ACCEPT/REJECT over the 167-file corpus and the 150,891 unique alloy4fun codes; triage every disagreement; implement the ADR-0009 tightening if the data demands it. If resuming cold with no notification, check `git status` for uncommitted output and review against the rubrics.
 
 ## Not yet started
 - Extending the scorecard to run mettle-side once anything parses/solves.
@@ -38,7 +38,7 @@
 - mt-020 — sequenced behind mt-019 (the next chunk); it is the rung's exit gauge and the ADR-0009 tightening decider.
 
 ## Next chunk (planned)
-**mt-019 — the `mettle check` CLI subcommand** (delegate → sonnet: mostly wiring; the caret renderer and resolver both exist). `mettle check <file.als>`: load module graph (FilesystemLoader) → resolve → render any `ResolveError` through the mt-013 caret renderer (multi-file aware: errors carry `FileId`s into other files — the renderer needs the right file's source/path from the `FileTable`), print warnings, exit codes per `parse` precedent. This is the Rung-2 human-testable build. Then mt-020 (differential resolve gauge over alloy4fun + corpus — the rung's exit and the ADR-0009 tightening decider).
+**mt-020 — the differential resolve gauge** (in flight, → opus). Jar side: the `parseEverything_fromString` batch shim (mt-013 precedent — that entry point already runs full `resolveAll`). mettle side: batch load+resolve driver in `als-conform`. Run the 167-file corpus (expect 167/167 agree-ACCEPT) and the 150,891 unique alloy4fun codes; classify every disagreement (jar-rejects/mettle-accepts = the ADR-0009 accept-lean debt + real bugs; jar-accepts/mettle-rejects = drop-in violations, fix all); implement the ADR-0009 top-down tightening if the data demands; deliver `docs/reference/alloy4fun-resolve-pass.md`. On completion: **Rung-2 owner touchpoint** (`mettle check`, plus the scorecard numbers).
 
 ## Key syntax facts pinned this session (details in [reference/alloy6-grammar.md](reference/alloy6-grammar.md))
 - The public grammar appendix is NOT the truth; the reference's `Alloy.lex`/`Alloy.cup`/`CompFilter` at the jar's build commit are, plus jar probes for anything ambiguous.
