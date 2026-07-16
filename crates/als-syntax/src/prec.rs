@@ -156,3 +156,30 @@ pub(crate) fn child_binder_budget(budget: u8, op: BinderOperator) -> u8 {
         BinderOperator::Ordinary => BINDER_BUDGET_HOP,
     }
 }
+
+/// The budget a *prefix* operator's own operand receives (mt-026 refinement
+/// to mt-014 Part 2's over-permissive "every ordinary prefix is transparent"
+/// claim — jar-verified 2026-07-16 against 427 fresh probes,
+/// `docs/reference/fuzzing.md` section 2). A prefix (`!`/`not`/the temporal
+/// unaries/`# int sum`/the closure operators `~ ^ *`; the set-test prefixes
+/// `no some lone one set seq` are separately hard-blocked and never call
+/// this) passes its ambient budget through **unchanged only while that
+/// ambient budget is already `TOP`** — chained arbitrarily deep, still
+/// `TOP` (`! ! ! all x: A | …`, `always always always all x: A | …` both
+/// parse). But once the ambient budget has already been spent down to `HOP`
+/// by an enclosing ordinary infix operator's one hop, a prefix does *not*
+/// forward that `HOP` to a binder beneath it — collapses to `NONE` instead,
+/// jar-rejected (`q and always all x: A | …`, `q and not some x: A | …`,
+/// `r + ~ all x: A | …`, `q or # all x: A | …`, `q until ~ all x: A | …` —
+/// every ordinary infix tier, every prefix whose own tier gate admits it at
+/// that position, every binder kind, uniformly) even though the
+/// un-prefixed bare binder in the exact same slot is fine
+/// (`q and all x: A | …`). `implies`'s refreshed `TOP` branches are
+/// unaffected (a prefix there still sees `TOP`, so still transparent).
+pub(crate) fn prefix_operand_budget(budget: u8) -> u8 {
+    if budget >= BINDER_BUDGET_TOP {
+        budget
+    } else {
+        BINDER_BUDGET_NONE
+    }
+}

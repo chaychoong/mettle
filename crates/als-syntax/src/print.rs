@@ -35,9 +35,9 @@ use crate::ast::{
     Quant, Scope, ScopeEnd, ScopeTarget, SigDecl, SigMult, SigParent, TypeScope, UnOp,
 };
 use crate::prec::{
-    arrow_bp, binary_bp, child_binder_budget, cmp_bp, BinderOperator, ARROW_BP, BINDER_BUDGET_HOP,
-    BINDER_BUDGET_NONE, BINDER_BUDGET_TOP, BP_ATOM, BP_IMPLIES_R, BP_NOT, BP_NUMUNOP,
-    BP_PRIME_CLOSURE, BP_TEST, CMP_BP, JOIN_BP, TIER_TEST,
+    arrow_bp, binary_bp, child_binder_budget, cmp_bp, prefix_operand_budget, BinderOperator,
+    ARROW_BP, BINDER_BUDGET_HOP, BINDER_BUDGET_NONE, BINDER_BUDGET_TOP, BP_ATOM, BP_IMPLIES_R,
+    BP_NOT, BP_NUMUNOP, BP_PRIME_CLOSURE, BP_TEST, CMP_BP, JOIN_BP, TIER_TEST,
 };
 
 /// A binding power no operator reaches; an atom's exposed edges use it, so an
@@ -614,12 +614,15 @@ impl Pretty<'_> {
     }
 
     /// `budget` is `e`'s own composition budget (see `write_expr`). Every
-    /// prefix here is *transparent*: it passes `budget` straight through to
-    /// its operand unchanged, matching `Parser::parse_prefix`'s handling of
+    /// prefix here forwards `prefix_operand_budget(budget)` to its operand
+    /// -- transparent only while `budget` is still `TOP` (mt-026 refinement
+    /// to mt-014 Part 2), matching `Parser::parse_prefix`'s handling of
     /// every prefix tier except the set-tests, which instead hard-block
-    /// (`BINDER_BUDGET_NONE`) regardless of `budget` -- jar-verified (mt-014
-    /// Part 2): `no all x: A | …` is a syntax error even though `! all x: A
-    /// | …` and `# all x: A | …` are fine.
+    /// (`BINDER_BUDGET_NONE`) regardless of `budget` -- jar-verified: `no
+    /// all x: A | …` is a syntax error at any budget, `! all x: A | …` and
+    /// `# all x: A | …` are fine at a fresh `TOP` start, but `q and ! all
+    /// x: A | …` / `q and # all x: A | …` are not (the prefix does not
+    /// forward an already-spent `HOP` to a binder beneath it).
     #[allow(
         clippy::too_many_lines,
         reason = "one match arm per UnOp variant (STYLE S2 soft-cap exception, same rationale \
@@ -644,31 +647,81 @@ impl Pretty<'_> {
                 self.write_operand(w, inner, BP_PRIME_CLOSURE, true, false, budget, indent)?;
                 w.write_char('\'')
             }
-            UnOp::Transpose => self.write_closure(w, '~', inner, indent, budget),
-            UnOp::Closure => self.write_closure(w, '^', inner, indent, budget),
-            UnOp::ReflexiveClosure => self.write_closure(w, '*', inner, indent, budget),
+            UnOp::Transpose => {
+                self.write_closure(w, '~', inner, indent, prefix_operand_budget(budget))
+            }
+            UnOp::Closure => {
+                self.write_closure(w, '^', inner, indent, prefix_operand_budget(budget))
+            }
+            UnOp::ReflexiveClosure => {
+                self.write_closure(w, '*', inner, indent, prefix_operand_budget(budget))
+            }
             UnOp::Not => {
                 w.write_char('!')?;
-                self.write_operand(w, inner, BP_NOT, false, rightmost, budget, indent)
+                self.write_operand(
+                    w,
+                    inner,
+                    BP_NOT,
+                    false,
+                    rightmost,
+                    prefix_operand_budget(budget),
+                    indent,
+                )
             }
-            UnOp::Always => {
-                self.write_word_prefix(w, "always", inner, BP_NOT, indent, rightmost, budget)
-            }
-            UnOp::Eventually => {
-                self.write_word_prefix(w, "eventually", inner, BP_NOT, indent, rightmost, budget)
-            }
-            UnOp::After => {
-                self.write_word_prefix(w, "after", inner, BP_NOT, indent, rightmost, budget)
-            }
-            UnOp::Before => {
-                self.write_word_prefix(w, "before", inner, BP_NOT, indent, rightmost, budget)
-            }
-            UnOp::Historically => {
-                self.write_word_prefix(w, "historically", inner, BP_NOT, indent, rightmost, budget)
-            }
-            UnOp::Once => {
-                self.write_word_prefix(w, "once", inner, BP_NOT, indent, rightmost, budget)
-            }
+            UnOp::Always => self.write_word_prefix(
+                w,
+                "always",
+                inner,
+                BP_NOT,
+                indent,
+                rightmost,
+                prefix_operand_budget(budget),
+            ),
+            UnOp::Eventually => self.write_word_prefix(
+                w,
+                "eventually",
+                inner,
+                BP_NOT,
+                indent,
+                rightmost,
+                prefix_operand_budget(budget),
+            ),
+            UnOp::After => self.write_word_prefix(
+                w,
+                "after",
+                inner,
+                BP_NOT,
+                indent,
+                rightmost,
+                prefix_operand_budget(budget),
+            ),
+            UnOp::Before => self.write_word_prefix(
+                w,
+                "before",
+                inner,
+                BP_NOT,
+                indent,
+                rightmost,
+                prefix_operand_budget(budget),
+            ),
+            UnOp::Historically => self.write_word_prefix(
+                w,
+                "historically",
+                inner,
+                BP_NOT,
+                indent,
+                rightmost,
+                prefix_operand_budget(budget),
+            ),
+            UnOp::Once => self.write_word_prefix(
+                w,
+                "once",
+                inner,
+                BP_NOT,
+                indent,
+                rightmost,
+                prefix_operand_budget(budget),
+            ),
             // Set tests and their bound-marker twins share surface spellings
             // (`some A` / `some A`): the reference's `mult()` distinguishes
             // them by context, so the printed text is identical. Hard
@@ -729,14 +782,34 @@ impl Pretty<'_> {
             ),
             UnOp::Card => {
                 w.write_char('#')?;
-                self.write_operand(w, inner, BP_NUMUNOP, false, rightmost, budget, indent)
+                self.write_operand(
+                    w,
+                    inner,
+                    BP_NUMUNOP,
+                    false,
+                    rightmost,
+                    prefix_operand_budget(budget),
+                    indent,
+                )
             }
-            UnOp::IntOf => {
-                self.write_word_prefix(w, "int", inner, BP_NUMUNOP, indent, rightmost, budget)
-            }
-            UnOp::SumOf => {
-                self.write_word_prefix(w, "sum", inner, BP_NUMUNOP, indent, rightmost, budget)
-            }
+            UnOp::IntOf => self.write_word_prefix(
+                w,
+                "int",
+                inner,
+                BP_NUMUNOP,
+                indent,
+                rightmost,
+                prefix_operand_budget(budget),
+            ),
+            UnOp::SumOf => self.write_word_prefix(
+                w,
+                "sum",
+                inner,
+                BP_NUMUNOP,
+                indent,
+                rightmost,
+                prefix_operand_budget(budget),
+            ),
             // `= e` is only reachable via a decl bound (handled in write_decl);
             // this arm keeps the match total. A decl bound is a fresh
             // `parse_expr()` context in the parser, so `BINDER_BUDGET_TOP`.
@@ -747,8 +820,12 @@ impl Pretty<'_> {
         }
     }
 
-    /// Self-recursive (`~~~~~x`) like `Parser::parse_closure`, so it takes
-    /// its own `budget` and threads it through unchanged (transparent).
+    /// Self-recursive (`~~~~~x`) like `Parser::parse_closure`. `budget` here
+    /// is already the *operand* budget (callers pass
+    /// `prefix_operand_budget(budget)`, mt-026) -- a further `~`/`^`/`*` in
+    /// `inner` re-derives its own operand budget the same way when this
+    /// function is re-entered via `write_unary`, so the chain composes
+    /// exactly like `Parser::parse_closure_at_depth`'s recursion.
     fn write_closure<W: Write>(
         &self,
         w: &mut W,

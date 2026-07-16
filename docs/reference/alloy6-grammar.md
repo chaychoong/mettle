@@ -215,8 +215,21 @@ permissive; ~220 jar probes, table in
   binder.
 - Comparisons (`= in < > =< >=`, negated or not) and the set-test prefixes
   (`no some lone one set seq`) never accept a bare binder operand.
-- Other prefixes (`!`, temporal unaries, `# sum int`, `~ ^ *`) are
-  transparent: they pass the ambient budget through unchanged.
+- Other prefixes (`!`/`not`, temporal unaries, `# sum int`, `~ ^ *`) are
+  transparent to a binder in their operand **only from a fresh (unspent)
+  budget** (mt-026 correction — the original statement "pass the ambient
+  budget through unchanged" was too permissive: unbounded, e.g.
+  `! ! ! all x: A \| …`, `always always all x: A \| …`, so long as the
+  chain starts at a fresh expression start or an `implies`-refreshed
+  branch. But once an enclosing ordinary operator has already spent its
+  one hop, a prefix does **not** forward that hop to a binder beneath it:
+  `q and always all x: A \| …`, `q and not some x: A \| …`,
+  `q iff not some x: A \| …`, `r + ~ all x: A \| …` are all syntax errors,
+  even though the un-prefixed bare binder in the same slot
+  (`q and all x: A \| …`) is fine — jar-verified 427 fresh probes, table
+  in [fuzzing.md](fuzzing.md) §2. `crate::prec::prefix_operand_budget`
+  implements this: it returns the ambient budget unchanged if it is
+  already `TOP`, else `NONE`.
 - Parentheses, block/brace bodies, box-join arguments, and decl bounds all
   re-enter as fresh expression starts.
 

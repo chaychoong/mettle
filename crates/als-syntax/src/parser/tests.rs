@@ -450,14 +450,136 @@ fn set_test_prefixes_never_absorb_a_binder() {
     }
 }
 
-/// Every other prefix (not a set-test) is transparent: it passes its
-/// ambient budget through unchanged, so it may wrap an *already-composed*
-/// operator+binder operand, not just a bare binder.
+/// Every other prefix (not a set-test) is transparent when it wraps
+/// something *other* than the binder itself -- here the prefix (`!`/
+/// `always`) applies to the infix's LHS (`q`), and the binder is a bare,
+/// unwrapped RHS of `and` (the already-covered single-hop case). This is
+/// NOT the same shape as mt-026's `prefix_wrapping_the_binder_*` tests
+/// below, which cover the prefix wrapping the binder itself.
 #[test]
 fn ordinary_prefixes_are_transparent_to_the_budget() {
     ast_of("run { ! (q) }"); // sanity: unrelated to binders
     ast_of("run { ! q and all x: A | x in x }");
     ast_of("run { always q and all x: A | x in x }");
+}
+
+// -- mt-026: prefix-wrapping-the-binder is TOP-only transparent -----------
+//
+// mt-014 Part 2 assumed every ordinary prefix passes its ambient budget
+// through unchanged to ITS OWN operand, at any budget. That was never
+// actually verified for the case of a prefix directly wrapping a binder
+// (`always all x: A | …`, not `always q`) while composed with an enclosing
+// infix operator -- and it's wrong: jar-verified 2026-07-16 over 427 fresh
+// probes (`docs/reference/fuzzing.md` section 2) that a prefix wrapping a
+// binder is transparent only while the ambient budget is still `TOP` (a
+// fresh expression start, or `implies`'s refreshed branches); once an
+// ordinary infix operator has already spent its one hop (ambient `HOP`), a
+// prefix wrapping the binder does NOT forward that hop -- every ordinary
+// infix tier (`or iff and until releases since triggered`), every
+// relational operator (`+ & -> . <: :>`), every prefix (`! not always
+// eventually before after historically once # int sum ~ ^ *`), and every
+// binder kind reject uniformly, though the un-prefixed bare binder in the
+// exact same slot is fine. Found via mt-020/025's alloy4fun differential:
+// exactly 6 real-world codes (`q and always all f: A | …`, `q and not some
+// x: A | …` shapes) the jar rejects at parse time that mettle's parser
+// wrongly accepted.
+
+/// A prefix wrapping a binder stays transparent no matter how deep the
+/// chain, as long as it starts at a fresh (`TOP`) budget -- jar-verified:
+/// `! all x: A | …` through five levels of `!`/`always` all parse.
+#[test]
+fn prefix_wrapping_the_binder_is_transparent_at_a_fresh_start() {
+    ast_of("run { ! all x: A | x in x }");
+    ast_of("run { ! ! all x: A | x in x }");
+    ast_of("run { ! ! ! ! ! all x: A | x in x }");
+    ast_of("run { always all x: A | x in x }");
+    ast_of("run { always always always all x: A | x in x }");
+}
+
+/// The exact bug shape (mt-026): a prefix wrapping a binder as the RHS of
+/// an ordinary infix operator (ambient `HOP`, already spent by that one
+/// hop) is rejected, even though the same binder bare in that slot is fine.
+/// Jar-verified directly (`ParseOnlyShim`, category `syntax`) for the
+/// minimized forms of all 6 affected alloy4fun codes:
+/// `q and always all x: A | x in x` (from codes 019940/029402, `eventually
+/// some Trash and always all f: File | …`), `q and not some x: A | x in x`
+/// (codes 023314/023316/120634), and `q iff not some x: A | x in x` (code
+/// 137967, `… iff not some r: Robot | …`).
+#[test]
+fn prefix_wrapping_the_binder_does_not_forward_an_already_spent_hop() {
+    let err = err_of("run { q and always all x: A | x in x }");
+    assert!(matches!(err, ParseError::BinderNeedsParens { .. }));
+    let err = err_of("run { q and not some x: A | x in x }");
+    assert!(matches!(err, ParseError::BinderNeedsParens { .. }));
+    let err = err_of("run { q iff not some x: A | x in x }");
+    assert!(matches!(err, ParseError::BinderNeedsParens { .. }));
+    // The bare (un-prefixed) sibling of each shape must keep parsing --
+    // this is the already-covered single-hop case, unaffected by mt-026.
+    ast_of("run { q and all x: A | x in x }");
+    ast_of("run { q iff some x: A | x in x }");
+}
+
+/// The rejection generalizes across every ordinary infix tier (not just
+/// `and`/`iff`), every relational operator, and the closure prefixes
+/// (`~ ^ *`), all jar-verified.
+#[test]
+fn prefix_wrapping_the_binder_is_rejected_after_every_ordinary_hop() {
+    for op in [
+        "or",
+        "and",
+        "iff",
+        "until",
+        "releases",
+        "since",
+        "triggered",
+    ] {
+        let src = format!("run {{ q {op} not all x: A | x in x }}");
+        let err = err_of(&src);
+        assert!(
+            matches!(err, ParseError::BinderNeedsParens { .. }),
+            "expected BinderNeedsParens for {src:?}, got {err:?}"
+        );
+    }
+    // Relational operators' right operand demands a tighter tier than `not`/
+    // `!`/the temporal unaries can ever satisfy (an independent, pre-mt-026
+    // tier-gate rejection -- see `loose_prefix_in_tight_operand_rejected`),
+    // so `~` (the tightest prefix tier, legal everywhere) isolates the
+    // binder-budget mechanism specifically here.
+    for op in ["+", "&", "->", ".", "<:", ":>"] {
+        let src = format!("run {{ r {op} ~ all x: A | x in x }}");
+        let err = err_of(&src);
+        assert!(
+            matches!(err, ParseError::BinderNeedsParens { .. }),
+            "expected BinderNeedsParens for {src:?}, got {err:?}"
+        );
+    }
+    let err = err_of("run { q and ~ all x: A | x in x }");
+    assert!(matches!(err, ParseError::BinderNeedsParens { .. }));
+}
+
+/// A same-tier chain still counts as a single hop (already-spent budget),
+/// so a trailing prefixed binder is rejected exactly like the two-operator
+/// case, and `implies`'s *second* hop (through an ordinary operator it
+/// grants but does not itself refresh) is equally ineligible for a
+/// prefix-wrapped binder.
+#[test]
+fn prefix_wrapping_the_binder_stays_rejected_through_chains_and_implies_second_hop() {
+    let err = err_of("run { q and r and always all x: A | x in x }");
+    assert!(matches!(err, ParseError::BinderNeedsParens { .. }));
+    let err = err_of("run { q implies r and always all x: A | x in x }");
+    assert!(matches!(err, ParseError::BinderNeedsParens { .. }));
+    // But the bare bare-binder sibling of the implies-second-hop shape
+    // still parses (already covered by `implies_grants_one_extra_hop_...`).
+    ast_of("run { q implies r and all x: A | x in x }");
+}
+
+/// `implies`'s own (refreshed-`TOP`) branches are unaffected: a prefix
+/// wrapping a binder there is still fully transparent, including the
+/// `else` branch (which "keeps the normal ambient budget", `TOP` here).
+#[test]
+fn prefix_wrapping_the_binder_stays_transparent_in_implies_branches() {
+    ast_of("run { q implies not all x: A | x in x }");
+    ast_of("run { q implies r else not all x: A | x in x }");
 }
 
 /// A parenthesized binder is unaffected by the budget at all -- parens

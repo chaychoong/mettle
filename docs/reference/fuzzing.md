@@ -288,6 +288,128 @@ relied on the over-permissive shape — expected, since the corpus is
 jar-derived); full workspace `cargo fmt --check`/`cargo clippy --workspace
 --all-targets -- -D warnings`/`cargo test --workspace` green.
 
+### mt-026 — prefix-wrapping-the-binder refinement
+
+mt-020/025's alloy4fun differential (`docs/reference/alloy4fun-resolve-pass.md`
+§10) left exactly 6 real-world codes where the jar rejects at parse time
+(`ParseOnlyShim` category `syntax`) and mettle over-accepted: `019940`,
+`023314`, `023316`, `029402`, `120634`, `137967` — all the same shape,
+`… and always all f: … | …` / `… and not some x: … | …` /
+`… iff not some x: … | …`. Every one is a prefix operator (`always`/`not`)
+sitting directly between an ordinary infix formula operator (`and`/`iff`)
+and a binder.
+
+**Root cause:** the original Part 2 derivation above never actually tested
+this shape. `ordinary_prefixes_are_transparent_to_the_budget` (the
+regression test that seemed to cover it) instead tests a prefix wrapping
+the infix's *left* operand (`always q and all x: A | …`, prefix binds to
+`q`) — a trivially different, already-legal case. A prefix *wrapping the
+binder itself*, composed with an enclosing infix operator's single hop,
+was an untested gap, and mettle's `parse_prefix`/`parse_closure_at_depth`
+happened to implement the more permissive (wrong) reading: "every ordinary
+prefix passes its ambient budget through unchanged, period."
+
+**Method:** two rounds of fresh `ParseOnlyShim` probes against the pinned
+jar (2026-07-16, disjoint from the original 217): round 1 (427 probes)
+swept every ordinary prefix (`! not always eventually before after
+historically once # ~`) × every binder kind (`all some no lone one sum
+let`), each combination probed bare at a fresh top-level start, doubled
+and chained 3–5 deep at a fresh start, and as the RHS of `and`/`or`/`iff`/
+a bare `implies` (plus a no-prefix `and`-RHS control per binder kind);
+round 2 (33 targeted follow-ups) covered every other ordinary infix tier
+(`until releases since triggered`), every relational operator (`+ & -> .
+<: :>`), same-tier chains, `implies`'s second hop, and `implies … else`'s
+both branches.
+
+### Results by category (round 1 + 2, prefix-wraps-binder shape only)
+
+| Context | n | Jar accepts (syntax-OK) | Jar syntax-rejects |
+|---|---:|---:|---:|
+| Bare top-level, 1 prefix × 7 binders × 10 prefixes | 70 | 70 | 0 |
+| Bare top-level, 2 prefixes (chained) × 7 × 10 | 70 | 70 | 0 |
+| Bare top-level, 3–5 prefixes chained (`!`/`always` only) | 12 | 12 | 0 |
+| RHS of `and`, no prefix (control) × 7 binders | 7 | 7 | 0 |
+| RHS of `and`, 1 prefix × 7 binders × 10 prefixes | 70 | 0 | 70 |
+| RHS of `or`, 1 prefix × 7 × 10 | 70 | 0 | 70 |
+| RHS of `iff`, 1 prefix × 7 × 10 | 70 | 0 | 70 |
+| RHS of bare `implies`, 1 prefix × 7 × 10 (control) | 70 | 70 | 0 |
+| RHS of `until`/`releases`/`since`/`triggered`, 1 prefix (`not`) | 4 | 0 | 4 |
+| RHS of `+ & -> . <: :>`, 1 prefix (`~`, tier-legal everywhere) | 6 | 0 | 6 |
+| Same-tier chain (`q and r and always all …`) | 1 | 0 | 1 |
+| `implies`'s second hop (`q implies r and always all …`) | 1 | 0 | 1 |
+| `implies`'s own branches (then/else), 1 prefix | 2 | 2 | 0 |
+
+("Jar accepts" folds in later-phase `other`-category failures, same
+convention as the original table.)
+
+### The refinement (M2′)
+
+> A prefix operator (`!`/`not`, the temporal unaries, `# int sum`, the
+> closure operators `~ ^ *`) forwards its ambient binder-composition budget
+> to its own operand **unchanged only while that ambient budget is still
+> `TOP`** (a fresh expression start, or one of `implies`'s refreshed
+> branches) — chained arbitrarily deep, still transparent
+> (`! ! ! all x: A | …`, `always always always all x: A | …` both parse).
+> Once the ambient budget has already been spent to `HOP` by an enclosing
+> ordinary infix operator's one hop, a prefix wrapping a binder does **not**
+> forward that `HOP` — it collapses to `NONE`, rejecting the binder,
+> uniformly across every ordinary infix tier, every relational operator,
+> and every prefix/binder kind, even though the *un-prefixed* bare binder
+> in the identical slot stays legal (`q and all x: A | …` parses;
+> `q and always all x: A | …` does not). M2's original rule (the budget
+> arithmetic across infix operators: one hop, `implies` refreshes to two,
+> comparisons hard-block) is otherwise unchanged.
+
+Concretely: `crate::prec::prefix_operand_budget(budget)` returns `budget`
+unchanged if `budget >= BINDER_BUDGET_TOP`, else `BINDER_BUDGET_NONE`. This
+single function is the whole fix — it replaces the previous "pass `budget`
+straight through" behavior at every prefix call site.
+
+### Fix
+
+`crates/als-syntax/src/prec.rs` gained `prefix_operand_budget`, doc-linked
+next to `child_binder_budget` as the same kind of shared parser/printer
+source of truth. `crates/als-syntax/src/parser.rs`: `parse_prefix`'s
+non-`TIER_TEST` branch and `parse_closure_at_depth` (the `~ ^ *` operators,
+which recurse outside `parse_prefix`) both now compute
+`prefix_operand_budget(budget)` before recursing into their operand instead
+of forwarding `budget` verbatim. `crates/als-syntax/src/print.rs`:
+`write_unary`'s `Not`/`Always`/`Eventually`/`After`/`Before`/
+`Historically`/`Once`/`Card`/`IntOf`/`SumOf` arms and the three
+`write_closure` call sites (`Transpose`/`Closure`/`ReflexiveClosure`) now
+pass `prefix_operand_budget(budget)` for the operand's own composition
+budget instead of `budget`, so the printer independently re-derives the
+identical parenthesization decision (mt-014's shared-table discipline,
+LESSONS.md: "parser AND printer must move in lockstep").
+
+**Regression tests** (`crates/als-syntax/src/parser/tests.rs`, "mt-026:
+prefix-wrapping-the-binder is TOP-only transparent" section, 6 tests): a
+chain of up to 5 prefixes at a fresh start still parses; the exact 6
+real-world bug shapes (minimized to `q and always all x: A | x in x`,
+`q and not some x: A | x in x`, `q iff not some x: A | x in x`, each
+jar-verified directly with `ParseOnlyShim` — category `syntax`, "35/18
+possible tokens" error at the binder keyword) now fail with
+`BinderNeedsParens`, while their un-prefixed bare-binder siblings still
+parse; the rejection generalizes across every ordinary infix tier, every
+relational operator, and `~`; same-tier chains and `implies`'s second hop
+stay rejected too; `implies`'s own then/else branches (refreshed `TOP`)
+stay fully transparent to a prefix-wrapped binder.
+
+**Gauge:** re-ran `resolve-gauge alloy4fun` (150,891 codes) and diffed
+against the cached jar verdicts — **exactly** the 6 target codes flipped
+from over-accept to agree-reject (`ok:false` both sides, jar `category:
+syntax`, mettle `phase: parse, variant: OpenedFileParse`); zero other
+files changed status in either direction. Over-acceptance: **320 → 314**
+(total agreement 99.7879% → 99.7919%, still rounding to **99.79%** — the
+6-code fix is real but small against 150,891 codes), 0 jar-accepts/
+mettle-rejects both directions preserved. `als-syntax`'s
+corpus_lex/parse/roundtrip suites (the syntax-level equivalent of the
+167-file curated-corpus gate; the `resolve-gauge paths` resolve/type gauge
+is out of this bead's als-syntax-only scope): still 167/167. Full
+`als-syntax` test suite (151 unit + corpus lex/parse/roundtrip + mutation
+fuzzer, 4,248 mutants) green; `cargo fmt --check`/`cargo clippy -p
+als-syntax --all-targets -- -D warnings`/workspace build green.
+
 ## 3. Definition-of-done check
 
 - Fuzzer: deterministic (verified via repeat runs), all properties held

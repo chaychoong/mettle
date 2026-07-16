@@ -237,8 +237,9 @@ const MAX_EXPR_DEPTH: u32 = 256;
 // can never drift.
 
 use crate::prec::{
-    arrow_bp, binary_bp, child_binder_budget, cmp_bp, BinderOperator, BINDER_BUDGET_HOP,
-    BINDER_BUDGET_NONE, BINDER_BUDGET_TOP, BP_NOT, BP_NUMUNOP, BP_TEST, TIER_TEST,
+    arrow_bp, binary_bp, child_binder_budget, cmp_bp, prefix_operand_budget, BinderOperator,
+    BINDER_BUDGET_HOP, BINDER_BUDGET_NONE, BINDER_BUDGET_TOP, BP_NOT, BP_NUMUNOP, BP_TEST,
+    TIER_TEST,
 };
 
 /// Maps a Pratt-loop [`Infix`] to the [`BinderOperator`] class
@@ -1427,14 +1428,16 @@ impl<'src> Parser<'src> {
         // The set-test prefixes (tier `TIER_TEST`: no/some/lone/one/set/seq)
         // never accept a binder as their operand, jar-verified (mt-014 Part
         // 2) — a hard `NONE`, independent of the ambient budget. Every other
-        // prefix (`!`/temporal unaries/`#`/`sum`/`int`) is transparent: it
-        // passes the ambient budget through unchanged (jar-verified: `! (a
-        // and all x: A | …)` parses fine, so a prefix does not itself spend
-        // a hop).
+        // prefix (`!`/temporal unaries/`#`/`sum`/`int`) is transparent only
+        // while the ambient budget is still `TOP` (mt-026 refinement,
+        // `crate::prec::prefix_operand_budget`) — jar-verified: `! all x: A
+        // | …` parses at a fresh expression start, but `q and ! all x: A |
+        // …` does not (the prefix does not forward an already-spent `HOP`
+        // to a binder beneath it).
         let operand_budget = if tier == TIER_TEST {
             BINDER_BUDGET_NONE
         } else {
-            budget
+            prefix_operand_budget(budget)
         };
         let operand = self.parse_operand(rbp, operand_budget)?;
         let span = start.merge(self.espan(operand));
@@ -1531,10 +1534,11 @@ impl<'src> Parser<'src> {
     /// time — mt-013 alloy4fun pass, `docs/reference/alloy4fun-error-pass.md`).
     /// Every other prefix tier already gets this via `parse_operand`
     /// (§1157); this one recurses locally so it needs its own check.
-    /// Transparent w.r.t. `budget` (mt-014 Part 2), like every other prefix.
-    /// Self-recursive (`~~~~~x`) rather than going back through
-    /// `parse_operand`, so it carries its own depth guard (mt-014 Part 1,
-    /// [`MAX_EXPR_DEPTH`]) rather than relying on `parse_operand`'s.
+    /// Transparent w.r.t. `budget` only while `budget` is still `TOP`
+    /// (mt-026 refinement, `crate::prec::prefix_operand_budget`), like every
+    /// other prefix. Self-recursive (`~~~~~x`) rather than going back
+    /// through `parse_operand`, so it carries its own depth guard (mt-014
+    /// Part 1, [`MAX_EXPR_DEPTH`]) rather than relying on `parse_operand`'s.
     fn parse_closure(&mut self, budget: u8) -> Result<ExprId, ParseError> {
         self.enter_depth()?;
         let result = self.parse_closure_at_depth(budget);
@@ -1551,10 +1555,11 @@ impl<'src> Parser<'src> {
             _ => return self.parse_atom(),
         };
         self.bump();
+        let operand_budget = prefix_operand_budget(budget);
         let inner = if self.starts_binder() {
-            self.binder_if_budgeted(budget)?
+            self.binder_if_budgeted(operand_budget)?
         } else {
-            self.parse_closure(budget)?
+            self.parse_closure(operand_budget)?
         };
         let span = start.merge(self.espan(inner));
         Ok(self.alloc(ExprKind::Unary { op, expr: inner }, span))
