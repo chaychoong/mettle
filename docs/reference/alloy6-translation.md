@@ -842,3 +842,88 @@ The choice-recording seam that makes this possible (mt-031 Part A,
 the lowerer replays §4.4 rather than re-deriving it. The recording is additive
 and provably non-behavioral (the alloy4fun resolve gauge is **byte-identical**
 before/after over all 150,891 codes).
+
+### 10.4 mt-033 solve/encode goldens (jar-verified 2026-07-16)
+
+Harness: `crates/als-conform/shim/OracleShim.java` driven directly (symmetry 0,
+noOverflow **true** = LEDGER-001 forbid, sat4j; `enumCap 0` = verdict, `enumCap
+-1` = exhaustive SB-0 count). Compared to mettle's `als_core::solve_goal` /
+`als_core::enumerate` over the same hand models (`crates/als-core/tests/solve.rs`,
+which pins each jar answer in a comment and never runs the jar). The gauge is
+**verdict + SB-0 count only** (ADR-0002); instance tuples are never diffed.
+
+**Verdict goldens (all mettle == jar):** quantifier-over-join SAT; acyclicity of
+a non-empty total successor function UNSAT; two `in`-subset sigs disjoint SAT;
+explicitly-scoped `extends` children SAT; `one`-field multiplicity SAT; `#A = 2`
+SAT and `#A > 3` (scope 3) UNSAT; `check` polarity (a `some A` assertion with an
+empty-A counterexample → SAT); `one`-sig field SAT; abstract-parent-equals-union
+SAT; reflexive-transitive-closure reachability SAT; `lone` sig forced empty SAT;
+transpose-in-join SAT; `Int`-field compared to a literal SAT; cardinality-compare
+(`#A = #B`) SAT; relational override SAT.
+
+**SB-0 enumeration counts (mettle == jar):**
+
+| Model | jar SB-0 count | mettle | note |
+|---|---|---|---|
+| `run { some A } for 3` | **7** | 7 | translation-ref probe T3 (raw non-empty subsets of 3) |
+| `run { #A = 2 } for 3` | **3** | 3 | the 2-subsets of 3 atoms |
+| `oracle/test1.als` `show` (`run { some r } for 3`) | **1129** | 1129 | the marquee number — fields + `set` multiplicity + domain constraints, no existential |
+
+**Skolemization count divergence (verdict matches; count does not — documented,
+not a bug).** `oracle/test1.als`'s `check NoEmpty` (`all b: B | some b.r`, negated
+to `some b: B | no b.r`) is **SAT** in both. Its SB-0 count is **jar 561 vs
+mettle 464**: the jar's `skolemDepth 0` turns the top-level existential into a
+skolem constant relation `$NoEmpty_b` and counts its assignments too (multiplying
+the raw count by the number of witnesses per instance), while mettle does **not**
+skolemize (ADR-0011, §2.3). This never changes the verdict — so **SB-0 count
+parity holds only for goals with no skolemizable top-level existential** (`some r`
+above is a multiplicity test, not `∃x`, hence 1129 matches exactly). Recorded in
+LIMITATIONS.
+
+**A genuine mt-029 scope bug surfaced — FIXED at review (probe S1, jar-verified
+2026-07-16).** An **abstract** parent whose two `extends` children are *unscoped*
+under a default `for 3` — `abstract sig A {} sig B extends A {} sig C extends A
+{} run { some B and some C } for 3` — is **SAT** in the jar (probe: `#C = 2` is
+SAT, `#B = 3 and #C = 3` is UNSAT, so each child's upper is 3 and the pair shares
+the 3 atoms). mettle's per-change-restart fixpoint back-derived `C = A(3) − B(3)
+= 0` via the abstract-difference rule after `B` (alone) inherited the parent
+scope. **Root cause pinned from `ScopeComputer.computeScopes` at the pinned
+commit: each derivation rule runs as one full pass over all sigs (changes
+accumulate live within the pass), is re-run to exhaustion, then control restarts
+from the top** — so `derive_scope_from_parent` scopes *both* unscoped siblings
+in one sweep and the difference rule never sees a half-updated state. (Also
+pinned: the childless-enum→0 assignment does **not** set the rule's changed
+flag.) `scope.rs` now ports the pass-at-a-time discipline; the regression
+(`abstract_unscoped_children_scope_bug` in `tests/solve.rs`, plus the scope-table
+pin in `tests/scope.rs`) is live, and the 11 baseline disagreements this caused
+are gone. Encoder goldens use `in`-subset sigs and explicitly-scoped children to
+test subset-sig encoding cleanly.
+
+**Encoder design (mt-033).** Bottom-up over the three-sorted IR: each `RelExpr`
+→ a sparse boolean **matrix** (only upper-bound tuples stored, keyed by tuple in
+lexicographic order), each `Formula` → a Tseitin `Bool` (constant or one literal),
+each `IntExpr` → a two's-complement bit-vector. Variable layout is ADR-0011
+decision 3: every bounded relation's `upper ∖ lower` tuples get primary variables
+first, in `RelId` × tuple order, then Tseitin auxiliaries; blocking over the
+primary variables only gives the raw SB-0 count. Closure is iterated squaring
+(`⌈log₂|U|⌉` rounds); `lone`/`one` use pairwise at-most-one; cardinality is a
+sequential ripple-carry count; `int[·]` a gated two's-complement sum with an
+overflow flag conjoined as `¬flag` when overflow is forbidden. **Measured
+integer needs of the 124 lowerable corpus commands: `Const` (36), `Card` (46),
+`AtomToInt` (68) — zero arithmetic / `sum` / int-ITE**, so those are typed defers
+(`TranslateError::LoweringUnsupported`, never a wrong verdict); the full
+integer/counting fidelity is Rung 4 (ADR-0011).
+
+**Corpus end-to-end (all 167 files, `crates/als-core/tests/solve_corpus.rs`).**
+564 root-module commands, post-scope-fix at the default 1s/command budget
+(`METTLE_SOLVE_BUDGET_MS` env-scales, mt-014 idiom): **440 lower-defer, 56
+solved (28 SAT / 28 UNSAT), 68 over-budget** (grounding-heavy goals —
+quantifiers ground without env-aware caching this rung, a non-gating perf item),
+**zero panics, deterministic** (a second solve of each small command gives the
+same verdict). Against the 234-verdict `baselines/` overlap, **one**
+disagreement remains: `mediaAssets.als` `check PasteCut` (`mettle=SAT /
+jar=UNSAT`), a genuine encoder-side under-constraint on a complex multi-field
+`check` — mt-034's instance self-check should localize it; mt-037 owns the fix.
+(The pre-fix numbers — 81 solved / 44 agree / 12 disagree at 5s — dropped 11
+disagreements to the scope fix; some previously-trivial wrong-scope commands
+became real problems and moved to over-budget.)

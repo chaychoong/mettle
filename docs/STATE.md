@@ -2,8 +2,8 @@
 
 > The live "where are we" doc. Update this at the end of every work chunk. On pickup, read this first.
 
-**Last updated:** 2026-07-16 (mt-032 CDCL solver merged)
-**Current rung:** **Rung 3 (relational core — "it actually solves my models") — in progress.** Contract (mt-028/ADR-0011) + scopes→universe (mt-029) + bounds (mt-030) + IR lowering/goal assembly (mt-031) + **CDCL solver (mt-032)** done; next is CNF encoding + instance decode (mt-033) — the phase that connects the lowered goal to the solver and makes mettle *answer* for the first time. Follow-up bead **mt-038** filed (lowering defer buckets; must close before mt-037). Rung 2 + ADR-0010 extension complete; owner touchpoint passed 2026-07-16 with the residual diagnostic gap filed as backlog bead **mt-027**.
+**Last updated:** 2026-07-16 (mt-033 CNF encoding + first verdicts merged)
+**Current rung:** **Rung 3 (relational core — "it actually solves my models") — in progress.** All four pipeline phases + the solver are in (mt-028..033): **mettle now returns real SAT/UNSAT verdicts and instances** — 15 jar-verified verdict goldens agree, SB-0 counts exact (probe T3 = 7; `oracle/test1.als` = **1129**), corpus solves 56 commands end-to-end (1 known baseline disagreement, `mediaAssets`, for mt-034/037). Next: mt-034 (evaluator + self-check net). Follow-up bead **mt-038** filed (lowering defer buckets; must close before mt-037). Rung 2 + ADR-0010 extension complete; owner touchpoint passed 2026-07-16 with the residual diagnostic gap filed as backlog bead **mt-027**.
 **Scorecard:** verdicts — corpus 167/167 = 100% both stages; alloy4fun 150,891 codes → **0 jar-accepts/mettle-rejects**, **99.79% agreement**, 314 over-accepts. Warnings (mt-023) — all 20 classes; corpus 0 missing; alloy4fun **99.80% files identical** (192 missing / 20 extra, root-caused in [reference/warning-parity.md](reference/warning-parity.md)). Speed (mt-024 `conform bench`) — mettle resolve ~4× the jar's batch total (caveat printed by the tool).
 **Conformance scorecard:** harness exists (Net 0 live); mettle-side solving not yet implemented. Rung-1 gauge: **corpus lex, parse, AND round-trip rate 167/167** (alloytools-models + portus-63), plus mt-014's mutation fuzzer (default 4,248 mutants/~5s in CI, verified to 88,500 mutants offline) — zero panics, sane spans, round-trip holds. Oracle baseline committed: `baselines/` (234 jar verdicts over alloytools-models, triaged).
 **Builds:** `cargo build/fmt/clippy/test` all green workspace-wide (~180 tests + the fuzzer). **Human-testable now:** `cargo build -p mettle && ./target/debug/mettle parse <file.als>` pretty-prints any Alloy 6 model (`--ast` for the structural dump); malformed input and pathologically-deep nesting both render precise caret diagnostics, never a crash.
@@ -35,14 +35,14 @@
 - Toolchains in this VM: Rust stable (`~/.cargo/bin`) and OpenJDK 21.
 
 ## In flight (delegated, background)
-- _None._ mt-032 merged 2026-07-16. LEDGER-004 **approved** (amended two-part rule) — mt-035 unblocked (depends mt-030, now met).
+- _None._ mt-033 merged 2026-07-16. LEDGER-004 **approved** (amended two-part rule) — mt-035 unblocked (depends mt-030, now met).
 
 ## Not yet started
-- Remaining Rung-3 beads: mt-033 (CNF + decode), mt-034 (evaluator/self-check), mt-035 (`util/ordering` exact bounds), mt-036 (`mettle run` CLI → owner touchpoint), mt-037 (solve gauge), mt-038 (lowering defers, before mt-037).
+- Remaining Rung-3 beads: mt-034 (evaluator/self-check), mt-035 (`util/ordering` exact bounds), mt-036 (`mettle run` CLI → owner touchpoint), mt-037 (solve gauge), mt-038 (lowering defers, before mt-037).
 - Backlog: **mt-021** (printer/dumper recursion depth; needs a small ADR; not rung-gating), **mt-027** (residual diagnostic parity).
 
 ## Next chunk (planned)
-**mt-033 — CNF encoding + instance decode** (`als-core`/`als-solve` boundary): bounded IR + bounds → `Cnf` with the fixed variable order (one boolean per relation×candidate-tuple in `RelId`×lex order — the primary vars; Tseitin auxiliaries after), the classic bounds-relational-to-SAT encoding of every IR op the 124 lowerable commands use; `Assignment` → relation tuple sets (instance decode); enumeration via mt-032's `block()` over **primary vars only**; the `expect 1 ⇒ symmetry 0` coupling is moot (mettle has no SB) but `expect` mining stays verdict-only here. Overflow (LEDGER-001 forbid-default) enters at the int-op encoding — pin against translation-ref §2.4. → opus. After it: mt-034 evaluator/self-check, then mt-035 ordering. Pacing contract: one chunk per "proceed", report, stop.
+**mt-034 — evaluator + self-check net** (`als-core`): evaluate any IR formula/expression against a concrete `Instance` (three-sorted evaluation over `TupleSet`s, translation-ref §6); wire the self-check — every SAT instance re-evaluated against its full goal, `debug_assert!` + a checked mode the corpus test uses; it should **localize the mediaAssets under-constraint** (an instance that fails its own goal names the defective conjunct via mt-031's provenance labels). Also the substrate for the Rung-5 REPL. → opus. Then mt-035 (ordering), mt-036 (CLI → owner touchpoint). Pacing contract: one chunk per "proceed", report, stop.
 
 ## Key syntax facts pinned this session (details in [reference/alloy6-grammar.md](reference/alloy6-grammar.md))
 - The public grammar appendix is NOT the truth; the reference's `Alloy.lex`/`Alloy.cup`/`CompFilter` at the jar's build commit are, plus jar probes for anything ambiguous.

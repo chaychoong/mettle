@@ -428,3 +428,26 @@ fn inexact_parent_scope_raised_too() {
     let p = su.scopes.iter().next().expect("P entry");
     assert_eq!((p.scope, p.is_exact), (3, false));
 }
+
+#[test]
+fn abstract_unscoped_children_both_inherit_parent_scope() {
+    // Probe S1 / T5 semantics (mt-033 review fix): the derivation rules run as
+    // full passes, so BOTH unscoped children inherit the parent's scope in one
+    // rule-3 sweep — the abstract-difference rule must never back-derive the
+    // second child to 0 from a half-updated state (the mt-029 per-change
+    // restart bug behind 11 wrong baseline UNSATs).
+    let su = scoped(
+        &[(
+            "root.als",
+            "abstract sig A {}\nsig B extends A {}\nsig C extends A {}\nrun {} for 3\n",
+        )],
+        0,
+    )
+    .expect("scopes derive");
+    let entries: Vec<_> = su.scopes.iter().collect();
+    assert_eq!(
+        entries.iter().map(|s| s.scope).collect::<Vec<_>>(),
+        vec![3, 3, 3],
+        "A, B, C all scope 3 — never C=0"
+    );
+}

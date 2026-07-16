@@ -289,17 +289,27 @@ impl<'a> ScopeSolver<'a> {
     }
 
     /// Runs the abstract-sum → overall → parent derivation fixpoint in strict
-    /// priority order: a higher rule is re-run to exhaustion before a lower one
-    /// fires, and any change restarts from the top (translation-ref §1.2).
+    /// priority order (translation-ref §1.2). Each rule is one **full pass**
+    /// over all sigs (changes accumulate within the pass — the reference
+    /// queries `sig2scope` live); a rule that changed anything is re-run to
+    /// exhaustion, then control restarts from the top. Pass-at-a-time matters:
+    /// with per-change restarts, `derive_parent` scoping one of two unscoped
+    /// siblings would let the abstract-difference rule fire on the half-updated
+    /// state and back-derive the other sibling to 0 — the mt-033 baseline
+    /// divergence (11 wrong UNSAT verdicts; jar-verified probe S1, `abstract
+    /// sig A; sig B, C extends A; for 3` gives B=C=3, never C=0).
     fn run_fixpoint(&mut self) -> Result<(), TranslateError> {
         loop {
             if self.derive_abstract() {
+                while self.derive_abstract() {}
                 continue;
             }
             if self.derive_overall()? {
+                while self.derive_overall()? {}
                 continue;
             }
             if self.derive_parent() {
+                while self.derive_parent() {}
                 continue;
             }
             break;
@@ -318,11 +328,13 @@ impl<'a> ScopeSolver<'a> {
         Ok(())
     }
 
-    /// Rule 1: an abstract sig's scope is the **sum** of its children when it is
-    /// unscoped and all children are scoped, or a missing child's scope is the
-    /// **difference** (clamped at 0) when the abstract sig is scoped and all but
-    /// one child is. Returns whether it changed anything.
+    /// Rule 1 (one full pass): an abstract sig's scope is the **sum** of its
+    /// children when it is unscoped and all children are scoped, or a missing
+    /// child's scope is the **difference** (clamped at 0) when the abstract sig
+    /// is scoped and all but one child is. Returns whether the pass changed
+    /// anything.
     fn derive_abstract(&mut self) -> bool {
+        let mut changed = false;
         for (id, sig) in self.world.sigs.iter() {
             if sig.is_builtin || !sig.is_abstract || self.children[id.index()].is_empty() {
                 continue;
@@ -336,32 +348,36 @@ impl<'a> ScopeSolver<'a> {
             let scoped_sum: u32 = kids.iter().filter_map(|k| self.scope[k.index()]).sum();
             if self.scope[id.index()].is_none() && unscoped.is_empty() {
                 self.scope[id.index()] = Some(scoped_sum);
-                return true;
-            }
-            if let (Some(parent_scope), [missing]) = (self.scope[id.index()], unscoped.as_slice()) {
+                changed = true;
+            } else if let (Some(parent_scope), [missing]) =
+                (self.scope[id.index()], unscoped.as_slice())
+            {
                 self.scope[missing.index()] = Some(parent_scope.saturating_sub(scoped_sum));
-                return true;
+                changed = true;
             }
         }
-        false
+        changed
     }
 
-    /// Rule 2: an unscoped top-level sig takes the overall scope; an unscoped
-    /// childless enum takes 0; an unscoped top-level sig with no overall (per-sig
-    /// scopes only) is an error. Returns whether it changed anything.
+    /// Rule 2 (one full pass): an unscoped top-level sig takes the overall
+    /// scope; an unscoped childless enum takes 0 — which the reference does
+    /// **not** count as a change for loop control; an unscoped top-level sig
+    /// with no overall (per-sig scopes only) is an error, raised mid-pass as
+    /// the reference does. Returns whether the pass changed anything.
     fn derive_overall(&mut self) -> Result<bool, TranslateError> {
+        let mut changed = false;
         for (id, sig) in self.world.sigs.iter() {
             if !self.is_scopable(id) || self.scope[id.index()].is_some() || !self.is_top_level(id) {
                 continue;
             }
             if sig.is_enum && self.children[id.index()].is_empty() {
                 self.scope[id.index()] = Some(0);
-                return Ok(true);
+                continue;
             }
             match self.effective_overall {
                 Some(n) => {
                     self.scope[id.index()] = Some(n);
-                    return Ok(true);
+                    changed = true;
                 }
                 None => {
                     return Err(TranslateError::MustSpecifyScope {
@@ -371,12 +387,16 @@ impl<'a> ScopeSolver<'a> {
                 }
             }
         }
-        Ok(false)
+        Ok(changed)
     }
 
-    /// Rule 3: an unscoped non-top-level sig inherits its (scoped) parent's
-    /// scope. Returns whether it changed anything.
+    /// Rule 3 (one full pass): every unscoped non-top-level sig with a scoped
+    /// parent inherits that scope — all such siblings in the same pass, which
+    /// is what keeps the abstract-difference rule from mis-firing (see
+    /// [`ScopeSolver::run_fixpoint`]). Returns whether the pass changed
+    /// anything.
     fn derive_parent(&mut self) -> bool {
+        let mut changed = false;
         for (id, _) in self.world.sigs.iter() {
             if !self.is_scopable(id) || self.scope[id.index()].is_some() || self.is_top_level(id) {
                 continue;
@@ -384,11 +404,11 @@ impl<'a> ScopeSolver<'a> {
             if let Some(parent) = self.prim_parent(id) {
                 if let Some(ps) = self.scope[parent.index()] {
                     self.scope[id.index()] = Some(ps);
-                    return true;
+                    changed = true;
                 }
             }
         }
-        false
+        changed
     }
 
     /// Builds the ordered universe by walking top-level sigs in declaration
