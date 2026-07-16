@@ -1,13 +1,29 @@
-//! The expression type checker (resolution-doc §4): a single bidirectional
-//! walk that computes each node's bounding type bottom-up and resolves overload
-//! choices top-down against the relevant type pushed from the parent (see the
-//! module-level note in `resolve/mod.rs` on the fused-pass structure).
+//! The expression type checker (resolution-doc §4) — the mt-025 **two-pass**
+//! structure (ADR-0008 decision 4, finally built for real).
 //!
-//! No `int`↔`Int` coercion (resolution-doc §4.5): `+ - = != in` are purely
-//! relational; only `#`, `sum`/`int`, and the `fun/…` binops produce
-//! primitive ints. The candidate scope chain follows §4.4:
-//! qualified prefix → local env → builtins → sigs/params → funcs/preds →
-//! fields (with implicit-`this` candidates inside a sig context).
+//! The reference resolves an expression in two observable passes:
+//!  1. **bottom-up `make`** builds a typed tree, attaching each node's bounding
+//!     `Type` and any *make-time* error (arity/sort/`~^*`-non-binary/multiplicity),
+//!     and turning ambiguous names/joins into `ExprChoice` candidate lists — the
+//!     join distributes over an ambiguous right operand (`Context.process`), so
+//!     `s.projects` becomes a *choice of joined results* `{s.(Person<:projects),
+//!     s.(Course<:projects)}`, each carrying its own joined type;
+//!  2. **top-down `resolve(relevantType)`** threads the precise relevant type
+//!     down (the §4.3 per-op slices), picks each `ExprChoice` by
+//!     `resolveHelper` against that relevant type (including the first-pass
+//!     retry), and settles call-vs-join.
+//!
+//! mettle folds these into one recursive walk that (a) peeks each node's
+//! bottom-up bounding type via the pure [`Cx::infer`] (so sibling slices are
+//! exact), and (b) materializes the join/name **choice** locally and resolves it
+//! against the **precise relevant [`Type`]** pushed from the parent — never the
+//! lossy `Want` enum of mt-018/022. Because a choice resolves only its *chosen*
+//! candidate, errors on discarded readings never surface: the accept/reject
+//! verdict is exactly the reference's `errors.pick()` over the final resolved
+//! tree, with **no** `ambig` / `join_lenient` / loose-want suppression (those
+//! existed only because the fused walk lacked the parent's relevant type).
+//!
+//! No `int`↔`Int` coercion (resolution-doc §4.5). Candidate scope chain §4.4.
 
 use std::collections::BTreeSet;
 
@@ -24,65 +40,93 @@ use crate::world::{FuncId, SigId};
 
 use super::Resolver;
 
-/// The relevant type pushed down during resolution (resolution-doc §4.3/§4.4).
+/// The result of resolving a node: its resolved bounding type, and whether the
+/// subtree carried an error (the reference's `errors.isEmpty()` gate — a parent
+/// suppresses its own make-error when a child already errored).
 #[derive(Clone)]
-pub(super) enum Want {
-    /// No constraint.
-    Any,
-    /// `resolve_as_formula`: must be boolean.
-    Formula,
-    /// `resolve_as_set`: any relational value. A **definite** set position
-    /// (a `some/no/one/lone/#` operand, a decl bound): a residual overload
-    /// ambiguity here is a genuine reject.
-    Set,
-    /// A set position mettle resolves **leniently** for ambiguity — the operand
-    /// of a relational join, whose precise per-column relevant slice mettle only
-    /// approximates, so it must never raise an ambiguity reject (`prev.t"` with
-    /// two `prev` overloads is disambiguated by the join slice in the reference).
-    SetLoose,
-    /// `resolve_as_int`: an integer.
-    Int,
-    /// The right operand of a relational join: prefer candidates whose first
-    /// column can join with the given left type (field disambiguation, §4.3).
-    JoinRhs(Type),
-    /// The left operand of a relational join: prefer candidates whose last
-    /// column can join with the given right type (the join-retry, §4.4).
-    JoinLhs(Type),
-    /// A relevant type a candidate must intersect at a **definite** position
-    /// (the `=`/`in` operand slices, where a residual ambiguity is a reject).
-    Of(Type),
-    /// A relevant type used to **narrow** a candidate, but **leniently**: it
-    /// filters the overload but never raises an ambiguity reject (the `+`/`&`/
-    /// `-`/`++` right operand and call arguments, whose precise slice mettle
-    /// only approximates).
-    OfLoose(Type),
+struct R {
+    ty: Type,
+    err: bool,
 }
 
-/// A resolved value candidate for a name (resolution-doc §4.4).
+impl R {
+    fn ok(ty: Type) -> Self {
+        R { ty, err: false }
+    }
+    fn bad() -> Self {
+        R {
+            ty: Type::empty(),
+            err: true,
+        }
+    }
+}
+
+/// A value candidate for a bare name (resolution-doc §4.4 `populate`): a typed
+/// leaf reading (sig / field-relation / implicit-`this` join / 0-ary call).
 struct Cand {
     ty: Type,
-    /// Disambiguation weight: implicit-`this`/cross-branch fields cost more, so
-    /// min-weight prefers direct references (resolution-doc §4.4 step 3).
+    /// Disambiguation weight (implicit-`this`/cross-branch fields cost 1).
     weight: i32,
-}
-
-/// A call candidate: a func/pred usable via box join.
-struct CallCand {
-    ret: Type,
-    params: Vec<Type>,
+    /// Human-readable origin (the reference's `reasons`), for the ambiguity msg.
     reason: String,
 }
 
-/// The expression-typing context: an immutable view of the resolved world plus
-/// the mutable lexical env and diagnostic sinks. Borrows `&Resolver`
-/// immutably, so the caller collects `errors`/`warnings` after the borrow ends.
+/// One materialized reading of a join/application spine — a candidate in the
+/// join-level `ExprChoice` (the reference's `Context.process` output).
+struct Reading {
+    /// The reading's bottom-up (merged) result type.
+    ty: Type,
+    weight: i32,
+    reason: String,
+    fin: Fin,
+}
+
+/// How to *finalize* a chosen [`Reading`]: resolve its operands against the
+/// slices derived from the relevant type, and emit any make-error.
+enum Fin {
+    /// A leaf value already fully typed (sig/const/var/field-relation/this-join).
+    Leaf,
+    /// A relational join `left . right`: resolve `left` against the join
+    /// left-slice; fire `IllegalJoin` if the join type is the `EMPTY` sentinel.
+    /// `right` is the compound right-operand expr when it is not a distributed
+    /// name leaf (a field candidate needs no further resolution).
+    Join {
+        left: ExprId,
+        right_ty: Type,
+        span: Span,
+    },
+    /// A function/predicate call: resolve each arg against its parameter type.
+    Call {
+        func: FuncId,
+        this_arg: Option<Type>,
+        args: Vec<ExprId>,
+        span: Span,
+    },
+    /// A pending / failed call spine (`ExprBadCall`, resolution-doc §4.4): the
+    /// specific func, the args gathered so far, whether an implicit `this` is the
+    /// first arg. If it survives resolution without completing, it is a reject.
+    BadCall {
+        func: FuncId,
+        args: Vec<ExprId>,
+        this_arg: bool,
+        span: Span,
+    },
+    /// A parenthesized / compound right operand: resolve the whole sub-expr
+    /// against the pushed relevant type.
+    Sub(ExprId),
+    /// A name with no candidate reading at all (unknown in a join/box spine):
+    /// a reject unless the model is `$`-lenient.
+    Unknown { name: String, span: Span },
+}
+
+/// The expression-typing context (see the module note). Borrows `&Resolver`
+/// immutably; the caller harvests `errors`/`warnings` after the borrow ends.
 pub(super) struct Cx<'a, 'g> {
     pub r: &'a Resolver<'g>,
     pub module: ModuleId,
     /// Lexical env (innermost binding last): let/quantifier vars, params, `this`.
     pub env: Vec<(String, Type)>,
-    /// The enclosing sig, for implicit-`this` field resolution (`None` at top
-    /// level, resolution-doc §3.3).
+    /// The enclosing sig, for implicit-`this` field resolution (§3.3).
     pub rootsig: Option<SigId>,
     /// A non-defined field bound: func/pred calls are disallowed (§3.4).
     pub no_calls: bool,
@@ -92,18 +136,6 @@ pub(super) struct Cx<'a, 'g> {
     pub warnings: Vec<ResolveWarning>,
     /// Remaining macro-substitution budget (resolution-doc §3.7, starts at 20).
     unroll: u32,
-    /// Set when an overloaded name was resolved accept-lean (>1 surviving
-    /// candidate) somewhere in the current top-level formula. Arity rejects are
-    /// suppressed while it holds: the wrong-arity type may be an artifact of the
-    /// arbitrary choice, not a genuine mismatch. A fully unambiguous formula
-    /// (probe 13) keeps it clear, so real arity errors still fire.
-    ambig: bool,
-    /// Set while resolving a relational join whose operand involved a
-    /// multi-candidate joinability pick (mt-022). Suppresses only the enclosing
-    /// `IllegalJoin` check — a locally-chosen join reading may be globally wrong,
-    /// so an empty outer join might not be a genuine illegal join. Scoped by the
-    /// join arm (saved/restored), unlike the formula-wide `ambig`.
-    join_lenient: bool,
     /// Env var names referenced so far (for the unused-binder warning).
     used: BTreeSet<String>,
 }
@@ -120,8 +152,6 @@ impl<'a, 'g> Cx<'a, 'g> {
             errors: Vec::new(),
             warnings: Vec::new(),
             unroll: 20,
-            ambig: false,
-            join_lenient: false,
             used: BTreeSet::new(),
         }
     }
@@ -138,123 +168,106 @@ impl<'a, 'g> Cx<'a, 'g> {
         self.errors.push(e);
     }
 
+    /// Whether this model uses `$`-meta names anywhere (`sig$`/`field$`/
+    /// `X$.subfields`). mettle does not synthesize the meta-sig atoms the meta
+    /// phase would (resolution-doc §1 phase 8); it approximates them as `univ`,
+    /// so an expression-level reject in a `$`-model may be an artifact of that
+    /// approximation. The reference resolves these with real meta atoms, so
+    /// mettle stays accept-lean (never rejects) in a `$`-model — the drop-in
+    /// gate outranks the rare `$`-model over-acceptance (LIMITATIONS).
+    fn lenient(&self) -> bool {
+        self.r.graph.seen_dollar
+    }
+
+    fn int_sig(&self) -> SigId {
+        self.r.world.builtins.int
+    }
+
+    #[allow(clippy::unused_self)]
+    fn formula(&self) -> Type {
+        Type::formula()
+    }
+    fn small_int(&self) -> Type {
+        Type::small_int(self.int_sig())
+    }
+
     // ---- public entry points (the three `resolve_as_*` wrappers, §4.3) ----
 
     /// `resolve_as_formula`: type-check `e` as a formula.
     pub(super) fn run_formula(&mut self, e: ExprId) {
-        self.ambig = false;
-        self.check(e, &Want::Formula);
+        let p = self.formula();
+        let mut r = self.resolve(e, &p);
+        self.typecheck(&mut r, &p, self.expr(e).span);
     }
 
-    /// `resolve_as_set`: type-check `e` as a relational value, returning its
-    /// set type.
+    /// `resolve_as_set`: type-check `e` as a relational value, returning its set
+    /// type.
     pub(super) fn run_set(&mut self, e: ExprId) -> Type {
-        self.ambig = false;
-        let t = self.check(e, &Want::Set);
-        t.as_set(self.r.world.builtins.int)
+        // relevant = removesBoolAndInt(bottom-up type) (resolution-doc §4.3).
+        let p = self.infer(e).remove_bool_and_int(self.int_sig());
+        let mut r = self.resolve(e, &p);
+        self.typecheck_as_set(&mut r, self.expr(e).span);
+        r.ty.as_set(self.int_sig())
     }
 
-    /// Resolves a declaration bound (field/param/quant), returning the relation
-    /// type it denotes (multiplicity markers strip away; `seq` adds the index
-    /// column).
+    /// Resolves a declaration bound (field/param/quant): the relation type it
+    /// denotes.
     pub(super) fn run_bound(&mut self, e: ExprId) -> Type {
-        self.ambig = false;
-        let t = self.check(e, &Want::Set);
-        t.as_set(self.r.world.builtins.int)
+        self.run_set(e)
     }
 
-    // ---- the core walk ----
+    // ================= bottom-up bounding types (pure `infer`) =================
+    // Mirrors the reference's `.type` after `make`: no error/warning emission,
+    // no choice resolution — an overloaded name yields the *merge* of its
+    // candidate types (`ExprChoice.make`). Used to peek a sibling's type when
+    // computing a child's precise relevant slice.
 
-    fn check(&mut self, e: ExprId, want: &Want) -> Type {
-        let ty = self.check_kind(e, want);
-        let span = self.expr(e).span;
-        self.typecheck(&ty, want, span);
-        ty
-    }
-
-    /// The reference's `typecheck_as_{formula,int,set}` sort check (resolution-doc
-    /// §4.3): once a node's bounding type is known, the position it sits in
-    /// requires a particular sort. A relational value where a formula is
-    /// required (or vice versa), or a non-int where an int is required, is an
-    /// `ErrorType` → REJECT.
-    ///
-    /// Suppressed when the subtree involved an accept-lean overload pick
-    /// (`self.ambig`) or already carries an error (`ty.is_error()`), so the
-    /// approximation never *wrongly rejects* a real model (ADR-0009): a wrong
-    /// sort there may be an artifact of the arbitrary choice, exactly as for the
-    /// arity check.
-    fn typecheck(&mut self, ty: &Type, want: &Want, span: Span) {
-        if self.ambig || ty.is_error() {
-            return;
-        }
-        match want {
-            Want::Any => {}
-            Want::Formula => {
-                if !ty.is_bool {
-                    self.err(ResolveError::NotFormula { span });
-                }
-            }
-            Want::Int => {
-                if !ty.is_small_int && !ty.is_int(&self.r.world) {
-                    self.err(ResolveError::NotInt { span });
-                }
-            }
-            // Every set position (`Set` and the join/comparison disambiguation
-            // hints, which are all set positions in the reference) rejects a
-            // boolean value used as a relation.
-            Want::Set
-            | Want::SetLoose
-            | Want::Of(_)
-            | Want::OfLoose(_)
-            | Want::JoinRhs(_)
-            | Want::JoinLhs(_) => {
-                if ty.is_bool {
-                    self.err(ResolveError::NotSet { span });
-                }
-            }
-        }
-    }
-
-    fn check_kind(&mut self, e: ExprId, want: &Want) -> Type {
+    fn infer(&self, e: ExprId) -> Type {
         let node = self.expr(e);
-        let span = node.span;
         match &node.kind {
-            ExprKind::Num(_) => Type::small_int(self.r.world.builtins.int),
+            ExprKind::Num(_) => self.small_int(),
             ExprKind::Str(_) => Type::unary(self.r.world.builtins.string),
             ExprKind::Const(c) => self.const_type(*c),
-            ExprKind::This => self.this_type(span),
-            ExprKind::Name(qn) => self.resolve_name(qn, want, false),
-            ExprKind::AtName(qn) => self.resolve_name(qn, want, true),
-            ExprKind::Unary { op, expr } => self.unary(*op, *expr, span, want),
-            // Join and box join both resolve via the applicative pass (§4.4).
+            ExprKind::This => self.infer_this(),
+            ExprKind::Name(qn) => self.infer_name(qn, false),
+            ExprKind::AtName(qn) => self.infer_name(qn, true),
+            ExprKind::Unary { op, expr } => self.infer_unary(*op, *expr),
             ExprKind::Binary {
                 op: BinOp::Join, ..
             }
-            | ExprKind::BoxJoin { .. } => self.applicative(e, span, want),
-            ExprKind::Binary { op, lhs, rhs } => self.binary(*op, *lhs, *rhs, span),
-            ExprKind::Arrow { lhs, rhs, .. } => self.arrow(*lhs, *rhs),
-            ExprKind::Compare { op, lhs, rhs, .. } => self.compare(*op, *lhs, *rhs, span),
+            | ExprKind::BoxJoin { .. } => self.infer_applicative(e),
+            ExprKind::Binary { op, lhs, rhs } => self.infer_binary(*op, *lhs, *rhs),
+            ExprKind::Arrow { lhs, rhs, .. } => {
+                self.infer(*lhs).product(&self.r.world, &self.infer(*rhs))
+            }
+            ExprKind::Compare { .. } => self.formula(),
             ExprKind::IfThenElse {
-                cond,
                 then_branch,
                 else_branch,
-            } => self.if_then_else(*cond, *then_branch, *else_branch, want),
-            ExprKind::Quant { quant, decls, body } => self.quant(*quant, decls, *body, span),
-            ExprKind::Comprehension { decls, body } => self.comprehension(decls, *body),
-            ExprKind::Let { bindings, body } => self.let_expr(bindings, *body, want),
-            ExprKind::Block(exprs) => {
-                // A single-element brace group `{ e }` is grouping (parens), so
-                // it takes the parent's relevant type and yields `e`'s type — a
-                // set `{a + b}` on the right of `in` stays a set, not a formula.
-                // A multi-formula block `{ f1 f2 }` is an implicit conjunction.
-                if let [only] = exprs.as_slice() {
-                    let only = *only;
-                    self.check(only, want)
+                ..
+            } => {
+                let t = self.infer(*then_branch);
+                let el = self.infer(*else_branch);
+                if t.is_bool || el.is_bool {
+                    self.formula()
                 } else {
-                    for &f in exprs {
-                        self.check(f, &Want::Formula);
-                    }
-                    Type::formula()
+                    t.union(&self.r.world, &el)
+                }
+            }
+            ExprKind::Quant { quant, .. } => {
+                if matches!(quant, Quant::Sum) {
+                    self.small_int()
+                } else {
+                    self.formula()
+                }
+            }
+            ExprKind::Comprehension { decls, .. } => self.infer_comprehension(decls),
+            ExprKind::Let { body, .. } => self.infer(*body),
+            ExprKind::Block(exprs) => {
+                if let [only] = exprs.as_slice() {
+                    self.infer(*only)
+                } else {
+                    self.formula()
                 }
             }
         }
@@ -270,63 +283,6 @@ impl<'a, 'g> Cx<'a, 'g> {
         }
     }
 
-    /// A pure bottom-up bounding type for `e` (the reference's `.type` after
-    /// `make`), with **no** error/warning emission and **no** choice resolution:
-    /// an overloaded name yields the *merge* of its candidate types (as
-    /// `ExprChoice.make` does). Used to peek a sibling's type when computing a
-    /// child's precise relevant type (`=`/`in` slices, resolution-doc §4.2/§4.3).
-    /// Read-only: it clones `env`/`rootsig` state through the recursion.
-    fn infer(&self, e: ExprId) -> Type {
-        let node = self.expr(e);
-        match &node.kind {
-            ExprKind::Num(_) => Type::small_int(self.r.world.builtins.int),
-            ExprKind::Str(_) => Type::unary(self.r.world.builtins.string),
-            ExprKind::Const(c) => self.const_type(*c),
-            ExprKind::This => self.infer_this(),
-            ExprKind::Name(qn) => self.infer_name(qn, false),
-            ExprKind::AtName(qn) => self.infer_name(qn, true),
-            ExprKind::Unary { op, expr } => self.infer_unary(*op, *expr),
-            ExprKind::Binary {
-                op: BinOp::Join, ..
-            }
-            | ExprKind::BoxJoin { .. } => self.infer_applicative(e),
-            ExprKind::Binary { op, lhs, rhs } => self.infer_binary(*op, *lhs, *rhs),
-            ExprKind::Arrow { lhs, rhs, .. } => {
-                self.infer(*lhs).product(&self.r.world, &self.infer(*rhs))
-            }
-            ExprKind::Compare { .. } => Type::formula(),
-            ExprKind::IfThenElse {
-                then_branch,
-                else_branch,
-                ..
-            } => {
-                let t = self.infer(*then_branch);
-                let el = self.infer(*else_branch);
-                if t.is_bool || el.is_bool {
-                    Type::formula()
-                } else {
-                    t.union(&self.r.world, &el)
-                }
-            }
-            ExprKind::Quant { quant, .. } => {
-                if matches!(quant, Quant::Sum) {
-                    Type::small_int(self.r.world.builtins.int)
-                } else {
-                    Type::formula()
-                }
-            }
-            ExprKind::Comprehension { decls, .. } => self.infer_comprehension(decls),
-            ExprKind::Let { body, .. } => self.infer(*body),
-            ExprKind::Block(exprs) => {
-                if let [only] = exprs.as_slice() {
-                    self.infer(*only)
-                } else {
-                    Type::formula()
-                }
-            }
-        }
-    }
-
     fn infer_this(&self) -> Type {
         if let Some(t) = self.env_get("this") {
             return t;
@@ -337,9 +293,7 @@ impl<'a, 'g> Cx<'a, 'g> {
         )
     }
 
-    /// The bottom-up merge of a name's candidate types (no resolution). Mirrors
-    /// [`Self::resolve_name`]'s candidate scope chain, returning the `ExprChoice`
-    /// merge (or the leaf type for a single candidate).
+    /// The bottom-up merge of a name's candidate types (no resolution).
     fn infer_name(&self, qn: &QualName, at_name: bool) -> Type {
         let segs = super::strip_this(qn.segments.iter().map(|s| s.text.clone()).collect());
         if !at_name && segs.len() == 1 {
@@ -350,10 +304,27 @@ impl<'a, 'g> Cx<'a, 'g> {
         if let Some(t) = self.builtin_value(&segs) {
             return t;
         }
+        // A `this/tail` qualifier scopes to the CURRENT module's own decls
+        // (getRawQS) — the merge over just those candidates.
+        let raw: Vec<String> = qn.segments.iter().map(|s| s.text.clone()).collect();
+        if raw.len() == 2 && raw[0] == "this" {
+            let own = self.own_candidates(&raw[1], at_name);
+            if !own.is_empty() {
+                let mut merge = Type::empty();
+                for c in &own {
+                    merge = merge.merge(&self.r.world, &c.ty);
+                }
+                return merge;
+            }
+        }
+
         let cands = self.value_candidates(&segs, at_name);
         if cands.is_empty() {
-            // A callable-by-name / macro / meta name: leniently `univ` (matches
-            // `resolve_name`'s fallback, enough for sibling-arity slicing).
+            // A 0-param macro used as a value expands to its body type (needed so
+            // `macro[x]` box joins the body relation, not a lenient `univ`).
+            if let Some(t) = self.infer_zero_macro(&segs) {
+                return t;
+            }
             return Type::unary(self.r.world.builtins.univ);
         }
         let mut merge = Type::empty();
@@ -361,6 +332,23 @@ impl<'a, 'g> Cx<'a, 'g> {
             merge = merge.merge(&self.r.world, &c.ty);
         }
         merge
+    }
+
+    /// The body type of a 0-param macro (read-only, unroll-bounded), or `None`
+    /// if `segs` is not a 0-param macro.
+    fn infer_zero_macro(&self, segs: &[String]) -> Option<Type> {
+        if self.unroll == 0 {
+            return Some(Type::unary(self.r.world.builtins.univ));
+        }
+        let mid = self.lookup_macro(segs)?;
+        if !self.r.world.macros[mid].params.is_empty() {
+            return None;
+        }
+        let mac = self.r.world.macros[mid].clone();
+        let mut sub = Cx::new(self.r, mac.module);
+        sub.unroll = self.unroll - 1;
+        sub.rootsig = self.rootsig;
+        Some(sub.infer(mac.body))
     }
 
     fn infer_unary(&self, op: UnOp, e: ExprId) -> Type {
@@ -376,7 +364,7 @@ impl<'a, 'g> Cx<'a, 'g> {
             | UnOp::After
             | UnOp::Before
             | UnOp::Historically
-            | UnOp::Once => Type::formula(),
+            | UnOp::Once => self.formula(),
             UnOp::SetOf | UnOp::ExactlyOf => self.infer(e).remove_bool_and_int(world.builtins.int),
             UnOp::SomeOf | UnOp::LoneOf | UnOp::OneOf => self.infer(e).extract(world, 1),
             UnOp::SeqOf => Type::unary(world.builtins.seq_int).product(world, &self.infer(e)),
@@ -386,7 +374,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                 Type::product_of(vec![world.builtins.univ, world.builtins.univ])
                     .union(world, &self.infer(e).closure(world))
             }
-            UnOp::Card | UnOp::IntOf | UnOp::SumOf => Type::small_int(world.builtins.int),
+            UnOp::Card | UnOp::IntOf | UnOp::SumOf => self.small_int(),
             UnOp::Prime => self.infer(e),
         }
     }
@@ -402,7 +390,7 @@ impl<'a, 'g> Cx<'a, 'g> {
             | BinOp::Releases
             | BinOp::Since
             | BinOp::Triggered
-            | BinOp::Seq => Type::formula(),
+            | BinOp::Seq => self.formula(),
             BinOp::Join => unreachable!("join is inferred by infer_applicative"),
             BinOp::Union | BinOp::Override => self
                 .infer(lhs)
@@ -418,7 +406,7 @@ impl<'a, 'g> Cx<'a, 'g> {
             | BinOp::IntSub
             | BinOp::IntMul
             | BinOp::IntDiv
-            | BinOp::IntRem => Type::small_int(world.builtins.int),
+            | BinOp::IntRem => self.small_int(),
         }
     }
 
@@ -426,9 +414,7 @@ impl<'a, 'g> Cx<'a, 'g> {
         let mut ty: Option<Type> = None;
         for &d in decls {
             let decl = &self.ast().decls[d];
-            let bt = self
-                .infer(decl.bound)
-                .remove_bool_and_int(self.r.world.builtins.int);
+            let bt = self.infer(decl.bound).remove_bool_and_int(self.int_sig());
             for _ in &decl.names {
                 ty = Some(match ty {
                     None => bt.clone(),
@@ -439,12 +425,8 @@ impl<'a, 'g> Cx<'a, 'g> {
         ty.unwrap_or_else(Type::empty)
     }
 
-    /// Bottom-up type of a `.`-join / box-join / call spine (no resolution): the
-    /// call's return type when a single applicable func/pred spine exists, else
-    /// the relational join of the parts. An approximation sufficient for sibling
-    /// slicing.
+    /// Bottom-up type of a `.`-join / box-join / call spine (no resolution).
     fn infer_applicative(&self, e: ExprId) -> Type {
-        // Builtin box targets.
         if let ExprKind::BoxJoin { target, args } = &self.expr(e).kind {
             if let ExprKind::Name(qn) = &self.expr(*target).kind {
                 let joined = qn
@@ -454,8 +436,8 @@ impl<'a, 'g> Cx<'a, 'g> {
                     .collect::<Vec<_>>()
                     .join("/");
                 match joined.as_str() {
-                    "pred/totalOrder" | "disj" => return Type::formula(),
-                    "int" | "sum" => return Type::small_int(self.r.world.builtins.int),
+                    "pred/totalOrder" | "disj" => return self.formula(),
+                    "int" | "sum" => return self.small_int(),
                     "Int" => return Type::unary(self.r.world.builtins.int),
                     _ => {}
                 }
@@ -463,109 +445,738 @@ impl<'a, 'g> Cx<'a, 'g> {
             let _ = args;
         }
         if let Some((mid, _)) = self.collect_macro_spine(e) {
-            // Approximate a macro use by `univ` (its body type needs expansion).
             let _ = mid;
             return Type::unary(self.r.world.builtins.univ);
         }
-        if let Some((cands, arg_exprs)) = self.collect_spine(e) {
-            let n = arg_exprs.len();
-            let rets: Vec<Type> = cands
-                .iter()
-                .filter(|c| c.params.len() == n)
-                .map(|c| c.ret.clone())
-                .collect();
-            if !rets.is_empty() {
-                let mut merge = Type::empty();
-                for r in &rets {
-                    merge = merge.merge(&self.r.world, r);
-                }
-                return merge;
-            }
+        // The bottom-up type is the **merge of all readings** (the reference's
+        // `ExprChoice.make` merge) — a call reading contributes its return type
+        // only when it is genuinely applicable (build_readings checks this), so a
+        // non-applicable auto-opened pred (`integer/pos`) never poisons the type.
+        let span = self.expr(e).span;
+        let readings = self.build_readings(e, span);
+        let mut merge = Type::empty();
+        for r in &readings {
+            merge = merge.merge(&self.r.world, &r.ty);
         }
-        // Relational reading.
-        match &self.expr(e).kind {
-            ExprKind::Binary { lhs, rhs, .. } => {
-                self.infer(*lhs).join(&self.r.world, &self.infer(*rhs))
+        merge
+    }
+
+    // ==================== top-down resolve (Pass B) ====================
+
+    /// Resolves `e` against the relevant type `p` (the reference's
+    /// `Expr.resolve(t, warns)`), returning its resolved type and whether the
+    /// subtree errored.
+    fn resolve(&mut self, e: ExprId, p: &Type) -> R {
+        let node = self.expr(e);
+        let span = node.span;
+        match &node.kind {
+            ExprKind::Num(_) => R::ok(self.small_int()),
+            ExprKind::Str(_) => R::ok(Type::unary(self.r.world.builtins.string)),
+            ExprKind::Const(c) => R::ok(self.const_type(*c)),
+            ExprKind::This => R::ok(self.infer_this()),
+            ExprKind::Name(qn) => self.resolve_name(qn, p, false),
+            ExprKind::AtName(qn) => self.resolve_name(qn, p, true),
+            ExprKind::Unary { op, expr } => self.unary_r(*op, *expr, span, p),
+            ExprKind::Binary {
+                op: BinOp::Join, ..
             }
-            ExprKind::BoxJoin { target, args } => {
-                let mut acc = self.infer(*target);
-                for &a in args {
-                    acc = self.infer(a).join(&self.r.world, &acc);
+            | ExprKind::BoxJoin { .. } => self.applicative(e, span, p),
+            ExprKind::Binary { op, lhs, rhs } => self.binary(*op, *lhs, *rhs, span, p),
+            ExprKind::Arrow { lhs, rhs, .. } => self.arrow(*lhs, *rhs, p),
+            ExprKind::Compare { op, lhs, rhs, .. } => self.compare(*op, *lhs, *rhs, span),
+            ExprKind::IfThenElse {
+                cond,
+                then_branch,
+                else_branch,
+            } => self.if_then_else(*cond, *then_branch, *else_branch, p),
+            ExprKind::Quant { quant, decls, body } => self.quant(*quant, decls, *body, span),
+            ExprKind::Comprehension { decls, body } => self.comprehension(decls, *body),
+            ExprKind::Let { bindings, body } => self.let_expr(bindings, *body, p),
+            ExprKind::Block(exprs) => {
+                if let [only] = exprs.as_slice() {
+                    self.resolve(*only, p)
+                } else {
+                    let mut err = false;
+                    for &f in exprs {
+                        let fp = self.formula();
+                        let mut r = self.resolve(f, &fp);
+                        self.typecheck(&mut r, &fp, self.expr(f).span);
+                        err |= r.err;
+                    }
+                    R {
+                        ty: self.formula(),
+                        err,
+                    }
                 }
-                acc
             }
-            _ => Type::empty(),
         }
     }
 
-    fn this_type(&mut self, span: Span) -> Type {
-        if let Some(t) = self.env_get("this") {
-            return t;
+    /// `resolve` a child, then apply the reference's `typecheck_as_{formula,int,
+    /// set}` for the position (make/`resolve_as_*` sort enforcement, §4.3).
+    fn resolve_checked(&mut self, e: ExprId, p: &Type) -> R {
+        let mut r = self.resolve(e, p);
+        self.typecheck(&mut r, p, self.expr(e).span);
+        r
+    }
+
+    /// The sort check for a relevant type `p` (formula / int / set), emitting
+    /// `NotFormula`/`NotInt`/`NotSet` on mismatch. No cascade on an already-
+    /// errored subtree (the reference's `errors.isEmpty()` short-circuit).
+    fn typecheck(&mut self, r: &mut R, p: &Type, span: Span) {
+        if r.err || self.lenient() {
+            return;
         }
-        if let Some(s) = self.rootsig {
-            return self.r.world.sigs[s].ty.clone();
+        if p.is_bool {
+            if !r.ty.is_bool {
+                self.err(ResolveError::NotFormula { span });
+                r.err = true;
+            }
+        } else if p.is_small_int {
+            if !r.ty.is_small_int && !r.ty.is_int(&self.r.world) {
+                self.err(ResolveError::NotInt { span });
+                r.err = true;
+            }
+        } else {
+            self.typecheck_as_set(r, span);
         }
-        // `this` outside any sig context: the reference rejects; lean to univ
-        // rather than cascade (accept-lean, warnings secondary).
-        let _ = span;
-        Type::unary(self.r.world.builtins.univ)
+    }
+
+    /// `typecheck_as_set`: a formula (`is_bool`) where a set is required is an
+    /// error; a `small_int`/`is_int` is cast (no error). EMPTY is already an
+    /// error subtree.
+    fn typecheck_as_set(&mut self, r: &mut R, span: Span) {
+        if r.err || self.lenient() {
+            return;
+        }
+        if r.ty.is_bool {
+            self.err(ResolveError::NotSet { span });
+            r.err = true;
+        }
+    }
+
+    // ---- operators (§4.3 slices) ----
+
+    #[allow(clippy::too_many_lines)]
+    fn unary_r(&mut self, op: UnOp, e: ExprId, span: Span, p: &Type) -> R {
+        let world = &self.r.world;
+        match op {
+            UnOp::Not => {
+                let fp = self.formula();
+                let sub = self.resolve_checked(e, &fp);
+                R {
+                    ty: self.formula(),
+                    err: sub.err,
+                }
+            }
+            UnOp::No | UnOp::Some | UnOp::Lone | UnOp::One => {
+                // relevant = removesBoolAndInt(sub.type)
+                let s = self.infer(e).remove_bool_and_int(self.int_sig());
+                let mut sub = self.resolve(e, &s);
+                self.typecheck_as_set(&mut sub, self.expr(e).span);
+                R {
+                    ty: self.formula(),
+                    err: sub.err,
+                }
+            }
+            UnOp::SetOf | UnOp::ExactlyOf | UnOp::SomeOf | UnOp::LoneOf | UnOp::OneOf => {
+                // multiplicity bound markers: operand as a set; result type per make.
+                let s = self.infer(e).remove_bool_and_int(self.int_sig());
+                let mut sub = self.resolve(e, &s);
+                self.typecheck_as_set(&mut sub, self.expr(e).span);
+                let ty = match op {
+                    UnOp::SetOf | UnOp::ExactlyOf => sub.ty.remove_bool_and_int(self.int_sig()),
+                    _ => sub.ty.extract(&self.r.world, 1),
+                };
+                if !sub.err && ty.is_error() && !self.lenient() {
+                    // "After some/lone/one, this must be a unary set" / set-of / exactly-of.
+                    self.err(ResolveError::NotSet { span });
+                    return R::bad();
+                }
+                R { ty, err: sub.err }
+            }
+            UnOp::SeqOf => {
+                let s = self.infer(e).remove_bool_and_int(self.int_sig());
+                let mut sub = self.resolve(e, &s);
+                self.typecheck_as_set(&mut sub, self.expr(e).span);
+                R {
+                    ty: Type::unary(self.r.world.builtins.seq_int).product(&self.r.world, &sub.ty),
+                    err: sub.err,
+                }
+            }
+            UnOp::Transpose => {
+                // s = sub.type.transpose().intersect(p).transpose()
+                let subt = self.infer(e);
+                let s = subt
+                    .transpose(&self.r.world)
+                    .intersect(&self.r.world, p)
+                    .transpose(&self.r.world);
+                let s = if s.has_entries() { s } else { subt.clone() };
+                let mut sub = self.resolve(e, &s);
+                self.typecheck_as_set(&mut sub, self.expr(e).span);
+                let ty = sub.ty.transpose(&self.r.world);
+                if !sub.err && ty.is_error() && !self.lenient() {
+                    self.err(ResolveError::UnaryNotBinary { op: "~", span });
+                    return R::bad();
+                }
+                R { ty, err: sub.err }
+            }
+            UnOp::Closure | UnOp::ReflexiveClosure => {
+                let subt = self.infer(e);
+                // resolveClosure(p, sub.type) narrows the operand to its binary
+                // part; mettle approximates with the operand's own binary shape
+                // (closure-operand ambiguity is negligible for the verdict).
+                let s = {
+                    let c = subt.extract(&self.r.world, 2);
+                    if c.has_entries() {
+                        c
+                    } else {
+                        subt.clone()
+                    }
+                };
+                let _ = p;
+                let mut sub = self.resolve(e, &s);
+                self.typecheck_as_set(&mut sub, self.expr(e).span);
+                let closed = sub.ty.closure(&self.r.world);
+                if !sub.err && closed.is_error() && !self.lenient() {
+                    self.err(ResolveError::UnaryNotBinary {
+                        op: if matches!(op, UnOp::Closure) {
+                            "^"
+                        } else {
+                            "*"
+                        },
+                        span,
+                    });
+                    return R::bad();
+                }
+                let ty = if matches!(op, UnOp::ReflexiveClosure) {
+                    Type::product_of(vec![self.r.world.builtins.univ, self.r.world.builtins.univ])
+                } else {
+                    closed
+                };
+                R { ty, err: sub.err }
+            }
+            UnOp::Card => {
+                let s = self.infer(e).remove_bool_and_int(self.int_sig());
+                let mut sub = self.resolve(e, &s);
+                self.typecheck_as_set(&mut sub, self.expr(e).span);
+                R {
+                    ty: self.small_int(),
+                    err: sub.err,
+                }
+            }
+            UnOp::IntOf | UnOp::SumOf => {
+                // int[e]/sum e: cast a unary set of Int atoms to a primitive int.
+                let s = self.infer(e).remove_bool_and_int(self.int_sig());
+                let mut sub = self.resolve(e, &s);
+                self.typecheck_as_set(&mut sub, self.expr(e).span);
+                R {
+                    ty: self.small_int(),
+                    err: sub.err,
+                }
+            }
+            UnOp::Always
+            | UnOp::Eventually
+            | UnOp::After
+            | UnOp::Before
+            | UnOp::Historically
+            | UnOp::Once => {
+                let _ = world;
+                let fp = self.formula();
+                let sub = self.resolve_checked(e, &fp);
+                R {
+                    ty: self.formula(),
+                    err: sub.err,
+                }
+            }
+            UnOp::Prime => {
+                // prime is a NOOP-typed postfix (§4.6): thread the parent relevant.
+                self.resolve(e, p)
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn binary(&mut self, op: BinOp, lhs: ExprId, rhs: ExprId, span: Span, p: &Type) -> R {
+        let world = &self.r.world;
+        match op {
+            BinOp::Or
+            | BinOp::And
+            | BinOp::Iff
+            | BinOp::Implies
+            | BinOp::Until
+            | BinOp::Releases
+            | BinOp::Since
+            | BinOp::Triggered
+            | BinOp::Seq => {
+                let fp = self.formula();
+                let l = self.resolve_checked(lhs, &fp);
+                let r = self.resolve_checked(rhs, &fp);
+                R {
+                    ty: self.formula(),
+                    err: l.err || r.err,
+                }
+            }
+            BinOp::Join => unreachable!("join is handled by applicative"),
+            BinOp::Union | BinOp::Override | BinOp::Intersect | BinOp::Diff => {
+                let lt = self.infer(lhs);
+                let rt = self.infer(rhs);
+                // make-type + make-error (bottom-up), gated on children error-free.
+                let (make_ty, arity_ok) = match op {
+                    BinOp::Union | BinOp::Override => {
+                        let t = lt.union_with_common_arity(world, &rt);
+                        (t.clone(), t.has_entries())
+                    }
+                    BinOp::Intersect => {
+                        let t = lt.intersect(world, &rt);
+                        (t.clone(), t.has_entries())
+                    }
+                    BinOp::Diff => {
+                        let t = lt.pick_common_arity(world, &rt);
+                        (t.clone(), t.has_entries())
+                    }
+                    _ => unreachable!(),
+                };
+                // relevant slices (§4.3): +/++/& = a.intersect(p),b.intersect(p);
+                // - = a=p, b=p.intersect(b).
+                let (ap, bp) = match op {
+                    BinOp::Diff => (p.clone(), p.intersect(world, &rt)),
+                    _ => (lt.intersect(world, p), rt.intersect(world, p)),
+                };
+                let l = self.resolve_checked(lhs, &ap);
+                let r = self.resolve_checked(rhs, &bp);
+                if !l.err && !r.err && !arity_ok && !self.lenient() {
+                    self.err(ResolveError::ArityMismatch {
+                        op: bin_sym(op),
+                        span,
+                    });
+                    return R::bad();
+                }
+                let ty = match op {
+                    BinOp::Diff => lt.pick_common_arity(world, &rt),
+                    _ => make_ty,
+                };
+                R {
+                    ty,
+                    err: l.err || r.err,
+                }
+            }
+            BinOp::DomRestrict => {
+                let lt = self.infer(lhs);
+                let rt = self.infer(rhs);
+                let make_ty = rt.domain_restrict(world, &lt);
+                let (ap, bp) = self.domain_slices(&lt, &rt, p);
+                let l = self.resolve_checked(lhs, &ap);
+                let r = self.resolve_checked(rhs, &bp);
+                if !l.err && !r.err && make_ty.is_error() && !self.lenient() {
+                    self.err(ResolveError::NotUnarySet {
+                        span: self.expr(lhs).span,
+                    });
+                    return R::bad();
+                }
+                R {
+                    ty: make_ty,
+                    err: l.err || r.err,
+                }
+            }
+            BinOp::RanRestrict => {
+                let lt = self.infer(lhs);
+                let rt = self.infer(rhs);
+                let make_ty = lt.range_restrict(world, &rt);
+                let (ap, bp) = self.range_slices(&lt, &rt, p);
+                let l = self.resolve_checked(lhs, &ap);
+                let r = self.resolve_checked(rhs, &bp);
+                if !l.err && !r.err && make_ty.is_error() && !self.lenient() {
+                    self.err(ResolveError::NotUnarySet {
+                        span: self.expr(rhs).span,
+                    });
+                    return R::bad();
+                }
+                R {
+                    ty: make_ty,
+                    err: l.err || r.err,
+                }
+            }
+            BinOp::Shl
+            | BinOp::Sha
+            | BinOp::Shr
+            | BinOp::IntAdd
+            | BinOp::IntSub
+            | BinOp::IntMul
+            | BinOp::IntDiv
+            | BinOp::IntRem => {
+                let ip = self.small_int();
+                let l = self.resolve_checked(lhs, &ip);
+                let r = self.resolve_checked(rhs, &ip);
+                R {
+                    ty: self.small_int(),
+                    err: l.err || r.err,
+                }
+            }
+        }
+    }
+
+    fn arrow(&mut self, lhs: ExprId, rhs: ExprId, p: &Type) -> R {
+        let world = &self.r.world;
+        let lt = self.infer(lhs);
+        let rt = self.infer(rhs);
+        // Arrow slices: leftType' from p.intersect(aa.product(bb)); fallback a=a,b=b.
+        let (ap, bp) = self.arrow_slices(&lt, &rt, p);
+        let l = self.resolve_checked(lhs, &ap);
+        let r = self.resolve_checked(rhs, &bp);
+        R {
+            ty: lt.product(world, &rt),
+            err: l.err || r.err,
+        }
+    }
+
+    /// The `->` (default) resolve slice: `leftType' = {r1 | ∃ r2, r1->r2 ∈ p}`,
+    /// `rightType' = {r2 | ∃ r1, r1->r2 ∈ p}`, with the reference's fallback to
+    /// the raw operand types when either slice empties.
+    fn arrow_slices(&self, a: &Type, b: &Type, p: &Type) -> (Type, Type) {
+        let world = &self.r.world;
+        let mut left = Type::empty();
+        let mut right = Type::empty();
+        for aa in &a.entries {
+            if aa.is_empty(world) {
+                continue;
+            }
+            for bb in &b.entries {
+                if bb.is_empty(world) {
+                    continue;
+                }
+                let prod =
+                    Type::product_of(aa.0.clone()).product(world, &Type::product_of(bb.0.clone()));
+                let inter = p.intersect(world, &prod);
+                for cc in &inter.entries {
+                    if cc.is_empty(world) {
+                        continue;
+                    }
+                    let al = cc.0[..aa.arity()].to_vec();
+                    let ar = cc.0[aa.arity()..].to_vec();
+                    left = left.union(world, &Type::product_of(al));
+                    right = right.union(world, &Type::product_of(ar));
+                }
+            }
+        }
+        if left.is_error() || right.is_error() {
+            (a.clone(), b.clone())
+        } else {
+            (left, right)
+        }
+    }
+
+    /// The `<:` DOMAIN resolve slice (resolution-doc §4.3): the left (domain)
+    /// operand is restricted to the unary parts that survive `p`, the right to
+    /// the relations whose first column those unaries restrict.
+    #[allow(clippy::many_single_char_names)]
+    fn domain_slices(&self, a: &Type, b: &Type, p: &Type) -> (Type, Type) {
+        let world = &self.r.world;
+        let mut left = Type::empty();
+        let mut right = Type::empty();
+        for aa in &a.entries {
+            if aa.arity() != 1 {
+                continue;
+            }
+            for bb in &b.entries {
+                if !p.has_arity(bb.arity()) {
+                    continue;
+                }
+                let restricted = restrict_col(world, bb, aa.0[0], 0);
+                let inter = p.intersect(world, &Type::product_of(restricted.0));
+                for cc in &inter.entries {
+                    if cc.is_empty(world) {
+                        continue;
+                    }
+                    left = left.union(world, &Type::product_of(vec![cc.0[0]]));
+                    right = right.union(world, &Type::product_of(cc.0.clone()));
+                }
+            }
+        }
+        if left.is_error() || right.is_error() {
+            let l = a.extract(world, 1);
+            let r = b.pick_common_arity(world, p);
+            (
+                if l.has_entries() { l } else { a.clone() },
+                if r.has_entries() { r } else { b.clone() },
+            )
+        } else {
+            (left, right)
+        }
+    }
+
+    /// The `:>` RANGE resolve slice (resolution-doc §4.3), symmetric to
+    /// [`Self::domain_slices`] on the last column.
+    #[allow(clippy::many_single_char_names)]
+    fn range_slices(&self, a: &Type, b: &Type, p: &Type) -> (Type, Type) {
+        let world = &self.r.world;
+        let mut left = Type::empty();
+        let mut right = Type::empty();
+        for bb in &b.entries {
+            if bb.arity() != 1 {
+                continue;
+            }
+            for aa in &a.entries {
+                if !p.has_arity(aa.arity()) {
+                    continue;
+                }
+                let restricted = restrict_col(world, aa, bb.0[0], aa.arity() - 1);
+                let inter = p.intersect(world, &Type::product_of(restricted.0));
+                for cc in &inter.entries {
+                    if cc.is_empty(world) {
+                        continue;
+                    }
+                    left = left.union(world, &Type::product_of(cc.0.clone()));
+                    let last = cc.arity() - 1;
+                    right = right.union(world, &Type::product_of(vec![cc.0[last]]));
+                }
+            }
+        }
+        if left.is_error() || right.is_error() {
+            let l = a.pick_common_arity(world, p);
+            let r = b.extract(world, 1);
+            (
+                if l.has_entries() { l } else { a.clone() },
+                if r.has_entries() { r } else { b.clone() },
+            )
+        } else {
+            (left, right)
+        }
+    }
+
+    fn compare(&mut self, op: CmpOp, lhs: ExprId, rhs: ExprId, span: Span) -> R {
+        let world = &self.r.world;
+        match op {
+            CmpOp::Lt | CmpOp::Gt | CmpOp::Le | CmpOp::Ge => {
+                let ip = self.small_int();
+                let l = self.resolve_checked(lhs, &ip);
+                let r = self.resolve_checked(rhs, &ip);
+                R {
+                    ty: self.formula(),
+                    err: l.err || r.err,
+                }
+            }
+            CmpOp::Eq | CmpOp::In => {
+                let lt = self.infer(lhs);
+                let rt = self.infer(rhs);
+                let (ap, bp) = if matches!(op, CmpOp::Eq) {
+                    // = : p=a.intersect(b); if p.hasTuple a=b=p else a=a.pickCommonArity(b),b=b.pickCommonArity(a)
+                    let pp = lt.intersect(world, &rt);
+                    if pp.has_tuple(world) {
+                        (pp.clone(), pp)
+                    } else {
+                        (
+                            lt.pick_common_arity(world, &rt),
+                            rt.pick_common_arity(world, &lt),
+                        )
+                    }
+                } else {
+                    // in : a=a.pickCommonArity(b); b=b.intersect(a)
+                    let a = lt.pick_common_arity(world, &rt);
+                    let b = rt.intersect(world, &a);
+                    (a, b)
+                };
+                let l = self.resolve_checked(lhs, &ap);
+                let r = self.resolve_checked(rhs, &bp);
+                let both_int = lt.is_int(world) && rt.is_int(world);
+                let arity_ok = lt.has_common_arity(&rt) || (matches!(op, CmpOp::Eq) && both_int);
+                if !l.err && !r.err && !arity_ok && !self.lenient() {
+                    self.err(ResolveError::ArityMismatch {
+                        op: if matches!(op, CmpOp::Eq) { "=" } else { "in" },
+                        span,
+                    });
+                    return R::bad();
+                }
+                R {
+                    ty: self.formula(),
+                    err: l.err || r.err,
+                }
+            }
+        }
+    }
+
+    fn if_then_else(&mut self, cond: ExprId, then_e: ExprId, else_e: ExprId, p: &Type) -> R {
+        let world = &self.r.world;
+        let fp = self.formula();
+        let c = self.resolve_checked(cond, &fp);
+        // ITE slice: if p.size>0 a=a.intersect(p),b=b.intersect(p) else a=b=p.
+        let (ap, bp) = if p.has_entries() || p.is_bool || p.is_small_int {
+            let at = self.infer(then_e);
+            let bt = self.infer(else_e);
+            (at.intersect(world, p), bt.intersect(world, p))
+        } else {
+            (p.clone(), p.clone())
+        };
+        // makeBool when p.is_bool: push formula relevant.
+        let (ap, bp) = if p.is_bool {
+            (self.formula(), self.formula())
+        } else {
+            (ap, bp)
+        };
+        let t = self.resolve_checked(then_e, &ap);
+        let el = self.resolve_checked(else_e, &bp);
+        let ty = if t.ty.is_bool || el.ty.is_bool {
+            self.formula()
+        } else {
+            t.ty.union(world, &el.ty)
+        };
+        R {
+            ty,
+            err: c.err || t.err || el.err,
+        }
     }
 
     // ---- names & candidates (§4.4) ----
 
-    fn resolve_name(&mut self, qn: &QualName, want: &Want, at_name: bool) -> Type {
+    fn resolve_name(&mut self, qn: &QualName, p: &Type, at_name: bool) -> R {
         let segs = super::strip_this(qn.segments.iter().map(|s| s.text.clone()).collect());
 
-        // Local env (single-segment only) shadows everything (§4.4 step 2).
-        // An `@name` reference never matches the lexical env: the reference does
-        // `env.get(name)` with the `@` still attached, and env keys are bare, so
-        // `@t` skips the quantifier/param var `t` and goes straight to the field
-        // (resolution-doc §3.3 — `@` disables the implicit-`this` join *and* the
-        // env shadow). Without this, `this.@t` inside `pred p[t: …]` wrongly
-        // binds `@t` to the param `t`.
         if !at_name && segs.len() == 1 {
             if let Some(t) = self.env_get(&segs[0]) {
                 self.used.insert(segs[0].clone());
-                return t;
+                return R::ok(t);
+            }
+        }
+        if let Some(t) = self.builtin_value(&segs) {
+            return R::ok(t);
+        }
+        if let Some(mid) = self.lookup_macro(&segs) {
+            if self.r.world.macros[mid].params.is_empty() {
+                return self.expand_macro(mid, &[], p);
             }
         }
 
-        // Builtin value names spelled with keywords / `fun/…` (§4.1/§4.5).
-        if let Some(t) = self.builtin_value(&segs) {
-            return t;
-        }
-
-        // A 0-param macro used as a value expands textually (§3.7).
-        if let Some(mid) = self.lookup_macro(&segs) {
-            if self.r.world.macros[mid].params.is_empty() {
-                return self.expand_macro(mid, &[]);
+        // A `this/tail` qualifier scopes to the CURRENT module's own decls first
+        // (getRawQS): if `tail` is declared here, only those candidates are used
+        // (never the auto-opened `util/integer` overloads) — the reference's rule
+        // that makes `~this/next` unambiguous where `~next` is ambiguous.
+        let raw: Vec<String> = qn.segments.iter().map(|s| s.text.clone()).collect();
+        if raw.len() == 2 && raw[0] == "this" {
+            let own = self.own_candidates(&raw[1], at_name);
+            if !own.is_empty() {
+                return self.pick_name(&own, p, &raw[1], qn.span);
             }
         }
 
         let cands = self.value_candidates(&segs, at_name);
         if cands.is_empty() {
-            // A func/pred/macro name used as a bare value — e.g. a callable
-            // passed as a macro argument (`interesting_not_axiom[Hb_p]`): treat
-            // it leniently as `univ` so the textual substitution type-checks
-            // (mettle binds macro params by type, not by expression).
             if !self.lookup_funcs(&segs).is_empty() || self.lookup_macro(&segs).is_some() {
-                return Type::unary(self.r.world.builtins.univ);
+                return R::ok(Type::unary(self.r.world.builtins.univ));
             }
-            // Meta names (`sig$`/`field$`, `X$.subfields`, …) are synthesized by
-            // the meta phase, which mettle defers (resolution-doc §1 phase 8,
-            // §9): in a `$`-bearing model, treat an otherwise-unknown name
-            // leniently as `univ` rather than reject (the reference accepts;
-            // LIMITATIONS).
             if segs.iter().any(|s| s.contains('$')) || self.r.graph.seen_dollar {
-                return Type::unary(self.r.world.builtins.univ);
+                return R::ok(Type::unary(self.r.world.builtins.univ));
             }
             self.err(ResolveError::UnknownName {
                 name: segs.join("/"),
                 span: qn.span,
             });
-            return Type::empty();
+            return R::bad();
         }
-        self.pick(&cands, want, &segs.join("/"), qn.span)
+        // resolveHelper over the leaf candidates against p.
+        self.pick_name(&cands, p, &segs.join("/"), qn.span)
+    }
+
+    /// `ExprChoice.resolveHelper` over leaf name candidates (§4.4), on precise
+    /// types (mt-022/025). Returns the resolved type, or an ambiguity/no-match
+    /// reject at a definite position.
+    fn pick_name(&mut self, cands: &[Cand], p: &Type, name: &str, span: Span) -> R {
+        if let [only] = cands {
+            return R::ok(only.ty.clone());
+        }
+        let types: Vec<Type> = cands.iter().map(|c| c.ty.clone()).collect();
+        let weights: Vec<i32> = cands.iter().map(|c| c.weight).collect();
+        match self.resolve_helper(&types, &weights, p) {
+            Pick::One(i) => R::ok(cands[i].ty.clone()),
+            Pick::NoneArity(k) => R::ok(self.none_of_arity(k)),
+            Pick::Ambiguous(idxs) => {
+                if self.lenient() {
+                    return R::ok(cands[idxs[0]].ty.clone());
+                }
+                self.err(ResolveError::AmbiguousName {
+                    name: name.to_owned(),
+                    span,
+                    candidates: idxs.iter().map(|&i| cands[i].reason.clone()).collect(),
+                });
+                R::bad()
+            }
+            Pick::NoIntersect => {
+                if self.lenient() {
+                    return R::ok(cands[0].ty.clone());
+                }
+                self.err(ResolveError::AmbiguousName {
+                    name: name.to_owned(),
+                    span,
+                    candidates: cands.iter().map(|c| c.reason.clone()).collect(),
+                });
+                R::bad()
+            }
+        }
+    }
+
+    /// The reference `ExprChoice.resolveHelper` (resolution-doc §4.4) over a
+    /// candidate type list. Leaf candidates (mettle's readings are pre-typed) so
+    /// the first-pass retry is a fixpoint — implemented as the same min-weight
+    /// selection.
+    fn resolve_helper(&self, types: &[Type], weights: &[i32], p: &Type) -> Pick {
+        let world = &self.r.world;
+        // exact matches: (p.is_bool && c.is_bool) || p.intersects(c).
+        let mut pool: Vec<usize> = (0..types.len())
+            .filter(|&i| (p.is_bool && types[i].is_bool) || p.intersects(world, &types[i]))
+            .collect();
+        // else legal matches: c.hasCommonArity(p).
+        if pool.is_empty() {
+            pool = (0..types.len())
+                .filter(|&i| types[i].has_common_arity(p))
+                .collect();
+        }
+        if pool.is_empty() {
+            return Pick::NoIntersect;
+        }
+        // min-weight survivors.
+        if pool.len() > 1 {
+            let minw = pool.iter().map(|&i| weights[i]).min().unwrap_or(0);
+            pool.retain(|&i| weights[i] == minw);
+        }
+        if pool.len() == 1 {
+            return Pick::One(pool[0]);
+        }
+        // >1 but all collapse to the same-arity empty set → none of that arity.
+        let mut arity: Option<usize> = None;
+        let mut collapse = true;
+        for &i in &pool {
+            let t = &types[i];
+            if t.is_bool || t.is_small_int || t.is_int(world) || t.has_tuple(world) {
+                collapse = false;
+                break;
+            }
+            match t.arity() {
+                Some(a) if a >= 1 => {
+                    if let Some(prev) = arity {
+                        if prev != a {
+                            collapse = false;
+                            break;
+                        }
+                    } else {
+                        arity = Some(a);
+                    }
+                }
+                _ => {
+                    collapse = false;
+                    break;
+                }
+            }
+        }
+        if collapse {
+            if let Some(a) = arity {
+                return Pick::NoneArity(a);
+            }
+        }
+        Pick::Ambiguous(pool)
+    }
+
+    fn none_of_arity(&self, k: usize) -> Type {
+        let none = self.r.world.builtins.none;
+        Type::product_of(vec![none; k.max(1)])
     }
 
     /// Looks up a macro by (possibly qualified) name across the reachable scope.
@@ -590,59 +1201,57 @@ impl<'a, 'g> Cx<'a, 'g> {
         None
     }
 
-    /// Expands a macro by textual substitution (resolution-doc §3.7): the
-    /// argument types bind the macro's params, and the body is typed in the
-    /// macro's defining module with the 20-unroll budget.
-    fn expand_macro(&mut self, mid: crate::world::MacroId, arg_exprs: &[ExprId]) -> Type {
+    /// Expands a macro by textual substitution (resolution-doc §3.7).
+    fn expand_macro(&mut self, mid: crate::world::MacroId, arg_exprs: &[ExprId], p: &Type) -> R {
         if self.unroll == 0 {
             self.err(ResolveError::MacroTooDeep {
                 span: self.r.world.macros[mid].span,
             });
-            return Type::unary(self.r.world.builtins.univ);
+            return R::ok(Type::unary(self.r.world.builtins.univ));
         }
-        // Argument types are evaluated in the caller's context.
         let arg_types: Vec<Type> = arg_exprs
             .iter()
-            .map(|&a| self.check(a, &Want::Any))
+            .map(|&a| {
+                let ap = self.infer(a);
+                self.resolve(a, &ap).ty
+            })
             .collect();
-        // A macro that receives a *callable passed by name* (a higher-order
-        // macro: `interesting_not_axiom[some_pred]`) cannot be faithfully
-        // type-checked by mettle's type-only param binding — the reference
-        // substitutes the name textually so `param[args]` inside the body
-        // becomes a real call, but mettle only has the param's (lenient `univ`)
-        // type. Resolve such a body **accept-lean** (ADR-0009): mark it
-        // ambiguous so the sort/arity rejects are suppressed and the
-        // approximation never wrongly rejects a real model.
+        // A macro receiving a *callable passed by name* (`interesting_not_axiom
+        // [Hb_p]`) cannot be faithfully typed by mettle's type-only param
+        // binding — the reference substitutes the name textually so `param[args]`
+        // in the body becomes a real call. Resolve such a body **accept-lean**
+        // (drop its errors), so the approximation never wrongly rejects (mt-020).
         let lean = arg_exprs.iter().any(|&a| self.arg_is_callable_by_name(a));
         let mac = self.r.world.macros[mid].clone();
         let mut sub = Cx::new(self.r, mac.module);
         sub.unroll = self.unroll - 1;
         sub.rootsig = self.rootsig;
-        sub.ambig = lean;
         for (name, ty) in mac.params.iter().zip(&arg_types) {
             sub.env.push((name.clone(), ty.clone()));
         }
-        let t = sub.check(mac.body, &Want::Any);
-        self.errors.append(&mut sub.errors);
+        let mut r = sub.resolve(mac.body, p);
+        if lean {
+            // Accept-lean: drop the body's errors AND mark the result errored so
+            // the *caller's* sort/typecheck never rejects either (a higher-order
+            // macro's expanded `param[args]` type is only approximated).
+            r.err = true;
+        } else {
+            self.errors.append(&mut sub.errors);
+        }
         self.warnings.append(&mut sub.warnings);
-        t
+        r
     }
 
     /// Whether `e` is a bare name referring to a func/pred/macro that *takes
     /// arguments* — a callable passed by name, with no 0-ary value reading.
-    /// Such an argument has no faithful value type in mettle's approximation
-    /// (the reference substitutes it textually); a macro receiving one is
-    /// resolved accept-lean (see [`Self::expand_macro`]).
     fn arg_is_callable_by_name(&self, e: ExprId) -> bool {
         let ExprKind::Name(qn) = &self.expr(e).kind else {
             return false;
         };
         let segs = super::strip_this(qn.segments.iter().map(|s| s.text.clone()).collect());
-        // A local relation/param value is a value, not a global callable.
         if segs.len() == 1 && self.env_get(&segs[0]).is_some() {
             return false;
         }
-        // A 0-ary value reading (sig, field, 0-ary fun) types fine as a value.
         if !self.value_candidates(&segs, false).is_empty() {
             return false;
         }
@@ -656,196 +1265,7 @@ impl<'a, 'g> Cx<'a, 'g> {
         callable_func || callable_macro
     }
 
-    /// The reference's `ExprChoice.resolveHelper` (resolution-doc §4.4), now on
-    /// **precise** types (mt-022): given the relevant type `t` derived from the
-    /// position `want`, keep exact matches (`t.intersects(cand)` or both
-    /// boolean), else legal matches (common arity), then the minimum-weight
-    /// survivors; a single distinct type wins; several that all collapse to the
-    /// same-arity empty set become `none`; otherwise it is a genuine ambiguity.
-    ///
-    /// At a **definite** position (a formula/int/set/`Of` slice) a residual
-    /// ambiguity is the reference's "This name is ambiguous" reject. At a
-    /// **lenient** position (`Any`, or a join slice mettle only approximates)
-    /// mettle stays accept-lean — it picks the first min-weight candidate and
-    /// flags `ambig` so downstream sort/arity checks are suppressed, since the
-    /// reference's precise join/argument slice (which mettle does not compute
-    /// there) might narrow to one.
-    fn pick(&mut self, cands: &[Cand], want: &Want, name: &str, span: Span) -> Type {
-        // A single candidate is not an `ExprChoice` at all (the reference's
-        // `ExprChoice.make` shortcut): it resolves to itself, with no relevant-
-        // type filter and no ambiguity — so a wrong relevant type here does not
-        // suppress the parent's arity/sort check.
-        if let [only] = cands {
-            return only.ty.clone();
-        }
-        // A join position filters candidates by *joinability* with the sibling
-        // (the reference's join slice), not by plain intersection — this is what
-        // excludes a non-joinable implicit-`this` field (weight 0) in favour of
-        // the cross-branch bare relation (weight 1) in `X.realm`. It is always a
-        // lenient position (no ambiguity reject).
-        if matches!(want, Want::JoinRhs(_) | Want::JoinLhs(_)) {
-            let joinable: Vec<&Cand> = cands.iter().filter(|c| self.fits(&c.ty, want)).collect();
-            // A join position that had **more than one** candidate is resolved
-            // by mettle's *local* joinability filter, which can pick a reading
-            // that is right for this join but wrong for an enclosing one (the
-            // reference keeps every reading in an `ExprChoice` and resolves the
-            // whole spine top-down — e.g. `s.grades.c` with a `Person`-owned and
-            // a `Course`-owned `grades`). mettle cannot reconsider, so it flags
-            // the surrounding join lenient, suppressing *only* the enclosing
-            // illegal-join check (not the formula's sort/arity checks) that a
-            // wrong local pick could spuriously trip.
-            if cands.len() > 1 {
-                self.join_lenient = true;
-            }
-            let pool: Vec<&Cand> = if joinable.is_empty() {
-                cands.iter().collect()
-            } else {
-                joinable
-            };
-            let min_w = pool.iter().map(|c| c.weight).min().unwrap_or(0);
-            let best: Vec<&Cand> = pool.into_iter().filter(|c| c.weight == min_w).collect();
-            return best.first().map_or_else(Type::empty, |c| c.ty.clone());
-        }
-
-        let (relevant, lenient) = self.relevant_of(want, cands);
-        // Exact matches, then (if none) legal (common-arity) matches.
-        let exact: Vec<&Cand> = cands
-            .iter()
-            .filter(|c| self.choice_intersects(&c.ty, &relevant))
-            .collect();
-        let pool: Vec<&Cand> = if exact.is_empty() {
-            cands
-                .iter()
-                .filter(|c| c.ty.has_common_arity(&relevant))
-                .collect()
-        } else {
-            exact
-        };
-        // No candidate matches the relevant type at all. The reference errors
-        // ("its relevant type does not intersect …"); mettle stays accept-lean
-        // (this is a rare corner and risks false rejects), picking leniently.
-        if pool.is_empty() {
-            self.ambig = true;
-            return cands.first().map_or_else(Type::empty, |c| c.ty.clone());
-        }
-        let min_w = pool.iter().map(|c| c.weight).min().unwrap_or(0);
-        let best: Vec<&Cand> = pool.into_iter().filter(|c| c.weight == min_w).collect();
-
-        let mut distinct: Vec<Type> = Vec::new();
-        for c in &best {
-            if !distinct.contains(&c.ty) {
-                distinct.push(c.ty.clone());
-            }
-        }
-        if distinct.len() == 1 {
-            return distinct.into_iter().next().unwrap_or_else(Type::empty);
-        }
-        // All collapse to the same-arity empty set ⇒ `none` (§4.4 step 6).
-        if distinct.iter().all(|t| t.is_error() || self.all_none(t)) {
-            return Type::unary(self.r.world.builtins.none);
-        }
-        if lenient {
-            self.ambig = true;
-            return best.first().map_or_else(Type::empty, |c| c.ty.clone());
-        }
-        // A genuine ambiguity at a definite position (resolution-doc §4.4).
-        self.err(ResolveError::AmbiguousName {
-            name: name.to_owned(),
-            span,
-            candidates: Vec::new(),
-        });
-        best.first().map_or_else(Type::empty, |c| c.ty.clone())
-    }
-
-    /// Derives the relevant type `t` that `resolveHelper` filters against, from
-    /// the position `want` and the candidate set, plus whether the position is
-    /// **lenient** (mettle does not compute a precise-enough slice there, so it
-    /// must not raise an ambiguity reject). `Set`/`Of` positions carry a precise
-    /// relevant type; `Any` and the join-slice hints are lenient.
-    fn relevant_of(&self, want: &Want, cands: &[Cand]) -> (Type, bool) {
-        match want {
-            Want::Formula => (Type::formula(), false),
-            Want::Int => (Type::small_int(self.r.world.builtins.int), false),
-            Want::Of(t) => (t.clone(), false),
-            Want::OfLoose(t) => (t.clone(), true),
-            Want::Set => {
-                // `removesBoolAndInt` of the choice's own merged bounding type —
-                // the set relevant type when no sibling narrows it further.
-                let mut merge = Type::empty();
-                for c in cands {
-                    merge = merge.merge(&self.r.world, &c.ty);
-                }
-                (merge.remove_bool_and_int(self.r.world.builtins.int), false)
-            }
-            // A join-slice hint or an unconstrained position: keep every
-            // candidate (its merge) but never raise ambiguity here.
-            Want::Any | Want::SetLoose | Want::JoinRhs(_) | Want::JoinLhs(_) => {
-                let mut merge = Type::empty();
-                for c in cands {
-                    merge = merge.merge(&self.r.world, &c.ty);
-                }
-                (merge, true)
-            }
-        }
-    }
-
-    /// The reference's `ExprChoice` exact-match test (`resolveHelper`): a
-    /// candidate `cand` is an exact match for the relevant type `t` iff both are
-    /// boolean, or their product types intersect (`Type.intersects`). The
-    /// historical int↔Int coercion is dead (resolution-doc §4.5), so there is no
-    /// int special case.
-    fn choice_intersects(&self, cand: &Type, t: &Type) -> bool {
-        (t.is_bool && cand.is_bool) || t.intersects(&self.r.world, cand)
-    }
-
-    /// Whether a value of type `ty` has the **sort** required at a `want`
-    /// position (a formula where a formula is wanted, a relation where a set is
-    /// wanted, an int where an int is wanted). Unlike [`Self::fits`], a set
-    /// position rejects a boolean value — this is what keeps a bool pred-call
-    /// (`util/integer` `pos`/`neg`/…) from being committed where the relational
-    /// field-join reading is the one the reference's relevant type selects.
-    fn sort_fits(&self, ty: &Type, want: &Want) -> bool {
-        match want {
-            Want::Any => true,
-            Want::Formula => ty.is_bool,
-            Want::Int => ty.is_small_int || ty.is_int(&self.r.world),
-            Want::Set
-            | Want::SetLoose
-            | Want::Of(_)
-            | Want::OfLoose(_)
-            | Want::JoinRhs(_)
-            | Want::JoinLhs(_) => !ty.is_bool && ty.has_entries(),
-        }
-    }
-
-    fn fits(&self, ty: &Type, want: &Want) -> bool {
-        match want {
-            Want::Any | Want::Set | Want::SetLoose => true,
-            Want::Formula => ty.is_bool,
-            Want::Int => ty.is_small_int || ty.is_int(&self.r.world),
-            // A candidate fits a join position only if the join yields a
-            // *genuine* tuple (`has_tuple`) — a disjoint join now keeps a
-            // `NONE`-headed product (mt-022), so `has_entries` would wrongly
-            // admit a non-joinable candidate (`c.projects` picking `Person <:
-            // projects` and collapsing to `none`).
-            Want::JoinRhs(left) => {
-                !ty.is_bool && left.join(&self.r.world, ty).has_tuple(&self.r.world)
-            }
-            Want::JoinLhs(right) => {
-                !ty.is_bool && ty.join(&self.r.world, right).has_tuple(&self.r.world)
-            }
-            Want::Of(t) | Want::OfLoose(t) => {
-                ty.intersects(&self.r.world, t)
-                    || (ty.is_small_int && t.is_int(&self.r.world))
-                    || (ty.is_int(&self.r.world) && t.is_small_int)
-            }
-        }
-    }
-
     /// Builtin value names: `fun/max`, `fun/min`, `fun/next`, `fun/prev` (§4.5).
-    /// These are synthesized by the parser as **single segments containing
-    /// `/`**, so we match the joined form. `Int`/`String`/`seq/Int`/`univ`/
-    /// `none` are handled as sigs by the builtin-sig lookup.
     fn builtin_value(&self, segs: &[String]) -> Option<Type> {
         let int = self.r.world.builtins.int;
         match segs.join("/").as_str() {
@@ -859,33 +1279,27 @@ impl<'a, 'g> Cx<'a, 'g> {
     /// 0-ary funcs, and fields (with implicit-`this` inside a sig context).
     fn value_candidates(&self, segs: &[String], at_name: bool) -> Vec<Cand> {
         let mut out = Vec::new();
-
-        // Sigs and module params (builtins folded in by lookup_sig_from).
         if let Some(sig) = self.r.lookup_sig_from(self.module, segs) {
             out.push(Cand {
                 ty: self.r.world.sigs[sig].ty.clone(),
                 weight: 0,
+                reason: format!("sig {}", self.r.world.sigs[sig].name),
             });
         }
-
-        // Zero-arg funcs/preds used as values: a 0-ary fun is its return value,
-        // a 0-ary pred is a formula (`Geometry => …`). Weight 0 (`populate`
-        // adds `ExprCall.make(f, null, penalty)` with penalty 0).
         for fid in self.lookup_funcs(segs) {
             let f = &self.r.world.funcs[fid];
             if f.params.is_empty() {
                 out.push(Cand {
                     ty: if f.is_pred {
-                        Type::formula()
+                        self.formula()
                     } else {
                         f.return_ty.clone()
                     },
                     weight: 0,
+                    reason: format!("{} {}", if f.is_pred { "pred" } else { "fun" }, f.name),
                 });
             }
         }
-
-        // Fields by label (only the tail segment matters for bare labels).
         let label = &segs[segs.len() - 1];
         if segs.len() == 1 {
             self.collect_field_cands(label, at_name, &mut out);
@@ -893,16 +1307,48 @@ impl<'a, 'g> Cx<'a, 'g> {
         out
     }
 
+    /// Candidates for a `this/tail` name: sigs/0-ary funcs/fields declared in
+    /// the **current module only** (the reference's `getRawQS` own-module scope).
+    fn own_candidates(&self, tail: &str, at_name: bool) -> Vec<Cand> {
+        let mut out = Vec::new();
+        let m = &self.r.mods[self.module.index()];
+        if let Some(&sig) = m.sigs.get(tail).or_else(|| m.param_sigs.get(tail)) {
+            out.push(Cand {
+                ty: self.r.world.sigs[sig].ty.clone(),
+                weight: 0,
+                reason: format!("sig {}", self.r.world.sigs[sig].name),
+            });
+        }
+        if let Some(fids) = m.funcs.get(tail) {
+            for &fid in fids {
+                let f = &self.r.world.funcs[fid];
+                if f.params.is_empty() {
+                    out.push(Cand {
+                        ty: if f.is_pred {
+                            self.formula()
+                        } else {
+                            f.return_ty.clone()
+                        },
+                        weight: 0,
+                        reason: format!("{} {}", if f.is_pred { "pred" } else { "fun" }, f.name),
+                    });
+                }
+            }
+        }
+        // Fields owned by a sig declared in this module.
+        for (_fid, field) in self.r.world.fields.iter() {
+            if field.name != tail || self.r.world.sigs[field.owner].module != self.module {
+                continue;
+            }
+            self.push_field_cand(field, at_name, &mut out);
+        }
+        out
+    }
+
     /// Field candidates for a bare label (resolution-doc §3.3/§3.4, weights per
-    /// `populate` resolution-mode 1):
-    /// - `rootsig == None` (top level / pred body): the bare relation, weight 0.
-    /// - inside a sig context whose `rootsig` is the same as or a descendant of
-    ///   the field's owner: the implicit-`this` join (`this.f`), weight 0; or,
-    ///   for `@f`, the bare relation, weight 0 (the `@` disables the join).
-    /// - a cross-branch field (`rootsig` set but not descended from the owner):
-    ///   the bare relation, weight **1** (the reference's "penalty of 1").
+    /// `populate` resolution-mode 1).
     fn collect_field_cands(&self, label: &str, at_name: bool, out: &mut Vec<Cand>) {
-        for (fid, field) in self.r.world.fields.iter() {
+        for (_fid, field) in self.r.world.fields.iter() {
             if field.name != *label {
                 continue;
             }
@@ -910,33 +1356,49 @@ impl<'a, 'g> Cx<'a, 'g> {
             if !self.reachable_contains(owner_mod) {
                 continue;
             }
-            let _ = fid;
-            match self.rootsig {
-                None => out.push(Cand {
-                    ty: field.ty.clone(),
-                    weight: 0,
-                }),
-                Some(root) if self.r.world.sig_is_same_or_descendent(root, field.owner) => {
-                    if at_name {
-                        // `@f`: the bare relation, no implicit `this` join.
-                        out.push(Cand {
-                            ty: field.ty.clone(),
-                            weight: 0,
-                        });
-                    } else {
-                        let this_ty = self.r.world.sigs[root].ty.clone();
-                        out.push(Cand {
-                            ty: this_ty.join(&self.r.world, &field.ty),
-                            weight: 0,
-                        });
-                    }
+            self.push_field_cand(field, at_name, out);
+        }
+    }
+
+    /// Pushes the candidate reading(s) for one field per `populate` (weights per
+    /// resolution-mode 1: implicit-`this`/bare 0, cross-branch 1).
+    fn push_field_cand(
+        &self,
+        field: &crate::world::ResolvedField,
+        at_name: bool,
+        out: &mut Vec<Cand>,
+    ) {
+        let reason = format!(
+            "field {} <: {}",
+            self.r.world.sigs[field.owner].name, field.name
+        );
+        match self.rootsig {
+            None => out.push(Cand {
+                ty: field.ty.clone(),
+                weight: 0,
+                reason,
+            }),
+            Some(root) if self.r.world.sig_is_same_or_descendent(root, field.owner) => {
+                if at_name {
+                    out.push(Cand {
+                        ty: field.ty.clone(),
+                        weight: 0,
+                        reason,
+                    });
+                } else {
+                    let this_ty = self.r.world.sigs[root].ty.clone();
+                    out.push(Cand {
+                        ty: this_ty.join(&self.r.world, &field.ty),
+                        weight: 0,
+                        reason,
+                    });
                 }
-                // Cross-branch: reachable via the bare relation, penalty 1.
-                Some(_) => out.push(Cand {
-                    ty: field.ty.clone(),
-                    weight: 1,
-                }),
             }
+            Some(_) => out.push(Cand {
+                ty: field.ty.clone(),
+                weight: 1,
+                reason,
+            }),
         }
     }
 
@@ -953,9 +1415,6 @@ impl<'a, 'g> Cx<'a, 'g> {
         if segs.len() > 1 {
             let refs: Vec<&str> = segs.iter().map(String::as_str).collect();
             let (landing, consumed) = self.r.graph.walk_prefix(self.module, &refs, self.module);
-            // A qualified prefix that matched no alias (`consumed == 0`) is a
-            // genuine qualified-lookup failure — no unqualified fallback (else
-            // `Color/first` would wrongly find a bare `first`, probe 09).
             if consumed == 0 {
                 return out;
             }
@@ -982,236 +1441,16 @@ impl<'a, 'g> Cx<'a, 'g> {
         out
     }
 
-    // ---- operators ----
+    // ---- application vs relational join (§4.4) — the materialized join choice ----
 
-    fn unary(&mut self, op: UnOp, e: ExprId, span: Span, want: &Want) -> Type {
-        match op {
-            // Formula prefixes.
-            UnOp::Not => {
-                self.check(e, &Want::Formula);
-                Type::formula()
-            }
-            UnOp::No | UnOp::Some | UnOp::Lone | UnOp::One => {
-                self.check(e, &Want::Set);
-                Type::formula()
-            }
-            // Multiplicity bound markers: the operand's set type unchanged.
-            UnOp::SetOf | UnOp::SomeOf | UnOp::LoneOf | UnOp::OneOf | UnOp::ExactlyOf => {
-                self.check(e, &Want::Set)
-            }
-            // `seq A` bound: prepend the seq-index column (§4.5).
-            UnOp::SeqOf => {
-                let t = self.check(e, &Want::SetLoose);
-                Type::unary(self.r.world.builtins.seq_int).product(&self.r.world, &t)
-            }
-            // Relational unary: `~`/`^`/`*` require a binary operand
-            // (resolution-doc §4.2). The reference computes the arity error
-            // bottom-up regardless of the top-down type.
-            UnOp::Transpose => {
-                let t = self.check(e, &Want::SetLoose);
-                self.require_binary(&t, "~", span);
-                t.transpose(&self.r.world)
-            }
-            UnOp::Closure | UnOp::ReflexiveClosure => {
-                // A closure preserves the operand's binary shape, so a relevant
-                // type from the parent (e.g. `i.*next`'s `JoinRhs`) flows
-                // straight to the operand to disambiguate it.
-                let operand_want = match want {
-                    Want::JoinRhs(_) => want,
-                    _ => &Want::SetLoose,
-                };
-                let t = self.check(e, operand_want);
-                self.require_binary(
-                    &t,
-                    if matches!(op, UnOp::Closure) {
-                        "^"
-                    } else {
-                        "*"
-                    },
-                    span,
-                );
-                // `*` includes `univ->univ`.
-                if matches!(op, UnOp::ReflexiveClosure) {
-                    Type::product_of(vec![self.r.world.builtins.univ, self.r.world.builtins.univ])
-                        .union(&self.r.world, &t)
-                } else {
-                    t
-                }
-            }
-            // Integer casts.
-            UnOp::Card | UnOp::IntOf | UnOp::SumOf => {
-                self.check(e, &Want::Set);
-                Type::small_int(self.r.world.builtins.int)
-            }
-            // Temporal unary: type like the operand (formula/relation preserved).
-            UnOp::Always
-            | UnOp::Eventually
-            | UnOp::After
-            | UnOp::Before
-            | UnOp::Historically
-            | UnOp::Once => {
-                let _ = want;
-                self.check(e, &Want::Formula);
-                Type::formula()
-            }
-            UnOp::Prime => self.check(e, &Want::SetLoose),
-        }
-    }
-
-    fn binary(&mut self, op: BinOp, lhs: ExprId, rhs: ExprId, span: Span) -> Type {
-        match op {
-            // Logical / temporal binaries → FORMULA.
-            BinOp::Or
-            | BinOp::And
-            | BinOp::Iff
-            | BinOp::Implies
-            | BinOp::Until
-            | BinOp::Releases
-            | BinOp::Since
-            | BinOp::Triggered
-            | BinOp::Seq => {
-                self.check(lhs, &Want::Formula);
-                self.check(rhs, &Want::Formula);
-                Type::formula()
-            }
-            // Join is routed through `applicative` before reaching `binary`.
-            BinOp::Join => unreachable!("join is handled by applicative"),
-            // Set ops needing common arity. The right operand is resolved with
-            // the left type as a relevant hint (`Of`), which disambiguates
-            // overloaded names like `Time - first` (§4.3). `Of` only filters —
-            // `pick` falls back to the full candidate pool if it empties — so a
-            // legitimately different-typed operand (`Man + Woman`) is unharmed.
-            BinOp::Union | BinOp::Intersect | BinOp::Diff | BinOp::Override => {
-                // `+`/`&`/`-`/`++` slice each operand by `intersect(p)` in the
-                // reference, so both are lenient set positions (an overloaded
-                // operand like `prev + next` is narrowed by the parent relevant
-                // type, which mettle approximates).
-                let l = self.check(lhs, &Want::SetLoose);
-                let r = if l.is_error() {
-                    self.check(rhs, &Want::SetLoose)
-                } else {
-                    self.check(rhs, &Want::OfLoose(l.clone()))
-                };
-                if !l.is_error() && !r.is_error() && !l.has_common_arity(&r) && !self.ambig {
-                    self.err(ResolveError::ArityMismatch {
-                        op: bin_sym(op),
-                        span,
-                    });
-                    return Type::empty();
-                }
-                match op {
-                    BinOp::Intersect => l.intersect(&self.r.world, &r),
-                    BinOp::Diff => l,
-                    _ => l.union(&self.r.world, &r),
-                }
-            }
-            // Domain restriction `A <: r`: the domain `A` must be a **unary**
-            // set (`ExprBinary.make` DOMAIN → `r.domainRestrict(A)`, EMPTY ⇒
-            // "This must be a unary set" at `A`). Its first column also
-            // disambiguates `r`'s fields the same way a join does.
-            BinOp::DomRestrict => {
-                let l = self.check(lhs, &Want::SetLoose);
-                let r = self.check(rhs, &Want::JoinRhs(l.clone()));
-                let ty = r.domain_restrict(&self.r.world, &l);
-                self.check_restrict_unary(&l, &r, &ty, self.expr(lhs).span);
-                ty
-            }
-            // Range restriction `r :> A`: the range `A` (rhs) must be unary.
-            BinOp::RanRestrict => {
-                let l = self.check(lhs, &Want::SetLoose);
-                let r = self.check(rhs, &Want::SetLoose);
-                let ty = l.range_restrict(&self.r.world, &r);
-                self.check_restrict_unary(&l, &r, &ty, self.expr(rhs).span);
-                ty
-            }
-            // Integer binops (`fun/add` …, shifts): both int → small int.
-            BinOp::Shl
-            | BinOp::Sha
-            | BinOp::Shr
-            | BinOp::IntAdd
-            | BinOp::IntSub
-            | BinOp::IntMul
-            | BinOp::IntDiv
-            | BinOp::IntRem => {
-                self.check(lhs, &Want::Int);
-                self.check(rhs, &Want::Int);
-                Type::small_int(self.r.world.builtins.int)
-            }
-        }
-    }
-
-    fn arrow(&mut self, lhs: ExprId, rhs: ExprId) -> Type {
-        // Arrow operands are lenient set positions: the reference slices each by
-        // `p.intersect(product)`, which mettle approximates.
-        let l = self.check(lhs, &Want::SetLoose);
-        let r = self.check(rhs, &Want::SetLoose);
-        l.product(&self.r.world, &r)
-    }
-
-    fn compare(&mut self, op: CmpOp, lhs: ExprId, rhs: ExprId, span: Span) -> Type {
-        match op {
-            CmpOp::Lt | CmpOp::Gt | CmpOp::Le | CmpOp::Ge => {
-                // Arithmetic comparisons: both sides typechecked as int.
-                self.check(lhs, &Want::Int);
-                self.check(rhs, &Want::Int);
-                Type::formula()
-            }
-            CmpOp::Eq | CmpOp::In => {
-                // The reference's relevant slices for `=`/`in` (ExprBinary.resolve):
-                // the left is sliced to the arities it shares with the right
-                // (`pickCommonArity`), the right to its intersection with that
-                // left slice. These require both bottom-up types, computed via
-                // `infer` (a pure sibling-type peek). This precision is what
-                // distinguishes a real ambiguity (`projects in Course->Project`:
-                // both same-arity fields survive) from an arity-narrowed unique
-                // pick (`keys in Room lone->Key`: only the arity-2 field).
-                let lt = self.infer(lhs);
-                let rt = self.infer(rhs);
-                let a = lt.pick_common_arity(&self.r.world, &rt);
-                let b = rt.intersect(&self.r.world, &a);
-                let l = self.check(lhs, &Want::Of(a));
-                let r = self.check(rhs, &Want::Of(b));
-                let both_int = l.is_int(&self.r.world) && r.is_int(&self.r.world);
-                let ok = l.is_error() || r.is_error() || l.has_common_arity(&r) || both_int;
-                if !ok && !self.ambig {
-                    self.err(ResolveError::ArityMismatch {
-                        op: if matches!(op, CmpOp::Eq) { "=" } else { "in" },
-                        span,
-                    });
-                }
-                Type::formula()
-            }
-        }
-    }
-
-    fn if_then_else(&mut self, cond: ExprId, then_e: ExprId, else_e: ExprId, want: &Want) -> Type {
-        self.check(cond, &Want::Formula);
-        let t = self.check(then_e, want);
-        let e = self.check(else_e, want);
-        if t.is_bool || e.is_bool {
-            Type::formula()
-        } else {
-            t.union(&self.r.world, &e)
-        }
-    }
-
-    // ---- application vs relational join (§4.4) ----
-
-    /// Resolves a `.`-join or box-join node. First tries the **applicative**
-    /// reading — a func/pred spine gathering args from leading `.`-joins and
-    /// trailing `[…]` (so `x.f`, `f[x]`, and `x.f[y]` all become `f[x(,y)]`,
-    /// resolution-doc §4.4 box-join completion). Falls back to a relational
-    /// join / box join when no candidate applies.
-    #[allow(clippy::too_many_lines)] // one cohesive dispatch: builtins, macros, calls, relational
-    fn applicative(&mut self, e: ExprId, span: Span, want: &Want) -> Type {
-        // Set when a func/pred spine was collected but no call applied — the
-        // relational reading is then a *failed call*, whose reject is `BadCall`,
-        // not `IllegalJoin` (resolution-doc §4.4).
-        let mut from_call_spine = false;
-        // Builtin box-join targets: list preds and the `int`/`Int` casts.
+    /// Resolves a `.`-join or box-join node by building the join-level
+    /// `ExprChoice` (the reference's `Context.process`) and picking against the
+    /// precise relevant type `p` (`resolveHelper`).
+    #[allow(clippy::too_many_lines)]
+    fn applicative(&mut self, e: ExprId, span: Span, p: &Type) -> R {
+        // Builtin box-join targets.
         if let ExprKind::BoxJoin { target, args } = &self.expr(e).kind {
             if let ExprKind::Name(qn) = &self.expr(*target).kind {
-                // Synthesized builtin names are single `/`-joined segments.
                 let joined = qn
                     .segments
                     .iter()
@@ -1220,256 +1459,666 @@ impl<'a, 'g> Cx<'a, 'g> {
                     .join("/");
                 let args = args.clone();
                 match joined.as_str() {
-                    "pred/totalOrder" | "disj" => {
-                        // The reference gives each arg a precise unary relevant
-                        // type (`args[0].pickUnary()`, `t.product(t)`); mettle
-                        // approximates with a lenient set position.
-                        for a in args {
-                            self.check(a, &Want::SetLoose);
+                    "pred/totalOrder" => {
+                        // ExprList TOTALORDER: t = args[0].pickUnary(); args[0],
+                        // args[1] resolve against t; args[2] against t.product(t).
+                        let mut err = false;
+                        let t = if let Some(&a0) = args.first() {
+                            self.infer(a0).extract(&self.r.world, 1)
+                        } else {
+                            Type::empty()
+                        };
+                        let tt = t.product(&self.r.world, &t);
+                        for (i, a) in args.iter().enumerate() {
+                            let ap = if i >= 2 { &tt } else { &t };
+                            let mut r = self.resolve(*a, ap);
+                            self.typecheck_as_set(&mut r, self.expr(*a).span);
+                            err |= r.err;
                         }
-                        return Type::formula();
+                        return R {
+                            ty: self.formula(),
+                            err,
+                        };
                     }
-                    // `int[e]`/`sum[e]`: cast a set of `Int` atoms to a
-                    // primitive int (the bracketed spelling of `int e`/`sum e`).
+                    "disj" => {
+                        // ExprList DISJOINT: p = removesBoolAndInt(a0); then
+                        // p = p.unionWithCommonArity(ai); each arg resolves vs p.
+                        let mut p = Type::empty();
+                        for (i, a) in args.iter().enumerate() {
+                            let at = self.infer(*a);
+                            p = if i == 0 {
+                                at.remove_bool_and_int(self.int_sig())
+                            } else {
+                                p.union_with_common_arity(&self.r.world, &at)
+                            };
+                        }
+                        let mut err = false;
+                        for a in &args {
+                            let mut r = self.resolve(*a, &p);
+                            self.typecheck_as_set(&mut r, self.expr(*a).span);
+                            err |= r.err;
+                        }
+                        return R {
+                            ty: self.formula(),
+                            err,
+                        };
+                    }
                     "int" | "sum" => {
+                        let mut err = false;
                         for a in args {
-                            self.check(a, &Want::SetLoose);
+                            let ap = self.infer(a).remove_bool_and_int(self.int_sig());
+                            let mut r = self.resolve(a, &ap);
+                            self.typecheck_as_set(&mut r, self.expr(a).span);
+                            err |= r.err;
                         }
-                        return Type::small_int(self.r.world.builtins.int);
+                        return R {
+                            ty: self.small_int(),
+                            err,
+                        };
                     }
-                    // `Int[e]`: cast a primitive int to the `Int` sig atom.
                     "Int" => {
+                        let mut err = false;
                         for a in args {
-                            self.check(a, &Want::Any);
+                            let ap = self.infer(a);
+                            err |= self.resolve(a, &ap).err;
                         }
-                        return Type::unary(self.r.world.builtins.int);
+                        return R {
+                            ty: Type::unary(self.r.world.builtins.int),
+                            err,
+                        };
                     }
                     _ => {}
                 }
             }
         }
 
-        // A parameterized macro applied via box join or `.`-spine expands
-        // textually (§3.7): `m[a]`, `x.m[a]` (= `m[x,a]`), and `x.m`.
+        // A parameterized macro applied via box join or `.`-spine.
         if let Some((mid, arg_exprs)) = self.collect_macro_spine(e) {
-            return self.expand_macro(mid, &arg_exprs);
+            return self.expand_macro(mid, &arg_exprs, p);
         }
 
-        if let Some((cands, arg_exprs)) = self.collect_spine(e) {
-            // Type args with the parameter types when the arity uniquely picks a
-            // candidate (disambiguates overloaded args like `init[first]`).
-            let arity_cands: Vec<&CallCand> = cands
-                .iter()
-                .filter(|c| c.params.len() == arg_exprs.len())
-                .collect();
-            let arg_types: Vec<Type> = if arity_cands.len() == 1 {
-                let params = arity_cands[0].params.clone();
-                arg_exprs
-                    .iter()
-                    .zip(&params)
-                    .map(|(&a, p)| self.check(a, &Want::OfLoose(p.clone())))
-                    .collect()
-            } else {
-                arg_exprs
-                    .iter()
-                    .map(|&a| self.check(a, &Want::Any))
-                    .collect()
-            };
-            // `applicable` (resolution-doc §4.4): a candidate whose arity
-            // matches and whose every argument is *applicable* to its parameter
-            // — common arity, and (only when **both** arg and param are
-            // non-empty) intersecting. An empty (`{none}`) argument is always
-            // applicable, exactly as the reference (`Context.applicable`): this
-            // is why `max[(c.grades).Student]` resolves as a call even when the
-            // receiver is statically empty.
-            let matches: Vec<&CallCand> = cands
-                .iter()
-                .filter(|c| c.params.len() == arg_exprs.len() && self.args_apply(c, &arg_types))
-                .collect();
-            let chosen: Option<&CallCand> = match matches.len() {
-                0 => None, // no applicable call → try the relational reading
-                1 => {
-                    // A single applicable call. The reference keeps *both* the
-                    // call reading and the relational/field-join reading in an
-                    // `ExprChoice` and picks by the relevant type. mettle commits
-                    // to the call when it genuinely applies (a non-empty argument
-                    // truly intersects the parameter) or when its return fits the
-                    // relevant type; otherwise — a call that applies only because
-                    // an argument is empty (`{none}`), whose return does not fit —
-                    // it falls through to the relational reading. This is what
-                    // stops `t.pos` (field `pos` vs auto-opened `util/integer`
-                    // `pred pos`, empty receiver) from committing to the bool
-                    // pred where a set is wanted.
-                    let c = matches[0];
-                    if self.sort_fits(&c.ret, want) || self.args_apply_strict(c, &arg_types) {
-                        Some(c)
-                    } else {
-                        None
-                    }
+        // Build the readings of this application spine and pick.
+        let readings = self.build_readings(e, span);
+        self.pick_reading(readings, p, span)
+    }
+
+    /// Materializes the join-level `ExprChoice`: the candidate readings of an
+    /// application spine (the reference's `Context.visit(JOIN)` + `process`).
+    fn build_readings(&self, e: ExprId, span: Span) -> Vec<Reading> {
+        match &self.expr(e).kind {
+            ExprKind::Binary {
+                op: BinOp::Join,
+                lhs,
+                rhs,
+            } => {
+                // `arg . right`: the right operand is the spine head, `lhs` the arg.
+                let base = self.readings_of(*rhs, span);
+                self.process_readings(base, *lhs, span)
+            }
+            ExprKind::BoxJoin { target, args } => {
+                // `t[a,b] = b.(a.t)`: fold each arg into the target's readings.
+                let mut base = self.readings_of(*target, span);
+                for &a in args {
+                    base = self.process_readings(base, a, span);
                 }
-                _ => {
-                    // Several applicable candidates: the reference's `ExprChoice`
-                    // narrows by the **relevant type** pushed from the parent
-                    // (min-weight → resolve-and-retry). mettle keeps only those
-                    // whose return fits the relevant type; if that leaves exactly
-                    // one it wins, else the "This name is ambiguous" reject
-                    // (probe 15). When the arguments only match *vacuously*
-                    // (every candidate applies because an argument is empty),
-                    // resolve accept-lean rather than risk a false reject.
-                    let by_want: Vec<&CallCand> = matches
-                        .iter()
-                        .copied()
-                        .filter(|c| self.fits(&c.ret, want))
-                        .collect();
-                    if by_want.len() == 1 {
-                        Some(by_want[0])
-                    } else {
-                        let any_strict = matches
-                            .iter()
-                            .any(|c| self.args_apply_strict(c, &arg_types));
-                        let pool = if by_want.is_empty() {
-                            &matches
-                        } else {
-                            &by_want
-                        };
-                        if any_strict {
-                            self.err(ResolveError::AmbiguousName {
-                                name: cands[0].reason.clone(),
-                                span,
-                                candidates: pool.iter().map(|c| c.reason.clone()).collect(),
+                base
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// The head readings of a spine operand: a bare name → its candidate readings
+    /// (`spine_head`); a nested join/box → its own readings (`build_readings`);
+    /// anything else → a single sub-expr reading of its bottom-up type.
+    fn readings_of(&self, e: ExprId, span: Span) -> Vec<Reading> {
+        match &self.expr(e).kind {
+            ExprKind::Name(_) => self.spine_head(e),
+            ExprKind::Binary {
+                op: BinOp::Join, ..
+            }
+            | ExprKind::BoxJoin { .. } => self.build_readings(e, span),
+            _ => vec![Reading {
+                ty: self.infer(e),
+                weight: 0,
+                reason: "(expr)".to_owned(),
+                fin: Fin::Sub(e),
+            }],
+        }
+    }
+
+    /// Applies argument `arg` to each reading (`Context.process`): a pending
+    /// call gains the arg (→ `Call`/`BadCall`), a value/field reading becomes a
+    /// relational join `arg . reading`.
+    fn process_readings(&self, base: Vec<Reading>, arg: ExprId, span: Span) -> Vec<Reading> {
+        let world = &self.r.world;
+        let argt = self.infer(arg);
+        let mut out = Vec::with_capacity(base.len());
+        for reading in base {
+            match reading.fin {
+                Fin::BadCall {
+                    func,
+                    mut args,
+                    this_arg,
+                    span: cspan,
+                } => {
+                    // `Context.process`: if bc.args.size() < count, append arg;
+                    // applicable(newargs) → Call, else BadCall. Otherwise (already
+                    // full) → relational join `arg . badcall`.
+                    let f = &self.r.world.funcs[func];
+                    let count = f.params.len();
+                    let params: Vec<Type> = f.params.iter().map(|pp| pp.ty.clone()).collect();
+                    let this_ty = self
+                        .rootsig
+                        .map_or_else(Type::empty, |s| self.r.world.sigs[s].ty.clone());
+                    let bc_size = usize::from(this_arg) + args.len();
+                    if bc_size < count {
+                        args.push(arg);
+                        if self.args_applicable(&params, &args, this_arg.then(|| this_ty.clone())) {
+                            let ret =
+                                self.specialize_ret(func, this_arg.then_some(&this_ty), &args);
+                            out.push(Reading {
+                                ty: ret,
+                                weight: reading.weight,
+                                reason: reading.reason,
+                                fin: Fin::Call {
+                                    func,
+                                    this_arg: this_arg.then_some(this_ty),
+                                    args,
+                                    span: cspan,
+                                },
                             });
                         } else {
-                            self.ambig = true;
+                            out.push(Reading {
+                                ty: Type::empty(),
+                                weight: reading.weight,
+                                reason: reading.reason,
+                                fin: Fin::BadCall {
+                                    func,
+                                    args,
+                                    this_arg,
+                                    span: cspan,
+                                },
+                            });
                         }
-                        Some(pool[0])
+                    } else {
+                        // Already full: a relational join of arg with the (bad) call.
+                        let ty = argt.join(world, &reading.ty);
+                        out.push(Reading {
+                            ty,
+                            weight: reading.weight,
+                            reason: reading.reason,
+                            fin: Fin::Join {
+                                left: arg,
+                                right_ty: reading.ty.clone(),
+                                span,
+                            },
+                        });
                     }
                 }
-            };
-            if let Some(c) = chosen {
+                // An unknown-name spine head stays a reject, not a relational join.
+                Fin::Unknown { .. } => out.push(reading),
+                _ => {
+                    // Relational join arg . reading (right is a resolved leaf).
+                    let ty = argt.join(world, &reading.ty);
+                    out.push(Reading {
+                        ty,
+                        weight: reading.weight,
+                        reason: reading.reason,
+                        fin: Fin::Join {
+                            left: arg,
+                            right_ty: reading.ty.clone(),
+                            span,
+                        },
+                    });
+                }
+            }
+        }
+        out
+    }
+
+    /// The head readings of a spine: a bare name → its value candidates (leaf/
+    /// this-join) + call/badcall readings; anything else → a single leaf reading
+    /// of its bottom-up type.
+    #[allow(clippy::too_many_lines)]
+    fn spine_head(&self, e: ExprId) -> Vec<Reading> {
+        match &self.expr(e).kind {
+            ExprKind::Name(qn) => {
+                let at_name = false;
+                let segs = super::strip_this(qn.segments.iter().map(|s| s.text.clone()).collect());
+                let mut out = Vec::new();
+                // env var shadows.
+                if segs.len() == 1 {
+                    if let Some(t) = self.env_get(&segs[0]) {
+                        out.push(Reading {
+                            ty: t,
+                            weight: 0,
+                            reason: format!("var {}", segs[0]),
+                            fin: Fin::Leaf,
+                        });
+                        return out;
+                    }
+                }
+                if let Some(t) = self.builtin_value(&segs) {
+                    out.push(Reading {
+                        ty: t,
+                        weight: 0,
+                        reason: segs.join("/"),
+                        fin: Fin::Leaf,
+                    });
+                    return out;
+                }
+                // value candidates (leaf readings).
+                for c in self.value_candidates(&segs, at_name) {
+                    out.push(Reading {
+                        ty: c.ty,
+                        weight: c.weight,
+                        reason: c.reason,
+                        fin: Fin::Leaf,
+                    });
+                }
+                // call/badcall readings.
+                for fid in self.lookup_funcs(&segs) {
+                    let f = &self.r.world.funcs[fid];
+                    let reason = format!("{} {}", if f.is_pred { "pred" } else { "fun" }, f.name);
+                    if f.params.is_empty() {
+                        continue; // 0-ary already a value candidate above.
+                    }
+                    // implicit-this first-arg candidate (weight 1).
+                    if let Some(root) = self.rootsig {
+                        let this_ty = self.r.world.sigs[root].ty.clone();
+                        if this_ty.has_arity(1)
+                            && f.params[0].ty.intersects(&self.r.world, &this_ty)
+                        {
+                            out.push(Reading {
+                                ty: Type::empty(),
+                                weight: 1,
+                                reason: format!(
+                                    "{} this.{}",
+                                    if f.is_pred { "pred" } else { "fun" },
+                                    f.name
+                                ),
+                                fin: Fin::BadCall {
+                                    func: fid,
+                                    args: Vec::new(),
+                                    this_arg: true,
+                                    span: qn.span,
+                                },
+                            });
+                        }
+                    }
+                    out.push(Reading {
+                        ty: Type::empty(),
+                        weight: 0,
+                        reason,
+                        fin: Fin::BadCall {
+                            func: fid,
+                            args: Vec::new(),
+                            this_arg: false,
+                            span: qn.span,
+                        },
+                    });
+                }
+                if out.is_empty() {
+                    // A 0-param macro applied via box/join: expand to its body type.
+                    if let Some(t) = self.infer_zero_macro(&segs) {
+                        out.push(Reading {
+                            ty: t,
+                            weight: 0,
+                            reason: segs.join("/"),
+                            fin: Fin::Leaf,
+                        });
+                        return out;
+                    }
+                    // A callable-by-name (macro arg), meta/`$` name → lenient
+                    // `univ` leaf; a genuinely unknown name → a reject reading.
+                    let callable =
+                        !self.lookup_funcs(&segs).is_empty() || self.lookup_macro(&segs).is_some();
+                    let dollar = segs.iter().any(|s| s.contains('$')) || self.r.graph.seen_dollar;
+                    if callable || dollar {
+                        out.push(Reading {
+                            ty: Type::unary(self.r.world.builtins.univ),
+                            weight: 0,
+                            reason: segs.join("/"),
+                            fin: Fin::Leaf,
+                        });
+                    } else {
+                        out.push(Reading {
+                            ty: Type::unary(self.r.world.builtins.univ),
+                            weight: 0,
+                            reason: segs.join("/"),
+                            fin: Fin::Unknown {
+                                name: segs.join("/"),
+                                span: qn.span,
+                            },
+                        });
+                    }
+                }
+                out
+            }
+            // A parenthesized / compound right operand: a single leaf reading of
+            // its bottom-up type (join-level ambiguity within it is resolved when
+            // that subtree resolves).
+            _ => vec![Reading {
+                ty: self.infer(e),
+                weight: 0,
+                reason: "(expr)".to_owned(),
+                fin: Fin::Sub(e),
+            }],
+        }
+    }
+
+    /// The reference's `DeduceType` per-call return-type specialization: re-infer
+    /// the fun's return-decl expr with each param bound to the actual arg type
+    /// (extracted to the param's arity), giving a tighter type at the call site
+    /// (`dom[grades]` → `Course`, not the declared `univ`). Falls back to the
+    /// declared type on any int/bool/arity change (as the reference does). Only
+    /// attempted when the declared return contains `univ` (the imprecise case),
+    /// to bound cost.
+    fn specialize_ret(&self, func: FuncId, this_ty: Option<&Type>, args: &[ExprId]) -> Type {
+        let f = &self.r.world.funcs[func];
+        let declared = f.return_ty.clone();
+        if f.is_pred || self.unroll == 0 || !self.contains_univ(&declared) {
+            return declared;
+        }
+        let Some(rd) = f.return_decl else {
+            return declared;
+        };
+        let mut argtys: Vec<Type> = Vec::new();
+        if let Some(t) = this_ty {
+            argtys.push(t.clone());
+        }
+        for &a in args {
+            argtys.push(self.infer(a));
+        }
+        if argtys.len() != f.params.len() {
+            return declared;
+        }
+        let module = f.module;
+        let params: Vec<(String, usize)> = f
+            .params
+            .iter()
+            .map(|p| (p.name.clone(), p.ty.arity().unwrap_or(1).max(1)))
+            .collect();
+        let mut sub = Cx::new(self.r, module);
+        sub.unroll = self.unroll - 1;
+        for ((name, ar), at) in params.iter().zip(&argtys) {
+            sub.env.push((name.clone(), at.extract(&self.r.world, *ar)));
+        }
+        let t = sub.infer(rd).remove_bool_and_int(self.int_sig());
+        if t.is_error()
+            || t.is_bool
+            || t.is_small_int
+            || t.is_int(&self.r.world)
+            || t.arity() != declared.arity()
+        {
+            declared
+        } else {
+            t
+        }
+    }
+
+    /// Whether every argument is applicable to its parameter (§4.4 `applicable`):
+    /// common arity, and — only when both are non-empty — intersecting. An
+    /// implicit `this` first arg is prepended.
+    fn args_applicable(&self, params: &[Type], args: &[ExprId], this_ty: Option<Type>) -> bool {
+        let world = &self.r.world;
+        let mut argtys: Vec<Type> = Vec::new();
+        if let Some(t) = this_ty {
+            argtys.push(t);
+        }
+        for &a in args {
+            argtys.push(self.infer(a));
+        }
+        // `applicable`: false if fewer args than params; else check each param.
+        if params.len() > argtys.len() {
+            return false;
+        }
+        params.iter().zip(&argtys).all(|(p, a)| {
+            if a.is_error() || p.is_error() {
+                return true;
+            }
+            if !a.has_common_arity(p) {
+                return false;
+            }
+            !(a.has_tuple(world) && p.has_tuple(world) && !a.intersects(world, p))
+        })
+    }
+
+    /// Picks a reading of the join-level choice against relevant type `p`
+    /// (`resolveHelper`), then finalizes it (resolve operands / args, emit
+    /// errors).
+    fn pick_reading(&mut self, mut readings: Vec<Reading>, p: &Type, span: Span) -> R {
+        if readings.is_empty() {
+            return R::bad();
+        }
+        if readings.len() == 1 {
+            let only = readings.swap_remove(0);
+            return self.finalize_reading(only, p);
+        }
+        let types: Vec<Type> = readings.iter().map(|r| r.ty.clone()).collect();
+        let weights: Vec<i32> = readings.iter().map(|r| r.weight).collect();
+        match self.resolve_helper(&types, &weights, p) {
+            Pick::One(i) => {
+                let reading = readings.swap_remove(i);
+                self.finalize_reading(reading, p)
+            }
+            Pick::NoneArity(k) => R::ok(self.none_of_arity(k)),
+            Pick::Ambiguous(idxs) => {
+                if self.lenient() {
+                    let reading = readings.swap_remove(idxs[0]);
+                    return self.finalize_lenient(reading, p);
+                }
+                // If the surviving readings are all failed calls (BadCall), it is a
+                // "possible incorrect function/predicate call", not an ambiguity.
+                let all_bad = idxs
+                    .iter()
+                    .all(|&i| matches!(readings[i].fin, Fin::BadCall { .. }));
+                if all_bad {
+                    self.err(ResolveError::BadCall {
+                        name: readings[idxs[0]].reason.clone(),
+                        span,
+                    });
+                } else {
+                    self.err(ResolveError::AmbiguousName {
+                        name: readings[idxs[0]].reason.clone(),
+                        span,
+                        candidates: idxs.iter().map(|&i| readings[i].reason.clone()).collect(),
+                    });
+                }
+                R::bad()
+            }
+            Pick::NoIntersect => {
+                if self.lenient() {
+                    let reading = readings.swap_remove(0);
+                    return self.finalize_lenient(reading, p);
+                }
+                // No reading matches the relevant type. If any reading is a bad call,
+                // report BadCall; else the join is illegal (both operands unary).
+                let any_bad = readings
+                    .iter()
+                    .any(|r| matches!(r.fin, Fin::BadCall { .. }));
+                if any_bad {
+                    self.err(ResolveError::BadCall {
+                        name: readings[0].reason.clone(),
+                        span,
+                    });
+                    R::bad()
+                } else {
+                    // finalize the first reading to surface a precise join error.
+                    let reading = readings.swap_remove(0);
+                    self.finalize_reading(reading, p)
+                }
+            }
+        }
+    }
+
+    /// Lenient finalize (a `$`-meta model): resolve the chosen reading but never
+    /// let it reject — a `BadCall` becomes a lenient `univ` value.
+    fn finalize_lenient(&mut self, reading: Reading, p: &Type) -> R {
+        if matches!(reading.fin, Fin::BadCall { .. } | Fin::Unknown { .. }) {
+            return R::ok(Type::unary(self.r.world.builtins.univ));
+        }
+        let mut r = self.finalize_reading(reading, p);
+        r.err = false;
+        r
+    }
+
+    /// Finalizes a chosen reading: resolves its operands against slices derived
+    /// from `p`, and emits any make-error (illegal join / bad call).
+    fn finalize_reading(&mut self, reading: Reading, p: &Type) -> R {
+        match reading.fin {
+            Fin::Leaf => R::ok(reading.ty),
+            Fin::Sub(e) => self.resolve(e, p),
+            Fin::Unknown { name, span } => {
+                if self.lenient() {
+                    return R::ok(reading.ty);
+                }
+                self.err(ResolveError::UnknownName { name, span });
+                R::bad()
+            }
+            Fin::Join {
+                left,
+                right_ty,
+                span,
+            } => {
+                // Resolve the left operand (which may itself be a join/choice).
+                // A compound right operand (`s.*next`, `x.(y.z)`) keeps its
+                // bottom-up type rather than being resolved standalone —
+                // standalone resolution loses the join's disambiguation (`*next`
+                // becomes ambiguous with the auto-opened `integer/next`); a
+                // documented over-acceptance for an unknown name inside a
+                // compound right operand (LIMITATIONS), never a false reject.
+                let lt = self.infer(left);
+                let (ap, _bp) = self.join_slices(&lt, &right_ty, p);
+                let mut l = self.resolve(left, &ap);
+                self.typecheck_as_set(&mut l, self.expr(left).span);
+                let joined = lt.join(&self.r.world, &right_ty);
+                // `$`-meta models resolve leniently (meta atoms mettle approximates
+                // as `univ`); a lenient `univ`/placeholder operand is never a
+                // genuine illegal join.
+                if !l.err
+                    && joined.is_error()
+                    && !self.r.graph.seen_dollar
+                    && !self.contains_univ(&lt)
+                    && !self.contains_univ(&right_ty)
+                {
+                    self.err(ResolveError::IllegalJoin { span });
+                    return R::bad();
+                }
+                R {
+                    ty: joined,
+                    err: l.err,
+                }
+            }
+            Fin::Call {
+                func,
+                this_arg,
+                args,
+                span,
+            } => {
                 if self.no_calls {
                     self.err(ResolveError::FieldBoundHasCall {
                         name: self.field_name.clone(),
                         span,
                     });
                 }
-                return c.ret.clone();
-            }
-            // No applicable call: fall through to the relational reading, but
-            // remember a call spine existed so its failure is a `BadCall`, never
-            // an `IllegalJoin` (resolution-doc §4.4 `process`).
-            from_call_spine = true;
-        }
-
-        // Relational reading.
-        match &self.expr(e).kind {
-            ExprKind::Binary { lhs, rhs, .. } => {
-                let (lhs, rhs) = (*lhs, *rhs);
-                // Track whether *this* join's operands involved a multi-candidate
-                // joinability pick (a possibly-wrong local commitment), so the
-                // enclosing illegal-join check can be suppressed without touching
-                // the formula-wide `ambig`.
-                let saved_jl = self.join_lenient;
-                self.join_lenient = false;
-                // Both operands of a relational join are lenient set positions:
-                // mettle only approximates the reference's precise per-column
-                // join slice (which also depends on the *parent* relevant type,
-                // not threaded here), so an overloaded operand must never raise
-                // an ambiguity reject — the reference narrows `first.next` /
-                // `prev.t"` and even field overloads (`key`/`name`) by that
-                // parent type, which mettle lacks. Left-of-join ambiguities the
-                // jar still rejects (`projects.p`) stay a documented
-                // over-acceptance (the single-pass limitation).
-                let l = self.check(lhs, &Want::SetLoose);
-                let r = self.check(rhs, &Want::JoinRhs(l.clone()));
-                let joined = l.join(&self.r.world, &r);
-                // Join-retry (§4.4): if the left was an overloaded bare name that
-                // resolved to the wrong candidate (empty join), re-resolve it
-                // with the right operand as a `JoinLhs` hint.
-                let joined =
-                    if joined.has_entries() || !matches!(self.expr(lhs).kind, ExprKind::Name(_)) {
-                        joined
-                    } else {
-                        let r2 = self.check(rhs, &Want::Set);
-                        let l2 = self.check(lhs, &Want::JoinLhs(r2.clone()));
-                        l2.join(&self.r.world, &r2)
-                    };
-                let operands_lenient = self.join_lenient;
-                if !from_call_spine && !operands_lenient {
-                    self.check_illegal_join(&l, &r, &joined, span);
+                let f = &self.r.world.funcs[func];
+                let params: Vec<Type> = f.params.iter().map(|pp| pp.ty.clone()).collect();
+                let ret = self.specialize_ret(func, this_arg.as_ref(), &args);
+                // Resolve each explicit arg against its parameter type, then
+                // typecheck_as_set (ExprCall.resolve).
+                let offset = usize::from(this_arg.is_some());
+                let mut err = false;
+                for (k, &a) in args.iter().enumerate() {
+                    let pk = params.get(offset + k).cloned().unwrap_or_else(Type::empty);
+                    let mut r = self.resolve(a, &pk);
+                    self.typecheck_as_set(&mut r, self.expr(a).span);
+                    err |= r.err;
                 }
-                // Propagate leniency to any enclosing join.
-                self.join_lenient = saved_jl || operands_lenient;
-                joined
+                R { ty: ret, err }
             }
-            ExprKind::BoxJoin { target, args } => {
-                // `m[a,b] = b.(a.m)`: the first arg joins the target, so it is a
-                // relevant hint that disambiguates an overloaded target name
-                // (`next[first]` = `first.next`).
-                let (target, args) = (*target, args.clone());
-                let arg_types: Vec<Type> =
-                    args.iter().map(|&a| self.check(a, &Want::Any)).collect();
-                let target_want = arg_types
-                    .first()
-                    .map_or(Want::Set, |t| Want::JoinRhs(t.clone()));
-                let mut acc = self.check(target, &target_want);
-                for at in &arg_types {
-                    // A box-join's desugaring to joins is *not* a source of the
-                    // `ExprBadJoin` reject: a failed `m[a,b]` is a `BadCall`, not
-                    // an illegal join (resolution-doc §4.4 `process`). Only the
-                    // genuine binary `.`-join arm below fires `IllegalJoin`.
-                    acc = at.join(&self.r.world, &acc);
-                }
-                acc
+            Fin::BadCall { func, span, .. } => {
+                let name = self.r.world.funcs[func].name.clone();
+                self.err(ResolveError::BadCall { name, span });
+                R::bad()
             }
-            _ => Type::empty(),
         }
     }
 
-    /// Collects the func/pred spine of an application: the candidate funcs plus
-    /// the argument expressions in order (leading `.`-join args first, then
-    /// box-join args). `None` when `e` has no func head (a pure relation).
-    fn collect_spine(&self, e: ExprId) -> Option<(Vec<CallCand>, Vec<ExprId>)> {
-        match &self.expr(e).kind {
-            ExprKind::Name(qn) => {
-                let segs: Vec<String> = qn.segments.iter().map(|s| s.text.clone()).collect();
-                let cands = self.call_candidates_for(&segs);
-                if cands.is_empty() {
-                    None
-                } else {
-                    Some((cands, Vec::new()))
+    /// The reference JOIN resolve slice for the **left** operand `a` (and right
+    /// `b`), given the join's relevant type `p` and the operands' bottom-up
+    /// types (resolution-doc §4.3, the 3-block algorithm).
+    #[allow(clippy::many_single_char_names)]
+    fn join_slices(&self, left: &Type, right: &Type, p: &Type) -> (Type, Type) {
+        let world = &self.r.world;
+        // Block 1: precise slice with p.intersect(aa.join(bb)).
+        let mut a = Type::empty();
+        let mut b = Type::empty();
+        for aa in &left.entries {
+            for bb in &right.entries {
+                let jarity = aa.arity() + bb.arity();
+                if jarity < 2 || !p.has_arity(jarity - 2) {
+                    continue;
+                }
+                let j = col_meet(world, aa.0[aa.arity() - 1], bb.0[0]);
+                if j == world.builtins.none {
+                    continue;
+                }
+                let aajoin =
+                    Type::product_of(aa.0.clone()).join(world, &Type::product_of(bb.0.clone()));
+                let inter = p.intersect(world, &aajoin);
+                for cc in &inter.entries {
+                    if cc.is_empty(world) {
+                        continue;
+                    }
+                    // reconstruct v = cc with j inserted at (aa.arity()-1).
+                    let mut v: Vec<SigId> = cc.0.clone();
+                    v.insert(aa.arity() - 1, j);
+                    let al = v[..aa.arity()].to_vec();
+                    let bl = v[aa.arity() - 1..].to_vec();
+                    a = a.union(world, &Type::product_of(al));
+                    b = b.union(world, &Type::product_of(bl));
                 }
             }
-            ExprKind::BoxJoin { target, args } => {
-                let (cands, mut pre) = self.collect_spine(*target)?;
-                pre.extend_from_slice(args);
-                Some((cands, pre))
-            }
-            ExprKind::Binary {
-                op: BinOp::Join,
-                lhs,
-                rhs,
-            } => {
-                // `x.f` applies f to x when f is a func/pred name.
-                let segs: Vec<String> = match &self.expr(*rhs).kind {
-                    ExprKind::Name(qn) => qn.segments.iter().map(|s| s.text.clone()).collect(),
-                    _ => return None,
-                };
-                let cands = self.call_candidates_for(&segs);
-                if cands.is_empty() {
-                    None
-                } else {
-                    Some((cands, vec![*lhs]))
-                }
-            }
-            _ => None,
         }
+        if !a.is_error() && !b.is_error() {
+            return (a, b);
+        }
+        // Block 2: fallback on intersects (drop the p.intersect non-empty filter).
+        let mut a2 = Type::empty();
+        let mut b2 = Type::empty();
+        for aa in &left.entries {
+            for bb in &right.entries {
+                let jarity = aa.arity() + bb.arity();
+                if jarity < 2 || !p.has_arity(jarity - 2) {
+                    continue;
+                }
+                if col_intersects(world, aa.0[aa.arity() - 1], bb.0[0]) {
+                    a2 = a2.union(world, &Type::product_of(aa.0.clone()));
+                    b2 = b2.union(world, &Type::product_of(bb.0.clone()));
+                }
+            }
+        }
+        if !a2.is_error() && !b2.is_error() {
+            return (a2, b2);
+        }
+        // Block 3: fallback merging all common-arity pairs.
+        let mut a3 = Type::empty();
+        let mut b3 = Type::empty();
+        for aa in &left.entries {
+            for bb in &right.entries {
+                let jarity = aa.arity() + bb.arity();
+                if jarity < 2 || !p.has_arity(jarity - 2) {
+                    continue;
+                }
+                a3 = a3.union(world, &Type::product_of(aa.0.clone()));
+                b3 = b3.union(world, &Type::product_of(bb.0.clone()));
+            }
+        }
+        (a3, b3)
     }
 
-    /// Collects a macro-application spine (§3.7): the macro plus its argument
-    /// expressions gathered from a leading `.`-join and trailing box args, so
-    /// `m[a]`, `x.m[a]`, and `x.m` all expand. `None` when the head is not a
-    /// (parameterized) macro. A 0-param macro used bare is handled in
-    /// `resolve_name`, so only param-macros or applied macros reach here.
+    /// Collects a macro-application spine (§3.7).
     fn collect_macro_spine(&self, e: ExprId) -> Option<(crate::world::MacroId, Vec<ExprId>)> {
         match &self.expr(e).kind {
             ExprKind::Name(qn) => {
@@ -1496,132 +2145,108 @@ impl<'a, 'g> Cx<'a, 'g> {
                     _ => return None,
                 };
                 let mid = self.lookup_macro(&segs)?;
-                Some((mid, vec![*lhs]))
+                // Only a *parameterized* macro consumes the join LHS as an
+                // argument (`x.m[..]` = `m[x,..]`). A 0-param macro on the right
+                // of a join is a plain relational join `x . (expand m)` — handled
+                // by `build_readings` (`infer_zero_macro`), not a macro spine.
+                if self.r.world.macros[mid].params.is_empty() {
+                    None
+                } else {
+                    Some((mid, vec![*lhs]))
+                }
             }
             _ => None,
         }
     }
 
-    /// Call candidates (funcs/preds) for a name, unless a local env var shadows
-    /// it (then it is a value/relation, not a call target).
-    fn call_candidates_for(&self, segs: &[String]) -> Vec<CallCand> {
-        if segs.len() == 1 && self.env_get(&segs[0]).is_some() {
-            return Vec::new();
-        }
-        let mut out = Vec::new();
-        for fid in self.lookup_funcs(segs) {
-            let f = &self.r.world.funcs[fid];
-            out.push(CallCand {
-                ret: f.return_ty.clone(),
-                params: f.params.iter().map(|p| p.ty.clone()).collect(),
-                reason: format!("{} {}", if f.is_pred { "pred" } else { "fun" }, f.name),
-            });
-        }
-        out
-    }
-
-    /// Whether every argument type intersects its parameter type (arity + type
-    /// applicability, resolution-doc §4.4).
-    fn args_apply(&self, c: &CallCand, arg_types: &[Type]) -> bool {
-        let w = &self.r.world;
-        c.params.iter().zip(arg_types).all(|(p, a)| {
-            if a.is_error() || p.is_error() {
-                return true; // an error-typed arg/param can't decide applicability
-            }
-            if !a.has_common_arity(p) {
-                return false;
-            }
-            // Only a *non-empty* arg against a *non-empty* param can fail to
-            // apply (an empty `{none}` operand is vacuously applicable).
-            !(a.has_tuple(w) && p.has_tuple(w) && !a.intersects(w, p))
-        })
-    }
-
-    /// Whether every argument *genuinely* (non-vacuously) intersects its
-    /// parameter — used only to tell a real overload ambiguity (probe 15) from
-    /// one manufactured by an empty/under-typed argument (the ambiguity branch
-    /// of [`Self::applicative`]).
-    fn args_apply_strict(&self, c: &CallCand, arg_types: &[Type]) -> bool {
-        let w = &self.r.world;
-        c.params
-            .iter()
-            .zip(arg_types)
-            .all(|(p, a)| a.has_tuple(w) && p.has_tuple(w) && a.intersects(w, p))
-    }
-
     // ---- binders ----
 
-    fn quant(&mut self, quant: Quant, decls: &[DeclId], body: ExprId, span: Span) -> Type {
+    fn quant(&mut self, quant: Quant, decls: &[DeclId], body: ExprId, span: Span) -> R {
         let pushed = self.bind_decls(decls);
-        if matches!(quant, Quant::Sum) {
-            self.check(body, &Want::Int);
+        let err = if matches!(quant, Quant::Sum) {
+            let ip = self.small_int();
+            self.resolve_checked(body, &ip).err
         } else {
-            self.check(body, &Want::Formula);
-        }
+            let fp = self.formula();
+            self.resolve_checked(body, &fp).err
+        };
         self.pop_and_warn_unused(decls, pushed);
         let _ = span;
-        if matches!(quant, Quant::Sum) {
-            Type::small_int(self.r.world.builtins.int)
+        let ty = if matches!(quant, Quant::Sum) {
+            self.small_int()
         } else {
-            Type::formula()
-        }
+            self.formula()
+        };
+        R { ty, err }
     }
 
-    fn comprehension(&mut self, decls: &[DeclId], body: ExprId) -> Type {
-        let pushed = self.bind_decls(decls);
-        self.check(body, &Want::Formula);
-        // Comprehension type = product of the decl bound types, in order.
+    fn comprehension(&mut self, decls: &[DeclId], body: ExprId) -> R {
+        // Bind the decls once, capturing each variable's element type (the
+        // comprehension result type is their product, in order). Re-resolving
+        // the bounds here would re-pick under the now-shadowed env — wrong when
+        // a decl redeclares an earlier name (`{p:A, …, p:f[p]}`).
+        let (pushed, types) = self.bind_decls_typed(decls);
+        let fp = self.formula();
+        let err = self.resolve_checked(body, &fp).err;
         let mut ty: Option<Type> = None;
-        for &d in decls {
-            let decl = &self.ast().decls[d];
-            let bt = self.decl_bound_type(decl);
-            for _ in &decl.names {
-                ty = Some(match ty {
-                    None => bt.clone(),
-                    Some(prev) => prev.product(&self.r.world, &bt),
-                });
-            }
+        for bt in &types {
+            ty = Some(match ty {
+                None => bt.clone(),
+                Some(prev) => prev.product(&self.r.world, bt),
+            });
         }
         self.pop_and_warn_unused(decls, pushed);
-        ty.unwrap_or_else(Type::empty)
+        R {
+            ty: ty.unwrap_or_else(Type::empty),
+            err,
+        }
     }
 
-    fn let_expr(&mut self, bindings: &[LetBinding], body: ExprId, want: &Want) -> Type {
+    fn let_expr(&mut self, bindings: &[LetBinding], body: ExprId, p: &Type) -> R {
         let mut pushed = 0;
         for b in bindings {
-            let t = self.check(b.value, &Want::Any);
+            let bp = self.infer(b.value);
+            let t = self.resolve(b.value, &bp).ty;
             self.env.push((b.name.text.clone(), t));
             pushed += 1;
         }
-        let out = self.check(body, want);
+        let out = self.resolve(body, p);
         for _ in 0..pushed {
             self.env.pop();
         }
         out
     }
 
-    /// Binds a decl list into the env, returning how many env frames to pop.
     fn bind_decls(&mut self, decls: &[DeclId]) -> usize {
+        self.bind_decls_typed(decls).0
+    }
+
+    /// Binds a decl list into the env, returning how many env frames to pop and
+    /// each pushed variable's element type (in push order) — resolved **once**
+    /// with the correct incremental env.
+    fn bind_decls_typed(&mut self, decls: &[DeclId]) -> (usize, Vec<Type>) {
         let mut pushed = 0;
+        let mut types = Vec::new();
         for &d in decls {
             let decl = self.ast().decls[d].clone();
             let bt = self.decl_bound_type(&decl);
             for name in &decl.names {
                 self.env.push((name.text.clone(), bt.clone()));
+                types.push(bt.clone());
                 pushed += 1;
             }
         }
-        pushed
+        (pushed, types)
     }
 
-    /// The (element) type each variable of a decl ranges over.
     fn decl_bound_type(&mut self, decl: &Decl) -> Type {
-        let t = self.check(decl.bound, &Want::Set);
-        t.as_set(self.r.world.builtins.int)
+        let p = self.infer(decl.bound).remove_bool_and_int(self.int_sig());
+        let mut r = self.resolve(decl.bound, &p);
+        self.typecheck_as_set(&mut r, self.expr(decl.bound).span);
+        r.ty.as_set(self.int_sig())
     }
 
     fn pop_and_warn_unused(&mut self, decls: &[DeclId], pushed: usize) {
-        // Collect names before popping (best-effort unused-binder warning).
         let mut names: Vec<(String, Span)> = Vec::new();
         for &d in decls {
             let decl = &self.ast().decls[d];
@@ -1642,62 +2267,6 @@ impl<'a, 'g> Cx<'a, 'g> {
 
     // ---- helpers ----
 
-    /// Rejects `~`/`^`/`*` on a non-binary operand (resolution-doc §4.2). A
-    /// binary type has entries, all of arity 2. Suppressed on error/ambiguous
-    /// operands (accept-lean, ADR-0009) — a wrong arity there may be an artifact
-    /// of an arbitrary overload pick, not a genuine mismatch.
-    fn require_binary(&mut self, t: &Type, op: &'static str, span: Span) {
-        if self.ambig || t.is_error() {
-            return;
-        }
-        if !(t.has_entries() && t.entries.iter().all(|p| p.arity() == 2)) {
-            self.err(ResolveError::UnaryNotBinary { op, span });
-        }
-    }
-
-    /// Fires `IllegalJoin` (`ExprBadJoin`, resolution-doc §4.2/§4.4) when a
-    /// relational join's type is the true `EMPTY` sentinel — which, with the
-    /// faithful [`Type::join`] (mt-022), happens iff **both** operands are
-    /// entirely unary (every arity-0 join is dropped, leaving no product).
-    /// A disjoint *multi-hop* join instead yields a `NONE`-headed product of the
-    /// correct arity (`has_entries` true) — a legal but statically-empty join —
-    /// so this never fires there. Guarded by the accept-lean bias
-    /// (`self.ambig` / error-typed operands) so an artifact of an arbitrary
-    /// overload pick is never rejected.
-    fn check_illegal_join(&mut self, l: &Type, r: &Type, joined: &Type, span: Span) {
-        if self.ambig || self.r.graph.seen_dollar || l.is_bool || r.is_bool {
-            return;
-        }
-        // A lenient `univ` placeholder (an unknown/meta/callable-by-name that
-        // mettle resolves to `univ` rather than reject) must never trigger the
-        // reject — those are exactly the leaves the reference resolves precisely
-        // and mettle approximates. Real illegal joins (`Teacher.Person`) join
-        // two concrete unary sigs, never `univ`.
-        if l.has_entries()
-            && r.has_entries()
-            && joined.is_error()
-            && !self.contains_univ(l)
-            && !self.contains_univ(r)
-        {
-            self.err(ResolveError::IllegalJoin { span });
-        }
-    }
-
-    /// Fires `NotUnarySet` when a domain/range restriction (`<:` / `:>`)
-    /// produced the `EMPTY` sentinel because its restricting operand is not a
-    /// unary set (`ExprBinary.make` DOMAIN/RANGE, resolution-doc §4.2). Guarded
-    /// by the accept-lean bias (`ambig`/`join_lenient`, error/bool operands).
-    fn check_restrict_unary(&mut self, l: &Type, r: &Type, ty: &Type, span: Span) {
-        if self.ambig || self.join_lenient || l.is_bool || r.is_bool {
-            return;
-        }
-        if !l.is_error() && !r.is_error() && ty.is_error() {
-            self.err(ResolveError::NotUnarySet { span });
-        }
-    }
-
-    /// Whether any product column of `t` is `univ` — a signal of a lenient
-    /// placeholder (or the genuine top sig), excluded from `IllegalJoin`.
     fn contains_univ(&self, t: &Type) -> bool {
         let univ = self.r.world.builtins.univ;
         t.entries.iter().any(|p| p.0.contains(&univ))
@@ -1710,14 +2279,18 @@ impl<'a, 'g> Cx<'a, 'g> {
             .find(|(n, _)| n == name)
             .map(|(_, t)| t.clone())
     }
+}
 
-    /// Whether every column of every product is `none` (an all-empty bound).
-    fn all_none(&self, t: &Type) -> bool {
-        t.has_entries()
-            && t.entries
-                .iter()
-                .all(|p| p.0.iter().all(|&s| s == self.r.world.builtins.none))
-    }
+/// The outcome of `resolveHelper` over a candidate type list.
+enum Pick {
+    /// Exactly one survivor: its index.
+    One(usize),
+    /// All survivors collapse to the same-arity empty set → `none` of arity `k`.
+    NoneArity(usize),
+    /// Two or more genuine survivors: ambiguous (their indices).
+    Ambiguous(Vec<usize>),
+    /// No survivor matches the relevant type at all.
+    NoIntersect,
 }
 
 /// The display symbol of a binary operator for arity-mismatch messages.
@@ -1728,5 +2301,49 @@ fn bin_sym(op: BinOp) -> &'static str {
         BinOp::Diff => "-",
         BinOp::Override => "++",
         _ => "<op>",
+    }
+}
+
+/// `ProductType.columnRestrict`: restrict column `idx` of `p` by sig `b`, or a
+/// `NONE`-filled product of the same arity if the meet is empty.
+fn restrict_col(
+    w: &crate::world::ResolvedWorld,
+    p: &crate::ty::Product,
+    b: SigId,
+    idx: usize,
+) -> crate::ty::Product {
+    use crate::ty::Product;
+    if p.is_empty(w) || idx >= p.arity() {
+        return p.clone();
+    }
+    let c = col_meet(w, p.0[idx], b);
+    if c == w.builtins.none {
+        return Product(vec![w.builtins.none; p.arity()]);
+    }
+    let mut cols = p.0.clone();
+    cols[idx] = c;
+    Product(cols)
+}
+
+/// The meet of two prim-sig columns (`PrimSig.intersect`).
+fn col_meet(w: &crate::world::ResolvedWorld, a: SigId, b: SigId) -> SigId {
+    if w.is_same_or_descendent(a, b) {
+        a
+    } else if w.is_same_or_descendent(b, a) {
+        b
+    } else {
+        w.builtins.none
+    }
+}
+
+/// Whether two prim-sig columns have a non-empty meet (`PrimSig.intersects`).
+fn col_intersects(w: &crate::world::ResolvedWorld, a: SigId, b: SigId) -> bool {
+    let none = w.builtins.none;
+    if w.is_same_or_descendent(a, b) {
+        a != none
+    } else if w.is_same_or_descendent(b, a) {
+        b != none
+    } else {
+        false
     }
 }

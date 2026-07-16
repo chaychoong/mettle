@@ -20,7 +20,12 @@ private one sig Ord {
 
 fun first: one elem { Ord.First }
 fun next: elem -> elem { Ord.Next }
-fun prev: elem -> elem { ~next }
+// `~next` is ambiguous: `util/integer` is auto-opened into every module and
+// also exports a 0-ary `next(): Int -> Int`; under transpose there is no join
+// context to filter it out by type, so a bare `next` here has two live
+// candidates. `this/next` scopes the lookup to this module's own
+// declarations only (resolution-doc §2.4/§4.4), which is unambiguous.
+fun prev: elem -> elem { ~this/next }
 fun last: one elem { elem - next.elem }
 
 fun prevs [e: elem]: set elem { e.^prev }

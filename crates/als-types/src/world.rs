@@ -153,6 +153,11 @@ pub struct ResolvedFunc {
     pub params: Vec<Param>,
     /// The declared return type (`FORMULA` for a pred).
     pub return_ty: Type,
+    /// The return-declaration expression (a `fun`'s bound), for per-call
+    /// return-type specialization (the reference's `DeduceType` polymorphism —
+    /// `dom[r]: set ((r.univ).univ)` yields a tighter type at each call site).
+    /// `None` for preds and receiver-less builtins.
+    pub return_decl: Option<als_syntax::ast::ExprId>,
 }
 
 /// A registered top-level `let` macro (resolution-doc §3.7). Stored by

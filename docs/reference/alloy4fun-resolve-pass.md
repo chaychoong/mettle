@@ -345,3 +345,115 @@ cargo run --release -p als-conform --bin resolve-gauge -- \
 - `crates/als-conform/src/bin/resolve_gauge.rs` — `NotUnarySet` bucket name.
 - `crates/als-types/tests/resolve_probes.rs` — 6 `_mt022` regression tests (all jar-verified).
 - `LIMITATIONS.md` — divergence classes requantified.
+
+---
+
+## 10. mt-025 — materialized typed tree + full top-down relevant threading
+
+Bead **mt-025** ([ADR-0010](../adr/0010-hundred-percent-before-signoff.md)) built the
+ADR-0008-decision-4 **two-pass** structure for real, eliminating the bulk of the
+mt-022 over-acceptance remainder. The gauge was re-run against the cached
+`gauge_full/jar_ff.jsonl` (`parseEverything_fromFile`) — byte-identical codes, so
+the JVM side was not re-run.
+
+### 10.1 What replaced the fused walk
+
+The `Want` enum, the `ambig` formula-wide flag, `join_lenient`, and the
+`SetLoose`/`OfLoose` loose wants of mt-018/022 are **gone**. In their place
+(`resolve/expr.rs`):
+
+- **A precise relevant `Type` is threaded top-down** — the reference's
+  `Expr.resolve(t, warns)` — with each op computing its children's slices
+  exactly (`=`/`in`, `+`/`&`/`-`/`++`, the 3-block **join slice**, `<:`/`:>`
+  column-restrict slices, `->`, ITE), all source-verified against `794226dd`.
+- **The join/name choice is materialized at the join level** (the reference's
+  `Context.process`): `s.projects` becomes a *choice of joined results*
+  `{s.(Person<:projects), s.(Course<:projects)}`, and `resolveHelper` picks
+  against the precise relevant type — when the relevant slice has no tuple, both
+  fields survive via `hasCommonArity`, which is the jar's "This name is
+  ambiguous". Box-join call completion (`ExprBadCall` → `ExprCall`) and
+  call-vs-join settlement happen here too.
+- **Errors attach to the chosen path only** — a choice resolves just its picked
+  candidate, so make-errors on discarded readings never surface. This *is* the
+  reference's `errors.pick()` over the final resolved tree; no suppression flag
+  is needed.
+- **Per-call return-type specialization** (`DeduceType`): `dom[grades]` yields
+  `Course`, not the declared `univ`, re-inferring the return-decl expr with the
+  params bound to the actual arg types (guarded to `univ`-returning funcs).
+- **`this/name` scopes to the current module's own decls** (`getRawQS`), so
+  `~this/next` is unambiguous where bare `~next` is not.
+
+### 10.2 Final numbers (150,891 codes, cached jar verdicts)
+
+| | mt-020 | mt-022 | **mt-025** |
+|---|---:|---:|---:|
+| agree ACCEPT | 101,970 | 101,970 | 101,970 |
+| agree REJECT | 42,621 | 46,446 | **48,601** |
+| **jar-accepts / mettle-rejects (drop-in)** | **0** | **0** | **0** |
+| jar-rejects / mettle-accepts (over-accept) | 6,300 | 2,475 | **320** |
+| **agreement** | 95.82% | 98.36% | **99.79%** |
+
+Corpus (167 real-path files): **167/167 agree ACCEPT**, 0 drop-in. Mettle side
+~45 s / 16 threads (mt-020 baseline ~34 s; the typed-tree + specialization cost
+is within the same order). 0 panics.
+
+### 10.3 Per-class over-acceptance, mt-022 → mt-025
+
+| jar reject class | mt-022 | mt-025 | note |
+|---|---:|---:|---|
+| ambiguous name (left-of-join) | 1,281 | 94 | `projects.p`/`s.projects` now reject; residual = joins whose left type mettle only approximates |
+| name cannot be found | 9 | 61 | unknown name *inside a compound right operand* (`x.(…)`) — not re-resolved (see below) |
+| `*`/`^`/`~` non-binary | ~7 | 57 | same compound-right-operand class (`s.*next`) |
+| illegal relational join | 549 | 21 | mostly caught by the faithful join type |
+| incorrect func/pred call | 179 | 22 | relational fallback still accepts |
+| must be a formula / set / int | 106+56+14 | 3+4+0 | un-suppressed (the `ambig` flag is gone) |
+| `in`/`&`/`=` arity | 72+21+7 | 0 | un-suppressed |
+| unary set (`<:`/`:>`) | 68 | 0 | precise column-restrict slices |
+| multiplicity not allowed | 29 | 25 | mult-flag not tracked |
+| exactly-of | 15 | 13 | mult-flag not tracked |
+| lenient-lex (parse) | 6 | 6 | **unchanged** — mt-026 binder-composition, not resolver |
+| "failed to typecheck" / other | ~47 | ~14 | mixed long tail |
+| **total** | **2,475** | **320** | |
+
+### 10.4 The residual 320 — root-caused
+
+Three families, all **over-acceptance** (0 drop-in), all requiring precision the
+current structure does not yet reach:
+
+1. **Unknown name / non-binary inside a compound right operand (~112).** `x.(y.z)`
+   / `s.*next` keeps its bottom-up type rather than re-resolving the compound —
+   resolving it standalone loses the join's disambiguation and re-introduces the
+   `next`/`integer/next` ambiguity (measured: **28,400** false rejects when
+   attempted). Needs the join's *precise* right-slice threaded into the compound.
+2. **Deep left-of-join ambiguity (~94).** Joins whose left operand's type mettle
+   approximates (e.g. an un-specializable function return) leave the join-level
+   choice broader than the jar's.
+3. **Multiplicity flag (~38: mult + exactly-of) and the 6 mt-026 parser codes.**
+   The `mult` flag is not tracked; the 6 lenient-lex codes are the mt-026
+   binder-composition parser divergence, out of scope here.
+
+### 10.5 Files touched (mt-025)
+
+- `crates/als-types/src/resolve/expr.rs` — the two-pass rewrite: precise
+  relevant threading, materialized join-level `ExprChoice` + `resolveHelper`,
+  `process`/box-join completion, `DeduceType` specialization, `this/` scoping,
+  unknown-name-in-join rejects, comprehension bind-once. `Want`/`ambig`/
+  `join_lenient`/loose-wants removed.
+- `crates/als-types/src/world.rs`, `resolve/members.rs` — `ResolvedFunc.return_decl`
+  for per-call specialization.
+- `crates/als-types/stdlib/util/ordering.als` — `prev` uses `~this/next`, not
+  bare `~next`: a real clean-room bug the faithful resolver exposed (`~next`
+  is genuinely ambiguous with the auto-opened `integer/next`; under transpose
+  no join context filters the candidates). **Provenance note:** the mt-025
+  agent's original fix was contaminated (it read upstream's ordering body —
+  caught at tech-lead review, reverted); the shipped fix was re-derived by a
+  fresh clean-room agent from only the resolver's error + resolution-doc
+  §2.4/§4.4/§7.1, landing on self-module qualification (`this/next`) with a
+  documented reasoning chain and a clean attestation. The independent
+  derivation reaching a *different* (equivalent) formulation than upstream's
+  is itself evidence of independence. Gauge re-verified identical at
+  99.7879% / 0 drop-in with the re-derived text.
+- `crates/als-types/tests/resolve_probes.rs` — 8 `_mt025` regression tests (all
+  jar-verified: left-of-join reject + disambiguated accept, `this/next` scope,
+  bare-`~next` ambiguity, `DeduceType` specialization, unknown-name-in-join,
+  comprehension redeclared-var, 0-param-macro join).

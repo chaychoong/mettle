@@ -59,6 +59,7 @@ impl Resolver<'_> {
             is_private,
             params: Vec::new(),
             return_ty: Type::formula(),
+            return_decl: None,
         });
         self.mods[module.index()]
             .funcs
@@ -245,6 +246,10 @@ impl Resolver<'_> {
             self.warnings.extend(warns);
             self.world.funcs[fid].params = params;
             self.world.funcs[fid].return_ty = return_ty;
+            // Capture the return-decl expr for per-call specialization.
+            if let Para::Fun(f) = &self.ast(module).paras[para] {
+                self.world.funcs[fid].return_decl = Some(f.returns);
+            }
         }
     }
 

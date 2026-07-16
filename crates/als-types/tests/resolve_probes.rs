@@ -436,3 +436,103 @@ fn resolution_is_deterministic() {
     let b = format!("{:?}", check(src));
     assert_eq!(a, b, "resolution must be byte-stable across runs");
 }
+
+// ---- mt-025: materialized typed tree / precise top-down relevant threading ----
+// The full two-pass structure (ADR-0008 decision 4) lets mettle reproduce the
+// reference's `ExprChoice` disambiguation on precise types. Every verdict below
+// is jar-verified (Alloy 6.2.0, `parseEverything_fromFile`).
+
+/// Left-of-join field ambiguity: `s.projects` under a `-` whose relevant slice
+/// is empty leaves both `projects` fields surviving `hasCommonArity` — the jar's
+/// "This name is ambiguous". (The mt-022 remainder this bead closes.)
+#[test]
+fn left_of_join_ambiguous_rejected_mt025() {
+    let e = reject(
+        "sig Person { enrolled: set Course, projects: set Project }\n\
+         sig Course { projects: set Project }\nsig Project {}\nsig Student in Person {}\n\
+         pred p { all s: Student | no s.enrolled - s.projects }\nrun p\n",
+    );
+    assert!(matches!(e, ResolveError::AmbiguousName { .. }), "{e:?}");
+}
+
+/// The companion accept the earlier naive tightening broke: a plain `s.projects`
+/// join disambiguates via the join slice (only `Person.projects` joins `s`).
+#[test]
+fn left_of_join_disambiguated_accepted_mt025() {
+    accept(
+        "sig Person { enrolled: set Course, projects: set Project }\n\
+         sig Course { projects: set Project }\nsig Project {}\nsig Student in Person {}\n\
+         pred p { all s: Student | some s.projects }\nrun p\n",
+    );
+}
+
+/// `~this/next` scopes to the current module's own `next` (`getRawQS`), so it is
+/// unambiguous even though `util/integer`'s `next` is auto-opened.
+#[test]
+fn this_qualified_scopes_to_own_module_accepted_mt025() {
+    accept(
+        "sig T {}\none sig O { Next: T->T }\nfun next: T -> T { O.Next }\n\
+         fun prev: T -> T { ~this/next }\nrun {}\n",
+    );
+}
+
+/// Bare `~next` in a user module IS ambiguous with the auto-opened
+/// `integer/next` (both `T->T` and `Int->Int` survive under `~`).
+#[test]
+fn bare_next_under_transpose_ambiguous_rejected_mt025() {
+    let e = reject(
+        "sig T {}\none sig O { Next: T->T }\nfun next: T -> T { O.Next }\n\
+         fun prev: T -> T { ~next }\nrun {}\n",
+    );
+    assert!(matches!(e, ResolveError::AmbiguousName { .. }), "{e:?}");
+}
+
+/// Per-call return-type specialization (`DeduceType`): `dom[grades]` yields
+/// `Course`, not the declared `univ`, so `dom[grades].projects` is unambiguous.
+#[test]
+fn call_return_type_specialized_accepted_mt025() {
+    accept(
+        "open util/ternary\nsig Person { projects: set Project }\n\
+         sig Course { projects: set Project, grades: Person -> Grade }\n\
+         sig Project {}\nsig Grade {}\n\
+         pred t { let c = dom[grades] | some c.projects }\nrun t\n",
+    );
+}
+
+/// An unknown name as a join right operand is a genuine "cannot be found"
+/// reject, not a lenient `univ` (the mt-025 spine-head fix).
+#[test]
+fn unknown_name_in_join_rejected_mt025() {
+    let e = reject(
+        "sig Work { source: one State }\nsig State {}\n\
+         pred q { some source.s }\nrun q\n",
+    );
+    assert!(matches!(e, ResolveError::UnknownName { .. }), "{e:?}");
+}
+
+/// A comprehension decl that redeclares an earlier variable and calls a func in
+/// its bound resolves the bound once with the correct incremental env (the
+/// type-computation loop must not re-resolve under the shadowed name).
+#[test]
+fn comprehension_redeclared_var_accepted_mt025() {
+    accept(
+        "sig PTCris { notifications: set Notification }\nsig Notification {}\n\
+         sig Modification extends Notification {}\nsig Production {}\n\
+         fun modifies_[p:PTCris,n:Modification] : Production { Production }\n\
+         fun _modifies_ : PTCris -> Modification -> Production {\n\
+           {p:PTCris, n:p.notifications&Modification, p:modifies_[p,n]}\n}\nrun {}\n",
+    );
+}
+
+/// A 0-param `let` macro applied on the right of a join (`enrolled.cProjects`)
+/// expands to its body relation and joins — not a spurious macro call that
+/// drops the join operand.
+#[test]
+fn zero_param_macro_join_accepted_mt025() {
+    accept(
+        "sig Person { enrolled: set Course, projects: set Project }\n\
+         sig Course { projects: set Project }\nsig Project {}\nsig Student in Person {}\n\
+         let cProjects = Course <: projects\nlet sProjects = Student <: projects\n\
+         pred inv { sProjects in enrolled.cProjects }\nrun inv\n",
+    );
+}
