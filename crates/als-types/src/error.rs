@@ -229,6 +229,61 @@ pub enum ResolveError {
         candidates: Vec<String>,
     },
 
+    /// An expression is used where a **formula** is required but its type is a
+    /// relational value, not boolean (`typecheck_as_formula`, resolution-doc
+    /// §4.3). E.g. a set expression as a fact/pred body or a quantifier body.
+    #[error("this must be a formula expression")]
+    NotFormula {
+        /// Span of the offending expression.
+        span: Span,
+    },
+
+    /// An expression is used where a **set/relation** is required but its type
+    /// is boolean (`typecheck_as_set`, resolution-doc §4.3). E.g. a formula as
+    /// the operand of `+`, `.`, `some`, or a field bound.
+    #[error("this must be a set or relation")]
+    NotSet {
+        /// Span of the offending expression.
+        span: Span,
+    },
+
+    /// An expression is used where an **integer** is required but its type is
+    /// neither a primitive int nor an `Int` relation (`typecheck_as_int`,
+    /// resolution-doc §4.3). E.g. a non-int operand of `<`, `>`, or `fun/add`.
+    #[error("this must be an integer expression")]
+    NotInt {
+        /// Span of the offending expression.
+        span: Span,
+    },
+
+    /// `~`/`^`/`*` applied to an operand that is not a binary relation
+    /// (`ExprUnary` bottom-up, resolution-doc §4.2). The reference message is
+    /// "`{op}` can be used only with a binary relation."
+    #[error("`{op}` can be used only with a binary relation")]
+    UnaryNotBinary {
+        /// The operator symbol (`~`/`^`/`*`).
+        op: &'static str,
+        /// Span of the operator expression.
+        span: Span,
+    },
+
+    /// A relational join whose touching columns are disjoint, so the join type
+    /// is empty and the node is not a valid function/predicate call either
+    /// (`ExprBadJoin`, resolution-doc §4.2/§4.4). The reference message is
+    /// "This cannot be a legal relational join …".
+    ///
+    /// **Deferred — never constructed yet** (mt-020): mettle's coarse join
+    /// typing cannot distinguish a genuinely illegal join from a
+    /// spuriously-empty one, and enforcing this produced more false rejects
+    /// than true catches (~3,436 vs ~3,261 over alloy4fun). The variant stays
+    /// so the §5.1 taxonomy row is visible; the precise-types bead (mt-022)
+    /// makes it fire. See LIMITATIONS.md.
+    #[error("this cannot be a legal relational join")]
+    IllegalJoin {
+        /// Span of the join expression.
+        span: Span,
+    },
+
     /// A failed function/predicate application — no candidate is applicable and
     /// no relational join succeeds (resolution-doc §4.4).
     #[error("`{name}` cannot be resolved; possible incorrect function/predicate call")]
@@ -371,6 +426,11 @@ impl ResolveError {
             | ResolveError::UnknownName { span, .. }
             | ResolveError::ArityMismatch { span, .. }
             | ResolveError::AmbiguousName { span, .. }
+            | ResolveError::NotFormula { span }
+            | ResolveError::NotSet { span }
+            | ResolveError::NotInt { span }
+            | ResolveError::UnaryNotBinary { span, .. }
+            | ResolveError::IllegalJoin { span }
             | ResolveError::BadCall { span, .. }
             | ResolveError::FuncBodyArity { span, .. }
             | ResolveError::DuplicateAssert { span, .. }

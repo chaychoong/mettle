@@ -3,7 +3,8 @@
 > The live "where are we" doc. Update this at the end of every work chunk. On pickup, read this first.
 
 **Last updated:** 2026-07-16
-**Current rung:** **Rung 2 (names & types) — in progress.** mt-016/017/015/018/019 **done**; mt-020 (differential gauge — the rung's exit and the ADR-0009 tightening decider) is the last bead. Home crate: `als-types`. Corpus gauge: **167/167 resolve + typecheck ACCEPT**; 94/94 through the real binary. **Human-testable now:** `cargo build -p mettle && ./target/debug/mettle check <file.als>` — accepts real models (with `open`s) or renders a caret error in whichever file it lives in; warnings never fatal. Known interim over-acceptances in LIMITATIONS per [ADR-0009](adr/0009-fused-resolve-pass-accept-lean.md).
+**Current rung:** **Rung 2 (names & types) COMPLETE** — mt-016/017/015/018/019/020 all done. **Owner touchpoint due:** `cargo build -p mettle && ./target/debug/mettle check <file.als>` on real models (feed it models Alloy accepts AND rejects — the rung's promise is same accept/reject decisions); one concrete thing to try — a model with a type error in an `open`ed submodule to see the caret land in the right file.
+**Scorecard (mt-020, [reference/alloy4fun-resolve-pass.md](reference/alloy4fun-resolve-pass.md)):** corpus 167/167 agree; alloy4fun 150,891 codes → **0 jar-accepts/mettle-rejects** (the drop-in direction is perfect), 95.82% total agreement, 6,300 over-accepts (4.2%) measured/bucketed in LIMITATIONS per [ADR-0009](adr/0009-fused-resolve-pass-accept-lean.md) (tightening measured and reverted — precise types are the real fix, backlog bead mt-022).
 **Conformance scorecard:** harness exists (Net 0 live); mettle-side solving not yet implemented. Rung-1 gauge: **corpus lex, parse, AND round-trip rate 167/167** (alloytools-models + portus-63), plus mt-014's mutation fuzzer (default 4,248 mutants/~5s in CI, verified to 88,500 mutants offline) — zero panics, sane spans, round-trip holds. Oracle baseline committed: `baselines/` (234 jar verdicts over alloytools-models, triaged).
 **Builds:** `cargo build/fmt/clippy/test` all green workspace-wide (~180 tests + the fuzzer). **Human-testable now:** `cargo build -p mettle && ./target/debug/mettle parse <file.als>` pretty-prints any Alloy 6 model (`--ast` for the structural dump); malformed input and pathologically-deep nesting both render precise caret diagnostics, never a crash.
 
@@ -30,15 +31,14 @@
 - Toolchains in this VM: Rust stable (`~/.cargo/bin`) and OpenJDK 21.
 
 ## In flight (delegated, background)
-- **mt-020** (differential resolve gauge, → opus) — the rung's exit: jar-vs-mettle ACCEPT/REJECT over the 167-file corpus and the 150,891 unique alloy4fun codes; triage every disagreement; implement the ADR-0009 tightening if the data demands it. If resuming cold with no notification, check `git status` for uncommitted output and review against the rubrics.
+- _None._ All delegations complete, reviewed, merged (latest: mt-020 differential gauge — **Rung 2 complete**).
 
 ## Not yet started
-- Extending the scorecard to run mettle-side once anything parses/solves.
-- Printer/dumper recursion-depth safety on long flat chains — backlog bead **mt-021** (needs a small ADR; not rung-gating).
-- mt-020 — sequenced behind mt-019 (the next chunk); it is the rung's exit gauge and the ADR-0009 tightening decider.
+- Rung 3 planning (relational translation, bounds, SAT solving, instances) — awaits the owner touchpoint below.
+- Backlog beads: **mt-022** (precise relevant-type propagation — the ADR-0009 outcome's real fix; re-enables the reverted tightenings), **mt-021** (printer/dumper recursion depth; needs a small ADR). Neither is rung-gating.
 
 ## Next chunk (planned)
-**mt-020 — the differential resolve gauge** (in flight, → opus). Jar side: the `parseEverything_fromString` batch shim (mt-013 precedent — that entry point already runs full `resolveAll`). mettle side: batch load+resolve driver in `als-conform`. Run the 167-file corpus (expect 167/167 agree-ACCEPT) and the 150,891 unique alloy4fun codes; classify every disagreement (jar-rejects/mettle-accepts = the ADR-0009 accept-lean debt + real bugs; jar-accepts/mettle-rejects = drop-in violations, fix all); implement the ADR-0009 top-down tightening if the data demands; deliver `docs/reference/alloy4fun-resolve-pass.md`. On completion: **Rung-2 owner touchpoint** (`mettle check`, plus the scorecard numbers).
+**Rung 2 is complete.** The next step is the **owner touchpoint**: hand the product owner `cargo build -p mettle && ./target/debug/mettle check <file.als>` — try real models, and models Alloy would reject (a bad type, a misspelled name in an opened submodule) to see the same verdict + a caret in the right file. On "proceed" after that touchpoint, start **Rung 3** (relational core, vertical slice: translate → bounds → SAT → instance — see [ROADMAP.md](ROADMAP.md)); no beads filed yet, file mt-02x beads as the rung's own first chunk. mt-018's resolver output (`ResolvedWorld`) feeds `als-core`'s three-sorted IR next.
 
 ## Key syntax facts pinned this session (details in [reference/alloy6-grammar.md](reference/alloy6-grammar.md))
 - The public grammar appendix is NOT the truth; the reference's `Alloy.lex`/`Alloy.cup`/`CompFilter` at the jar's build commit are, plus jar probes for anything ambiguous.

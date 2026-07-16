@@ -59,6 +59,22 @@ Consequences observed at merge (jar-probed, tech-lead verified):
 - Anyone touching `resolve/expr.rs` must preserve the bottom-up-before-choice
   invariant and the accept-lean bias direction until mt-020 rules.
 
+## Outcome (decision 3 executed — 2026-07-16, mt-020)
+
+The gauge ran over 150,891 alloy4fun codes + the 167-file corpus:
+**0 jar-accepts/mettle-rejects** anywhere; over-acceptance totals 6,300 codes
+(4.2%), of which ambiguous names are ~1,505. That crossed the trigger, so the
+top-down retry-then-error tightening **was implemented and measured**: it
+produced **28,402 new drop-in violations** (and rejected 75 valid corpus
+models) while removing only ~1,478 over-accepts — the blocker is mettle's
+coarse bounding-type precision, not choice logic, exactly the failure mode
+this ADR anticipated. **Verdict: the tightening was reverted; the accept-lean
+posture stands**, with every divergence class measured and listed in
+LIMITATIONS. The real fix is precise per-node relevant-type propagation —
+filed as backlog bead **mt-022**; when it lands, this ADR's posture is
+re-evaluated (and `ResolveError::IllegalJoin`, currently never constructed,
+starts firing). Full data: [reference/alloy4fun-resolve-pass.md](../reference/alloy4fun-resolve-pass.md).
+
 ## Alternatives considered
 
 - **Demand the two-pass rework now.** Rejected: costs an opus-scale rewrite

@@ -130,6 +130,7 @@ impl<'a, 'g> Cx<'a, 'g> {
     /// `resolve_as_set`: type-check `e` as a relational value, returning its
     /// set type.
     pub(super) fn run_set(&mut self, e: ExprId) -> Type {
+        self.ambig = false;
         let t = self.check(e, &Want::Set);
         t.as_set(self.r.world.builtins.int)
     }
@@ -138,6 +139,7 @@ impl<'a, 'g> Cx<'a, 'g> {
     /// type it denotes (multiplicity markers strip away; `seq` adds the index
     /// column).
     pub(super) fn run_bound(&mut self, e: ExprId) -> Type {
+        self.ambig = false;
         let t = self.check(e, &Want::Set);
         t.as_set(self.r.world.builtins.int)
     }
@@ -145,6 +147,51 @@ impl<'a, 'g> Cx<'a, 'g> {
     // ---- the core walk ----
 
     fn check(&mut self, e: ExprId, want: &Want) -> Type {
+        let ty = self.check_kind(e, want);
+        let span = self.expr(e).span;
+        self.typecheck(&ty, want, span);
+        ty
+    }
+
+    /// The reference's `typecheck_as_{formula,int,set}` sort check (resolution-doc
+    /// §4.3): once a node's bounding type is known, the position it sits in
+    /// requires a particular sort. A relational value where a formula is
+    /// required (or vice versa), or a non-int where an int is required, is an
+    /// `ErrorType` → REJECT.
+    ///
+    /// Suppressed when the subtree involved an accept-lean overload pick
+    /// (`self.ambig`) or already carries an error (`ty.is_error()`), so the
+    /// approximation never *wrongly rejects* a real model (ADR-0009): a wrong
+    /// sort there may be an artifact of the arbitrary choice, exactly as for the
+    /// arity check.
+    fn typecheck(&mut self, ty: &Type, want: &Want, span: Span) {
+        if self.ambig || ty.is_error() {
+            return;
+        }
+        match want {
+            Want::Any => {}
+            Want::Formula => {
+                if !ty.is_bool {
+                    self.err(ResolveError::NotFormula { span });
+                }
+            }
+            Want::Int => {
+                if !ty.is_small_int && !ty.is_int(&self.r.world) {
+                    self.err(ResolveError::NotInt { span });
+                }
+            }
+            // Every set position (`Set` and the join/comparison disambiguation
+            // hints, which are all set positions in the reference) rejects a
+            // boolean value used as a relation.
+            Want::Set | Want::Of(_) | Want::JoinRhs(_) | Want::JoinLhs(_) => {
+                if ty.is_bool {
+                    self.err(ResolveError::NotSet { span });
+                }
+            }
+        }
+    }
+
+    fn check_kind(&mut self, e: ExprId, want: &Want) -> Type {
         let node = self.expr(e);
         let span = node.span;
         match &node.kind {
@@ -159,7 +206,7 @@ impl<'a, 'g> Cx<'a, 'g> {
             ExprKind::Binary {
                 op: BinOp::Join, ..
             }
-            | ExprKind::BoxJoin { .. } => self.applicative(e, span),
+            | ExprKind::BoxJoin { .. } => self.applicative(e, span, want),
             ExprKind::Binary { op, lhs, rhs } => self.binary(*op, *lhs, *rhs, span),
             ExprKind::Arrow { lhs, rhs, .. } => self.arrow(*lhs, *rhs),
             ExprKind::Compare { op, lhs, rhs, .. } => self.compare(*op, *lhs, *rhs, span),
@@ -300,10 +347,20 @@ impl<'a, 'g> Cx<'a, 'g> {
             .iter()
             .map(|&a| self.check(a, &Want::Any))
             .collect();
+        // A macro that receives a *callable passed by name* (a higher-order
+        // macro: `interesting_not_axiom[some_pred]`) cannot be faithfully
+        // type-checked by mettle's type-only param binding — the reference
+        // substitutes the name textually so `param[args]` inside the body
+        // becomes a real call, but mettle only has the param's (lenient `univ`)
+        // type. Resolve such a body **accept-lean** (ADR-0009): mark it
+        // ambiguous so the sort/arity rejects are suppressed and the
+        // approximation never wrongly rejects a real model.
+        let lean = arg_exprs.iter().any(|&a| self.arg_is_callable_by_name(a));
         let mac = self.r.world.macros[mid].clone();
         let mut sub = Cx::new(self.r, mac.module);
         sub.unroll = self.unroll - 1;
         sub.rootsig = self.rootsig;
+        sub.ambig = lean;
         for (name, ty) in mac.params.iter().zip(&arg_types) {
             sub.env.push((name.clone(), ty.clone()));
         }
@@ -311,6 +368,34 @@ impl<'a, 'g> Cx<'a, 'g> {
         self.errors.append(&mut sub.errors);
         self.warnings.append(&mut sub.warnings);
         t
+    }
+
+    /// Whether `e` is a bare name referring to a func/pred/macro that *takes
+    /// arguments* — a callable passed by name, with no 0-ary value reading.
+    /// Such an argument has no faithful value type in mettle's approximation
+    /// (the reference substitutes it textually); a macro receiving one is
+    /// resolved accept-lean (see [`Self::expand_macro`]).
+    fn arg_is_callable_by_name(&self, e: ExprId) -> bool {
+        let ExprKind::Name(qn) = &self.expr(e).kind else {
+            return false;
+        };
+        let segs = super::strip_this(qn.segments.iter().map(|s| s.text.clone()).collect());
+        // A local relation/param value is a value, not a global callable.
+        if segs.len() == 1 && self.env_get(&segs[0]).is_some() {
+            return false;
+        }
+        // A 0-ary value reading (sig, field, 0-ary fun) types fine as a value.
+        if !self.value_candidates(&segs, false).is_empty() {
+            return false;
+        }
+        let callable_func = self
+            .lookup_funcs(&segs)
+            .iter()
+            .any(|&f| !self.r.world.funcs[f].params.is_empty());
+        let callable_macro = self
+            .lookup_macro(&segs)
+            .is_some_and(|m| !self.r.world.macros[m].params.is_empty());
+        callable_func || callable_macro
     }
 
     /// Applies the disambiguation ladder (resolution-doc §4.4): want-filter →
@@ -343,14 +428,20 @@ impl<'a, 'g> Cx<'a, 'g> {
         if distinct.iter().all(|t| t.is_error() || self.all_none(t)) {
             return Type::unary(self.r.world.builtins.none);
         }
-        // A bare name that stays multi-candidate is resolved accept-lean: the
-        // reference's full top-down pass narrows it via the relevant type, which
-        // mettle's single-pass propagation only approximates, so rejecting here
-        // would false-reject real models. `AmbiguousName` is instead reserved
-        // for the reliable case — an ambiguous *call* (multiple funcs match a
-        // box-join's arity + arg types, see `applicative`). This under-
-        // approximates the jar's name-ambiguity reject (probe 15 in call form is
-        // still caught); the gap is tracked for the mt-020 differential gauge.
+        // A bare name that stays multi-candidate is resolved **accept-lean**
+        // (ADR-0009): the reference's `ExprChoice` narrows it via a *full*
+        // top-down relevant-type retry over precisely-typed candidates, then
+        // errors "This name is ambiguous". mettle's single pass carries only
+        // coarse bounding types, so it over-generates candidates the reference
+        // would narrow — the mt-020 differential proved this directly: emitting
+        // the ambiguity reject here (even guarded, even after a `fits(want)`
+        // filter) produced **28,402** jar-accepts/mettle-rejects across the
+        // 150,891 alloy4fun codes (and rejected 75 valid corpus models) while
+        // removing only ~1,478 over-accepts. So the tightening is **not**
+        // implementable on the current coarse type representation; the class
+        // stays a documented over-acceptance (LIMITATIONS) until mettle grows
+        // precise relevant-type propagation. `AmbiguousName` remains reserved
+        // for the reliable *call*-ambiguity case (probe 15, `applicative`).
         // The first min-weight candidate (a single clean arity) avoids the
         // mixed-arity union that would pollute downstream arity checks.
         let _ = (name, span);
@@ -441,7 +532,7 @@ impl<'a, 'g> Cx<'a, 'g> {
             // Implicit `this.f` when the owner is the rootsig or an ancestor.
             if !at_name {
                 if let Some(root) = self.rootsig {
-                    if self.r.world.is_same_or_descendent(root, field.owner) {
+                    if self.r.world.sig_is_same_or_descendent(root, field.owner) {
                         let this_ty = self.r.world.sigs[root].ty.clone();
                         out.push(Cand {
                             ty: this_ty.join(&self.r.world, &field.ty),
@@ -504,7 +595,7 @@ impl<'a, 'g> Cx<'a, 'g> {
 
     // ---- operators ----
 
-    fn unary(&mut self, op: UnOp, e: ExprId, _span: Span, want: &Want) -> Type {
+    fn unary(&mut self, op: UnOp, e: ExprId, span: Span, want: &Want) -> Type {
         match op {
             // Formula prefixes.
             UnOp::Not => {
@@ -524,8 +615,14 @@ impl<'a, 'g> Cx<'a, 'g> {
                 let t = self.check(e, &Want::Set);
                 Type::unary(self.r.world.builtins.seq_int).product(&self.r.world, &t)
             }
-            // Relational unary.
-            UnOp::Transpose => self.check(e, &Want::Set).transpose(),
+            // Relational unary: `~`/`^`/`*` require a binary operand
+            // (resolution-doc §4.2). The reference computes the arity error
+            // bottom-up regardless of the top-down type.
+            UnOp::Transpose => {
+                let t = self.check(e, &Want::Set);
+                self.require_binary(&t, "~", span);
+                t.transpose()
+            }
             UnOp::Closure | UnOp::ReflexiveClosure => {
                 // A closure preserves the operand's binary shape, so a relevant
                 // type from the parent (e.g. `i.*next`'s `JoinRhs`) flows
@@ -535,6 +632,15 @@ impl<'a, 'g> Cx<'a, 'g> {
                     _ => &Want::Set,
                 };
                 let t = self.check(e, operand_want);
+                self.require_binary(
+                    &t,
+                    if matches!(op, UnOp::Closure) {
+                        "^"
+                    } else {
+                        "*"
+                    },
+                    span,
+                );
                 // `*` includes `univ->univ`.
                 if matches!(op, UnOp::ReflexiveClosure) {
                     Type::product_of(vec![self.r.world.builtins.univ, self.r.world.builtins.univ])
@@ -688,7 +794,7 @@ impl<'a, 'g> Cx<'a, 'g> {
     /// resolution-doc §4.4 box-join completion). Falls back to a relational
     /// join / box join when no candidate applies.
     #[allow(clippy::too_many_lines)] // one cohesive dispatch: builtins, macros, calls, relational
-    fn applicative(&mut self, e: ExprId, span: Span) -> Type {
+    fn applicative(&mut self, e: ExprId, span: Span, want: &Want) -> Type {
         // Builtin box-join targets: list preds and the `int`/`Int` casts.
         if let ExprKind::BoxJoin { target, args } = &self.expr(e).kind {
             if let ExprKind::Name(qn) = &self.expr(*target).kind {
@@ -757,22 +863,73 @@ impl<'a, 'g> Cx<'a, 'g> {
                 .iter()
                 .filter(|c| c.params.len() == arg_exprs.len() && self.args_apply(c, &arg_types))
                 .collect();
-            if matches.len() == 1 {
+            // Prefer candidates every argument *strictly* (non-error) intersects.
+            // The reference keeps both the call and the relational-join reading
+            // of `x.f` / `f[x]` as `ExprChoice` alternatives and picks by the
+            // relevant type; mettle approximates by committing to the call only
+            // when the args genuinely apply, and otherwise falling through to
+            // the relational reading (so a field named like an auto-opened
+            // stdlib pred — `pos`/`neg`/`lte` from `util/integer` — resolves as
+            // the field join, not a spurious pred call, when the arg does not
+            // actually fit the pred's `Int` param).
+            let strict: Vec<&CallCand> = matches
+                .iter()
+                .copied()
+                .filter(|c| self.args_apply_strict(c, &arg_types))
+                .collect();
+            let chosen: Option<&CallCand> = if strict.len() == 1 {
+                Some(strict[0])
+            } else if strict.len() > 1 {
+                // Several candidates a well-typed argument matches. The
+                // reference's `ExprChoice` narrows these by the **relevant
+                // type** pushed from the parent (ADR-0009 decision 3, the
+                // top-down retry): keep only candidates whose return fits
+                // `want`. `prevs[Component.position+1] in …` resolves to the
+                // `util/ordering` `prevs` (returns the ordered sig), not the
+                // `util/integer` one (returns `Int`), because the enclosing
+                // `in` makes the ordered sig the relevant type.
+                let by_want: Vec<&CallCand> = strict
+                    .iter()
+                    .copied()
+                    .filter(|c| self.fits(&c.ret, want))
+                    .collect();
+                if by_want.len() == 1 {
+                    Some(by_want[0])
+                } else {
+                    // Still ambiguous even under the relevant type → the
+                    // reference's "This name is ambiguous" reject (probe 15).
+                    let pool = if by_want.is_empty() {
+                        &strict
+                    } else {
+                        &by_want
+                    };
+                    self.err(ResolveError::AmbiguousName {
+                        name: cands[0].reason.clone(),
+                        span,
+                        candidates: pool.iter().map(|c| c.reason.clone()).collect(),
+                    });
+                    Some(pool[0])
+                }
+            } else if matches.len() > 1 {
+                // Multiple candidates match only vacuously (an under-typed
+                // argument): the top-down relevant type would disambiguate in
+                // the reference; mettle's single pass cannot, so resolve
+                // accept-lean (ADR-0009) rather than wrongly reject.
+                self.ambig = true;
+                Some(matches[0])
+            } else {
+                // Zero or a single *vacuous* match: fall through to the
+                // relational reading (a field-join of the same name may exist).
+                None
+            };
+            if let Some(c) = chosen {
                 if self.no_calls {
                     self.err(ResolveError::FieldBoundHasCall {
                         name: self.field_name.clone(),
                         span,
                     });
                 }
-                return matches[0].ret.clone();
-            }
-            if matches.len() > 1 {
-                self.err(ResolveError::AmbiguousName {
-                    name: cands[0].reason.clone(),
-                    span,
-                    candidates: matches.iter().map(|c| c.reason.clone()).collect(),
-                });
-                return matches[0].ret.clone();
+                return c.ret.clone();
             }
             // No applicable call: fall through to the relational reading.
         }
@@ -924,6 +1081,18 @@ impl<'a, 'g> Cx<'a, 'g> {
         })
     }
 
+    /// A stricter [`Self::args_apply`] with no error/empty short-circuit: every
+    /// argument must *genuinely* intersect its parameter type. Used only to tell
+    /// a real overload ambiguity (probe 15) from one manufactured by an
+    /// under-typed argument (see the ambiguity branch of [`Self::applicative`]).
+    fn args_apply_strict(&self, c: &CallCand, arg_types: &[Type]) -> bool {
+        c.params.iter().zip(arg_types).all(|(p, a)| {
+            a.intersects(&self.r.world, p)
+                || (a.is_small_int && p.is_int(&self.r.world))
+                || (a.is_int(&self.r.world) && p.is_int(&self.r.world))
+        })
+    }
+
     // ---- binders ----
 
     fn quant(&mut self, quant: Quant, decls: &[DeclId], body: ExprId, span: Span) -> Type {
@@ -1016,6 +1185,19 @@ impl<'a, 'g> Cx<'a, 'g> {
     }
 
     // ---- helpers ----
+
+    /// Rejects `~`/`^`/`*` on a non-binary operand (resolution-doc §4.2). A
+    /// binary type has entries, all of arity 2. Suppressed on error/ambiguous
+    /// operands (accept-lean, ADR-0009) — a wrong arity there may be an artifact
+    /// of an arbitrary overload pick, not a genuine mismatch.
+    fn require_binary(&mut self, t: &Type, op: &'static str, span: Span) {
+        if self.ambig || t.is_error() {
+            return;
+        }
+        if !(t.has_entries() && t.entries.iter().all(|p| p.arity() == 2)) {
+            self.err(ResolveError::UnaryNotBinary { op, span });
+        }
+    }
 
     fn env_get(&self, name: &str) -> Option<Type> {
         self.env

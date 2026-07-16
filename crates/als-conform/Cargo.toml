@@ -12,7 +12,20 @@ workspace = true
 name = "conform"
 path = "src/bin/conform.rs"
 
+# mt-020 differential resolve/typecheck gauge: a batch driver that runs
+# mettle's own load+resolve over the alloy4fun corpus (and the 167-file
+# corpus) and diffs the verdicts against the jar (ParseOnlyShim, whose
+# `parseEverything_fromString` already runs the full resolveAll).
+[[bin]]
+name = "resolve-gauge"
+path = "src/bin/resolve_gauge.rs"
+
 [dependencies]
+# als-types / als-syntax: the resolve-gauge bin drives mettle's own
+# load+resolve pipeline (ModuleGraph::load_with_source + als_types::resolve)
+# to produce the mettle-side ACCEPT/REJECT verdict it diffs against the jar.
+als-types = { path = "../als-types" }
+als-syntax = { path = "../als-syntax" }
 # thiserror: typed per-crate error enum (STYLE E1) for the harness's own
 # infra failures (jar missing, javac failure, process I/O) -- boilerplate
 # Display/Error impls for a growing enum, nothing std doesn't already do

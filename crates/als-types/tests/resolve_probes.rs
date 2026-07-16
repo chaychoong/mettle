@@ -281,6 +281,97 @@ fn string_literal_field_accepted_probe_28() {
     accept("sig A { name: String }\nfact { all a: A | a.name = \"hello\" }\n");
 }
 
+// ---- mt-020 differential gauge fixes (docs/reference/alloy4fun-resolve-pass.md) ----
+// Each of these is a jar-verified verdict the alloy4fun differential surfaced:
+// the reject tests close over-acceptances (mettle used to accept), the accept
+// tests close drop-in violations (mettle used to wrongly reject).
+
+#[test]
+fn closure_on_non_binary_rejected_mt020() {
+    // `^A` on a unary sig: the reference rejects "^ can be used only with a
+    // binary relation" (resolution-doc §4.2). mettle used to accept.
+    let e = reject("sig A {}\nfact { some ^A }\n");
+    assert!(
+        matches!(e, ResolveError::UnaryNotBinary { op: "^", .. }),
+        "{e:?}"
+    );
+}
+
+#[test]
+fn transpose_on_non_binary_rejected_mt020() {
+    let e = reject("sig A {}\nfact { some ~A }\n");
+    assert!(
+        matches!(e, ResolveError::UnaryNotBinary { op: "~", .. }),
+        "{e:?}"
+    );
+}
+
+#[test]
+fn set_as_formula_rejected_mt020() {
+    // A bare sig as a fact body is a set, not a formula (`typecheck_as_formula`,
+    // resolution-doc §4.3). Jar: "This must be a formula expression."
+    let e = reject("sig A {}\nfact { A }\n");
+    assert!(matches!(e, ResolveError::NotFormula { .. }), "{e:?}");
+}
+
+#[test]
+fn formula_as_set_rejected_mt020() {
+    // `some (A in A)`: `some` needs a set, but `A in A` is a formula
+    // (`typecheck_as_set`). Jar rejects (as a failed typecheck).
+    let e = reject("sig A {}\nfact { some (A in A) }\n");
+    assert!(matches!(e, ResolveError::NotSet { .. }), "{e:?}");
+}
+
+#[test]
+fn non_int_comparison_rejected_mt020() {
+    // `A < A`: `<` requires integer operands (`typecheck_as_int`). Jar: "This
+    // must be an integer expression."
+    let e = reject("sig A {}\nfact { A < A }\n");
+    assert!(matches!(e, ResolveError::NotInt { .. }), "{e:?}");
+}
+
+#[test]
+fn subset_sig_implicit_this_accepted_mt020() {
+    // Inside a `sig D in P` appended fact, the ancestor field `parts` resolves
+    // via implicit `this` (a `D` atom *is* a `P`), so `this not in parts` is
+    // unary-vs-unary and type-checks. mettle used to reject with an arity
+    // mismatch (subset-sig `isSameOrDescendentOf`). Jar accepts.
+    accept("sig P { parts: set P }\nsig D in P {}{ this not in parts }\n");
+}
+
+#[test]
+fn field_named_like_stdlib_pred_accepted_mt020() {
+    // `pos` is both a user field and an (auto-opened) `util/integer` pred. On
+    // `t.pos` the pred does not apply to a non-`Int` `t`, so the field-join
+    // reading wins. mettle used to commit to the vacuous pred call and reject
+    // the result as a non-set. Jar accepts.
+    accept("sig T {}\nsig X { pos: lone T }\npred p { all t: X | some t.pos }\nrun p\n");
+}
+
+#[test]
+fn overload_disambiguated_by_relevant_type_accepted_mt020() {
+    // `foo[a + b]` on the RHS of `in` gets the relevant type `A`, which narrows
+    // the two `foo` overloads to the `A`-returning one (ADR-0009 decision 3, the
+    // top-down retry, applied to call choices). mettle used to reject as
+    // ambiguous. Jar accepts. (On the LHS, with no relevant type, both still
+    // stay ambiguous — see `ambiguous_call_rejected_probe_15`.)
+    accept(
+        "sig A {}\nsig B {}\n\
+         fun foo[x: A]: A { x }\n\
+         fun foo[x: B]: B { x }\n\
+         pred p[a: A, b: B] { a in foo[a + b] }\nrun p\n",
+    );
+}
+
+#[test]
+fn higher_order_macro_accepted_mt020() {
+    // A macro that receives a callable by name (`m[ax]`) is resolved
+    // accept-lean: mettle binds macro params by type, so it cannot reproduce the
+    // reference's textual substitution turning `axiom[univ]` into a real call.
+    // Used to reject (the substituted body typed as a non-formula). Jar accepts.
+    accept("pred ax[x: univ] { some x }\nlet m[axiom] { axiom[univ] }\nfact { m[ax] }\n");
+}
+
 // ---- determinism (STYLE U4) ----
 
 #[test]

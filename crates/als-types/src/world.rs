@@ -230,4 +230,27 @@ impl ResolvedWorld {
             }
         }
     }
+
+    /// Whether a `this: sub` atom is guaranteed to lie in `sup`'s domain — i.e.
+    /// `sub` is the same as or a descendant of `sup` following **both** the prim
+    /// `extends` chain **and** subset (`in`/`=`) parents. Unlike
+    /// [`Self::is_same_or_descendent`] (a Type-column predicate where subset
+    /// sigs never appear), this is the reference's `Sig.isSameOrDescendentOf`
+    /// used for the implicit-`this` field visibility check (resolution-doc
+    /// §3.3): a field of `Product` is reachable as `this.field` inside a
+    /// `sig Dangerous in Product` fact because a `Dangerous` atom *is* a
+    /// `Product`.
+    #[must_use]
+    pub fn sig_is_same_or_descendent(&self, sub: SigId, sup: SigId) -> bool {
+        if sub == sup {
+            return true;
+        }
+        match &self.sigs[sub].kind {
+            SigKind::Prim { parent: Some(p) } => self.sig_is_same_or_descendent(*p, sup),
+            SigKind::Prim { parent: None } => false,
+            SigKind::Subset { parents, .. } => parents
+                .iter()
+                .any(|&p| self.sig_is_same_or_descendent(p, sup)),
+        }
+    }
 }
