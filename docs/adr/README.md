@@ -15,6 +15,7 @@ Each ADR captures one non-trivial decision, its context, and its consequences. A
 | [0007](0007-rung1-lexer-parser-architecture.md) | Rung-1 syntax front end: hand-written lexer + recursive-descent/Pratt parser | Accepted |
 | [0008](0008-rung2-resolver-architecture.md) | Rung-2 resolver & type-checker architecture (`als-types`, two-pass, typed-ID world) | Accepted (dec. 4 amended by 0009) |
 | [0009](0009-fused-resolve-pass-accept-lean.md) | Fused resolve pass + accept-lean interim posture (amends 0008; mt-020 decides tightening) | Accepted (scheduling superseded by 0010) |
-| [0010](0010-hundred-percent-before-signoff.md) | Owner gate: ~100% resolve similarity before the Rung-2 touchpoint (mt-022/023 now) | Accepted |
+| [0010](0010-hundred-percent-before-signoff.md) | Owner gate: ~100% resolve similarity before the Rung-2 touchpoint (mt-022/023 now) | Accepted (outcome recorded) |
+| [0011](0011-rung3-translation-solving-architecture.md) | Rung-3 translation & solving architecture + the SAT-solver decision (hand-rolled CDCL recommended) | **Proposed — awaiting owner** |
 
 Template for new ADRs: **Context → Decision → Consequences → Alternatives considered**, with `Status:` and `Date:` headers, and a `Supersedes` / `Superseded by` line when relevant.

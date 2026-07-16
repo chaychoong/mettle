@@ -71,6 +71,11 @@ Rung gauge: **same accept/reject decisions as the jar** on resolve/typecheck (RO
 - ✔ **mt-024** · harness · One-command conformance + speed benchmark (owner-requested; delegated → sonnet, tech-lead reviewed)
   Done 2026-07-16: `conform bench [<corpus-dir>]` — per-stage conformance (parse/resolve; solve slots in at Rung 3 without schema change) + honest speed (warm threaded mettle per stage; jar one-JVM batch with startup reported separately; size-spread cold sample; ratio only for the like-for-like pair, caveat printed). Text + `--json`, byte-stable except timings; `--skip-jar`. Tech lead ran it end-to-end: parse 167/167, resolve 167/167, mettle resolve ~4× jar batch total. Usage in `als-conform` module docs.
 
+## Now (Rung 3 — relational core)
+
+- ✔ **mt-028** · R3 · Pinned translation & solving contract (delegated → opus, tech-lead reviewed)
+  Done 2026-07-16: [reference/alloy6-translation.md](reference/alloy6-translation.md) pins scopes→universe→bounds (exact `Name$N` atom naming/order — resolves the numbering Ledger corner), the resolved-Expr→relational mapping + skolemization (`$cmd_var`), symmetry breaking (all Kodkod lex-leader; ADR-0002's SB-0 counting needs none of it), SAT boundary + outcome/enumeration semantics (87/1129 re-confirmed), self-verification story, and `util/ordering` exact-bounds pinning → **LEDGER-004 drafted (proposed)**. 9 jar probes; found a new oracle gotcha: **`expect 1` silently forces `symmetry 0`** (memory + doc updated). [ADR-0011](adr/0011-rung3-translation-solving-architecture.md) drafted (**Proposed — awaiting owner**): 4-phase pipeline over the ADR-0005 shapes; solver recommendation = hand-rolled zero-dep CDCL in `als-solve` (determinism owned by construction, MPL-2.0-clean, static binary) with the `Solver` trait as a future FFI seam. Proposed bead breakdown (mt-029..037) recorded in the mt-028 report + STATE — **not filed; awaiting owner go** (pacing contract).
+
 ## Backlog (later rungs)
 Tracked at rung granularity in [ROADMAP.md](ROADMAP.md); expanded into beads when a rung becomes "Next".
 - ▢ **mt-027** · R? · Close the residual diagnostic-parity gap (owner-accepted-and-deferred 2026-07-16)

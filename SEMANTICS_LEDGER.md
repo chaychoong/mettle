@@ -44,6 +44,14 @@ Test: <path to the conformance test>
 
 ---
 
+### LEDGER-004 — `util/ordering` exact bounds & order pinning
+**Rule:** Opening `util/ordering[S]` forces sig `S`'s scope to be **exact**, and binds the order's `first`/`last`/`next` relations to **exact constants** over `S`'s atoms in universe order (`first = S$0`, `last = S$<n-1>`, `next` = the consecutive-atom successor relation) — the linear order is fully pinned and the ordered atoms carry no residual symmetry, independent of the symmetry-breaking setting.
+**Status:** `proposed` (drafted by mt-028, 2026-07-16; facts jar-`verified`). **Do not implement until `approved`** (gates bead mt-035).
+**Evidence:** probes T4/T4b in [reference/alloy6-translation.md](docs/reference/alloy6-translation.md) §5/§10 — instance count = 1 at both symmetry 20 and symmetry 0; exact atom set `S$0..S$n-1` + private `ordering/Ord$0`. Residual: exact `next` shape for >3-atom orders re-derived when mt-035 lands (§9).
+**Test:** _(added with the Rung-3 ordering work, mt-035)_
+
+---
+
 ## Corners that NEED entries (tracked; not yet written)
 These are known to be behavior-defining and version-sensitive. Each becomes a numbered, verified, approved entry before the code that depends on it ships.
 

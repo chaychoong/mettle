@@ -31,14 +31,18 @@
 - Toolchains in this VM: Rust stable (`~/.cargo/bin`) and OpenJDK 21.
 
 ## In flight (delegated, background)
-- **mt-028** (pinned translation & solving contract, → opus) running since 2026-07-16: `docs/reference/alloy6-translation.md` + draft ADR-0011 (incl. the solver decision: hand-rolled CDCL vs vendored — owner-visible) + a proposed Rung-3 bead breakdown. If resuming cold, check `git status` for the two uncommitted docs and review against the rubrics.
+- _None._ (Latest merged: mt-028, the Rung-3 contract. **PAUSED per the owner** — nothing launches until they say so.)
 
 ## Not yet started
 - Rung 3 planning (relational translation, bounds, SAT solving, instances) — awaits the deferred owner touchpoint (after mt-022 + mt-023, per ADR-0010).
 - Backlog: **mt-021** (printer/dumper recursion depth; needs a small ADR; not rung-gating).
 
 ## Next chunk (planned)
-**PAUSED by the owner (2026-07-16): finish the current round, then stop.** The current round = mt-028 (in flight): when it reports, the tech lead reviews/merges the contract doc + draft ADR-0011 and **stops — no new delegations**. What then waits on the owner: the **solver-strategy decision** (ADR-0011, owner-visible: hand-rolled CDCL vs vendored — licensing/determinism tradeoffs) and the go-ahead to file + start the Rung-3 implementation beads. Operating contract amended (CLAUDE.md): one chunk per "proceed", no auto-chaining.
+**PAUSED — three items await the owner (2026-07-16):**
+1. **ADR-0011 solver decision** — recommendation: hand-rolled zero-dep CDCL SAT solver in `als-solve` (determinism by construction, clean MPL-2.0, static binary; `Solver` trait stays as an optional-FFI seam). Alternative: vendor/bind an existing solver (faster to first-solve, but licensing + cross-version determinism auditing).
+2. **LEDGER-004 approval** — `util/ordering` exact bounds & order pinning (gates bead mt-035).
+3. **Go-ahead to file + start the Rung-3 beads** (proposed breakdown mt-029..037 in the mt-028 record: scope→universe, bounds, IR lowering, CDCL solver, CNF+decode, evaluator/self-check, ordering, `mettle run`/`check` CLI, differential solve gauge; owner touchpoint after mt-036).
+On "proceed": file the beads and start mt-029 (one chunk).
 
 ## Key syntax facts pinned this session (details in [reference/alloy6-grammar.md](reference/alloy6-grammar.md))
 - The public grammar appendix is NOT the truth; the reference's `Alloy.lex`/`Alloy.cup`/`CompFilter` at the jar's build commit are, plus jar probes for anything ambiguous.
