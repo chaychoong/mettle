@@ -39,8 +39,9 @@
 //! does.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
-// A gauge/reporting bin: precision loss in a percentage print is immaterial.
-#![allow(clippy::cast_precision_loss)]
+// A gauge/reporting bin: precision loss in a percentage print is immaterial,
+// and JSON line/col fields fit `usize` on any real target.
+#![allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -53,6 +54,14 @@ use std::thread;
 
 use als_types::{FilesystemLoader, MapLoader, ModuleGraph, ResolveError};
 
+/// One resolve warning as the parity gauge sees it: its class and 1-based
+/// (line, col). mt-023.
+struct Warn {
+    class: &'static str,
+    line: usize,
+    col: usize,
+}
+
 /// mettle's verdict for one input, plus enough detail to bucket a
 /// disagreement without re-running.
 struct Verdict {
@@ -61,14 +70,25 @@ struct Verdict {
     phase: &'static str,
     /// The `ResolveError` variant name (or `""` on accept, `"<panic>"` on panic).
     variant: &'static str,
+    /// Warnings emitted on ACCEPT (mt-023), span-ordered, `(class, line, col)`.
+    warnings: Vec<Warn>,
 }
 
 impl Verdict {
-    fn accept() -> Self {
+    fn accept(warnings: Vec<Warn>) -> Self {
         Self {
             ok: true,
             phase: "accept",
             variant: "",
+            warnings,
+        }
+    }
+    fn reject(phase: &'static str, variant: &'static str) -> Self {
+        Self {
+            ok: false,
+            phase,
+            variant,
+            warnings: Vec::new(),
         }
     }
     fn panicked() -> Self {
@@ -76,8 +96,26 @@ impl Verdict {
             ok: false,
             phase: "panic",
             variant: "<panic>",
+            warnings: Vec::new(),
         }
     }
+}
+
+/// 1-based `(line, col)` of byte `offset` in `source`, counting columns in
+/// Unicode scalar values (matching mettle's CLI diagnostics and the jar's
+/// line/col reporting closely enough for line-granular parity).
+fn line_col(source: &str, offset: u32) -> (usize, usize) {
+    let off = (offset as usize).min(source.len());
+    let mut line = 1usize;
+    let mut line_start = 0usize;
+    for (i, b) in source.as_bytes().iter().enumerate().take(off) {
+        if *b == b'\n' {
+            line += 1;
+            line_start = i + 1;
+        }
+    }
+    let col = source[line_start..off].chars().count() + 1;
+    (line, col)
 }
 
 /// The stable short name of a `ResolveError` variant, for bucketing.
@@ -131,12 +169,26 @@ fn mettle_verdict<L: als_types::ModuleLoader>(path: &str, source: String, loader
     let result = panic::catch_unwind(AssertUnwindSafe(|| {
         match ModuleGraph::load_with_source(path, source, loader) {
             Ok(graph) => match als_types::resolve(&graph) {
-                Ok(_) => Verdict::accept(),
-                Err(e) => Verdict {
-                    ok: false,
-                    phase: "resolve",
-                    variant: variant_name(&e),
-                },
+                Ok(resolved) => {
+                    // Convert each warning's span → (class, line, col) using the
+                    // source of the file it points into (mt-023).
+                    let warnings = resolved
+                        .warnings
+                        .iter()
+                        .map(|w| {
+                            let span = w.span();
+                            let src = &graph.files.file(span.file).source;
+                            let (line, col) = line_col(src, span.start);
+                            Warn {
+                                class: w.class(),
+                                line,
+                                col,
+                            }
+                        })
+                        .collect();
+                    Verdict::accept(warnings)
+                }
+                Err(e) => Verdict::reject("resolve", variant_name(&e)),
             },
             Err(e) => {
                 let phase = if matches!(e, ResolveError::OpenedFileParse { .. }) {
@@ -144,11 +196,7 @@ fn mettle_verdict<L: als_types::ModuleLoader>(path: &str, source: String, loader
                 } else {
                     "load"
                 };
-                Verdict {
-                    ok: false,
-                    phase,
-                    variant: variant_name(&e),
-                }
+                Verdict::reject(phase, variant_name(&e))
             }
         }
     }));
@@ -158,13 +206,26 @@ fn mettle_verdict<L: als_types::ModuleLoader>(path: &str, source: String, loader
 /// One JSON-Lines verdict record (hand-written JSON; escapes only what a file
 /// path / verdict field can contain).
 fn write_verdict_line(w: &mut impl Write, file: &str, v: &Verdict) -> std::io::Result<()> {
+    let mut warns = String::from("[");
+    for (i, wn) in v.warnings.iter().enumerate() {
+        if i > 0 {
+            warns.push(',');
+        }
+        let _ = write!(
+            warns,
+            "{{\"class\":\"{}\",\"line\":{},\"col\":{}}}",
+            wn.class, wn.line, wn.col
+        );
+    }
+    warns.push(']');
     writeln!(
         w,
-        "{{\"file\":\"{}\",\"ok\":{},\"phase\":\"{}\",\"variant\":\"{}\"}}",
+        "{{\"file\":\"{}\",\"ok\":{},\"phase\":\"{}\",\"variant\":\"{}\",\"warnings\":{}}}",
         json_escape(file),
         v.ok,
         v.phase,
-        v.variant
+        v.variant,
+        warns
     )
 }
 
@@ -521,6 +582,205 @@ fn run_diff(mettle_path: &Path, jar_path: &Path) -> ExitCode {
 }
 
 // ---------------------------------------------------------------------------
+// warn-diff subcommand (mt-023 warning parity)
+// ---------------------------------------------------------------------------
+
+/// One side's warnings for a file, as `(class, line, col)` triples.
+type WarnSet = Vec<(String, usize, usize)>;
+
+/// Reads a verdict jsonl, returning per-file `(ok, warnings)`. mettle warnings
+/// carry `class`; jar warnings carry `message` (mapped to a class via
+/// [`als_types::jar_stem_class`]) — `jar` selects which. Unclassifiable jar
+/// stems are collected into `unclassified`.
+fn read_warn_jsonl(
+    path: &Path,
+    jar: bool,
+    unclassified: &mut BTreeMap<String, usize>,
+) -> BTreeMap<String, (bool, WarnSet)> {
+    let text =
+        fs::read_to_string(path).unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    let mut map = BTreeMap::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let v: serde_json::Value = serde_json::from_str(line)
+            .unwrap_or_else(|e| panic!("bad json line in {}: {e}", path.display()));
+        let file = v
+            .get("file")
+            .and_then(|f| f.as_str())
+            .expect("verdict line missing `file`")
+            .to_owned();
+        let ok = v
+            .get("ok")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let mut ws: WarnSet = Vec::new();
+        if let Some(arr) = v.get("warnings").and_then(|w| w.as_array()) {
+            for w in arr {
+                let line_no = w
+                    .get("line")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0) as usize;
+                let col = w
+                    .get("col")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0) as usize;
+                let class = if jar {
+                    let msg = w.get("message").and_then(|m| m.as_str()).unwrap_or("");
+                    if let Some(c) = als_types::jar_stem_class(msg) {
+                        c.to_owned()
+                    } else {
+                        *unclassified
+                            .entry(msg.lines().next().unwrap_or("").to_owned())
+                            .or_default() += 1;
+                        continue;
+                    }
+                } else {
+                    w.get("class")
+                        .and_then(|c| c.as_str())
+                        .unwrap_or("")
+                        .to_owned()
+                };
+                ws.push((class, line_no, col));
+            }
+        }
+        map.insert(file, (ok, ws));
+    }
+    map
+}
+
+/// Deduplicated `(class, line)` set — the primary parity key (§8: positions may
+/// differ in column between the reference's operator `Pos` and mettle's node
+/// span, so parity is matched at line granularity; see warning-parity.md).
+fn class_line_set(ws: &WarnSet) -> std::collections::BTreeSet<(String, usize)> {
+    ws.iter().map(|(c, l, _)| (c.clone(), *l)).collect()
+}
+
+#[allow(clippy::too_many_lines)]
+fn run_warn_diff(mettle_path: &Path, jar_path: &Path) -> ExitCode {
+    let mut unclassified: BTreeMap<String, usize> = BTreeMap::new();
+    let mettle = read_warn_jsonl(mettle_path, false, &mut unclassified);
+    let jar = read_warn_jsonl(jar_path, true, &mut unclassified);
+
+    let mut agree_accept = 0usize;
+    let mut files_exact = 0usize;
+    let mut files_with_missing = 0usize;
+    let mut files_with_extra = 0usize;
+    let mut col_matched = 0usize; // (class,line,col) exact among matched (class,line)
+    let mut line_matched = 0usize; // matched (class,line) pairs
+    let mut missing_by_class: BTreeMap<String, usize> = BTreeMap::new();
+    let mut extra_by_class: BTreeMap<String, usize> = BTreeMap::new();
+    let mut missing_examples: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut extra_examples: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut jar_total = 0usize;
+    let mut mettle_total = 0usize;
+
+    for (file, (m_ok, m_ws)) in &mettle {
+        let Some((j_ok, j_ws)) = jar.get(file) else {
+            continue;
+        };
+        if !(*m_ok && *j_ok) {
+            continue; // parity only defined on agree-ACCEPT files.
+        }
+        agree_accept += 1;
+        let m_set = class_line_set(m_ws);
+        let j_set = class_line_set(j_ws);
+        jar_total += j_set.len();
+        mettle_total += m_set.len();
+
+        let missing: Vec<_> = j_set.difference(&m_set).cloned().collect();
+        let extra: Vec<_> = m_set.difference(&j_set).cloned().collect();
+        if missing.is_empty() && extra.is_empty() {
+            files_exact += 1;
+        }
+        if !missing.is_empty() {
+            files_with_missing += 1;
+        }
+        if !extra.is_empty() {
+            files_with_extra += 1;
+        }
+        for (class, line) in &missing {
+            *missing_by_class.entry(class.clone()).or_default() += 1;
+            let ex = missing_examples.entry(class.clone()).or_default();
+            if ex.len() < 5 {
+                ex.push(format!("{file}:{line}"));
+            }
+        }
+        for (class, line) in &extra {
+            *extra_by_class.entry(class.clone()).or_default() += 1;
+            let ex = extra_examples.entry(class.clone()).or_default();
+            if ex.len() < 5 {
+                ex.push(format!("{file}:{line}"));
+            }
+        }
+        // Column agreement among (class,line) pairs present on both sides.
+        for (class, line) in m_set.intersection(&j_set) {
+            line_matched += 1;
+            let m_col = m_ws
+                .iter()
+                .find(|(c, l, _)| c == class && l == line)
+                .map(|(_, _, col)| *col);
+            let j_col = j_ws
+                .iter()
+                .find(|(c, l, _)| c == class && l == line)
+                .map(|(_, _, col)| *col);
+            if m_col == j_col {
+                col_matched += 1;
+            }
+        }
+    }
+
+    println!("=== mt-023 warning-parity gauge (agree-ACCEPT files) ===");
+    println!("agree-ACCEPT files           : {agree_accept}");
+    println!("files with identical warn set: {files_exact}");
+    println!(
+        "files mettle-MISSING a warn  : {files_with_missing}  (LEDGER-002 direction — drive to 0)"
+    );
+    println!("files mettle-EXTRA a warn    : {files_with_extra}");
+    println!("jar (class,line) warnings    : {jar_total}");
+    println!("mettle (class,line) warnings : {mettle_total}");
+    println!("matched (class,line) pairs   : {line_matched}  ({col_matched} also column-exact)");
+
+    if !missing_by_class.is_empty() {
+        println!("\n--- mettle-MISSING by class (fix all) ---");
+        for (class, n) in &missing_by_class {
+            println!("  {class:24} {n}");
+            if let Some(ex) = missing_examples.get(class) {
+                for e in ex {
+                    println!("      e.g. {e}");
+                }
+            }
+        }
+    }
+    if !extra_by_class.is_empty() {
+        println!("\n--- mettle-EXTRA by class (triage) ---");
+        for (class, n) in &extra_by_class {
+            println!("  {class:24} {n}");
+            if let Some(ex) = extra_examples.get(class) {
+                for e in ex {
+                    println!("      e.g. {e}");
+                }
+            }
+        }
+    }
+    if !unclassified.is_empty() {
+        println!("\n--- UNCLASSIFIED jar stems (extend the stem table!) ---");
+        for (stem, n) in &unclassified {
+            println!("  {n:6} {stem}");
+        }
+    }
+
+    // Exit 1 if any mettle-missing remains (the LEDGER-002 conformance gate).
+    if missing_by_class.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // main / arg parsing
 // ---------------------------------------------------------------------------
 
@@ -536,7 +796,8 @@ fn usage() -> ExitCode {
         "usage:\n\
          \x20 resolve-gauge alloy4fun --corpus <dir> --out <dir> [--threads N] [--limit N]\n\
          \x20 resolve-gauge paths <list-file> --out <dir>\n\
-         \x20 resolve-gauge diff --mettle <mettle.jsonl> --jar <jar.jsonl>"
+         \x20 resolve-gauge diff --mettle <mettle.jsonl> --jar <jar.jsonl>\n\
+         \x20 resolve-gauge warn-diff --mettle <mettle.jsonl> --jar <jar.jsonl>"
     );
     ExitCode::from(2)
 }
@@ -573,6 +834,12 @@ fn main() -> ExitCode {
                 return usage();
             };
             run_diff(Path::new(&m), Path::new(&j))
+        }
+        "warn-diff" => {
+            let (Some(m), Some(j)) = (opt(&args, "--mettle"), opt(&args, "--jar")) else {
+                return usage();
+            };
+            run_warn_diff(Path::new(&m), Path::new(&j))
         }
         _ => usage(),
     }

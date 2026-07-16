@@ -3,8 +3,8 @@
 > The live "where are we" doc. Update this at the end of every work chunk. On pickup, read this first.
 
 **Last updated:** 2026-07-16
-**Current rung:** **Rung 2 (names & types) — extended per [ADR-0010](adr/0010-hundred-percent-before-signoff.md)** (owner gated the touchpoint on ~100% similarity). mt-016/017/015/018/019/020/022/024/025/**026** done; remaining rung-gating: **mt-023** (warning parity + `--strict`), then the touchpoint — which also carries the **residual-314 decision** (~0.21%: ~112 compound-right-operand, ~94 deep left-of-join approximation, ~38 multiplicity flag, ~10 tail — each priced for the owner; an mt-027 if they want it closed first).
-**Scorecard (after mt-026):** corpus 167/167 = 100% both stages (run `conform bench` to regenerate); alloy4fun 150,891 codes → **0 jar-accepts/mettle-rejects both directions**, **99.79% agreement**, 314 over-accepts. **Speed (mt-024 bench):** mettle resolve ~4× the jar's batch total on the 167 corpus (threaded-vs-single-JVM caveat printed by the tool).
+**Current rung:** **Rung 2 (names & types) COMPLETE incl. the [ADR-0010](adr/0010-hundred-percent-before-signoff.md) extension** — every rung-gating bead done (mt-016..020, 022–026). **Owner touchpoint due**, carrying: `mettle check [--strict]`, `conform bench`, the scorecard below, and the **residual-314 decision** (~0.21%: ~112 compound-right-operand, ~94 deep left-of-join approximation, ~38 multiplicity flag, ~10 tail — an mt-027 if the owner wants it closed before testing).
+**Scorecard:** verdicts — corpus 167/167 = 100% both stages; alloy4fun 150,891 codes → **0 jar-accepts/mettle-rejects**, **99.79% agreement**, 314 over-accepts. Warnings (mt-023) — all 20 classes; corpus 0 missing; alloy4fun **99.80% files identical** (192 missing / 20 extra, root-caused in [reference/warning-parity.md](reference/warning-parity.md)). Speed (mt-024 `conform bench`) — mettle resolve ~4× the jar's batch total (caveat printed by the tool).
 **Conformance scorecard:** harness exists (Net 0 live); mettle-side solving not yet implemented. Rung-1 gauge: **corpus lex, parse, AND round-trip rate 167/167** (alloytools-models + portus-63), plus mt-014's mutation fuzzer (default 4,248 mutants/~5s in CI, verified to 88,500 mutants offline) — zero panics, sane spans, round-trip holds. Oracle baseline committed: `baselines/` (234 jar verdicts over alloytools-models, triaged).
 **Builds:** `cargo build/fmt/clippy/test` all green workspace-wide (~180 tests + the fuzzer). **Human-testable now:** `cargo build -p mettle && ./target/debug/mettle parse <file.als>` pretty-prints any Alloy 6 model (`--ast` for the structural dump); malformed input and pathologically-deep nesting both render precise caret diagnostics, never a crash.
 
@@ -31,14 +31,14 @@
 - Toolchains in this VM: Rust stable (`~/.cargo/bin`) and OpenJDK 21.
 
 ## In flight (delegated, background)
-- **mt-023** (warning parity + `--strict`, → opus) — the last rung-gating bead: full §5.2 catalog on the mt-025 typed tree, warning-set differential vs a capturing jar shim, `mettle check --strict`. If resuming cold, check `git status` for uncommitted output and review against the rubrics.
+- _None._ All delegations complete, reviewed, merged (latest: mt-023 warning parity — **Rung 2 + ADR-0010 extension complete**).
 
 ## Not yet started
 - Rung 3 planning (relational translation, bounds, SAT solving, instances) — awaits the deferred owner touchpoint (after mt-022 + mt-023, per ADR-0010).
 - Backlog: **mt-021** (printer/dumper recursion depth; needs a small ADR; not rung-gating).
 
 ## Next chunk (planned)
-**mt-023 — warning parity + `--strict`** (in flight, → opus). Then the **owner touchpoint**: `mettle check`, `conform bench`, verdict + warning + speed numbers, and the residual-314 decision (mt-027 or accept). Then Rung 3.
+**The owner touchpoint.** Hand over: `cargo build --workspace --release` (or debug), then `./target/debug/mettle check [--strict] <file.als>` and `./target/debug/conform bench`. Numbers to show: verdict 99.79% / 0 false rejects, warnings 99.80% / 0 missing on corpus, speed ~4×. Decision to put to the owner: the residual 314 (accept as documented, or fund mt-027 before testing). On "proceed" past the touchpoint: **Rung 3** (relational core: translate `ResolvedWorld` → als-core IR → bounds → SAT → instances); file its beads as the rung's first chunk.
 
 ## Key syntax facts pinned this session (details in [reference/alloy6-grammar.md](reference/alloy6-grammar.md))
 - The public grammar appendix is NOT the truth; the reference's `Alloy.lex`/`Alloy.cup`/`CompFilter` at the jar's build commit are, plus jar probes for anything ambiguous.

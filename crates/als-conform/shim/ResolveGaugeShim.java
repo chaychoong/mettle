@@ -1,5 +1,6 @@
 import edu.mit.csail.sdg.alloy4.A4Reporter;
 import edu.mit.csail.sdg.alloy4.Err;
+import edu.mit.csail.sdg.alloy4.ErrorWarning;
 import edu.mit.csail.sdg.alloy4.Pos;
 import edu.mit.csail.sdg.parser.CompUtil;
 
@@ -7,6 +8,8 @@ import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Batch resolve/typecheck verdict shim for the mt-020 differential gauge
@@ -44,10 +47,14 @@ import java.nio.charset.StandardCharsets;
  * absolute {@code .als} path per line. Output: JSON Lines on stdout, one object
  * per input file, in list order:
  * <pre>
- *   {"file":"...","ok":true,"nanos":123456}
+ *   {"file":"...","ok":true,"nanos":123456,"warnings":[{"line":4,"col":7,"message":"..."}]}
  *   {"file":"...","ok":false,"phase":"parse","nanos":123456,"line":12,"col":8,"message":"..."}
  *   {"file":"...","ok":false,"phase":"resolve","nanos":123456,"line":1,"col":1,"message":"..."}
  * </pre>
+ * The {@code warnings} array (mt-023) captures the reference's post-{@code
+ * resolveAll} warning set for the warning-parity gauge; it appears only on
+ * ACCEPT records (warnings are emitted only after success). It is additive:
+ * every field mt-020/mt-024 read is untouched.
  * {@code nanos} is this file's own `parseEverything_fromFile` wall time,
  * excluding JVM startup (which happens once, before the first line) -- the
  * per-file half of `bench`'s batch-mode jar timing.
@@ -79,10 +86,20 @@ public final class ResolveGaugeShim {
 
     private static String runOne(String path) {
         long t0 = System.nanoTime();
+        // mt-023: a capturing reporter (the ProbeShim precedent) records each
+        // warning's (line, col, message). The reference emits warnings only
+        // after resolveAll fully succeeds (resolution-doc §0/§5.2), so a
+        // captured warning always coincides with an ACCEPT record. The
+        // `warnings` field is purely additive: mt-020/mt-024 readers ignore it.
+        final List<ErrorWarning> warns = new ArrayList<>();
+        A4Reporter rep = new A4Reporter() {
+            @Override public void warning(ErrorWarning w) { warns.add(w); }
+        };
         try {
-            CompUtil.parseEverything_fromFile(A4Reporter.NOP, null, path);
+            CompUtil.parseEverything_fromFile(rep, null, path);
             long nanos = System.nanoTime() - t0;
-            return "{\"file\":\"" + escape(path) + "\",\"ok\":true,\"nanos\":" + nanos + "}";
+            return "{\"file\":\"" + escape(path) + "\",\"ok\":true,\"nanos\":" + nanos
+                + ",\"warnings\":" + warningsJson(warns) + "}";
         } catch (Err e) {
             long nanos = System.nanoTime() - t0;
             Pos pos = e.pos != null ? e.pos : Pos.UNKNOWN;
@@ -132,6 +149,30 @@ public final class ResolveGaugeShim {
             return "parse";
         }
         return "resolve";
+    }
+
+    /**
+     * Serializes the captured warnings as a JSON array of
+     * {@code {"line":Y,"col":X,"message":"..."}} objects, in collection order
+     * (the reference's collection order is JVM-incidental — resolution-doc §8 —
+     * so the mt-023 gauge compares warning SETS, never order). A warning with
+     * an unknown pos serializes with line/col 0.
+     */
+    private static String warningsJson(List<ErrorWarning> warns) {
+        StringBuilder sb = new StringBuilder();
+        sb.append('[');
+        for (int i = 0; i < warns.size(); i++) {
+            ErrorWarning w = warns.get(i);
+            Pos p = w.pos != null ? w.pos : Pos.UNKNOWN;
+            if (i > 0) {
+                sb.append(',');
+            }
+            sb.append("{\"line\":").append(p.y)
+              .append(",\"col\":").append(p.x)
+              .append(",\"message\":\"").append(escape(w.msg != null ? w.msg : "")).append("\"}");
+        }
+        sb.append(']');
+        return sb.toString();
     }
 
     /** Hand-rolled JSON string escaping — no JSON-library dependency (matches the other shims). */

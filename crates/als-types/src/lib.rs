@@ -33,7 +33,7 @@ pub use graph::{ArgRef, ModuleGraph, ModuleId, ModuleInstance, OpenEdge, ParamBi
 pub use loader::{FilesystemLoader, MapLoader, ModuleLoader};
 pub use resolve::{resolve, Resolved};
 pub use ty::{Product, Type};
-pub use warning::ResolveWarning;
+pub use warning::{jar_stem_class, ResolveWarning};
 pub use world::{
     Builtins, FieldId, FuncId, MacroId, Param, ResolvedCommand, ResolvedField, ResolvedFunc,
     ResolvedMacro, ResolvedSig, ResolvedWorld, SigId, SigKind,

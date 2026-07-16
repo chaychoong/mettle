@@ -10,6 +10,7 @@ use als_syntax::{ArenaId, Span};
 use crate::error::ResolveError;
 use crate::graph::ModuleId;
 use crate::ty::Type;
+use crate::warning::ResolveWarning;
 use crate::world::{
     FuncId, MacroId, Param, ResolvedCommand, ResolvedField, ResolvedFunc, ResolvedMacro, SigId,
 };
@@ -154,6 +155,26 @@ impl Resolver<'_> {
         };
         self.errors.extend(errs);
         self.warnings.extend(warns);
+
+        // Static-field var-mismatch warnings (resolution-doc §5.2 E(d)/E(e),
+        // `resolveFieldDecl`). Both are independent `if`s in the reference.
+        if !decl.is_var {
+            // E(d): a static field whose bound references a variable sig. The
+            // reference visits the bound *expression* for any `var` sig; mettle
+            // approximates with the resolved bound type's columns (a var sig
+            // projected away by a join is the only miss).
+            let bound_has_var = bound_ty
+                .entries
+                .iter()
+                .any(|p| p.0.iter().any(|&s| self.world.sigs[s].is_var));
+            if bound_has_var {
+                self.warn(ResolveWarning::FieldStaticVarBound { span: decl.span });
+            }
+            // E(e): a static field inside a variable sig.
+            if self.world.sigs[sig].is_var {
+                self.warn(ResolveWarning::FieldStaticInVarSig { span: decl.span });
+            }
+        }
 
         // Empty-bound reject (all-`none` relation).
         let none = self.world.builtins.none;
@@ -381,6 +402,16 @@ impl Resolver<'_> {
                 cx.errors.push(ResolveError::FuncBodyArity {
                     name: self.world.funcs[fid].name.clone(),
                     span: para_span(&ast.paras[para]),
+                });
+            }
+            // F: a function body type disjoint from its declared return type
+            // (`CompModule.resolveFuncBody`): both non-empty and non-intersecting.
+            if ret.has_tuple(&self.world)
+                && bt.has_tuple(&self.world)
+                && !bt.intersects(&self.world, ret)
+            {
+                cx.warnings.push(ResolveWarning::ReturnDisjoint {
+                    span: ast.exprs[body].span,
                 });
             }
         }

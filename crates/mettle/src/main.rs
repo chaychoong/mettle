@@ -63,14 +63,17 @@ fn run(args: &[String]) -> Result<(), ExitCode> {
 fn print_usage() {
     eprintln!(
         "usage: mettle parse <file.als> [--ast]\n\
-         \x20\x20\x20\x20\x20mettle check <file.als>\n\
+         \x20\x20\x20\x20\x20mettle check <file.als> [--strict]\n\
          \n\
          Subcommands:\n\
          \x20\x20parse <file.als>       parse a module and print it back as canonical Alloy 6\n\
          \x20\x20check <file.als>       load, resolve, and type-check a module (and its opens)\n\
          \n\
          Options (parse):\n\
-         \x20\x20--ast                  print the span-free structural AST dump instead of source"
+         \x20\x20--ast                  print the span-free structural AST dump instead of source\n\
+         \n\
+         Options (check):\n\
+         \x20\x20--strict               exit non-zero if any warning fired (verdict unchanged)"
     );
 }
 
@@ -156,12 +159,14 @@ fn run_parse(args: &[String]) -> Result<(), ExitCode> {
 /// one-line summary prints to stdout.
 fn run_check(args: &[String]) -> Result<(), ExitCode> {
     let mut path: Option<&str> = None;
+    let mut strict = false;
     for arg in args {
         match arg.as_str() {
             "-h" | "--help" => {
                 print_usage();
                 return Ok(());
             }
+            "--strict" => strict = true,
             other if other.starts_with('-') => {
                 eprintln!("mettle check: unknown option `{other}`");
                 print_usage();
@@ -230,6 +235,15 @@ fn run_check(args: &[String]) -> Result<(), ExitCode> {
                 .count();
             let n_funcs = resolved.world.funcs.len();
             let n_warnings = resolved.warnings.len();
+            // `--strict` promotes any warning to a failing exit (the accept
+            // verdict itself is unchanged — resolution-doc §5.3 / LEDGER-002).
+            if strict && n_warnings > 0 {
+                write_stdout(format!(
+                    "{path}: FAILED (strict): {n_warnings} warning(s) \
+                     ({n_sigs} sigs, {n_funcs} funcs)\n"
+                ))?;
+                return Err(ExitCode::from(1));
+            }
             write_stdout(format!(
                 "{path}: ok ({n_sigs} sigs, {n_funcs} funcs, {n_warnings} warnings)\n"
             ))

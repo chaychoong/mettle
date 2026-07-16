@@ -158,6 +158,51 @@ fn submodule_parse_error_falls_back_to_a_disk_reread() {
 }
 
 #[test]
+fn strict_fails_when_a_warning_fires() {
+    // `--strict` (mt-023) promotes any warning to a nonzero exit — but the
+    // ACCEPT verdict itself is unchanged (LEDGER-002): warnings still render,
+    // and the summary says why it failed.
+    let file = fixture("warn.als");
+    let out = Command::new(env!("CARGO_BIN_EXE_mettle"))
+        .args(["check", "--strict"])
+        .arg(&file)
+        .output()
+        .expect("failed to spawn mettle");
+    assert_eq!(out.status.code(), Some(1), "stderr: {}", stderr(&out));
+    // The warning still renders to stderr.
+    assert!(
+        stderr(&out).contains("variable `x` is never used"),
+        "{}",
+        stderr(&out)
+    );
+    // The summary explains the strict failure.
+    assert!(stdout(&out).contains("FAILED (strict)"), "{}", stdout(&out));
+    assert!(stdout(&out).contains("1 warning"), "{}", stdout(&out));
+}
+
+#[test]
+fn strict_passes_a_clean_model() {
+    // No warnings → `--strict` exits 0, same as a plain check.
+    let file = fixture("good.als");
+    let out = Command::new(env!("CARGO_BIN_EXE_mettle"))
+        .args(["check", "--strict"])
+        .arg(&file)
+        .output()
+        .expect("failed to spawn mettle");
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stdout(&out).contains(": ok ("), "{}", stdout(&out));
+}
+
+#[test]
+fn warnings_without_strict_still_exit_zero() {
+    // Without `--strict`, a warning is never fatal.
+    let file = fixture("warn.als");
+    let out = run_check(&file);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stdout(&out).contains(": ok ("), "{}", stdout(&out));
+}
+
+#[test]
 fn unknown_option_exits_two() {
     let out = Command::new(env!("CARGO_BIN_EXE_mettle"))
         .args(["check", "--bogus"])

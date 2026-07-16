@@ -25,8 +25,6 @@
 //!
 //! No `int`↔`Int` coercion (resolution-doc §4.5). Candidate scope chain §4.4.
 
-use std::collections::BTreeSet;
-
 use als_syntax::ast::{
     BinOp, CmpOp, Const, Decl, DeclId, Expr, ExprId, ExprKind, LetBinding, QualName, Quant, UnOp,
 };
@@ -88,11 +86,14 @@ enum Fin {
     Leaf,
     /// A relational join `left . right`: resolve `left` against the join
     /// left-slice; fire `IllegalJoin` if the join type is the `EMPTY` sentinel.
-    /// `right` is the compound right-operand expr when it is not a distributed
-    /// name leaf (a field candidate needs no further resolution).
+    /// `right_expr` is the compound right-operand expr when it is not a
+    /// distributed name leaf (a field candidate needs no further resolution) —
+    /// carried so its own warnings can be collected (a warning-only resolve that
+    /// discards errors, so the verdict is unaffected; mt-023).
     Join {
         left: ExprId,
         right_ty: Type,
+        right_expr: Option<ExprId>,
         span: Span,
     },
     /// A function/predicate call: resolve each arg against its parameter type.
@@ -136,8 +137,6 @@ pub(super) struct Cx<'a, 'g> {
     pub warnings: Vec<ResolveWarning>,
     /// Remaining macro-substitution budget (resolution-doc §3.7, starts at 20).
     unroll: u32,
-    /// Env var names referenced so far (for the unused-binder warning).
-    used: BTreeSet<String>,
 }
 
 impl<'a, 'g> Cx<'a, 'g> {
@@ -152,7 +151,6 @@ impl<'a, 'g> Cx<'a, 'g> {
             errors: Vec::new(),
             warnings: Vec::new(),
             unroll: 20,
-            used: BTreeSet::new(),
         }
     }
 
@@ -482,7 +480,7 @@ impl<'a, 'g> Cx<'a, 'g> {
             }
             | ExprKind::BoxJoin { .. } => self.applicative(e, span, p),
             ExprKind::Binary { op, lhs, rhs } => self.binary(*op, *lhs, *rhs, span, p),
-            ExprKind::Arrow { lhs, rhs, .. } => self.arrow(*lhs, *rhs, p),
+            ExprKind::Arrow { lhs, rhs, .. } => self.arrow(*lhs, *rhs, span, p),
             ExprKind::Compare { op, lhs, rhs, .. } => self.compare(*op, *lhs, *rhs, span),
             ExprKind::IfThenElse {
                 cond,
@@ -496,6 +494,20 @@ impl<'a, 'g> Cx<'a, 'g> {
                 if let [only] = exprs.as_slice() {
                     self.resolve(*only, p)
                 } else {
+                    // D (implicit conjunction): two juxtaposed formulas on the
+                    // same source line, no explicit `and` (§5.2, `ExprList.makeAND`
+                    // `pos == null && a.span().y2 == b.span().y`). Block elements
+                    // are always the implicitly-conjoined case (`and`/`&&` build a
+                    // Binary node, never a Block element). Position: between them.
+                    for pair in exprs.windows(2) {
+                        let (a, b) = (pair[0], pair[1]);
+                        let (aspan, bspan) = (self.expr(a).span, self.expr(b).span);
+                        if self.same_source_line(aspan.file, aspan.end, bspan.start) {
+                            self.warnings.push(ResolveWarning::ImplicitConjunction {
+                                span: Span::new(aspan.file, aspan.end, bspan.start),
+                            });
+                        }
+                    }
                     let mut err = false;
                     for &f in exprs {
                         let fp = self.formula();
@@ -607,11 +619,21 @@ impl<'a, 'g> Cx<'a, 'g> {
             UnOp::Transpose => {
                 // s = sub.type.transpose().intersect(p).transpose()
                 let subt = self.infer(e);
-                let s = subt
+                let s_pre = subt
                     .transpose(&self.r.world)
                     .intersect(&self.r.world, p)
                     .transpose(&self.r.world);
-                let s = if s.has_entries() { s } else { subt.clone() };
+                // A2 (does not contribute): s == EMPTY && p.hasTuple() (§5.2).
+                if s_pre.is_error() && p.has_tuple(&self.r.world) {
+                    self.warnings.push(ResolveWarning::DoesNotContribute {
+                        span: self.expr(e).span,
+                    });
+                }
+                let s = if s_pre.has_entries() {
+                    s_pre
+                } else {
+                    subt.clone()
+                };
                 let mut sub = self.resolve(e, &s);
                 self.typecheck_as_set(&mut sub, self.expr(e).span);
                 let ty = sub.ty.transpose(&self.r.world);
@@ -654,6 +676,28 @@ impl<'a, 'g> Cx<'a, 'g> {
                 } else {
                     closed
                 };
+                // A1 (closure redundant): for `^` only, `this.type` joined with
+                // itself has no tuple — domain and range are disjoint (§5.2). The
+                // reference's `this.type` is the make-time (bottom-up) closure
+                // type, not the relevant-narrowed `closed`.
+                if matches!(op, UnOp::Closure) {
+                    let bu = self.infer(e).closure(&self.r.world);
+                    if bu.join(&self.r.world, &bu).has_no_tuple(&self.r.world) && bu.has_entries() {
+                        self.warnings
+                            .push(ResolveWarning::ClosureRedundant { span });
+                    }
+                }
+                // A2 (does not contribute): the operand's relevant contribution
+                // to the parent type is empty (`resolveClosure(p, sub.type) ==
+                // EMPTY && p.hasTuple()`, §5.2). Computed on the bottom-up operand
+                // type; used for the warning decision only (the *pushed* relevant
+                // type is unchanged, so the verdict is untouched).
+                let s_a2 = self.resolve_closure(p, &self.infer(e));
+                if s_a2.is_error() && p.has_tuple(&self.r.world) {
+                    self.warnings.push(ResolveWarning::DoesNotContribute {
+                        span: self.expr(e).span,
+                    });
+                }
                 R { ty, err: sub.err }
             }
             UnOp::Card => {
@@ -667,7 +711,18 @@ impl<'a, 'g> Cx<'a, 'g> {
             }
             UnOp::IntOf | UnOp::SumOf => {
                 // int[e]/sum e: cast a unary set of Int atoms to a primitive int.
-                let s = self.infer(e).remove_bool_and_int(self.int_sig());
+                let subt = self.infer(e);
+                // A5 (int atoms): the `int[]`/`sum` cast (CAST2INT), when the
+                // operand can hold no Int atoms (§5.2). Position: the operand.
+                if subt
+                    .intersect(&self.r.world, &Type::unary(self.int_sig()))
+                    .has_no_tuple(&self.r.world)
+                {
+                    self.warnings.push(ResolveWarning::IntAtoms {
+                        span: self.expr(e).span,
+                    });
+                }
+                let s = subt.remove_bool_and_int(self.int_sig());
                 let mut sub = self.resolve(e, &s);
                 self.typecheck_as_set(&mut sub, self.expr(e).span);
                 R {
@@ -752,6 +807,26 @@ impl<'a, 'g> Cx<'a, 'g> {
                     });
                     return R::bad();
                 }
+                // Relevance/redundancy warnings (§5.2 A6/A7/A8), on a well-typed
+                // node whose children resolved cleanly.
+                if !l.err && !r.err {
+                    match op {
+                        // A6: `&` — the intersection type is statically empty.
+                        BinOp::Intersect if make_ty.has_no_tuple(world) => {
+                            self.warnings
+                                .push(ResolveWarning::IntersectIrrelevant { span });
+                        }
+                        // A7: `+`/`++` — a side contributes nothing to `p`.
+                        BinOp::Union | BinOp::Override if ap.is_error() || bp.is_error() => {
+                            self.warnings.push(ResolveWarning::PlusIrrelevant { span });
+                        }
+                        // A8: `-` — the result or the narrowed right side is empty.
+                        BinOp::Diff if make_ty.has_no_tuple(world) || bp.has_no_tuple(world) => {
+                            self.warnings.push(ResolveWarning::MinusIrrelevant { span });
+                        }
+                        _ => {}
+                    }
+                }
                 let ty = match op {
                     BinOp::Diff => lt.pick_common_arity(world, &rt),
                     _ => make_ty,
@@ -774,6 +849,11 @@ impl<'a, 'g> Cx<'a, 'g> {
                     });
                     return R::bad();
                 }
+                // A10: `<:` result is always empty (§5.2).
+                if !l.err && !r.err && make_ty.has_no_tuple(world) {
+                    self.warnings
+                        .push(ResolveWarning::DomainIrrelevant { span });
+                }
                 R {
                     ty: make_ty,
                     err: l.err || r.err,
@@ -791,6 +871,10 @@ impl<'a, 'g> Cx<'a, 'g> {
                         span: self.expr(rhs).span,
                     });
                     return R::bad();
+                }
+                // A11: `:>` result is always empty (§5.2).
+                if !l.err && !r.err && make_ty.has_no_tuple(world) {
+                    self.warnings.push(ResolveWarning::RangeIrrelevant { span });
                 }
                 R {
                     ty: make_ty,
@@ -816,7 +900,7 @@ impl<'a, 'g> Cx<'a, 'g> {
         }
     }
 
-    fn arrow(&mut self, lhs: ExprId, rhs: ExprId, p: &Type) -> R {
+    fn arrow(&mut self, lhs: ExprId, rhs: ExprId, span: Span, p: &Type) -> R {
         let world = &self.r.world;
         let lt = self.infer(lhs);
         let rt = self.infer(rhs);
@@ -824,6 +908,14 @@ impl<'a, 'g> Cx<'a, 'g> {
         let (ap, bp) = self.arrow_slices(&lt, &rt, p);
         let l = self.resolve_checked(lhs, &ap);
         let r = self.resolve_checked(rhs, &bp);
+        // A12: one side of `->` is empty while the other is not (§5.2 default).
+        if !l.err && !r.err {
+            let lt_tuple = lt.has_tuple(world);
+            let rt_tuple = rt.has_tuple(world);
+            if lt_tuple != rt_tuple {
+                self.warnings.push(ResolveWarning::ArrowIrrelevant { span });
+            }
+        }
         R {
             ty: lt.product(world, &rt),
             err: l.err || r.err,
@@ -987,6 +1079,37 @@ impl<'a, 'g> Cx<'a, 'g> {
                     });
                     return R::bad();
                 }
+                // Redundancy warnings (§5.2 A3/A4) on a well-typed comparison.
+                if !l.err && !r.err {
+                    // "Same value" mirrors the reference's structural
+                    // `ExprBinary.isSame`. (Rare divergence: the reference's
+                    // isSame fails to fire on `+`/`-` compounds over a *var field*
+                    // — e.g. `(A->B - f) + f = …` — for temporal-resolution
+                    // reasons; mettle's structural check fires, a documented
+                    // handful of mettle-EXTRA, warning-parity.md.)
+                    let same = self.same_expr(lhs, rhs);
+                    match op {
+                        // A3: `=`/`!=` sides always disjoint or always identical.
+                        CmpOp::Eq
+                            if (lt.has_tuple(world)
+                                && rt.has_tuple(world)
+                                && !lt.intersects(world, &rt))
+                                || same =>
+                        {
+                            self.warnings.push(ResolveWarning::EqRedundant { span });
+                        }
+                        // A4: `in`/`!in` — a side empty, disjoint, or identical.
+                        CmpOp::In
+                            if lt.has_no_tuple(world)
+                                || rt.has_no_tuple(world)
+                                || bp.has_no_tuple(world)
+                                || same =>
+                        {
+                            self.warnings.push(ResolveWarning::SubsetRedundant { span });
+                        }
+                        _ => {}
+                    }
+                }
                 R {
                     ty: self.formula(),
                     err: l.err || r.err,
@@ -1003,7 +1126,24 @@ impl<'a, 'g> Cx<'a, 'g> {
         let (ap, bp) = if p.has_entries() || p.is_bool || p.is_small_int {
             let at = self.infer(then_e);
             let bt = self.infer(else_e);
-            (at.intersect(world, p), bt.intersect(world, p))
+            let ap = at.intersect(world, p);
+            let bp = bt.intersect(world, p);
+            // C (redundant ITE branch): when the parent relevant type has
+            // entries, a branch whose type had tuples but whose narrowed type
+            // does not is redundant (§5.2). Positions: the branch expressions.
+            if p.has_entries() && !p.is_bool {
+                if at.has_tuple(world) && !ap.has_tuple(world) {
+                    self.warnings.push(ResolveWarning::RedundantIteBranch {
+                        span: self.expr(then_e).span,
+                    });
+                }
+                if bt.has_tuple(world) && !bp.has_tuple(world) {
+                    self.warnings.push(ResolveWarning::RedundantIteBranch {
+                        span: self.expr(else_e).span,
+                    });
+                }
+            }
+            (ap, bp)
         } else {
             (p.clone(), p.clone())
         };
@@ -1033,7 +1173,6 @@ impl<'a, 'g> Cx<'a, 'g> {
 
         if !at_name && segs.len() == 1 {
             if let Some(t) = self.env_get(&segs[0]) {
-                self.used.insert(segs[0].clone());
                 return R::ok(t);
             }
         }
@@ -1504,9 +1643,21 @@ impl<'a, 'g> Cx<'a, 'g> {
                         };
                     }
                     "int" | "sum" => {
+                        // Both `int[e]` and `sum[e]` are CAST2INT (§4.5).
                         let mut err = false;
                         for a in args {
-                            let ap = self.infer(a).remove_bool_and_int(self.int_sig());
+                            let at = self.infer(a);
+                            // A5 (int atoms): CAST2INT operand that can hold no Int
+                            // atoms (§5.2). Position: the operand.
+                            if at
+                                .intersect(&self.r.world, &Type::unary(self.int_sig()))
+                                .has_no_tuple(&self.r.world)
+                            {
+                                self.warnings.push(ResolveWarning::IntAtoms {
+                                    span: self.expr(a).span,
+                                });
+                            }
+                            let ap = at.remove_bool_and_int(self.int_sig());
                             let mut r = self.resolve(a, &ap);
                             self.typecheck_as_set(&mut r, self.expr(a).span);
                             err |= r.err;
@@ -1650,6 +1801,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                             fin: Fin::Join {
                                 left: arg,
                                 right_ty: reading.ty.clone(),
+                                right_expr: None,
                                 span,
                             },
                         });
@@ -1657,8 +1809,15 @@ impl<'a, 'g> Cx<'a, 'g> {
                 }
                 // An unknown-name spine head stays a reject, not a relational join.
                 Fin::Unknown { .. } => out.push(reading),
-                _ => {
+                other => {
                     // Relational join arg . reading (right is a resolved leaf).
+                    // A `Sub(e)` right operand (a compound expr — closure,
+                    // paren, nested join) is otherwise never resolved; carry it
+                    // so `finalize` can collect its warnings (mt-023).
+                    let right_expr = match other {
+                        Fin::Sub(e) => Some(e),
+                        _ => None,
+                    };
                     let ty = argt.join(world, &reading.ty);
                     out.push(Reading {
                         ty,
@@ -1667,6 +1826,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                         fin: Fin::Join {
                             left: arg,
                             right_ty: reading.ty.clone(),
+                            right_expr,
                             span,
                         },
                     });
@@ -1979,19 +2139,31 @@ impl<'a, 'g> Cx<'a, 'g> {
             Fin::Join {
                 left,
                 right_ty,
+                right_expr,
                 span,
             } => {
                 // Resolve the left operand (which may itself be a join/choice).
                 // A compound right operand (`s.*next`, `x.(y.z)`) keeps its
-                // bottom-up type rather than being resolved standalone —
-                // standalone resolution loses the join's disambiguation (`*next`
-                // becomes ambiguous with the auto-opened `integer/next`); a
-                // documented over-acceptance for an unknown name inside a
-                // compound right operand (LIMITATIONS), never a false reject.
+                // bottom-up type for the *verdict* rather than being resolved
+                // standalone — standalone resolution loses the join's
+                // disambiguation (`*next` becomes ambiguous with the auto-opened
+                // `integer/next`); a documented over-acceptance for an unknown
+                // name inside a compound right operand (LIMITATIONS), never a
+                // false reject.
                 let lt = self.infer(left);
-                let (ap, _bp) = self.join_slices(&lt, &right_ty, p);
+                let (ap, bp) = self.join_slices(&lt, &right_ty, p);
                 let mut l = self.resolve(left, &ap);
                 self.typecheck_as_set(&mut l, self.expr(left).span);
+                // Warning-only pass over the compound right operand (mt-023): the
+                // reference resolves it (emitting any relevance/redundancy warning
+                // inside, e.g. a `^`-closure), so mettle collects those warnings
+                // too — but discards any *errors* it raises, keeping the verdict
+                // byte-identical (the LIMITATIONS over-acceptance is preserved).
+                if let Some(re) = right_expr {
+                    let nerr = self.errors.len();
+                    let _ = self.resolve(re, &bp);
+                    self.errors.truncate(nerr);
+                }
                 let joined = lt.join(&self.r.world, &right_ty);
                 // `$`-meta models resolve leniently (meta atoms mettle approximates
                 // as `univ`); a lenient `univ`/placeholder operand is never a
@@ -2004,6 +2176,18 @@ impl<'a, 'g> Cx<'a, 'g> {
                 {
                     self.err(ResolveError::IllegalJoin { span });
                     return R::bad();
+                }
+                // A9: a legal-arity join whose type is statically empty (§5.2
+                // `this.type.hasNoTuple()`). EMPTY (illegal join) took the reject
+                // path above; a `univ` operand is a lenient placeholder, not a
+                // genuine empty join.
+                if !l.err
+                    && !joined.is_error()
+                    && joined.has_no_tuple(&self.r.world)
+                    && !self.contains_univ(&lt)
+                    && !self.contains_univ(&right_ty)
+                {
+                    self.warnings.push(ResolveWarning::JoinEmpty { span });
                 }
                 R {
                     ty: joined,
@@ -2170,7 +2354,7 @@ impl<'a, 'g> Cx<'a, 'g> {
             let fp = self.formula();
             self.resolve_checked(body, &fp).err
         };
-        self.pop_and_warn_unused(decls, pushed);
+        self.pop_and_warn_unused(decls, body, pushed);
         let _ = span;
         let ty = if matches!(quant, Quant::Sum) {
             self.small_int()
@@ -2195,7 +2379,11 @@ impl<'a, 'g> Cx<'a, 'g> {
                 Some(prev) => prev.product(&self.r.world, bt),
             });
         }
-        self.pop_and_warn_unused(decls, pushed);
+        // Comprehensions are exempt from the unused-variable warning
+        // (`ExprQt.resolve`: `op != Op.COMPREHENSION`, resolution-doc §5.2 B).
+        for _ in 0..pushed {
+            self.env.pop();
+        }
         R {
             ty: ty.unwrap_or_else(Type::empty),
             err,
@@ -2213,6 +2401,21 @@ impl<'a, 'g> Cx<'a, 'g> {
         let out = self.resolve(body, p);
         for _ in 0..pushed {
             self.env.pop();
+        }
+        // Unused `let` variable (`ExprLet.resolve`: `!newSub.hasVar(var)`,
+        // resolution-doc §5.2 B). Desugared `let x=a, y=b | body` is nested lets,
+        // so `x` is used iff a later binding value or the body references it
+        // (syntactic `hasVar`). Position: the name.
+        for (i, b) in bindings.iter().enumerate() {
+            let used_later = bindings[i + 1..]
+                .iter()
+                .any(|nb| self.references_name(nb.value, &b.name.text));
+            if !used_later && !self.references_name(body, &b.name.text) {
+                self.warnings.push(ResolveWarning::UnusedVariable {
+                    name: b.name.text.clone(),
+                    span: b.name.span,
+                });
+            }
         }
         out
     }
@@ -2246,23 +2449,191 @@ impl<'a, 'g> Cx<'a, 'g> {
         r.ty.as_set(self.int_sig())
     }
 
-    fn pop_and_warn_unused(&mut self, decls: &[DeclId], pushed: usize) {
-        let mut names: Vec<(String, Span)> = Vec::new();
-        for &d in decls {
-            let decl = &self.ast().decls[d];
-            for n in &decl.names {
-                names.push((n.text.clone(), n.span));
-            }
-        }
+    /// Pops the `pushed` binder frames and emits an unused-variable warning for
+    /// each quantifier variable the reference would (`ExprQt.resolve`,
+    /// resolution-doc §5.2 B): a variable `x` in group `i` is warned iff **no
+    /// later decl group's bound references `x`** and **the body does not
+    /// reference `x`**. "References" is the reference's syntactic `hasVar`
+    /// ([`Self::references_name`]), not a resolve-time side effect — a variable
+    /// used only as a join spine head (`proc.p`) still counts as used.
+    fn pop_and_warn_unused(&mut self, decls: &[DeclId], body: ExprId, pushed: usize) {
         for _ in 0..pushed {
             self.env.pop();
         }
-        for (name, span) in names {
-            if !self.used.contains(&name) {
-                self.warnings
-                    .push(ResolveWarning::UnusedVariable { name, span });
+        for (i, &d) in decls.iter().enumerate() {
+            let decl = self.ast().decls[d].clone();
+            let later_bounds: Vec<ExprId> = decls[i + 1..]
+                .iter()
+                .map(|&dj| self.ast().decls[dj].bound)
+                .collect();
+            for n in &decl.names {
+                let used_later = later_bounds
+                    .iter()
+                    .any(|&b| self.references_name(b, &n.text));
+                if !used_later && !self.references_name(body, &n.text) {
+                    self.warnings.push(ResolveWarning::UnusedVariable {
+                        name: n.text.clone(),
+                        span: n.span,
+                    });
+                }
             }
         }
+    }
+
+    /// The reference's `ExprUnary.resolveClosure(parent, child)` (A2): the child
+    /// (binary) tuples `c1->c2` that lie on some closure path `p1..c1..c2..p2`
+    /// for a parent tuple `p1->p2`. Returns `EMPTY` when the closure contributes
+    /// nothing to `parent` — the "does not contribute" trigger. A faithful port
+    /// of the directed-graph reachability over prim-sig columns.
+    fn resolve_closure(&self, parent: &Type, child: &Type) -> Type {
+        use std::collections::{BTreeMap, BTreeSet};
+        let w = &self.r.world;
+        let mut nodes: BTreeSet<usize> = BTreeSet::new();
+        let mut adj: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
+        let add_edge = |a: SigId, b: SigId, adj: &mut BTreeMap<usize, BTreeSet<usize>>| {
+            adj.entry(a.index()).or_default().insert(b.index());
+        };
+        // Child binary edges.
+        for c in &child.entries {
+            if c.arity() == 2 {
+                nodes.insert(c.0[0].index());
+                nodes.insert(c.0[1].index());
+                add_edge(c.0[0], c.0[1], &mut adj);
+            }
+        }
+        // Connect intersecting nodes both ways.
+        let node_vec: Vec<usize> = nodes.iter().copied().collect();
+        for &a in &node_vec {
+            for &b in &node_vec {
+                if a != b && col_intersects(w, SigId::from_index(a), SigId::from_index(b)) {
+                    add_edge(SigId::from_index(a), SigId::from_index(b), &mut adj);
+                }
+            }
+        }
+        // Parent tuples: introduce their columns, linking to intersecting nodes.
+        for p in &parent.entries {
+            if p.arity() != 2 {
+                continue;
+            }
+            for &col in &[p.0[0], p.0[1]] {
+                if !nodes.contains(&col.index()) {
+                    let cur: Vec<usize> = nodes.iter().copied().collect();
+                    for &x in &cur {
+                        if col_intersects(w, col, SigId::from_index(x)) {
+                            add_edge(col, SigId::from_index(x), &mut adj);
+                            add_edge(SigId::from_index(x), col, &mut adj);
+                        }
+                    }
+                    nodes.insert(col.index());
+                }
+            }
+        }
+        // A child edge survives iff some parent tuple reaches through it.
+        let has_path = |from: usize, to: usize, adj: &BTreeMap<usize, BTreeSet<usize>>| -> bool {
+            if from == to {
+                return true;
+            }
+            let mut seen: BTreeSet<usize> = BTreeSet::new();
+            let mut stack = vec![from];
+            seen.insert(from);
+            while let Some(n) = stack.pop() {
+                if let Some(next) = adj.get(&n) {
+                    for &m in next {
+                        if m == to {
+                            return true;
+                        }
+                        if seen.insert(m) {
+                            stack.push(m);
+                        }
+                    }
+                }
+            }
+            false
+        };
+        let mut answer = Type::empty();
+        for c in &child.entries {
+            if c.arity() != 2 {
+                continue;
+            }
+            let (c1, c2) = (c.0[0].index(), c.0[1].index());
+            for p in &parent.entries {
+                if p.arity() != 2 {
+                    continue;
+                }
+                let (p1, p2) = (p.0[0].index(), p.0[1].index());
+                if has_path(p1, c1, &adj) && has_path(c2, p2, &adj) {
+                    answer = answer.merge(w, &Type::product_of(c.0.clone()));
+                    break;
+                }
+            }
+        }
+        answer
+    }
+
+    /// Whether expression `e` syntactically references a bare variable named
+    /// `name`, honoring shadowing (a nested binder that rebinds `name` hides it
+    /// in the shadowed scope) — the reference's `Expr.hasVar`.
+    fn references_name(&self, e: ExprId, name: &str) -> bool {
+        match &self.expr(e).kind {
+            ExprKind::Name(qn) | ExprKind::AtName(qn) => {
+                qn.segments.len() == 1 && qn.segments[0].text == name
+            }
+            ExprKind::Num(_) | ExprKind::Str(_) | ExprKind::Const(_) | ExprKind::This => false,
+            ExprKind::Unary { expr, .. } => self.references_name(*expr, name),
+            ExprKind::Binary { lhs, rhs, .. }
+            | ExprKind::Arrow { lhs, rhs, .. }
+            | ExprKind::Compare { lhs, rhs, .. } => {
+                self.references_name(*lhs, name) || self.references_name(*rhs, name)
+            }
+            ExprKind::BoxJoin { target, args } => {
+                self.references_name(*target, name)
+                    || args.iter().any(|&a| self.references_name(a, name))
+            }
+            ExprKind::IfThenElse {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                self.references_name(*cond, name)
+                    || self.references_name(*then_branch, name)
+                    || self.references_name(*else_branch, name)
+            }
+            ExprKind::Quant { decls, body, .. } | ExprKind::Comprehension { decls, body } => {
+                self.decls_or_body_reference(decls, *body, name)
+            }
+            ExprKind::Let { bindings, body } => {
+                // Binding values are sequential (later see earlier); the body is
+                // shadowed once a binding rebinds `name`.
+                let mut shadowed = false;
+                for b in bindings {
+                    if !shadowed && self.references_name(b.value, name) {
+                        return true;
+                    }
+                    if b.name.text == name {
+                        shadowed = true;
+                    }
+                }
+                !shadowed && self.references_name(*body, name)
+            }
+            ExprKind::Block(exprs) => exprs.iter().any(|&f| self.references_name(f, name)),
+        }
+    }
+
+    /// `references_name` for a `Quant`/`Comprehension`: search each decl bound
+    /// (evaluated in the outer scope, up to the point `name` is rebound), then
+    /// the body iff no decl rebinds `name`.
+    fn decls_or_body_reference(&self, decls: &[DeclId], body: ExprId, name: &str) -> bool {
+        let mut shadowed = false;
+        for &d in decls {
+            let decl = &self.ast().decls[d];
+            if !shadowed && self.references_name(decl.bound, name) {
+                return true;
+            }
+            if decl.names.iter().any(|n| n.text == name) {
+                shadowed = true;
+            }
+        }
+        !shadowed && self.references_name(body, name)
     }
 
     // ---- helpers ----
@@ -2279,6 +2650,103 @@ impl<'a, 'g> Cx<'a, 'g> {
             .find(|(n, _)| n == name)
             .map(|(_, t)| t.clone())
     }
+
+    /// Whether byte offsets `end` (exclusive end of the first formula) and
+    /// `start` (start of the second) sit on the same source line — the byte-span
+    /// equivalent of the reference's `a.span().y2 == b.span().y` (no newline
+    /// between). Reads the file's source from the module graph.
+    fn same_source_line(&self, file: als_syntax::FileId, end: u32, start: u32) -> bool {
+        if start < end {
+            return false;
+        }
+        let src = &self.r.graph.files.file(file).source;
+        let (lo, hi) = (end as usize, start as usize);
+        if hi > src.len() {
+            return false;
+        }
+        !src.as_bytes()[lo..hi].contains(&b'\n')
+    }
+
+    /// Structural expression equality ignoring spans (the reference's
+    /// `Expr.isSame`, resolution-doc §5.2 A3/A4 "same value"). Conservative: a
+    /// `false` never causes a *missing* reject (this only gates a warning), so
+    /// unhandled shapes simply do not fire the redundancy warning.
+    fn same_expr(&self, a: ExprId, b: ExprId) -> bool {
+        if a == b {
+            return true;
+        }
+        let (ka, kb) = (&self.expr(a).kind, &self.expr(b).kind);
+        match (ka, kb) {
+            (ExprKind::Num(x), ExprKind::Num(y)) => x == y,
+            (ExprKind::Str(x), ExprKind::Str(y)) => x == y,
+            (ExprKind::Const(x), ExprKind::Const(y)) => x == y,
+            (ExprKind::This, ExprKind::This) => true,
+            (ExprKind::Name(x), ExprKind::Name(y)) | (ExprKind::AtName(x), ExprKind::AtName(y)) => {
+                seg_eq(x, y)
+            }
+            (ExprKind::Unary { op: oa, expr: ea }, ExprKind::Unary { op: ob, expr: eb }) => {
+                oa == ob && self.same_expr(*ea, *eb)
+            }
+            (
+                ExprKind::Binary {
+                    op: oa,
+                    lhs: la,
+                    rhs: ra,
+                },
+                ExprKind::Binary {
+                    op: ob,
+                    lhs: lb,
+                    rhs: rb,
+                },
+            ) => oa == ob && self.same_expr(*la, *lb) && self.same_expr(*ra, *rb),
+            (
+                ExprKind::Compare {
+                    op: oa,
+                    negated: na,
+                    lhs: la,
+                    rhs: ra,
+                },
+                ExprKind::Compare {
+                    op: ob,
+                    negated: nb,
+                    lhs: lb,
+                    rhs: rb,
+                },
+            ) => oa == ob && na == nb && self.same_expr(*la, *lb) && self.same_expr(*ra, *rb),
+            (
+                ExprKind::Arrow {
+                    lhs: la, rhs: ra, ..
+                },
+                ExprKind::Arrow {
+                    lhs: lb, rhs: rb, ..
+                },
+            ) => self.same_expr(*la, *lb) && self.same_expr(*ra, *rb),
+            (
+                ExprKind::BoxJoin {
+                    target: ta,
+                    args: aa,
+                },
+                ExprKind::BoxJoin {
+                    target: tb,
+                    args: ab,
+                },
+            ) => {
+                aa.len() == ab.len()
+                    && self.same_expr(*ta, *tb)
+                    && aa.iter().zip(ab).all(|(&x, &y)| self.same_expr(x, y))
+            }
+            _ => false,
+        }
+    }
+}
+
+/// Segment-text equality of two qualified names (span-free).
+fn seg_eq(a: &QualName, b: &QualName) -> bool {
+    a.segments.len() == b.segments.len()
+        && a.segments
+            .iter()
+            .zip(&b.segments)
+            .all(|(x, y)| x.text == y.text)
 }
 
 /// The outcome of `resolveHelper` over a candidate type list.

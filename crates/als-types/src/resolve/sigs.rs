@@ -388,17 +388,36 @@ impl Resolver<'_> {
         }
     }
 
+    /// Static/variable mismatch warnings (resolution-doc §5.2 E(a)/E(b)/E(c),
+    /// `CompModule.resolveSig`). A parent is "variable" iff its own sig is `var`
+    /// (`n.isVariable != null`); `univ`/builtins never count.
     fn emit_var_static_warnings(&mut self, i: usize) {
         let src = &self.sig_srcs[i];
         let id = src.id;
         let is_var = src.is_var;
-        if let SigKind::Prim { parent: Some(p) } = self.world.sigs[id].kind {
+        let span = self.world.sigs[id].span;
+        // The reference splits by parent kind: the subset branch only emits
+        // E(a) (static under a variable parent); the prim-`extends` branch emits
+        // both E(b) (static under variable) and E(c) (redundant `var`). So the
+        // redundant-`var` warning is **prim-only** — a `var sig A in B` with a
+        // static `B` never warns.
+        let (parents, is_subset): (Vec<SigId>, bool) = match &self.world.sigs[id].kind {
+            SigKind::Prim { parent: Some(p) } => (vec![*p], false),
+            SigKind::Subset { parents, .. } => (parents.clone(), true),
+            SigKind::Prim { parent: None } => (Vec::new(), false),
+        };
+        for p in parents {
+            if self.world.sigs[p].is_builtin {
+                continue; // `n != UNIV` in the reference.
+            }
             let parent_var = self.world.sigs[p].is_var;
-            if is_var && !parent_var && !self.world.sigs[p].is_builtin {
-                self.warn(ResolveWarning::VarStaticMismatch {
-                    detail: "variable sig extends a static sig",
-                    span: self.world.sigs[id].span,
-                });
+            if parent_var && !is_var {
+                // E(a)/E(b): static sig under a variable parent (both branches).
+                self.warn(ResolveWarning::SigStaticVarParent { span });
+            } else if !parent_var && is_var && !is_subset {
+                // E(c): variable sig under a static parent — redundant `var`.
+                // Prim `extends` only.
+                self.warn(ResolveWarning::SigRedundantVar { span });
             }
         }
     }

@@ -197,10 +197,56 @@ pub fn warning_message(warning: &ResolveWarning) -> String {
         ResolveWarning::UnusedVariable { name, .. } => {
             format!("variable `{name}` is never used")
         }
-        ResolveWarning::IrrelevantIntersection { .. } => {
+        ResolveWarning::ClosureRedundant { .. } => {
+            "this transitive closure (`^`) is redundant: its domain and range are disjoint"
+                .to_owned()
+        }
+        ResolveWarning::DoesNotContribute { .. } => {
+            "this expression does not contribute to the value of the parent".to_owned()
+        }
+        ResolveWarning::IntAtoms { .. } => "this expression should contain `Int` atoms".to_owned(),
+        ResolveWarning::EqRedundant { .. } => {
+            "this comparison is redundant: the two sides are always disjoint or always equal"
+                .to_owned()
+        }
+        ResolveWarning::SubsetRedundant { .. } => {
+            "this subset test is redundant: a side is always empty, disjoint, or equal".to_owned()
+        }
+        ResolveWarning::IntersectIrrelevant { .. } => {
             "this intersection (`&`) is always empty; its operands are disjoint".to_owned()
         }
-        ResolveWarning::VarStaticMismatch { detail, .. } => (*detail).to_owned(),
+        ResolveWarning::PlusIrrelevant { .. } => {
+            "this union is irrelevant: a subexpression does not contribute".to_owned()
+        }
+        ResolveWarning::MinusIrrelevant { .. } => {
+            "this difference (`-`) is irrelevant: the right subexpression is redundant".to_owned()
+        }
+        ResolveWarning::JoinEmpty { .. } => "this join always yields the empty set".to_owned(),
+        ResolveWarning::DomainIrrelevant { .. } => {
+            "this domain restriction (`<:`) is always empty".to_owned()
+        }
+        ResolveWarning::RangeIrrelevant { .. } => {
+            "this range restriction (`:>`) is always empty".to_owned()
+        }
+        ResolveWarning::ArrowIrrelevant { .. } => {
+            "this product (`->`) is irrelevant: one side is always empty".to_owned()
+        }
+        ResolveWarning::RedundantIteBranch { .. } => "this subexpression is redundant".to_owned(),
+        ResolveWarning::ImplicitConjunction { .. } => {
+            "implicit conjunction between two formulas on the same line".to_owned()
+        }
+        ResolveWarning::SigStaticVarParent { .. } => {
+            "this static sig has a variable parent".to_owned()
+        }
+        ResolveWarning::SigRedundantVar { .. } => {
+            "marking this sig `var` is redundant: its parent is static".to_owned()
+        }
+        ResolveWarning::FieldStaticVarBound { .. } => {
+            "this static field's bound references a variable sig".to_owned()
+        }
+        ResolveWarning::FieldStaticInVarSig { .. } => {
+            "this static field is inside a variable sig".to_owned()
+        }
         ResolveWarning::ReturnDisjoint { .. } => {
             "function body's type is disjoint from its declared return type".to_owned()
         }
