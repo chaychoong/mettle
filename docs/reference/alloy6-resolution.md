@@ -644,53 +644,259 @@ mirrors the `resolveAll` verdict: warnings are reported, never rejected.**
 ## 7. `util/*` module interfaces (clean-room reference for mt-015)
 
 The 11 modules the jar embeds under `models/util/`, with **public interface
-only** (module header + params + exported sig/fun/pred/assert *signatures*).
-**Bodies are deliberately omitted** (ADR-0006 clean-room rule): mt-015 writes
-mettle's own bodies from these signatures + Ledger-pinned behavior, never from
-upstream text. Signatures are not copyrightable and *must* match for conformance.
+only** (module header + params + exported sig/field/fun/pred/assert/macro
+*signatures*). **Bodies are deliberately omitted** (ADR-0006 clean-room rule):
+mt-015 writes mettle's own bodies from these signatures + Ledger-pinned behavior,
+never from upstream text. Signatures are not copyrightable and *must* match for
+conformance — an argument-order, arity, param-name, or result-multiplicity
+mismatch is a conformance bug (a user model that calls the stdlib will resolve
+differently). §7.1–§7.11 below are the precise per-member appendix (this
+supersedes the condensed listing that shipped with mt-016; the corrections it
+forced are in the mt-016 follow-up report).
 
-- **`util/ordering[exactly elem]`** — imposes a total order on `elem` (private
-  `one sig Ord`, uses `pred/totalOrder`). Exports: `fun first/last: one elem`;
-  `fun prev/next: elem->elem`; `fun prevs/nexts[e: elem]: set elem`; `pred
-  lt/gt/lte/gte[e1,e2: elem]`; `fun larger/smaller[e1,e2: elem]: elem`; `fun
-  max/min[es: set elem]: lone elem`; `assert correct`. **Analyzer special-casing**
-  (exact bounds + symmetry breaking on the ordered sig) lives in Java, not the
-  `.als`, and needs its own SEMANTICS_LEDGER entries (mt-015/mt-017).
-- **`util/integer`** (no params) — `fun add/plus/sub/minus/mul/div/rem/negate
-  [n1,n2: Int]: Int`; `pred eq/gt/lt/gte/lte/zero/pos/neg/nonpos/nonneg`;
-  `fun signum[n: Int]: Int`; `fun int2elem/elem2int`; `fun max/min: one Int`;
-  `fun next/prev: Int->Int`; `fun max/min[es: set Int]: lone Int`; `fun
-  prevs/nexts[e: Int]: set Int`; `fun larger/smaller[e1,e2: Int]: Int`.
-  **Special-cased**: `Context` and `getAllReachableUserDefinedFunc` name-check
-  `"util/integer"` explicitly (its funcs are inlined / excluded from meta).
-- **`util/boolean`** — `abstract sig Bool`; `one sig True, False extends Bool`;
-  `pred isTrue/isFalse[b: Bool]`; `fun Not[b]/And/Or/Xor/Nand/Nor[b1,b2]: Bool`.
-- **`util/natural`** — `sig Natural`; `one sig Zero in Natural`; `lone sig One in
-  Natural`; `fun inc/dec[n]: lone Natural`; `fun add/sub/mul/div[n1,n2]: lone
-  Natural`; `pred gt/lt/gte/lte[n1,n2]`; `fun max/min[ns: set Natural]: lone
-  Natural`. (Opens `util/ordering[Natural] as ord`.)
-- **`util/sequence[elem]`** — `sig SeqIdx`, `sig Seq { … }`; predicates
-  `noDuplicates/allExist/allExistNoDuplicates/rest/isEmpty/hasDups/startsWith`;
-  `pred add/setAt/insert/copy/append/subseq`; funcs `at/elems/first/last/inds/
-  lastIdx/afterLastIdx/idxOf/lastIdxOf/indsOf/firstIdx/finalIdx`. (Opens
-  `util/ordering[SeqIdx] as ord`.)
-- **`util/sequniv`** (the `seq` keyword's module, aliased `seq`) — sequences as
-  `Int -> univ`; `pred isSeq/isEmpty/hasDups`; funcs `elems/first/last/rest/
-  butlast/inds/lastIdx/afterLastIdx/idxOf/lastIdxOf/indsOf/add/setAt/insert/
-  delete/append/subseq`. (Opens `util/integer as ui`.)
-- **`util/seqrel[elem]`** — sequences as `SeqIdx -> elem`; same operation surface
-  as `util/sequence`. (Opens `util/integer`, `util/ordering[SeqIdx] as ord`.)
-- **`util/relation`** — `fun dom/ran[r: univ->univ]: set …`; predicates
-  `total/functional/function/surjective/injective/bijective/bijection/reflexive/
-  irreflexive/symmetric/antisymmetric/transitive/acyclic/complete/preorder/
-  equivalence/partialOrder/totalOrder`.
-- **`util/graph[node]`** — predicates `undirected/noSelfLoops/weaklyConnected/
-  stronglyConnected/rootedAt/ring/dag/forest/tree/treeRootedAt`; funcs
-  `roots/leaves/innerNodes`. (Opens `util/relation as rel`.)
-- **`util/ternary`** — `fun dom/ran/mid[r: univ->univ->univ]`; `fun
-  select12/select13/select23`; `fun flip12/flip13/flip23`.
-- **`util/time`** — **no `module` header** (an unusual header-less module); `sig
-  Time`; opens `util/ordering[Time]`. Confirms header-less modules are legal.
+**Notation** (our own, not verbatim source): `f(p: T, …): R` is a fun with
+params `p: T` and result type `R`; `pred p(p: T, …)` is a pred; `()` marks a
+0-ary member. Types carry an explicit multiplicity keyword: `one X`, `lone X`,
+`set X`, `X -> Y` (product, default arrow mult), `X -> lone Y`, etc. A **bare
+unary** result/param declared without a keyword (`: elem`, `: Int`, `: node`,
+`: Bool`, `: SeqIdx`) has effective multiplicity **`one`** (the decl-default
+oneOf rule, §3.4/§3.5) — flagged `⟨one⟩` where it could mislead. Param **names
+are part of the interface** (they are visible in reasons/errors and, for
+`this.`-style calls, in resolution) — reproduce them verbatim. `[private]` marks
+a hidden member; a private member's *name* must still be hidden by mettle's
+rewrite (it must not leak into the module's public namespace).
+
+### 7.1 `util/ordering[exactly elem]`
+
+Single linear order over `elem`; **param `elem` is `exactly`-marked** (forces the
+instance's scope to be exact — analyzer special-casing, below).
+
+- Internal sig: `private one sig Ord { First: set elem, Next: elem -> elem }`
+  with appended fact `pred/totalOrder[elem, First, Next]`. The `pred/totalOrder`
+  **builtin** is called with **3 args in order (domain, first-set, next-rel)**:
+  arg1 = the ordered domain `elem`, arg2 = `Ord.First` (type `set elem`),
+  arg3 = `Ord.Next` (type `elem -> elem`). `First`/`Next` are `Ord`'s **fields**
+  (referenced by implicit `this` inside `Ord`'s appended fact). `Ord` and its two
+  fields are **private** (the `Ord` name and `First`/`Next` are not part of the
+  callable surface; users go through the funcs/preds).
+- Funcs/preds (all callable, no receiver):
+  - `first(): one elem` ⟨explicit `one`⟩ · `last(): one elem`
+  - `prev(): elem -> elem` · `next(): elem -> elem`  ⟨0-ary, binary result⟩
+  - `prevs(e: elem): set elem` · `nexts(e: elem): set elem`
+  - `pred lt(e1: elem, e2: elem)` · `pred gt(e1, e2: elem)` ·
+    `pred lte(e1, e2: elem)` · `pred gte(e1, e2: elem)`
+  - `larger(e1: elem, e2: elem): elem` ⟨one⟩ · `smaller(e1: elem, e2: elem): elem`
+  - `max(es: set elem): lone elem` · `min(es: set elem): lone elem`
+- Public assertion: `assert correct`. The module also declares its own
+  `run {}`/`check correct` commands (self-test) — not part of the callable API but
+  present in the parsed module.
+- **Analyzer special-casing** (Java, not `.als`): the `exactly` param + `Ord`
+  private singleton let the solver pin exact bounds and break symmetry on the
+  ordered sig. mt-015/mt-017 reproduce this as SEMANTICS_LEDGER-pinned behavior,
+  independent of whose `.als` ships.
+
+### 7.2 `util/integer` (no params)
+
+Special-cased by name in the resolver (`Context.isIntsNotUsed`,
+`getAllReachableUserDefinedFunc` skip `"util/integer"`). All members take/return
+`Int` (the sig), never primitive int:
+
+- `add(n1: Int, n2: Int): Int` · `plus(n1, n2: Int): Int` ·
+  `sub(n1, n2: Int): Int` · `minus(n1, n2: Int): Int` · `mul(n1, n2: Int): Int` ·
+  `div(n1, n2: Int): Int` · `rem(n1, n2: Int): Int`
+- `negate(n: Int): Int`  ⟨**unary** — one param⟩
+- `pred eq(n1, n2: Int)` · `pred gt(n1, n2: Int)` · `pred lt(n1, n2: Int)` ·
+  `pred gte(n1, n2: Int)` · `pred lte(n1, n2: Int)`
+- `pred zero(n: Int)` · `pred pos(n: Int)` · `pred neg(n: Int)` ·
+  `pred nonpos(n: Int)` · `pred nonneg(n: Int)`
+- `signum(n: Int): Int`  ⟨unary⟩
+- `int2elem(i: Int, next: univ -> univ, s: set univ): lone s`  ⟨**3 params in
+  order (i, next, s)**; result is `lone s`, i.e. lone of the *supplied set param*⟩
+- `elem2int(e: univ, next: univ -> univ): lone Int`  ⟨**2 params only** (e, next);
+  no set param; result `lone Int`⟩
+- `max(): one Int` · `min(): one Int`  ⟨**0-ary** overloads⟩
+- `next(): Int -> Int` · `prev(): Int -> Int`  ⟨0-ary, binary result; **no
+  set-form of next/prev**⟩
+- `max(es: set Int): lone Int` · `min(es: set Int): lone Int`  ⟨set overloads —
+  `max`/`min` are each an overload set of the 0-ary and the set form⟩
+- `prevs(e: Int): set Int` · `nexts(e: Int): set Int`
+- `larger(e1: Int, e2: Int): Int` · `smaller(e1: Int, e2: Int): Int`
+
+### 7.3 `util/boolean` (no params)
+
+- `abstract sig Bool {}`
+- `one sig True extends Bool {}` and `one sig False extends Bool {}` (declared
+  together: `one sig True, False extends Bool {}`)
+- `pred isTrue(b: Bool)` · `pred isFalse(b: Bool)`
+- `Not(b: Bool): Bool` ⟨one⟩ · `And(b1: Bool, b2: Bool): Bool` ·
+  `Or(b1, b2: Bool): Bool` · `Xor(b1, b2: Bool): Bool` ·
+  `Nand(b1, b2: Bool): Bool` · `Nor(b1, b2: Bool): Bool`
+- `[private] subset_(s1: set Bool, s2: set Bool): Bool`  ⟨**private** helper —
+  hidden name⟩
+
+### 7.4 `util/natural` (no params)
+
+- Opens (**both private**): `private open util/ordering[Natural] as ord`;
+  `private open util/integer as integer` (so `ord/…` and `integer/…` are *not*
+  re-exported through `util/natural`).
+- `sig Natural {}`
+- `one sig Zero in Natural {}`  ⟨`one`, **subset (`in`)** of Natural⟩
+- `lone sig One in Natural {}`  ⟨`lone`, subset of Natural — empty when
+  scope < 2⟩
+- Anonymous `fact { … }` (constrains `Zero`/`One` to the order's first/second).
+- `inc(n: Natural): lone Natural` · `dec(n: Natural): lone Natural`
+- `add(n1: Natural, n2: Natural): lone Natural` · `sub(n1, n2: Natural): lone
+  Natural` · `mul(n1, n2: Natural): lone Natural` · `div(n1, n2: Natural): lone
+  Natural`  ⟨all results `lone`, may be empty⟩
+- `pred gt(n1, n2: Natural)` · `pred lt(n1, n2: Natural)` ·
+  `pred gte(n1, n2: Natural)` · `pred lte(n1, n2: Natural)`
+- `max(ns: set Natural): lone Natural` · `min(ns: set Natural): lone Natural`
+
+### 7.5 `util/sequence[elem]` (sequences reified as `Seq` atoms)
+
+- Opens: `open util/ordering[SeqIdx] as ord`.
+- `sig SeqIdx {}`  ⟨no fields⟩
+- `sig Seq { seqElems: SeqIdx -> lone elem }`  ⟨**field name is `seqElems`**, type
+  `SeqIdx -> lone elem`; sig has an appended fact constraining a prefix⟩
+- Public `fact canonicalizeSeqs` (no two `Seq` atoms share a `seqElems`).
+- **Predicates**: `pred noDuplicates()` ⟨0-ary⟩ · `pred allExist()` ⟨0-ary⟩ ·
+  `pred allExistNoDuplicates()` ⟨0-ary⟩ · `pred rest(s: Seq, r: Seq)` ·
+  `pred isEmpty(s: Seq)` · `pred hasDups(s: Seq)` ·
+  `pred startsWith(s: Seq, prefix: Seq)` ·
+  `pred add(s: Seq, e: elem, added: Seq)` ·
+  `pred setAt(s: Seq, idx: SeqIdx, e: elem, setted: Seq)` ·
+  `pred insert(s: Seq, idx: SeqIdx, e: elem, inserted: Seq)` ·
+  `pred copy(source: Seq, dest: Seq, destStart: SeqIdx)` ·
+  `pred append(s1: Seq, s2: Seq, appended: Seq)` ·
+  `pred subseq(s: Seq, sub: Seq, from: SeqIdx, to: SeqIdx)`
+  ⟨note: here `add/setAt/insert/copy/append/subseq` are **preds** (relate input
+  and output seqs), unlike seqrel/sequniv where they are funcs⟩
+- **Funcs**: `at(s: Seq, i: SeqIdx): lone elem` · `elems(s: Seq): set elem` ·
+  `first(s: Seq): lone elem` · `last(s: Seq): lone elem` ·
+  `inds(s: Seq): set SeqIdx` · `lastIdx(s: Seq): lone SeqIdx` ·
+  `afterLastIdx(s: Seq): lone SeqIdx` · `idxOf(s: Seq, e: elem): lone SeqIdx` ·
+  `lastIdxOf(s: Seq, e: elem): lone SeqIdx` · `indsOf(s: Seq, e: elem): set
+  SeqIdx` · `firstIdx(): SeqIdx` ⟨0-ary, effective `one`⟩ · `finalIdx(): SeqIdx`
+  ⟨0-ary, `one`⟩.
+  Disambiguation: **`first`/`last`** take a `Seq` and return the first/last
+  *element* (`lone elem`); **`firstIdx`/`finalIdx`** are 0-ary and return the
+  first/last *index* of the whole `SeqIdx` order (`one SeqIdx`); **`lastIdx`**
+  takes a `Seq` and returns its last occupied *index* (`lone SeqIdx`);
+  **`afterLastIdx`** takes a `Seq` and returns the next free index (`lone
+  SeqIdx`).
+
+### 7.6 `util/seqrel[elem]` (sequences as a bare `SeqIdx -> elem` relation)
+
+- Opens: `open util/integer` (no alias → auto-aliased `integer`);
+  `open util/ordering[SeqIdx] as ord`.
+- `sig SeqIdx {}`  ⟨no `Seq` sig — a sequence is any `SeqIdx -> elem` value⟩
+- `pred isSeq(s: SeqIdx -> elem)`
+- All operations are **funcs** returning `SeqIdx -> elem` (contrast §7.5):
+  `elems(s: SeqIdx -> elem): set elem` · `first(s: SeqIdx -> elem): lone elem` ·
+  `last(s: SeqIdx -> elem): lone elem` ·
+  `rest(s: SeqIdx -> elem): SeqIdx -> elem` ·
+  `butlast(s: SeqIdx -> elem): SeqIdx -> elem` ·
+  `pred isEmpty(s: SeqIdx -> elem)` · `pred hasDups(s: SeqIdx -> elem)` ·
+  `inds(s: SeqIdx -> elem): set SeqIdx` ·
+  `lastIdx(s: SeqIdx -> elem): lone SeqIdx` ·
+  `afterLastIdx(s: SeqIdx -> elem): lone SeqIdx` ·
+  `idxOf(s: SeqIdx -> elem, e: elem): lone SeqIdx` ·
+  `lastIdxOf(s: SeqIdx -> elem, e: elem): lone SeqIdx` ·
+  `indsOf(s: SeqIdx -> elem, e: elem): set SeqIdx` ·
+  `add(s: SeqIdx -> elem, e: elem): SeqIdx -> elem` ·
+  `setAt(s: SeqIdx -> elem, i: SeqIdx, e: elem): SeqIdx -> elem` ·
+  `insert(s: SeqIdx -> elem, i: SeqIdx, e: elem): SeqIdx -> elem` ·
+  `delete(s: SeqIdx -> elem, i: SeqIdx): SeqIdx -> elem` ·
+  `append(s1: SeqIdx -> elem, s2: SeqIdx -> elem): SeqIdx -> elem` ·
+  `subseq(s: SeqIdx -> elem, from: SeqIdx, to: SeqIdx): SeqIdx -> elem` ·
+  `firstIdx(): SeqIdx` ⟨0-ary, one⟩ · `finalIdx(): SeqIdx` ⟨0-ary, one⟩.
+  ⟨seqrel has `butlast` and `delete` (sequence has neither); sequence has
+  `copy`/`startsWith`/`noDuplicates`/`allExist*` (seqrel has none)⟩
+
+### 7.7 `util/sequniv` (the `seq` keyword's module; sequences as `Int -> univ`)
+
+Do **not** open manually — the `seq` field keyword auto-opens this aliased `seq`
+(§4.5). Sequences are `Int -> univ` relations indexed by `seq/Int`.
+
+- Opens: `open util/integer as ui`. No sigs.
+- `pred isSeq(s: Int -> univ)` · `pred isEmpty(s: Int -> univ)` ·
+  `pred hasDups(s: Int -> univ)`
+- Funcs (note **dependent result types** referring to the param `s`):
+  `elems(s: Int -> univ): set (Int.s)` · `first(s: Int -> univ): lone (Int.s)` ·
+  `last(s: Int -> univ): lone (Int.s)` · `rest(s: Int -> univ): s` ·
+  `butlast(s: Int -> univ): s` · `inds(s: Int -> univ): set Int` ·
+  `lastIdx(s: Int -> univ): lone Int` · `afterLastIdx(s: Int -> univ): lone Int` ·
+  `idxOf(s: Int -> univ, e: univ): lone Int` ·
+  `lastIdxOf(s: Int -> univ, e: univ): lone Int` ·
+  `indsOf(s: Int -> univ, e: univ): set Int` ·
+  `add(s: Int -> univ, e: univ): s + (seq/Int -> e)` ·
+  `setAt(s: Int -> univ, i: Int, e: univ): s + (seq/Int -> e)` ·
+  `insert(s: Int -> univ, i: Int, e: univ): s + (seq/Int -> e)` ·
+  `delete(s: Int -> univ, i: Int): s` ·
+  `append(s1: Int -> univ, s2: Int -> univ): s1 + s2` ·
+  `subseq(s: Int -> univ, from: Int, to: Int): s`.
+
+### 7.8 `util/relation` (no params)
+
+**Param shapes are NOT uniform** — arity varies by predicate:
+
+- Funcs (dependent results): `dom(r: univ -> univ): set (r.univ)` ·
+  `ran(r: univ -> univ): set (univ.r)`
+- Preds taking `(r, s: set univ)`: `total`, `functional`, `function`,
+  `surjective`, `injective`, `bijective`, `acyclic`, `preorder`, `equivalence`,
+  `partialOrder`, `totalOrder` — each `pred name(r: univ -> univ, s: set univ)`.
+  (`reflexive(r: univ -> univ, s: set univ)` too.)
+- Preds taking **only `(r)`**: `pred irreflexive(r: univ -> univ)` ·
+  `pred symmetric(r: univ -> univ)` · `pred antisymmetric(r: univ -> univ)` ·
+  `pred transitive(r: univ -> univ)`
+- Pred taking **three** params:
+  `pred bijection(r: univ -> univ, d: set univ, c: set univ)`
+- Pred whose set param is declared **bare `univ`** (not `set univ`):
+  `pred complete(r: univ -> univ, s: univ)`  ⟨the lone exception; every other
+  domain param is `set univ`⟩
+
+### 7.9 `util/graph[node]` (no int)
+
+- Opens: `open util/relation as rel`.
+- Preds taking only `(r)`: `pred undirected(r: node -> node)` ·
+  `pred noSelfLoops(r: node -> node)` · `pred weaklyConnected(r: node -> node)` ·
+  `pred stronglyConnected(r: node -> node)` · `pred ring(r: node -> node)` ·
+  `pred dag(r: node -> node)` · `pred forest(r: node -> node)` ·
+  `pred tree(r: node -> node)`
+- Preds taking `(r, root: node)`: `pred rootedAt(r: node -> node, root: node)` ·
+  `pred treeRootedAt(r: node -> node, root: node)`
+- Funcs: `roots(r: node -> node): set node` · `leaves(r: node -> node): set node`
+  · `innerNodes(r: node -> node): set node`
+
+### 7.10 `util/ternary` (no params)
+
+All funcs take `r: univ -> univ -> univ`; result types are dependent projections:
+
+- `dom(r): set ((r.univ).univ)` · `ran(r): set (univ.(univ.r))` ·
+  `mid(r): set (univ.(r.univ))`
+- `select12(r): r.univ` · `select23(r): univ.r` ·
+  `select13(r): ((r.univ).univ) -> (univ.(univ.r))`
+- `flip12(r): (univ.(r.univ)) -> ((r.univ).univ) -> (univ.(univ.r))` ·
+  `flip13(r): (univ.(univ.r)) -> (univ.(r.univ)) -> ((r.univ).univ)` ·
+  `flip23(r): ((r.univ).univ) -> (univ.(univ.r)) -> (univ.(r.univ))`
+
+### 7.11 `util/time` (**header-less** module — no `module` line)
+
+Confirms header-less modules are legal (the module path is inferred from the
+open/filename). This module is **mostly macros**, not funcs:
+
+- Opens: `open util/ordering[Time]` (no alias → auto-aliased `ordering`).
+- `sig Time {}`
+- Macros (`let` paragraphs — expand by substitution, §3.7):
+  - `dynamic(x)` ⟨1 param⟩ · `dynamicSet(x)` ⟨1 param⟩
+  - `then(a, b, t, t")` ⟨**4 params; the 4th param name is `t"`** — the trailing
+    `"` is a legal identifier char (grammar §1.4), *not* a string⟩
+  - `while()` ⟨0-param macro, defined as `while = while3`⟩
+  - `while0(cond, body, t, t")` … `while9(cond, body, t, t")` ⟨10 macros, each
+    4 params `cond, body, t, t"`⟩
+  ⟨macro params carry no type annotations — they are textual, §3.7. The `"`-in-
+  name quirk also appears as bound vars `s"`, `i"`, `x"` in seqrel/sequniv/
+  sequence bodies; mettle's lexer already accepts it (grammar §1.4).⟩
 
 ---
 
