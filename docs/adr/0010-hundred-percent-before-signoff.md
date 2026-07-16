@@ -39,6 +39,16 @@ LEDGER-002 owner requirement, warning parity is measured).
   development loop (never wrongly reject while precision is being built);
   it is retired class-by-class as each tightening lands with clean gauge runs.
 
+## Outcome (2026-07-16)
+
+The extension ran to: verdicts **99.79%** (0 false rejects, 314 over-accepts,
+corpus 100%), warnings **99.80%** files identical (0 missing on corpus), speed
+~4× (mt-024 bench). The owner reviewed the remainder's root causes and
+**accepted moving to Rung 3** with the residual filed as bead **mt-027**
+(revisited as Rungs 3–4 deepen the same type machinery) rather than funding a
+standalone push. The gate's intent — testing starts only on trustworthy,
+measured verdicts — is satisfied; the literal 100% is tracked, not abandoned.
+
 ## Alternatives considered
 
 - **Touchpoint now, precision later** (the ADR-0009 schedule): rejected by the
