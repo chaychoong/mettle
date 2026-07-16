@@ -29,7 +29,7 @@
 - Toolchains in this VM: Rust stable (`~/.cargo/bin`) and OpenJDK 21.
 
 ## In flight (delegated, background)
-- _None._ All delegations complete, reviewed, merged (latest: mt-017 module graph + mt-015 clean-room stdlib, wired together and committed 2026-07-16).
+- **mt-018** (resolver/typechecker core, → opus) running since 2026-07-16: ADR-0008 passes A/B over the mt-017 module graph, full §5.1 reject taxonomy, corpus target 167/167 ACCEPT. Spec highlights: enum/`seq` synthetic opens are a known mt-017 gap the bead must solve; agent instructed to stop at a clean registration layer if §4 expression typing needs its own delegation. If resuming cold with no notification, check `git status` for uncommitted `als-types` output and review against the rubrics.
 
 ## Not yet started
 - Extending the scorecard to run mettle-side once anything parses/solves.
