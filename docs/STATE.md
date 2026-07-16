@@ -30,7 +30,7 @@
 - Toolchains in this VM: Rust stable (`~/.cargo/bin`) and OpenJDK 21.
 
 ## In flight (delegated, background)
-- _None._ All delegations complete, reviewed, merged (latest: mt-018 resolver/typechecker core, ADR-0009 recorded at its merge).
+- **mt-019** (`mettle check` CLI, → sonnet) running since 2026-07-16: load→resolve→caret-render wiring in `crates/mettle` only; the subtle part is multi-file diagnostics (span `FileId` → the right file's source/path from the graph's `FileTable`). If resuming cold with no notification, check `git status` for uncommitted `crates/mettle` output and review against the rubrics.
 
 ## Not yet started
 - Extending the scorecard to run mettle-side once anything parses/solves.
