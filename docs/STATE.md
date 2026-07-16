@@ -38,11 +38,7 @@
 - Backlog: **mt-021** (printer/dumper recursion depth; needs a small ADR; not rung-gating).
 
 ## Next chunk (planned)
-**PAUSED — three items await the owner (2026-07-16):**
-1. **ADR-0011 solver decision** — recommendation: hand-rolled zero-dep CDCL SAT solver in `als-solve` (determinism by construction, clean MPL-2.0, static binary; `Solver` trait stays as an optional-FFI seam). Alternative: vendor/bind an existing solver (faster to first-solve, but licensing + cross-version determinism auditing).
-2. **LEDGER-004 approval** — `util/ordering` exact bounds & order pinning (gates bead mt-035).
-3. **Go-ahead to file + start the Rung-3 beads** (proposed breakdown mt-029..037 in the mt-028 record: scope→universe, bounds, IR lowering, CDCL solver, CNF+decode, evaluator/self-check, ordering, `mettle run`/`check` CLI, differential solve gauge; owner touchpoint after mt-036).
-On "proceed": file the beads and start mt-029 (one chunk).
+**mt-029 — scopes → universe** (in flight as this chunk). Owner decisions so far: ADR-0011 **accepted** (write our own CDCL); Rung-3 plan approved ("do what you think is right", beads mt-029..037 filed); **LEDGER-004 still awaiting approval** (explanation delivered 2026-07-16; gates only mt-035). Pacing contract: after mt-029 merges — report and stop.
 
 ## Key syntax facts pinned this session (details in [reference/alloy6-grammar.md](reference/alloy6-grammar.md))
 - The public grammar appendix is NOT the truth; the reference's `Alloy.lex`/`Alloy.cup`/`CompFilter` at the jar's build commit are, plus jar probes for anything ambiguous.

@@ -74,7 +74,25 @@ Rung gauge: **same accept/reject decisions as the jar** on resolve/typecheck (RO
 ## Now (Rung 3 — relational core)
 
 - ✔ **mt-028** · R3 · Pinned translation & solving contract (delegated → opus, tech-lead reviewed)
-  Done 2026-07-16: [reference/alloy6-translation.md](reference/alloy6-translation.md) pins scopes→universe→bounds (exact `Name$N` atom naming/order — resolves the numbering Ledger corner), the resolved-Expr→relational mapping + skolemization (`$cmd_var`), symmetry breaking (all Kodkod lex-leader; ADR-0002's SB-0 counting needs none of it), SAT boundary + outcome/enumeration semantics (87/1129 re-confirmed), self-verification story, and `util/ordering` exact-bounds pinning → **LEDGER-004 drafted (proposed)**. 9 jar probes; found a new oracle gotcha: **`expect 1` silently forces `symmetry 0`** (memory + doc updated). [ADR-0011](adr/0011-rung3-translation-solving-architecture.md) drafted (**Proposed — awaiting owner**): 4-phase pipeline over the ADR-0005 shapes; solver recommendation = hand-rolled zero-dep CDCL in `als-solve` (determinism owned by construction, MPL-2.0-clean, static binary) with the `Solver` trait as a future FFI seam. Proposed bead breakdown (mt-029..037) recorded in the mt-028 report + STATE — **not filed; awaiting owner go** (pacing contract).
+  Done 2026-07-16: [reference/alloy6-translation.md](reference/alloy6-translation.md) pins scopes→universe→bounds (exact `Name$N` atom naming/order — resolves the numbering Ledger corner), the resolved-Expr→relational mapping + skolemization (`$cmd_var`), symmetry breaking (all Kodkod lex-leader; ADR-0002's SB-0 counting needs none of it), SAT boundary + outcome/enumeration semantics (87/1129 re-confirmed), self-verification story, and `util/ordering` exact-bounds pinning → LEDGER-004 (proposed). 9 jar probes; new oracle gotcha: **`expect 1` silently forces `symmetry 0`**. [ADR-0011](adr/0011-rung3-translation-solving-architecture.md) **Accepted** (owner approved writing our own CDCL solver, 2026-07-16).
+- ▢ **mt-029** · R3 · Scopes → universe (`als-core`)
+  `ScopeComputer` port per translation-ref §1: the fixpoint (abstract-sum → overall → parent), exact/`one`/`lone` rules, defaults (overall 3, identical for `run`/`check`), bitwidth/maxseq atoms, and the **exact atom naming/order** (`Name$N` decimal, declaration order, then ints ascending, then strings) — the canonical numbering everything downstream depends on. Owner go 2026-07-16 ("do what you think is right").
+- ▢ **mt-030** · R3 · Bounds builder (`als-core`)
+  `BoundsComputer` port per §1: leaf/remainder/abstract tuple allocation, subset sigs, field product bounds, sig-hierarchy/multiplicity/size constraints. Depends: mt-029.
+- ▢ **mt-031** · R3 · IR lowering + goal assembly (`als-core`)
+  Resolved `Expr` → three-sorted IR per §2–§3: multiplicities, skolemizable quantifiers, comprehensions, facts ∧ command (or ∧ ¬assertion for `check`), incl. implicit facts (sig facts, field decls, multiplicity). Depends: mt-029/030.
+- ▢ **mt-032** · R3 · CDCL SAT solver (`als-solve`; [ADR-0011](adr/0011-rung3-translation-solving-architecture.md) owner decision)
+  Hand-rolled, zero-dep, deterministic: watched-literal unit propagation, 1-UIP learning, restarts; incremental interface (block-clause enumeration per §6). The rung's biggest bead.
+- ▢ **mt-033** · R3 · CNF encoding + instance decode (`als-core`/`als-solve` boundary)
+  Bounded IR + bounds → `Cnf` with a fixed variable order (determinism); `Assignment` → relation tuples + skolem values (§4/§6). Depends: mt-030/031/032.
+- ▢ **mt-034** · R3 · Evaluator + self-check net
+  Evaluate any IR formula/expression against a concrete instance; `debug_assert!` every produced instance satisfies the goal (§7 — the ROADMAP "self-verified" promise; later the REPL's engine). Depends: mt-031/033.
+- ⛔ **mt-035** · R3 · `util/ordering` exact bounds (**gated on LEDGER-004 approval**)
+  The §5 special-casing: force exact scope on the ordered sig, pin first/next/last to constants in universe order. Depends: mt-030, LEDGER-004 `approved`.
+- ▢ **mt-036** · R3 · `mettle run` / `mettle check <cmd>` CLI
+  Execute a command end-to-end: verdict + instance rendering / "no counterexample"; `expect` handling. The Rung-3 human-testable build → **owner touchpoint after this bead**. Depends: mt-033/034.
+- ▢ **mt-037** · R3 · Differential solve gauge + SB-0 counting net (the rung's exit)
+  Verdicts vs `baselines/` (234 cached jar verdicts) + fresh jar runs where needed; SB-0 exact-count parity per ADR-0002 (respecting the `expect 1`→symmetry-0 gotcha); triage every disagreement. Depends: mt-036.
 
 ## Backlog (later rungs)
 Tracked at rung granularity in [ROADMAP.md](ROADMAP.md); expanded into beads when a rung becomes "Next".
