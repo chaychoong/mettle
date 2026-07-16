@@ -46,6 +46,7 @@ impl Default for Args {
 fn print_usage() {
     eprintln!(
         "usage: conform [OPTIONS] <file.als|dir>...\n\
+         \x20\x20\x20conform bench [<corpus-dir>] [OPTIONS]   (mt-024: conformance + speed report; conform bench --help)\n\
          \n\
          Options:\n\
          \x20\x20--jar PATH             reference jar (default oracle/org.alloytools.alloy.dist.jar)\n\
@@ -115,7 +116,157 @@ fn collect_into(path: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// `bench` subcommand (mt-024): one-command conformance + speed report.
+// ---------------------------------------------------------------------------
+
+fn print_bench_usage() {
+    eprintln!(
+        "usage: conform bench [<corpus-dir>] [OPTIONS]\n\
+         \n\
+         Runs mettle's parse+resolve pipeline and (unless --skip-jar) the pinned\n\
+         reference jar over the same corpus, and prints one deterministic\n\
+         conformance + speed report (text to stdout, optionally JSON via --json).\n\
+         \n\
+         <corpus-dir>            scan this directory recursively for .als files\n\
+         \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20(default: corpus/alloytools-models/models + corpus/portus-63, 167 files)\n\
+         \n\
+         Options:\n\
+         \x20\x20--jar PATH           reference jar (default oracle/org.alloytools.alloy.dist.jar)\n\
+         \x20\x20--shim PATH          ResolveGaugeShim.java source (default: the copy in crates/als-conform/shim/)\n\
+         \x20\x20--threads N          mettle-side parallelism (default: available cores)\n\
+         \x20\x20--skip-jar           mettle-only run -- no JDK required, no jar conformance/timing\n\
+         \x20\x20--cold-sample N      fresh-JVM-per-file sample size (default 10)\n\
+         \x20\x20--timeout SECS       per-JVM-invocation wall-clock budget in seconds (default 60)\n\
+         \x20\x20--json PATH          write the report as JSON to PATH"
+    );
+}
+
+fn missing_value(flag: &str) -> ExitCode {
+    eprintln!("conform bench: missing value for {flag}");
+    print_bench_usage();
+    ExitCode::from(2)
+}
+
+/// Parses `conform bench`'s own argument grammar and runs it. Kept
+/// separate from [`parse_args`]/the legacy Net-0 flow entirely -- `bench`
+/// has different inputs (a config struct, not `OracleConfig` + enumeration
+/// cap) and a different report shape, so bolting it onto the existing flag
+/// set would conflate two independent command surfaces.
+fn bench_main(args: &[String]) -> ExitCode {
+    let mut cfg = als_conform::BenchConfig::default();
+    let mut json_out: Option<PathBuf> = None;
+    let mut corpus_dir: Option<PathBuf> = None;
+
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--jar" => {
+                let Some(v) = it.next() else {
+                    return missing_value("--jar");
+                };
+                cfg.jar_path = PathBuf::from(v);
+            }
+            "--shim" => {
+                let Some(v) = it.next() else {
+                    return missing_value("--shim");
+                };
+                cfg.shim_source = PathBuf::from(v);
+            }
+            "--threads" => {
+                let Some(n) = it.next().and_then(|v| v.parse().ok()) else {
+                    return missing_value("--threads");
+                };
+                cfg.threads = n;
+            }
+            "--skip-jar" => cfg.skip_jar = true,
+            "--cold-sample" => {
+                let Some(n) = it.next().and_then(|v| v.parse().ok()) else {
+                    return missing_value("--cold-sample");
+                };
+                cfg.cold_sample = n;
+            }
+            "--timeout" => {
+                let Some(secs) = it.next().and_then(|v| v.parse().ok()) else {
+                    return missing_value("--timeout");
+                };
+                cfg.jvm_timeout = Duration::from_secs(secs);
+            }
+            "--json" => {
+                let Some(v) = it.next() else {
+                    return missing_value("--json");
+                };
+                json_out = Some(PathBuf::from(v));
+            }
+            "-h" | "--help" => {
+                print_bench_usage();
+                return ExitCode::SUCCESS;
+            }
+            other if other.starts_with("--") => {
+                eprintln!("conform bench: unknown option {other}");
+                print_bench_usage();
+                return ExitCode::from(2);
+            }
+            other if corpus_dir.is_none() => corpus_dir = Some(PathBuf::from(other)),
+            other => {
+                eprintln!("conform bench: unexpected extra argument {other}");
+                print_bench_usage();
+                return ExitCode::from(2);
+            }
+        }
+    }
+
+    if let Some(dir) = corpus_dir {
+        cfg.corpus_roots = vec![dir];
+    }
+
+    let report = match als_conform::run_bench(&cfg) {
+        Ok(report) => report,
+        Err(als_conform::ConformError::JarNotFound(path)) => {
+            eprintln!(
+                "conform bench: reference jar not found at {}\n\
+                 Fetch it per docs/reference/alloy6-reference.md, or pass --skip-jar for a mettle-only run.",
+                path.display()
+            );
+            return ExitCode::from(2);
+        }
+        Err(e) => {
+            eprintln!("conform bench: {e}");
+            return ExitCode::from(2);
+        }
+    };
+
+    print!("{}", report.render_text());
+
+    if let Some(path) = &json_out {
+        match report.to_json() {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(path, json) {
+                    eprintln!("conform bench: failed to write {}: {e}", path.display());
+                    return ExitCode::from(2);
+                }
+            }
+            Err(e) => {
+                eprintln!("conform bench: {e}");
+                return ExitCode::from(2);
+            }
+        }
+    }
+
+    let any_disagreement = report.conformance.stages.iter().any(|s| s.disagree > 0);
+    if any_disagreement {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
 fn main() -> ExitCode {
+    let raw_args: Vec<String> = std::env::args().collect();
+    if raw_args.get(1).map(String::as_str) == Some("bench") {
+        return bench_main(&raw_args[2..]);
+    }
+
     let Some(args) = parse_args() else {
         print_usage();
         return ExitCode::from(2);

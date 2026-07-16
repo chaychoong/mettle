@@ -26,17 +26,31 @@ import java.nio.charset.StandardCharsets;
  * embedded fallback) the two entries are verdict-equivalent; for the 167-file
  * corpus (real sibling opens) only this one is correct.
  *
- * <p>The mt-020 gauge is binary, so no syntax-vs-resolve classification is
- * needed (contrast {@code ParseOnlyShim}); the {@code message}/position fields
- * are emitted only to aid triage of disagreements.
+ * <p>The mt-020 gauge itself is binary, so it never looked at *why* a file was
+ * rejected. mt-024's `conform bench` needs exactly that: a per-stage
+ * conformance report (parse vs. resolve) plus per-file timing, from one JVM
+ * pass over the corpus. Two purely <b>additive</b> fields were added for that
+ * ({@code phase} on reject lines, {@code nanos} always) -- every field mt-020
+ * already reads (`file`, `ok`) is untouched, so the existing gauge is
+ * unaffected.
+ *
+ * <p>{@code phase} classifies a reject the same way {@code ParseOnlyShim}
+ * (mt-013) classifies SYNTAX vs. OTHER -- by inspecting the top frame of the
+ * thrown {@link Err}'s stack trace -- just renamed to mettle's own
+ * `ResolveError` phase vocabulary ({@code parse} vs. {@code resolve}) so a
+ * `bench` disagreement line reads the same on both sides.
  *
  * <p>Usage: {@code java -cp <shim>:<jar> ResolveGaugeShim <file-list>}, one
  * absolute {@code .als} path per line. Output: JSON Lines on stdout, one object
  * per input file, in list order:
  * <pre>
- *   {"file":"...","ok":true}
- *   {"file":"...","ok":false,"line":12,"col":8,"message":"..."}
+ *   {"file":"...","ok":true,"nanos":123456}
+ *   {"file":"...","ok":false,"phase":"parse","nanos":123456,"line":12,"col":8,"message":"..."}
+ *   {"file":"...","ok":false,"phase":"resolve","nanos":123456,"line":1,"col":1,"message":"..."}
  * </pre>
+ * {@code nanos} is this file's own `parseEverything_fromFile` wall time,
+ * excluding JVM startup (which happens once, before the first line) -- the
+ * per-file half of `bench`'s batch-mode jar timing.
  * Never throws; a genuinely unexpected {@link Throwable} is reported distinctly.
  */
 public final class ResolveGaugeShim {
@@ -64,20 +78,60 @@ public final class ResolveGaugeShim {
     }
 
     private static String runOne(String path) {
+        long t0 = System.nanoTime();
         try {
             CompUtil.parseEverything_fromFile(A4Reporter.NOP, null, path);
-            return "{\"file\":\"" + escape(path) + "\",\"ok\":true}";
+            long nanos = System.nanoTime() - t0;
+            return "{\"file\":\"" + escape(path) + "\",\"ok\":true,\"nanos\":" + nanos + "}";
         } catch (Err e) {
+            long nanos = System.nanoTime() - t0;
             Pos pos = e.pos != null ? e.pos : Pos.UNKNOWN;
             return "{\"file\":\"" + escape(path) + "\",\"ok\":false,"
+                + "\"phase\":\"" + classify(e) + "\","
+                + "\"nanos\":" + nanos + ","
                 + "\"line\":" + pos.y + ",\"col\":" + pos.x + ","
                 + "\"message\":\"" + escape(e.msg) + "\"}";
         } catch (Throwable t) {
+            long nanos = System.nanoTime() - t0;
             String m = t.getMessage();
             return "{\"file\":\"" + escape(path) + "\",\"ok\":false,"
+                + "\"phase\":\"resolve\","
+                + "\"nanos\":" + nanos + ","
                 + "\"line\":0,\"col\":0,"
                 + "\"message\":\"unclassified throwable: " + escape(m != null ? m : t.getClass().getName()) + "\"}";
         }
+    }
+
+    /**
+     * "parse" iff the top stack frame is the lexer, the CUP parser, an inline
+     * CUP grammar action, or one of the two inline {@code CompModule}
+     * structural checks (module header, empty enum) -- a genuine syntax-phase
+     * failure. Everything else is a later-phase module/name/type failure:
+     * "resolve". Identical logic to {@code ParseOnlyShim#classify}
+     * (mt-013, kept for its own SYNTAX/OTHER vocabulary); duplicated rather
+     * than shared because the two shims are independent single-file
+     * compilation units (no shared shim library exists, matching this
+     * project's zero-dependency shim convention) -- if the two ever drift,
+     * `bench`'s parse-stage numbers and the mt-020 gauge's category labels
+     * would visibly disagree, which is itself a useful tripwire.
+     */
+    private static String classify(Err e) {
+        StackTraceElement[] st = e.getStackTrace();
+        if (st.length == 0) {
+            return "resolve";
+        }
+        String cls = st[0].getClassName();
+        String method = st[0].getMethodName();
+        if (cls.equals("edu.mit.csail.sdg.parser.CompLexer")
+            || cls.equals("edu.mit.csail.sdg.parser.CompParser")
+            || cls.startsWith("edu.mit.csail.sdg.parser.CUP$CompParser$actions")) {
+            return "parse";
+        }
+        if (cls.equals("edu.mit.csail.sdg.parser.CompModule")
+            && (method.equals("addModelName") || method.equals("addEnum"))) {
+            return "parse";
+        }
+        return "resolve";
     }
 
     /** Hand-rolled JSON string escaping — no JSON-library dependency (matches the other shims). */

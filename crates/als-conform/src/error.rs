@@ -38,4 +38,16 @@ pub enum ConformError {
     /// Failed to render the scorecard as JSON.
     #[error("failed to render scorecard as json: {0}")]
     Json(#[from] serde_json::Error),
+    /// A JVM shim invocation (mt-024's `bench`, driving `ResolveGaugeShim`
+    /// directly rather than through [`crate::shim::run_oracle_on_file`])
+    /// exceeded its wall-clock budget.
+    #[error("java {class_name} timed out after {timeout:?}")]
+    JvmTimeout {
+        class_name: String,
+        timeout: std::time::Duration,
+    },
+    /// A JVM shim invocation exited nonzero or produced no parseable
+    /// output on stdout.
+    #[error("java {class_name} failed: {message}")]
+    JvmFailed { class_name: String, message: String },
 }

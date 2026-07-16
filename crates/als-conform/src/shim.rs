@@ -29,31 +29,60 @@ use crate::parse::parse_shim_output;
 /// can't be launched at all, or [`ConformError::ShimCompile`] if `javac`
 /// runs but reports a failure.
 pub fn ensure_shim_compiled(cfg: &OracleConfig) -> Result<PathBuf, ConformError> {
-    if !cfg.jar_path.is_file() {
-        return Err(ConformError::JarNotFound(cfg.jar_path.clone()));
+    compile_java_shim(
+        &cfg.jar_path,
+        &cfg.shim_source,
+        &cfg.shim_classes_dir,
+        "OracleShim",
+    )
+}
+
+/// Compiles `shim_source` (a single-file `.java` shim with public class
+/// `class_name`) against `jar_path` into `classes_dir`, if the cached
+/// `<class_name>.class` is missing or older than the source.
+///
+/// This is the shared compile step behind every JVM shim in this crate
+/// (`OracleShim`, `ResolveGaugeShim`, ...) -- [`ensure_shim_compiled`] is
+/// now a thin wrapper around it for `OracleShim` specifically, so `bench`
+/// (mt-024) can compile `ResolveGaugeShim` the same way without
+/// duplicating the javac invocation or the up-to-date check.
+///
+/// # Errors
+/// Returns [`ConformError::JarNotFound`]/[`ConformError::ShimSourceNotFound`]
+/// if the configured paths don't exist, [`ConformError::Spawn`] if `javac`
+/// can't be launched at all, or [`ConformError::ShimCompile`] if `javac`
+/// runs but reports a failure.
+pub fn compile_java_shim(
+    jar_path: &Path,
+    shim_source: &Path,
+    classes_dir: &Path,
+    class_name: &str,
+) -> Result<PathBuf, ConformError> {
+    if !jar_path.is_file() {
+        return Err(ConformError::JarNotFound(jar_path.to_path_buf()));
     }
-    if !cfg.shim_source.is_file() {
-        return Err(ConformError::ShimSourceNotFound(cfg.shim_source.clone()));
+    if !shim_source.is_file() {
+        return Err(ConformError::ShimSourceNotFound(shim_source.to_path_buf()));
     }
 
-    let class_file = cfg.shim_classes_dir.join("OracleShim.class");
+    let class_file = classes_dir.join(format!("{class_name}.class"));
     let up_to_date = matches!(
-        (mtime(&class_file), mtime(&cfg.shim_source)),
+        (mtime(&class_file), mtime(shim_source)),
         (Some(class_time), Some(src_time)) if class_time >= src_time
     );
 
     if !up_to_date {
-        std::fs::create_dir_all(&cfg.shim_classes_dir)?;
+        std::fs::create_dir_all(classes_dir)?;
         let output = ProcessCommand::new("javac")
             .arg("-cp")
-            .arg(&cfg.jar_path)
+            .arg(jar_path)
             .arg("-d")
-            .arg(&cfg.shim_classes_dir)
-            .arg(&cfg.shim_source)
+            .arg(classes_dir)
+            .arg(shim_source)
             .output()
             .map_err(|source| ConformError::Spawn {
                 program: "javac",
-                file: cfg.shim_source.clone(),
+                file: shim_source.to_path_buf(),
                 source,
             })?;
         if !output.status.success() {
@@ -62,7 +91,7 @@ pub fn ensure_shim_compiled(cfg: &OracleConfig) -> Result<PathBuf, ConformError>
             ));
         }
     }
-    Ok(cfg.shim_classes_dir.clone())
+    Ok(classes_dir.to_path_buf())
 }
 
 fn mtime(path: &Path) -> Option<std::time::SystemTime> {
@@ -272,21 +301,26 @@ fn spawn_and_capture(
     }
 }
 
-fn read_all(mut pipe: impl Read) -> String {
+/// Drains a pipe to a `String`, discarding read errors (best-effort --
+/// used on background drain threads where the only alternative is losing
+/// the child's output entirely). Shared with `bench` (mt-024), which
+/// drives `ResolveGaugeShim` with the same pipe-then-poll pattern.
+pub(crate) fn read_all(mut pipe: impl Read) -> String {
     let mut buf = String::new();
     let _ = pipe.read_to_string(&mut buf);
     buf
 }
 
-enum WaitResult {
+pub(crate) enum WaitResult {
     Exited,
     TimedOut,
     WaitError(String),
 }
 
 /// Polls `child` until it exits or `timeout` elapses; on timeout, kills
-/// and reaps the child.
-fn wait_with_timeout(child: &mut Child, timeout: Duration) -> WaitResult {
+/// and reaps the child. Shared with `bench` (mt-024) for the same reason
+/// as [`read_all`].
+pub(crate) fn wait_with_timeout(child: &mut Child, timeout: Duration) -> WaitResult {
     const POLL_INTERVAL: Duration = Duration::from_millis(20);
     let start = Instant::now();
     loop {
