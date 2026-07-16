@@ -7,6 +7,10 @@
 
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
+mod solver;
+
+pub use solver::{block, Cdcl, CdclSolver};
+
 use std::fmt;
 use std::ops::Not;
 
@@ -22,6 +26,21 @@ impl Var {
     #[must_use]
     pub fn index(self) -> usize {
         self.0 as usize
+    }
+
+    /// Reconstructs a variable from its dense index.
+    ///
+    /// Internal to the solver: it iterates the dense `0..num_vars` pool and
+    /// needs to turn an index back into a `Var` (STYLE I1 keeps the pool dense,
+    /// so this is total for `index < num_vars`).
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "the pool is capped at u32::MAX/2 vars by Cnf::fresh_var, so a dense \
+                  in-range index always fits u32"
+    )]
+    pub(crate) fn from_index(index: usize) -> Var {
+        debug_assert!(index < u32::MAX as usize / 2, "variable index overflow");
+        Var(index as u32)
     }
 }
 
@@ -55,6 +74,15 @@ impl Lit {
     #[must_use]
     pub fn is_positive(self) -> bool {
         self.0 & 1 == 0
+    }
+
+    /// The dense literal code (`var << 1 | negated`).
+    ///
+    /// Solver-side arrays (watch lists) are indexed by literal, so the code is
+    /// the natural dense key; `code < 2 * num_vars` by construction.
+    #[must_use]
+    pub fn code(self) -> usize {
+        self.0 as usize
     }
 }
 
