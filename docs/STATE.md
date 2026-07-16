@@ -38,7 +38,7 @@
 - Backlog: **mt-021** (printer/dumper recursion depth; needs a small ADR; not rung-gating).
 
 ## Next chunk (planned)
-**mt-022 — precise per-node relevant-type propagation** (delegate → opus, subtle correctness; the hardest resolver bead). Implement the reference's precise bounding types + true top-down relevant-type pass in `als-types` (contract §4.2–§4.4), re-enable every ADR-0009-reverted tightening, iterate the mt-020 gauge to convergence — target 100% alloy4fun agreement, remainder individually triaged. Then mt-023 (warning parity + `--strict`), then the **owner touchpoint**, then Rung 3.
+**mt-022 — precise per-node relevant-type propagation** (in flight, → opus; the hardest resolver bead). Implement the reference's precise bounding types + true top-down relevant-type pass in `als-types` (contract §4.2–§4.4), re-enable every ADR-0009-reverted tightening, iterate the mt-020 gauge to convergence — target 100% alloy4fun agreement, remainder individually triaged. Then **mt-024** (one-command conformance + speed benchmark, owner-requested — reuses the gauge infra mt-022 touches) and **mt-023** (warning parity + `--strict`), then the **owner touchpoint**, then Rung 3.
 
 ## Key syntax facts pinned this session (details in [reference/alloy6-grammar.md](reference/alloy6-grammar.md))
 - The public grammar appendix is NOT the truth; the reference's `Alloy.lex`/`Alloy.cup`/`CompFilter` at the jar's build commit are, plus jar probes for anything ambiguous.
