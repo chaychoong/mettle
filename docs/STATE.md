@@ -31,7 +31,7 @@
 - Toolchains in this VM: Rust stable (`~/.cargo/bin`) and OpenJDK 21.
 
 ## In flight (delegated, background)
-- _None._ (Latest merged: mt-025 — 99.79%, clean-room incident handled and re-derived; see TASKS.)
+- **mt-026** (binder rule vs the 6 jar-parse-reject codes, → sonnet, `als-syntax` only) and **mt-024** (`conform bench` conformance+speed command, → sonnet, `als-conform` only) running in parallel since 2026-07-16 — disjoint crates. If resuming cold, check `git status` per crate and review each against the rubrics.
 
 ## Not yet started
 - Rung 3 planning (relational translation, bounds, SAT solving, instances) — awaits the deferred owner touchpoint (after mt-022 + mt-023, per ADR-0010).
