@@ -106,6 +106,7 @@ fn variant_name(e: &ResolveError) -> &'static str {
         ResolveError::NotSet { .. } => "NotSet",
         ResolveError::NotInt { .. } => "NotInt",
         ResolveError::UnaryNotBinary { .. } => "UnaryNotBinary",
+        ResolveError::NotUnarySet { .. } => "NotUnarySet",
         ResolveError::IllegalJoin { .. } => "IllegalJoin",
         ResolveError::BadCall { .. } => "BadCall",
         ResolveError::FuncBodyArity { .. } => "FuncBodyArity",

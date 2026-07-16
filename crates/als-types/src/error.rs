@@ -267,6 +267,15 @@ pub enum ResolveError {
         span: Span,
     },
 
+    /// The domain/range operand of `<:` / `:>` is not a unary set
+    /// (`ExprBinary.make` DOMAIN/RANGE, resolution-doc §4.2). The reference
+    /// message is "This must be a unary set, …".
+    #[error("this must be a unary set")]
+    NotUnarySet {
+        /// Span of the offending (non-unary) operand.
+        span: Span,
+    },
+
     /// A relational join whose touching columns are disjoint, so the join type
     /// is empty and the node is not a valid function/predicate call either
     /// (`ExprBadJoin`, resolution-doc §4.2/§4.4). The reference message is
@@ -430,6 +439,7 @@ impl ResolveError {
             | ResolveError::NotSet { span }
             | ResolveError::NotInt { span }
             | ResolveError::UnaryNotBinary { span, .. }
+            | ResolveError::NotUnarySet { span }
             | ResolveError::IllegalJoin { span }
             | ResolveError::BadCall { span, .. }
             | ResolveError::FuncBodyArity { span, .. }

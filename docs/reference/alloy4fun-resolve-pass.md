@@ -224,3 +224,124 @@ embedded" / lenient-lex tail (mt-013), negligible.
 - `crates/als-types/src/error.rs` — new `ResolveError` variants (`NotFormula`/`NotSet`/`NotInt`/`UnaryNotBinary`/`IllegalJoin`).
 - `crates/als-types/tests/resolve_probes.rs` — 9 `_mt020` regression tests.
 - `LIMITATIONS.md`, `docs/README.md` — this doc linked in; measured divergences.
+
+---
+
+## 9. mt-022 — precise per-node relevant types (Rung-2 tightening)
+
+Bead **mt-022** ([ADR-0010](../adr/0010-hundred-percent-before-signoff.md)) closed
+the bulk of the mt-020 over-acceptance by making the type representation and the
+overload resolution **faithful to the reference** (sources at commit `794226dd`),
+then re-enabling every tightening [ADR-0009](../adr/0009-fused-resolve-pass-accept-lean.md)
+had reverted. The gauge was re-run against the **cached mt-020 jar verdicts**
+(`gauge_full/jar_ff.jsonl`, the authoritative `parseEverything_fromFile` pass) —
+the JVM side was not re-run (the codes are byte-identical).
+
+### 9.1 The root-cause fix — empty products keep their arity
+
+`ast/Type.java` keeps an empty product as `NONE->..->NONE` **with its arity**;
+mettle's `Type` had collapsed it to the true-`EMPTY` sentinel, losing the arity.
+That single coarseness was the ADR-0009 blocker: it made `join`/`intersect`/
+`hasCommonArity` conflate "empty because the columns are disjoint" (a legal
+arity-N relation) with "no product at all" (an illegal join / genuine mismatch).
+`ty.rs` was rewritten as a faithful port (`Product::is_empty`, `add` drops only
+arity-0, `join`/`intersect`/`product`/`pickCommonArity`/`unionWithCommonArity`/
+`domainRestrict`/`rangeRestrict`/`closure`/`intersects`/`hasTuple` all matching
+`Type.java`; `PrimSig.intersect`/`intersects` column semantics — `NONE` intersects
+nothing).
+
+### 9.2 What was re-enabled (`resolve/expr.rs`)
+
+- **`IllegalJoin` now fires** — a relational join whose faithful type is `EMPTY`
+  (⟺ both operands entirely unary) is `ExprBadJoin`. Guarded off `univ`
+  placeholders, `$`-models, call-spine fallbacks, and `join_lenient` (a scoped
+  flag: a multi-candidate joinability pick may be locally-right-globally-wrong,
+  e.g. `s.grades.c`, so it suppresses **only** the enclosing illegal-join, not
+  the formula's other checks).
+- **`AmbiguousName` for bare names** at a *definite* position (`some g`,
+  `projects in …`) — the reference's `ExprChoice.resolveHelper` on precise
+  types. Positions whose relevant type mettle can only approximate (join
+  operands, `+`/`&`/`->` operands, builtin-pred args, macro/`Any`) are
+  **lenient** (`SetLoose`/`OfLoose`, no ambiguity reject) so a candidate the jar
+  narrows via a slice mettle does not thread is never falsely rejected.
+- **`=`/`in` relevant slices** are computed precisely (`a = lt.pickCommonArity(rt)`,
+  `b = rt.intersect(a)`) via a new pure bottom-up `infer(sibling)` — this is what
+  tells a real ambiguity (`projects in Course->Project`) from an arity-narrowed
+  unique pick (`keys in Room lone->Key`).
+- **Candidate weights** corrected to `populate` (sig 0, 0-ary fun 0, implicit-
+  `this`/bare field 0, cross-branch field 1); the **`applicable`** test matches
+  the reference (empty args always apply); **`@name` skips the lexical env**.
+- **`NotUnarySet`** (`<:`/`:>` domain/range must be unary) added and enforced.
+- The `NotFormula`/`NotSet`/`NotInt`/`ArityMismatch`/`UnaryNotBinary` checks now
+  fire far more often, because the faithful resolution sets the `ambig`
+  suppression flag much less (a resolved single candidate no longer taints the
+  formula).
+
+### 9.3 Final numbers (150,891 codes, cached jar verdicts)
+
+| | mt-020 | mt-022 |
+|---|---:|---:|
+| agree ACCEPT | 101,970 | 101,970 |
+| agree REJECT | 42,621 | 46,446 |
+| **jar-accepts / mettle-rejects (drop-in)** | **0** | **0** |
+| jar-rejects / mettle-accepts (over-accept) | 6,300 | **2,475** |
+| **agreement** | **95.82%** | **98.36%** |
+
+Corpus (167 real-path files): **167/167 agree ACCEPT**, 0 drop-in — unchanged.
+
+### 9.4 Per-class over-acceptance, before → after
+
+| jar reject class | mt-020 | mt-022 | note |
+|---|---:|---:|---|
+| illegal relational join | 3,261 | 549 | mostly caught; remainder = `join_lenient`-suppressed multi-candidate joins |
+| ambiguous name | 1,505 | 1,281 | remainder ≈1,207 are **left-of-join** field ambiguities (`projects.p`) the jar narrows via the parent relevant type mettle does not thread — see §9.5 |
+| must be a formula | 503 | 106 | ambiguity-suppressed remainder |
+| `in` arity | 311 | 72 | " |
+| incorrect func/pred call | 188 | 179 | relational fallback still accepts |
+| must be a unary set (`<:`/`:>`) | 132 | 68 | ambiguity-suppressed remainder |
+| must be a set or relation | 65 | 56 | " |
+| `&` arity | 65 | 21 | " |
+| must be an integer | 39 | 14 | " |
+| multiplicity not allowed | 35 | 29 | mult-flag not tracked |
+| `=` arity | 18 | 7 | ambiguity-suppressed remainder |
+| exactly-of | 17 | 15 | mult-flag not tracked |
+| `~`/`^`/`*` non-binary | ~24 | ~7 | ambiguity-suppressed remainder |
+| name cannot be found | 10 | 9 | `$`/meta lenient |
+| lenient-lex (parse) | 6 | 6 | **unchanged** — mt-014 binder-composition (parser), not resolver |
+| "failed to be typechecked" / other | ~106 | ~47 | mixed long tail |
+| **total** | **6,300** | **2,475** | |
+
+### 9.5 The irreducible remainder (single-pass limitation)
+
+The dominant residual (~1,207 codes) is a **left-of-join field ambiguity**:
+`projects.p` where two same-arity fields both join the right operand. The
+reference keeps both readings in an `ExprChoice` and picks by the **parent**
+relevant type propagated top-down; mettle's fused walk resolves the join operand
+before that parent type exists, so it must stay lenient. Restricting the reject
+to all-field survivors was tried and **reverted** — it false-rejected `key`/
+`name` (field overloads the jar narrows the same way) and, via the join-slice
+change, `prev`/`first`/`next` (`util/ordering` vs `util/integer` funcs). Catching
+this class faithfully needs the reference's full top-down relevant-type
+threading (a materialized typed tree), out of scope for the fused-walk evolution.
+The **lenient-lex** 6 are a pre-existing mt-014 parser (binder-composition)
+divergence, unchanged here.
+
+### 9.6 Reproduce
+
+The mettle side re-runs over the same `codes/` (byte-identical), diffed against
+the cached `gauge_full/jar_ff.jsonl`:
+
+```
+cargo run --release -p als-conform --bin resolve-gauge -- \
+  alloy4fun --corpus corpus/alloy4fun/2024-25 --out <OUT> --threads 16
+# diff mettle.jsonl against the cached fromFile jar verdicts (basename-keyed)
+```
+
+### 9.7 Files touched (mt-022)
+
+- `crates/als-types/src/ty.rs` — faithful `Type`/`Product` port (empty products keep arity).
+- `crates/als-types/src/resolve/expr.rs` — `infer` bottom-up types; faithful `pick`/`resolveHelper`; precise `=`/`in` slices; `SetLoose`/`OfLoose` lenient positions; corrected weights + `applicable`; `@name` env skip; `IllegalJoin`/`NotUnarySet` firing; `join_lenient`.
+- `crates/als-types/src/error.rs` — `NotUnarySet` variant.
+- `crates/als-conform/src/bin/resolve_gauge.rs` — `NotUnarySet` bucket name.
+- `crates/als-types/tests/resolve_probes.rs` — 6 `_mt022` regression tests (all jar-verified).
+- `LIMITATIONS.md` — divergence classes requantified.

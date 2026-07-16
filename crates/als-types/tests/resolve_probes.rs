@@ -372,6 +372,60 @@ fn higher_order_macro_accepted_mt020() {
     accept("pred ax[x: univ] { some x }\nlet m[axiom] { axiom[univ] }\nfact { m[ax] }\n");
 }
 
+// ---- mt-022: precise per-node relevant types (all jar-verified) ----
+
+#[test]
+fn illegal_join_rejected_mt022() {
+    // `A.A` joins two unary sets → arity-0 join → `ExprBadJoin`. With the
+    // faithful `Type::join` (empty products kept with arity) mettle now fires
+    // `IllegalJoin` exactly when both operands are unary. Jar: REJECT.
+    let e = reject("sig A {}\nfact { some A.A }\n");
+    assert!(matches!(e, ResolveError::IllegalJoin { .. }), "{e:?}");
+}
+
+#[test]
+fn legal_but_empty_join_accepted_mt022() {
+    // `D.f.C`: `D.f` = A->B, `.C` joins a disjoint column → a `NONE`-headed
+    // arity-1 product (empty but a *legal* relation), not an illegal join. The
+    // reference keeps the arity; mettle used to drop it. Jar: ACCEPT.
+    accept("sig A {}\nsig B {}\nsig C {}\nsig D { f: A -> B }\nfact { some D.f.C }\n");
+}
+
+#[test]
+fn ambiguous_bare_field_rejected_mt022() {
+    // A bare `f` matching two unrelated fields, used at a definite set position
+    // (`some f`), is a genuine "This name is ambiguous" reject once mettle
+    // resolves the `ExprChoice` against the precise relevant type. Jar: REJECT.
+    let e = reject("sig A { f: A }\nsig B { f: B }\nfact { some f }\n");
+    assert!(matches!(e, ResolveError::AmbiguousName { .. }), "{e:?}");
+}
+
+#[test]
+fn at_name_skips_binder_shadow_mt022() {
+    // `@t` never binds the lexical env: inside a sig fact with a quantifier
+    // `t`, `this.@t` is the field `t` (E->T), not the bound var. Jar: ACCEPT.
+    accept("sig T {}\nsig E { t: T } { all t: T | t = this.@t implies some t }\n");
+}
+
+#[test]
+fn empty_arg_call_applies_mt022() {
+    // `max` applies to an argument even when it is statically empty (the
+    // reference's `applicable` skips the intersection test for an empty arg),
+    // so `p.grades.max` resolves as a call, not an illegal join. Jar: ACCEPT.
+    accept(
+        "open util/ordering[G]\nsig G {}\nsig P { grades: set G }\n\
+         pred q { all p: P | some p.grades.max }\nrun q\n",
+    );
+}
+
+#[test]
+fn domain_restrict_nonunary_rejected_mt022() {
+    // The domain of `<:` must be a unary set; `f <: A` with a binary `f` is
+    // "This must be a unary set". Jar: REJECT.
+    let e = reject("sig A { f: A -> A }\nfact { some (f <: A) }\n");
+    assert!(matches!(e, ResolveError::NotUnarySet { .. }), "{e:?}");
+}
+
 // ---- determinism (STYLE U4) ----
 
 #[test]

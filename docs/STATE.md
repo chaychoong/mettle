@@ -3,8 +3,8 @@
 > The live "where are we" doc. Update this at the end of every work chunk. On pickup, read this first.
 
 **Last updated:** 2026-07-16
-**Current rung:** **Rung 2 (names & types) — extended per [ADR-0010](adr/0010-hundred-percent-before-signoff.md).** mt-016/017/015/018/019/020 done; the owner gated the touchpoint on **~100% similarity**, so mt-022 (precise types → close the 4.2% verdict gap) and mt-023 (warning parity + `--strict`) are now rung-gating. Touchpoint happens after both, with verdict + warning numbers together.
-**Scorecard (mt-020, [reference/alloy4fun-resolve-pass.md](reference/alloy4fun-resolve-pass.md)):** corpus 167/167 agree; alloy4fun 150,891 codes → **0 jar-accepts/mettle-rejects** (the drop-in direction is perfect), 95.82% total agreement, 6,300 over-accepts (4.2%) measured/bucketed in LIMITATIONS per [ADR-0009](adr/0009-fused-resolve-pass-accept-lean.md) (tightening measured and reverted — precise types are the real fix, backlog bead mt-022).
+**Current rung:** **Rung 2 (names & types) — extended per [ADR-0010](adr/0010-hundred-percent-before-signoff.md)** (owner gated the touchpoint on ~100% similarity). mt-016/017/015/018/019/020/**022** done; remaining rung-gating: **mt-025** (materialized typed tree — the last ~1.6%), **mt-026** (6 parser binder codes), **mt-023** (warning parity + `--strict`), plus owner-requested **mt-024** (benchmark command).
+**Scorecard (after mt-022, [reference/alloy4fun-resolve-pass.md](reference/alloy4fun-resolve-pass.md) §9):** corpus 167/167 agree; alloy4fun 150,891 codes → **0 jar-accepts/mettle-rejects** (drop-in direction perfect), **98.36% total agreement** (was 95.82%), 2,475 over-accepts (was 6,300) — remainder root-caused: ~1,207 left-of-join field ambiguity + its suppression shadow (→ mt-025), 6 parser binder codes (→ mt-026).
 **Conformance scorecard:** harness exists (Net 0 live); mettle-side solving not yet implemented. Rung-1 gauge: **corpus lex, parse, AND round-trip rate 167/167** (alloytools-models + portus-63), plus mt-014's mutation fuzzer (default 4,248 mutants/~5s in CI, verified to 88,500 mutants offline) — zero panics, sane spans, round-trip holds. Oracle baseline committed: `baselines/` (234 jar verdicts over alloytools-models, triaged).
 **Builds:** `cargo build/fmt/clippy/test` all green workspace-wide (~180 tests + the fuzzer). **Human-testable now:** `cargo build -p mettle && ./target/debug/mettle parse <file.als>` pretty-prints any Alloy 6 model (`--ast` for the structural dump); malformed input and pathologically-deep nesting both render precise caret diagnostics, never a crash.
 
@@ -31,14 +31,14 @@
 - Toolchains in this VM: Rust stable (`~/.cargo/bin`) and OpenJDK 21.
 
 ## In flight (delegated, background)
-- **mt-022** (precise relevant-type propagation, → opus) running since 2026-07-16: precise §4 types + true top-down pass, re-enable all ADR-0009-reverted tightenings one at a time with gauge runs, target 100% alloy4fun agreement with 0 false rejects throughout. If resuming cold with no notification, check `git status` for uncommitted output and review against the rubrics (per-class before/after table is the review input).
+- _None._ (Latest merged: mt-022 — agreement 98.36%, remainder filed as mt-025/mt-026.)
 
 ## Not yet started
 - Rung 3 planning (relational translation, bounds, SAT solving, instances) — awaits the deferred owner touchpoint (after mt-022 + mt-023, per ADR-0010).
 - Backlog: **mt-021** (printer/dumper recursion depth; needs a small ADR; not rung-gating).
 
 ## Next chunk (planned)
-**mt-022 — precise per-node relevant-type propagation** (in flight, → opus; the hardest resolver bead). Implement the reference's precise bounding types + true top-down relevant-type pass in `als-types` (contract §4.2–§4.4), re-enable every ADR-0009-reverted tightening, iterate the mt-020 gauge to convergence — target 100% alloy4fun agreement, remainder individually triaged. Then **mt-024** (one-command conformance + speed benchmark, owner-requested — reuses the gauge infra mt-022 touches) and **mt-023** (warning parity + `--strict`), then the **owner touchpoint**, then Rung 3.
+**mt-025 — materialized typed tree + full top-down relevant-type threading** (delegate → opus; the mt-022 remainder, ~2,000 codes dominated by left-of-join field ambiguity). Then **mt-026** (6 binder-composition parser codes, → sonnet, als-syntax-only), **mt-024** (benchmark command), **mt-023** (warning parity + `--strict`), then the **owner touchpoint** with verdict + warning + speed numbers, then Rung 3.
 
 ## Key syntax facts pinned this session (details in [reference/alloy6-grammar.md](reference/alloy6-grammar.md))
 - The public grammar appendix is NOT the truth; the reference's `Alloy.lex`/`Alloy.cup`/`CompFilter` at the jar's build commit are, plus jar probes for anything ambiguous.
