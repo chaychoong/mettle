@@ -1,8 +1,12 @@
 # ADR-0009 — Fused resolve pass and the accept-lean interim posture
 
-**Status:** Accepted · **Date:** 2026-07-16 · **Beads:** mt-018 (decision made
-at its merge), mt-020 (measures the consequences) · **Amends:** [ADR-0008](0008-rung2-resolver-architecture.md)
-(decision 4; the rest of ADR-0008 stands unchanged)
+**Status:** Accepted; scheduling superseded by [ADR-0010](0010-hundred-percent-before-signoff.md)
+(the "leave until scorecard pressure warrants" posture — the owner gated the
+Rung-2 touchpoint on ~100% similarity, so mt-022 runs immediately; the
+technical findings below stand) · **Date:** 2026-07-16 · **Beads:** mt-018
+(decision made at its merge), mt-020 (measures the consequences) ·
+**Amends:** [ADR-0008](0008-rung2-resolver-architecture.md) (decision 4; the
+rest of ADR-0008 stands unchanged)
 
 ## Context
 
