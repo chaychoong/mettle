@@ -31,7 +31,7 @@
 - Toolchains in this VM: Rust stable (`~/.cargo/bin`) and OpenJDK 21.
 
 ## In flight (delegated, background)
-- _None._ All delegations complete, reviewed, merged (latest: mt-023 warning parity — **Rung 2 + ADR-0010 extension complete**).
+- **mt-028** (pinned translation & solving contract, → opus) running since 2026-07-16: `docs/reference/alloy6-translation.md` + draft ADR-0011 (incl. the solver decision: hand-rolled CDCL vs vendored — owner-visible) + a proposed Rung-3 bead breakdown. If resuming cold, check `git status` for the two uncommitted docs and review against the rubrics.
 
 ## Not yet started
 - Rung 3 planning (relational translation, bounds, SAT solving, instances) — awaits the deferred owner touchpoint (after mt-022 + mt-023, per ADR-0010).
