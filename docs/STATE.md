@@ -31,7 +31,7 @@
 - Toolchains in this VM: Rust stable (`~/.cargo/bin`) and OpenJDK 21.
 
 ## In flight (delegated, background)
-- _None._ (Latest merged: mt-022 — agreement 98.36%, remainder filed as mt-025/mt-026.)
+- **mt-025** (materialized typed tree + full top-down relevant-type threading, → opus) running since 2026-07-16: the ADR-0008-decision-4 structure for real; removes mt-022's residual leniencies class-by-class with gauge runs; target = only the 6 mt-026 parser codes remain; 0 false rejects non-negotiable. If resuming cold, check `git status` for uncommitted output; the per-class before/after table is the review input.
 
 ## Not yet started
 - Rung 3 planning (relational translation, bounds, SAT solving, instances) — awaits the deferred owner touchpoint (after mt-022 + mt-023, per ADR-0010).
