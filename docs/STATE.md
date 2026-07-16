@@ -2,7 +2,7 @@
 
 > The live "where are we" doc. Update this at the end of every work chunk. On pickup, read this first.
 
-**Last updated:** 2026-07-16
+**Last updated:** 2026-07-16 (session wrapped; owner directed: continue in a fresh session)
 **Current rung:** **Rung 3 (relational core — "it actually solves my models") — opening.** Rung 2 + ADR-0010 extension complete; **owner touchpoint passed 2026-07-16** ("we can move on") with the residual diagnostic gap documented and filed as backlog bead **mt-027** (ADR-0010 outcome recorded). First Rung-3 chunk: the pinned translation/solving contract (study bead), then file the rung's implementation beads.
 **Scorecard:** verdicts — corpus 167/167 = 100% both stages; alloy4fun 150,891 codes → **0 jar-accepts/mettle-rejects**, **99.79% agreement**, 314 over-accepts. Warnings (mt-023) — all 20 classes; corpus 0 missing; alloy4fun **99.80% files identical** (192 missing / 20 extra, root-caused in [reference/warning-parity.md](reference/warning-parity.md)). Speed (mt-024 `conform bench`) — mettle resolve ~4× the jar's batch total (caveat printed by the tool).
 **Conformance scorecard:** harness exists (Net 0 live); mettle-side solving not yet implemented. Rung-1 gauge: **corpus lex, parse, AND round-trip rate 167/167** (alloytools-models + portus-63), plus mt-014's mutation fuzzer (default 4,248 mutants/~5s in CI, verified to 88,500 mutants offline) — zero panics, sane spans, round-trip holds. Oracle baseline committed: `baselines/` (234 jar verdicts over alloytools-models, triaged).
@@ -31,14 +31,14 @@
 - Toolchains in this VM: Rust stable (`~/.cargo/bin`) and OpenJDK 21.
 
 ## In flight (delegated, background)
-- _None._ (Latest merged: mt-029 scopes→universe; LEDGER-004 `verified` via the owner-suggested probe matrix. **PAUSED** — awaiting owner "proceed" for mt-030 and the LEDGER-004 approval.)
+- _None._ Session wrapped 2026-07-16. LEDGER-004 **approved** (amended two-part rule) — mt-035 unblocked.
 
 ## Not yet started
 - Rung 3 planning (relational translation, bounds, SAT solving, instances) — awaits the deferred owner touchpoint (after mt-022 + mt-023, per ADR-0010).
 - Backlog: **mt-021** (printer/dumper recursion depth; needs a small ADR; not rung-gating).
 
 ## Next chunk (planned)
-**mt-030 — the bounds builder** (`BoundsComputer` port per translation-ref §1: leaf/remainder/abstract tuple allocation, subset sigs, field product bounds, hierarchy/multiplicity constraints; consumes mt-029's `ScopeTable` seam; → opus). Awaiting the owner's "proceed" (pacing contract). Also still awaiting: **LEDGER-004 approval** (now `verified`, amended two-part rule — subsig-conditional pinning; gates only mt-035).
+**mt-030 — the bounds builder** (`BoundsComputer` port per translation-ref §1: leaf/remainder/abstract tuple allocation, subset sigs, field product bounds, hierarchy/multiplicity constraints; consumes mt-029's `ScopeTable` seam; → opus). All decisions are in: ADR-0011 accepted, LEDGER-004 approved, Rung-3 beads filed. A bare "proceed" in the fresh session starts exactly this one chunk (pacing contract: one chunk per proceed, report, stop).
 
 ## Key syntax facts pinned this session (details in [reference/alloy6-grammar.md](reference/alloy6-grammar.md))
 - The public grammar appendix is NOT the truth; the reference's `Alloy.lex`/`Alloy.cup`/`CompFilter` at the jar's build commit are, plus jar probes for anything ambiguous.

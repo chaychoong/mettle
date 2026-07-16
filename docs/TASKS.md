@@ -87,8 +87,8 @@ Rung gauge: **same accept/reject decisions as the jar** on resolve/typecheck (RO
   Bounded IR + bounds → `Cnf` with a fixed variable order (determinism); `Assignment` → relation tuples + skolem values (§4/§6). Depends: mt-030/031/032.
 - ▢ **mt-034** · R3 · Evaluator + self-check net
   Evaluate any IR formula/expression against a concrete instance; `debug_assert!` every produced instance satisfies the goal (§7 — the ROADMAP "self-verified" promise; later the REPL's engine). Depends: mt-031/033.
-- ⛔ **mt-035** · R3 · `util/ordering` exact bounds (**gated on LEDGER-004 approval**)
-  The §5 special-casing: force exact scope on the ordered sig, pin first/next/last to constants in universe order. Depends: mt-030, LEDGER-004 `approved`.
+- ▢ **mt-035** · R3 · `util/ordering` exact bounds (LEDGER-004 **approved** 2026-07-16 — the amended two-part rule)
+  The §5 special-casing per the approved rule: always force exact population; pin first/next/last to constants **only** in the childless/no-partition-choice case; subsig case leaves the order a genuine constraint. Tests must cover both halves as distinct behaviors. Depends: mt-030.
 - ▢ **mt-036** · R3 · `mettle run` / `mettle check <cmd>` CLI
   Execute a command end-to-end: verdict + instance rendering / "no counterexample"; `expect` handling. The Rung-3 human-testable build → **owner touchpoint after this bead**. Depends: mt-033/034.
 - ▢ **mt-037** · R3 · Differential solve gauge + SB-0 counting net (the rung's exit)
