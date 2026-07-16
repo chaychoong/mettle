@@ -12,7 +12,8 @@ use crate::graph::ModuleId;
 use crate::ty::Type;
 use crate::warning::ResolveWarning;
 use crate::world::{
-    FuncId, MacroId, Param, ResolvedCommand, ResolvedField, ResolvedFunc, ResolvedMacro, SigId,
+    CommandScope, FuncId, MacroId, Param, ResolvedCommand, ResolvedField, ResolvedFunc,
+    ResolvedMacro, SigId,
 };
 
 use super::expr::Cx;
@@ -483,24 +484,66 @@ impl Resolver<'_> {
             }
         }
 
-        // Scopes.
+        // Scopes: resolve each entry, keeping the resolved data for the
+        // translation-time scope computer (mt-029). `int`/`seq`/`String`/`steps`
+        // targets become scalar fields; sig targets become `CommandScope`s
+        // (including builtins like `univ`/`none`, which the scope layer rejects).
+        let mut overall = None;
+        let mut bitwidth = None;
+        let mut maxseq = None;
+        let mut maxstring = None;
+        let mut string_exact = false;
+        let mut steps = None;
+        let mut scopes = Vec::new();
         if let Some(scope) = &cmd.scope {
+            overall = scope.default;
             let entries = scope.entries.clone();
             for entry in &entries {
-                if let ScopeTarget::Sig(qn) = &entry.target {
-                    let segs: Vec<String> = qn.segments.iter().map(|s| s.text.clone()).collect();
-                    match self.lookup_sig_from(module, &segs) {
-                        None => self.error(ResolveError::ScopeSigNotFound {
-                            name: segs.join("/"),
-                            span: entry.span,
-                        }),
-                        Some(sig) => self.check_scope_sig(sig, entry.is_exact, entry.span, &segs),
+                match &entry.target {
+                    ScopeTarget::Sig(qn) => {
+                        let segs: Vec<String> =
+                            qn.segments.iter().map(|s| s.text.clone()).collect();
+                        match self.lookup_sig_from(module, &segs) {
+                            None => self.error(ResolveError::ScopeSigNotFound {
+                                name: segs.join("/"),
+                                span: entry.span,
+                            }),
+                            Some(sig) => {
+                                self.check_scope_sig(sig, entry.is_exact, entry.span, &segs);
+                                scopes.push(CommandScope {
+                                    sig,
+                                    scope: entry.start,
+                                    is_exact: entry.is_exact,
+                                    span: entry.span,
+                                });
+                            }
+                        }
                     }
+                    ScopeTarget::Int => bitwidth = Some(entry.start),
+                    ScopeTarget::Seq => maxseq = Some(entry.start),
+                    ScopeTarget::Str => {
+                        maxstring = Some(entry.start);
+                        string_exact = entry.is_exact;
+                    }
+                    ScopeTarget::Steps => steps = Some(entry.start),
                 }
             }
         }
 
-        self.world.commands.push(ResolvedCommand { span, kind });
+        self.world.commands.push(ResolvedCommand {
+            span,
+            kind,
+            label: cmd.label.as_ref().map(|l| l.text.clone()),
+            expect: cmd.expect,
+            overall,
+            bitwidth,
+            maxseq,
+            maxstring,
+            string_exact,
+            steps,
+            scopes,
+            additional_exact: Vec::new(),
+        });
     }
 
     fn check_scope_sig(&mut self, sig: SigId, is_exact: bool, span: Span, segs: &[String]) {

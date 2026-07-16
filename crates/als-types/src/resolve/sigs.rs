@@ -143,6 +143,9 @@ impl Resolver<'_> {
             Vec::new(),
             None,
         );
+        // The synthetic enum parent carries `is_enum` so the scope layer can
+        // reject an explicit scope on it (translation-ref §1.2).
+        self.world.sigs[parent].is_enum = true;
         for variant in &decl.variants {
             self.declare_sig(
                 module,
@@ -187,11 +190,14 @@ impl Resolver<'_> {
         let id = SigId::from_index(self.world.sigs.len());
         self.world.sigs.alloc(ResolvedSig {
             name: name.to_owned(),
+            // Bare name for now; `compute_qualified_names` fills the alias path.
+            qualified_name: name.to_owned(),
             module,
             span,
             // Placeholder kind; the hierarchy pass fills parents + subset kind.
             kind: SigKind::Prim { parent: None },
             is_abstract,
+            is_enum: false,
             is_var,
             is_private,
             is_builtin: false,

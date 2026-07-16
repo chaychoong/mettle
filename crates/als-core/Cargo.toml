@@ -15,3 +15,7 @@ als-syntax = { path = "../als-syntax" }
 als-types = { path = "../als-types" }
 # als-solve: Tseitin->CNF output is expressed in als-solve's CNF interface types.
 als-solve = { path = "../als-solve" }
+# thiserror: typed, render-free per-phase error enum (STYLE E1) -- TranslateError
+# is the translation-phase reject boundary, exactly the role thiserror already
+# plays for ResolveError in als-types. Version pinned to the workspace.
+thiserror = "1"

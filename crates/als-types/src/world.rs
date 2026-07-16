@@ -8,7 +8,7 @@
 //! numbering, CNF, and solving are out of scope (later rungs) — this world
 //! stops at "resolved + type-checked + accept verdict".
 
-use als_syntax::ast::{CmdKind, SigMult};
+use als_syntax::ast::{CmdKind, Expect, SigMult};
 use als_syntax::{define_id, Arena, Span};
 
 use crate::graph::ModuleId;
@@ -83,6 +83,13 @@ pub enum SigKind {
 pub struct ResolvedSig {
     /// Declared name (the bare label, not qualified).
     pub name: String,
+    /// The sig's global label — the exact string the reference names its atoms
+    /// after (`Util.tailThis(sig.label)`): the bare name for a root-module sig
+    /// (`A`), and the alias path from the root for an opened-module sig
+    /// (`foo/Widget`, `a/b/Beta`, `ordering/Ord`). This is what
+    /// `als_core::scope` prefixes each atom with (`<qualified_name>$<index>`),
+    /// so the universe reads exactly as Alloy prints it. mt-029 widening.
+    pub qualified_name: String,
     /// The module instance this sig was declared in.
     pub module: ModuleId,
     /// Span of the declaring `sig`/`enum` name.
@@ -91,6 +98,10 @@ pub struct ResolvedSig {
     pub kind: SigKind,
     /// `abstract`.
     pub is_abstract: bool,
+    /// The synthetic `abstract` parent of an `enum` declaration (the reference
+    /// rejects any explicit scope on it — "cannot set a scope on the enum").
+    /// mt-029 widening.
+    pub is_enum: bool,
     /// `var` (mutable).
     pub is_var: bool,
     /// `private`.
@@ -178,14 +189,62 @@ pub struct ResolvedMacro {
     pub is_private: bool,
 }
 
-/// A resolved command (`run`/`check`, resolution-doc §3.6). The Rung-2 gauge
-/// only needs that it *resolved*; the solvable form is a later rung.
+/// One explicit per-sig scope clause of a command (`but [exactly] N SIG`),
+/// with the target already resolved to a [`SigId`] (mt-029 widening). Range
+/// (`N..M`) and increment (`:I`) growth scopes collapse to their starting
+/// value `scope` for the static Rung-3 slice; growth/trace scopes are Rung 6.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct CommandScope {
+    /// The sig this clause scopes (a user sig, or a builtin like `univ`/`none`
+    /// that the translation-time scope check will reject).
+    pub sig: SigId,
+    /// The starting scope bound `N`.
+    pub scope: u32,
+    /// `exactly N SIG`.
+    pub is_exact: bool,
+    /// Span of the scope entry (for the translation-time error caret).
+    pub span: Span,
+}
+
+/// A resolved command (`run`/`check`, resolution-doc §3.6), carrying the scope
+/// data `als_core::scope::compute_universe` needs (mt-029 widening): the
+/// overall default, per-sig scopes (targets resolved to [`SigId`]s), and the
+/// `int`/`seq`/`String` scalar scopes. The Rung-2 gauge only needed that the
+/// command *resolved*; the solvable form starts here.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ResolvedCommand {
     /// Span of the command.
     pub span: Span,
     /// `run` or `check`.
     pub kind: CmdKind,
+    /// `label:` prefix, if written (skolem/instance naming, later rungs).
+    pub label: Option<String>,
+    /// `expect 0|1` annotation (post-solve verdict check + the symmetry-0
+    /// coupling of `expect 1`, translation-ref §3/§4.4).
+    pub expect: Option<Expect>,
+    /// `for N` overall default scope (`None` when unwritten — defaults to 3
+    /// only when no per-sig scopes were given either, translation-ref §1.1).
+    pub overall: Option<u32>,
+    /// `N int` — integer bitwidth (`None` → default 4).
+    pub bitwidth: Option<u32>,
+    /// `N seq` — maximum sequence length (`None` → derived, translation-ref
+    /// §1.1).
+    pub maxseq: Option<u32>,
+    /// `N String` — the String-atom scope value (`None` → only referenced
+    /// literals). A `String` scope must be `exactly` (checked at translation).
+    pub maxstring: Option<u32>,
+    /// Whether the `String` scope was written `exactly`.
+    pub string_exact: bool,
+    /// `N steps` — trace length (temporal; captured, Rung 6).
+    pub steps: Option<u32>,
+    /// Explicit per-sig scopes, in source order.
+    pub scopes: Vec<CommandScope>,
+    /// Sigs forced to an **exact** scope by something other than an explicit
+    /// `exactly` — i.e. `open util/ordering[S]` propagating its `exactly`
+    /// parameter (translation-ref §5, `additionalExactScopes`). Empty until
+    /// mt-035 (gated on LEDGER-004) populates it; the scope layer already
+    /// honors it, so the seam is live.
+    pub additional_exact: Vec<SigId>,
 }
 
 /// The resolved world: arena-owned sigs, fields, funcs, macros, and commands,

@@ -147,6 +147,9 @@ impl<'g> Resolver<'g> {
 
         // Phase 4a: register sigs + enum desugaring (names, quals, kinds).
         self.register_sigs();
+        // Fill each sig's global label (the atom-naming prefix) from the module
+        // alias graph — needed by `als_core::scope` (mt-029).
+        self.compute_qualified_names();
         // Phase 2/3-equivalent: bind module params to argument sigs.
         self.resolve_params();
         // Phase 4b: resolve sig parents, detect cycles, compute types.
@@ -202,15 +205,48 @@ impl<'g> Resolver<'g> {
         };
     }
 
+    /// Fills every sig's `qualified_name` — the global label the reference
+    /// names its atoms after. A root-module sig keeps its bare name; an
+    /// opened-module sig is prefixed by the alias path from the root
+    /// (`foo/Widget`, `a/b/Beta`). The path is the preorder DFS over `open`
+    /// edges in source order (first reach wins), mirroring how the reference
+    /// assigns labels during recursive module loading.
+    fn compute_qualified_names(&mut self) {
+        let n = self.graph.modules.len();
+        let mut prefix: Vec<Option<String>> = vec![None; n];
+        prefix[self.graph.root.index()] = Some(String::new());
+        let mut stack = vec![self.graph.root];
+        while let Some(m) = stack.pop() {
+            // `prefix[m]` is always set before `m` is pushed.
+            let here = prefix[m.index()].clone().unwrap_or_default();
+            // Reverse so source-order edges pop (and win first-reach) in order.
+            for edge in self.graph.modules[m].opens.iter().rev() {
+                let t = edge.target;
+                if prefix[t.index()].is_none() {
+                    prefix[t.index()] = Some(format!("{here}{}/", edge.alias));
+                    stack.push(t);
+                }
+            }
+        }
+        for i in 0..self.world.sigs.len() {
+            let sig = SigId::from_index(i);
+            let m = self.world.sigs[sig].module;
+            let here = prefix[m.index()].clone().unwrap_or_default();
+            self.world.sigs[sig].qualified_name = format!("{here}{}", self.world.sigs[sig].name);
+        }
+    }
+
     fn alloc_builtin(&mut self, name: &str, parent: Option<SigId>, module: ModuleId) -> SigId {
         let span = crate::load::synthetic_span();
         let id = SigId::from_index(self.world.sigs.len());
         self.world.sigs.alloc(crate::world::ResolvedSig {
             name: name.to_owned(),
+            qualified_name: name.to_owned(),
             module,
             span,
             kind: SigKind::Prim { parent },
             is_abstract: false,
+            is_enum: false,
             is_var: false,
             is_private: false,
             is_builtin: true,

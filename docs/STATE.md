@@ -31,14 +31,14 @@
 - Toolchains in this VM: Rust stable (`~/.cargo/bin`) and OpenJDK 21.
 
 ## In flight (delegated, background)
-- _None._ (Latest merged: mt-028, the Rung-3 contract. **PAUSED per the owner** — nothing launches until they say so.)
+- _None._ (Latest merged: mt-029 scopes→universe; LEDGER-004 `verified` via the owner-suggested probe matrix. **PAUSED** — awaiting owner "proceed" for mt-030 and the LEDGER-004 approval.)
 
 ## Not yet started
 - Rung 3 planning (relational translation, bounds, SAT solving, instances) — awaits the deferred owner touchpoint (after mt-022 + mt-023, per ADR-0010).
 - Backlog: **mt-021** (printer/dumper recursion depth; needs a small ADR; not rung-gating).
 
 ## Next chunk (planned)
-**mt-029 — scopes → universe** (in flight as this chunk). Owner decisions so far: ADR-0011 **accepted** (write our own CDCL); Rung-3 plan approved ("do what you think is right", beads mt-029..037 filed); **LEDGER-004 still awaiting approval** (explanation delivered 2026-07-16; gates only mt-035). Pacing contract: after mt-029 merges — report and stop.
+**mt-030 — the bounds builder** (`BoundsComputer` port per translation-ref §1: leaf/remainder/abstract tuple allocation, subset sigs, field product bounds, hierarchy/multiplicity constraints; consumes mt-029's `ScopeTable` seam; → opus). Awaiting the owner's "proceed" (pacing contract). Also still awaiting: **LEDGER-004 approval** (now `verified`, amended two-part rule — subsig-conditional pinning; gates only mt-035).
 
 ## Key syntax facts pinned this session (details in [reference/alloy6-grammar.md](reference/alloy6-grammar.md))
 - The public grammar appendix is NOT the truth; the reference's `Alloy.lex`/`Alloy.cup`/`CompFilter` at the jar's build commit are, plus jar probes for anything ambiguous.

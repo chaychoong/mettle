@@ -35,6 +35,6 @@ pub use resolve::{resolve, Resolved};
 pub use ty::{Product, Type};
 pub use warning::{jar_stem_class, ResolveWarning};
 pub use world::{
-    Builtins, FieldId, FuncId, MacroId, Param, ResolvedCommand, ResolvedField, ResolvedFunc,
-    ResolvedMacro, ResolvedSig, ResolvedWorld, SigId, SigKind,
+    Builtins, CommandScope, FieldId, FuncId, MacroId, Param, ResolvedCommand, ResolvedField,
+    ResolvedFunc, ResolvedMacro, ResolvedSig, ResolvedWorld, SigId, SigKind,
 };
