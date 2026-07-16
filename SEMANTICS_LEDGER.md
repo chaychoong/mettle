@@ -30,16 +30,31 @@ Test: <path to the conformance test>
 
 ---
 
+### LEDGER-002 — resolve/typecheck verdict boundary (warnings never fatal)
+**Rule:** mettle's `check` verdict is binary — ACCEPT iff the reference's `resolveAll` returns, REJECT iff it throws — and **warnings never change the verdict** (they are reported, not fatal).
+**Status:** `proposed` (drafted by tech lead 2026-07-16; facts `verified` against the jar).
+**Evidence:** Reference sources at commit `794226dd` (warnings emitted only after full success; `A4Reporter.NOP` drops them) + mt-016 probes 01/40/42 + the mt-020 differential over 150,891 alloy4fun codes ([reference/alloy4fun-resolve-pass.md](docs/reference/alloy4fun-resolve-pass.md)). See [reference/alloy6-resolution.md](docs/reference/alloy6-resolution.md) §0/§5.3.
+**Test:** `crates/als-types/tests/resolve_probes.rs` (warning cases assert ACCEPT); the `resolve_gauge` differential harness.
+
+### LEDGER-003 — overload/ambiguity resolution posture (accept-lean interim)
+**Rule:** mettle resolves overloaded names/calls by the reference's candidate ladder where its types are precise enough, and where they are not it **accepts with the first minimum-weight candidate rather than rejecting** — mettle must never reject a model the jar accepts, at the measured cost of ~4.2% over-acceptance on jar-rejected models.
+**Status:** `proposed` (drafted by tech lead 2026-07-16 per [ADR-0009](docs/adr/0009-fused-resolve-pass-accept-lean.md); measurements `verified` by the mt-020 gauge: 0 drop-in violations, 6,300 over-accepts, tightening measured-and-reverted).
+**Evidence:** [reference/alloy4fun-resolve-pass.md](docs/reference/alloy4fun-resolve-pass.md); divergence classes + frequencies in [LIMITATIONS.md](LIMITATIONS.md). Supersession path: backlog bead mt-022 (precise types) re-runs the gauge and re-proposes this rule.
+**Test:** `crates/als-types/tests/resolve_probes.rs` (probe 15 call-form reject; `_mt020` regression tests); the `resolve_gauge` harness.
+
+---
+
 ## Corners that NEED entries (tracked; not yet written)
 These are known to be behavior-defining and version-sensitive. Each becomes a numbered, verified, approved entry before the code that depends on it ships.
 
 - **Integer overflow** — done: [LEDGER-001](#ledger-001--integer-overflow-default-forbid-overflows--nooverflow) above, `approved` 2026-07-15 (canonical default = forbid).
 - **Integer wraparound & bitwidth** — two's-complement semantics, default bitwidth, `Int` sig.
-- **`util/ordering`** — the relations/bounds it induces (`first`/`next`/`last`, total order pinned to atom order).
+- **`util/ordering`** — the relations/bounds it induces (`first`/`next`/`last`, total order pinned to atom order) and the analyzer's exact-bounds + symmetry special-casing for the `exactly`-marked param (resolve-level structure pinned in [reference/alloy6-resolution.md](docs/reference/alloy6-resolution.md) §7.1; solve-level behavior needs its entry at Rung 3).
+- **Clean-room stdlib body semantics** — the mt-015 judgment calls that only solving can verify: `util/time` macro bodies, `util/relation` `complete`, rank arithmetic in `natural`/`sequence`/`seqrel` (flagged in the mt-015 report and [reference/alloy4fun-resolve-pass.md](docs/reference/alloy4fun-resolve-pass.md); each becomes an entry when Rung 3-4 differential runs exercise it).
 - **Cardinality `#`** — typing, coercion to `Int`, interaction with overflow.
-- **Overloading resolution** — same field name across disjoint sigs.
+- **Overloading resolution** — resolve-level accept/reject pinned by [LEDGER-003](#ledger-003--overloadambiguity-resolution-posture-accept-lean-interim) (proposed); anything solve-visible (which candidate's *value* is used) still needs its own entry.
 - **`seq` semantics** — `util/sequniv`, `seq` fields.
-- **Type/relevance checking** — which expressions warn vs error vs pass (Edwards/Jackson/Torlak).
+- **Type/relevance checking** — accept/reject boundary pinned by [LEDGER-002](#ledger-002--resolvetypecheck-verdict-boundary-warnings-never-fatal) (proposed); the per-warning firing conditions remain open (resolution-doc §9).
 - **Iteration-order-sensitive numbering** — anywhere the jar's behavior depends on declaration/atom order.
 
 > No rule above is settled yet. Do not implement against this file until an entry exists and is marked `approved`.
