@@ -8,9 +8,11 @@
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
 pub mod bounds;
+pub mod bounds_builder;
 pub mod error;
 pub mod ir;
 pub mod scope;
 
+pub use bounds_builder::{compute_bounds, BoundsResult};
 pub use error::TranslateError;
 pub use scope::{compute_universe, MintedAtoms, ScopeTable, ScopedSig, ScopedUniverse};

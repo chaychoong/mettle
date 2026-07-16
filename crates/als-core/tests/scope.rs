@@ -380,3 +380,51 @@ fn scope_table_covers_every_non_builtin_prim_sig() {
     assert_eq!(su.sig_atom_count, 3);
     assert_eq!(su.int_atom_range().len(), 16);
 }
+
+// ==================== §1.2 scope raise (children exceed parent) ====================
+
+#[test]
+fn parent_scope_raised_to_children_lower_sum() {
+    // The reference's `computeLowerBound` silently RAISES a sig's scope to the
+    // sum of its children's lower bounds (`if (n < lower) n = lower`),
+    // exactness preserved — never an error (jar-verified 2026-07-16, probe
+    // B19: universe = C$0..C$2 only, no P atoms, command solves SAT).
+    let su = scoped(
+        &[(
+            "root.als",
+            "sig P {}\nsig C extends P {}\nrun {} for exactly 2 P, exactly 3 C\n",
+        )],
+        0,
+    )
+    .expect("the jar accepts an over-full exact child: scope raise, not error");
+    assert_eq!(
+        su.universe
+            .iter()
+            .map(|(_, n)| n.to_owned())
+            .collect::<Vec<_>>(),
+        with_ints(&["C$0", "C$1", "C$2"])
+    );
+    let entries: Vec<_> = su.scopes.iter().collect();
+    let p = entries[0];
+    assert_eq!(p.scope, 3, "P raised from 2 to the children lower sum");
+    assert!(p.is_exact, "the raise preserves exactness");
+    assert!(p.minted.is_none(), "raised-to-lower P mints nothing");
+    let c = entries[1];
+    assert_eq!((c.scope, c.is_exact), (3, true));
+}
+
+#[test]
+fn inexact_parent_scope_raised_too() {
+    // Same raise for an inexact parent (`<=2` raised to `<=3`, jar reporter
+    // message "scope raised from <=2 to be <=3"); probe B19.
+    let su = scoped(
+        &[(
+            "root.als",
+            "sig P {}\nsig C extends P {}\nrun {} for 2 P, exactly 3 C\n",
+        )],
+        0,
+    )
+    .expect("raise, not error");
+    let p = su.scopes.iter().next().expect("P entry");
+    assert_eq!((p.scope, p.is_exact), (3, false));
+}

@@ -393,7 +393,7 @@ impl<'a> ScopeSolver<'a> {
 
     /// Builds the ordered universe by walking top-level sigs in declaration
     /// order, and the scope table.
-    fn finish(self) -> Result<ScopedUniverse, TranslateError> {
+    fn finish(mut self) -> Result<ScopedUniverse, TranslateError> {
         // Any scopable sig still unscoped after the fixpoint could not be given
         // a scope (e.g. an unscoped parent in the per-sig form) — an error.
         for (id, sig) in self.world.sigs.iter() {
@@ -414,18 +414,17 @@ impl<'a> ScopeSolver<'a> {
         }
 
         // --- sig atoms: recursive declaration-order walk (translation-ref §1.3)
-        let mut build = UniverseBuilder {
-            solver: &self,
+        let mut build = UniverseState {
             atoms: Vec::new(),
             minted: BTreeMap::new(),
             used_labels: BTreeSet::new(),
         };
         for (id, _) in self.world.sigs.iter() {
             if self.is_scopable(id) && self.is_top_level(id) {
-                build.walk(id);
+                self.walk(id, &mut build);
             }
         }
-        let UniverseBuilder {
+        let UniverseState {
             mut atoms, minted, ..
         } = build;
         let sig_atom_count = atoms.len();
@@ -487,9 +486,9 @@ impl<'a> ScopeSolver<'a> {
     }
 }
 
-/// Walks the sig hierarchy, appending atom names in universe order.
-struct UniverseBuilder<'a> {
-    solver: &'a ScopeSolver<'a>,
+/// The universe being built by [`ScopeSolver::walk`]: atom names in universe
+/// order plus the per-sig minted runs.
+struct UniverseState {
     atoms: Vec<String>,
     minted: BTreeMap<SigId, MintedAtoms>,
     /// Labels already used, so a (pathological) qualified-name collision cannot
@@ -498,51 +497,61 @@ struct UniverseBuilder<'a> {
     used_labels: BTreeSet<String>,
 }
 
-impl UniverseBuilder<'_> {
-    /// Appends `sig`'s subtree (children first) and returns its lower-bound
-    /// atom count. A sig mints fresh atoms only when its scope exceeds the sum
-    /// of its children's lowers **and** it is exact or top-level
-    /// (translation-ref §1.3) — otherwise it draws atoms from its parent's pool.
-    fn walk(&mut self, sig: SigId) -> u32 {
+impl ScopeSolver<'_> {
+    /// Appends `sig`'s subtree (children first) to the universe and returns its
+    /// lower-bound atom count. A sig whose scope is **smaller** than the sum of
+    /// its children's lowers has its scope silently **raised** to that sum,
+    /// exactness preserved — the reference's `computeLowerBound` scope-raise
+    /// (`if (n < lower) n = lower`), reported but never an error
+    /// (translation-ref §1.2, probe B19: `for exactly 2 P, exactly 3 C` raises
+    /// `P` to exactly 3 and solves SAT). A sig mints fresh atoms only when its
+    /// (possibly raised) scope exceeds that sum **and** it is exact or
+    /// top-level (translation-ref §1.3) — otherwise it draws atoms from its
+    /// parent's pool.
+    fn walk(&mut self, sig: SigId, u: &mut UniverseState) -> u32 {
         let mut lower = 0;
-        for i in 0..self.solver.children[sig.index()].len() {
-            let kid = self.solver.children[sig.index()][i];
-            if self.solver.is_scopable(kid) {
-                lower += self.walk(kid);
+        for i in 0..self.children[sig.index()].len() {
+            let kid = self.children[sig.index()][i];
+            if self.is_scopable(kid) {
+                lower += self.walk(kid, u);
             }
         }
-        let n = self.solver.scope[sig.index()].unwrap_or(0);
-        let mints = self.solver.exact[sig.index()] || self.solver.is_top_level(sig);
+        let mut n = self.scope[sig.index()].unwrap_or(0);
+        if n < lower {
+            n = lower;
+            self.scope[sig.index()] = Some(n);
+        }
+        let mints = self.exact[sig.index()] || self.is_top_level(sig);
         if n > lower && mints {
             let count = n - lower;
-            let label = self.unique_label(&self.solver.world.sigs[sig].qualified_name);
-            let first = AtomId::from_index(self.atoms.len());
+            let label = unique_label(&mut u.used_labels, &self.world.sigs[sig].qualified_name);
+            let first = AtomId::from_index(u.atoms.len());
             for k in 0..count {
-                self.atoms.push(format!("{label}${k}"));
+                u.atoms.push(format!("{label}${k}"));
             }
-            self.minted.insert(sig, MintedAtoms { first, count });
+            u.minted.insert(sig, MintedAtoms { first, count });
             lower + count
         } else {
             lower
         }
     }
+}
 
-    /// Returns `label`, disambiguating a repeat with a numeric suffix. Real
-    /// models never collide (module qualification makes labels globally
-    /// unique); this only guards the pathological case so the universe never
-    /// panics on a duplicate atom name.
-    fn unique_label(&mut self, label: &str) -> String {
-        if self.used_labels.insert(label.to_owned()) {
-            return label.to_owned();
-        }
-        for suffix in 2.. {
-            let candidate = format!("{label}_{suffix}");
-            if self.used_labels.insert(candidate.clone()) {
-                return candidate;
-            }
-        }
-        unreachable!("suffix search is unbounded")
+/// Returns `label`, disambiguating a repeat with a numeric suffix. Real
+/// models never collide (module qualification makes labels globally
+/// unique); this only guards the pathological case so the universe never
+/// panics on a duplicate atom name.
+fn unique_label(used: &mut BTreeSet<String>, label: &str) -> String {
+    if used.insert(label.to_owned()) {
+        return label.to_owned();
     }
+    for suffix in 2.. {
+        let candidate = format!("{label}_{suffix}");
+        if used.insert(candidate.clone()) {
+            return candidate;
+        }
+    }
+    unreachable!("suffix search is unbounded")
 }
 
 /// The multiplicity/scope conflict error for an explicit scope, if any

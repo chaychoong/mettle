@@ -135,6 +135,17 @@ the fixpoint sets `A=4` (overall), then `B=4` and `C=4` (from parent) — **each
 child ≤ 4 independently; the `for 4` does NOT cap their sum.** (jar-verified:
 probe T5.)
 
+**Scope raise during the atom walk (mt-030 review, jar-verified 2026-07-16,
+probe B19).** *After* the fixpoint, `computeLowerBound` silently **raises** any
+sig's scope to the sum of its children's lower bounds when the children exceed
+it (`if (n < lower) n = lower`, exactness preserved; a reporter message, never
+an error). So `sig P {} sig C extends P {} run {} for exactly 2 P, exactly 3 C`
+is **accepted**: `P` becomes exactly 3, the universe is `C$0 C$1 C$2` (no `P`
+atoms), no size formula is emitted for `P` (its upper equals its raised scope),
+and the command solves **SAT** — the `exactly 2 P` is effectively overridden,
+not contradicted. The inexact form (`for 2 P, exactly 3 C`) raises `≤2` to `≤3`
+identically.
+
 ### 1.3 The universe: atom names and order
 
 `ScopeComputer.computeLowerBound` walks each top-level sig **recursively**
@@ -205,6 +216,65 @@ indices go to earlier-declared sigs):
 This maps onto `als_core::bounds::{Bounds, RelBound, TupleSet}` directly: one
 `RelBound` per `RelId`, `RelBound::exact` for the pinned/exact cases, lower⊆upper
 enforced (already asserted in the skeleton).
+
+#### 1.4′ mt-030 pinned facts (jar-verified 2026-07-16, probes B1–B18)
+
+The `BoundsShim`/`DumpK2` probes (§10.2) dumped `A4Solution.getBounds()` and
+`debugExtractKInput()` at `symmetry=0`, `noOverflow=false`,
+`inferPartialInstance=false` (the raw `BoundsComputer` output, before the
+`Simplifier`). These sharpen §1.4 where it was compressed:
+
+- **Child-growth condition (jar-verified).** A child absorbs the parent's floating
+  atoms iff **`scope(child) > lower(child).size()`** (`computeUpperBound`). So an
+  **inexact** child (lower empty) takes the parent's **whole** floating pool as
+  its upper — *not* capped at the child's own scope — while an **exact** child
+  (lower == scope) takes nothing new. The child's scope cap is a **formula**, not
+  a tighter bound (probe B6: `for 4 A, 2 B`, B extends A → `B.upper = {A$0..A$3}`,
+  the `#B ≤ 2` cap is a size formula). Getting this "can still grow" test wrong
+  silently flips verdicts.
+- **Size-formula guard (jar-verified, sharper than "lower==upper==n").** A size
+  formula is emitted **iff `upper.size() > scope`** — i.e. only when the bound is
+  looser than the scope. A plain top-level leaf whose `upper.size() == scope`
+  gets **no** size formula (probe B1). Exact sigs always have `upper.size() ==
+  scope`, so they never emit one. Shape (all quantified over atoms, never `#`):
+  `scope 0 → no sig`; `scope 1 → lone sig` (inexact) / `one sig` (exact);
+  `scope n≥2 inexact → no sig or (some v0..v_{n-1}: sig | v0+…+v_{n-1} = sig)` —
+  the witnesses are **not** required disjoint, so the union is 1..n atoms, giving
+  `#sig ≤ n` (probe B6). The exact n≥2 form adds pairwise-disjoint witnesses
+  (`= n`) but is unreachable for prim sigs (exact ⇒ `upper == scope` ⇒ no
+  emission).
+- **Sibling disjointness is unconditional (jar-verified, probe B7).** `no (c_i &
+  c_j)` is emitted for **every** sibling pair, even when the children's uppers are
+  already disjoint (two exact children minting separate atoms still get the
+  formula). The `<Sig>_remainder` relation does **not** participate in
+  disjointness (probes B3/B4: only `no (B & C)`, never `no (B & remainder)`).
+- **`one`-sig field owner-strip is `one`-only (jar-verified, probes B13/B14).** A
+  field on a **`one`** sig stores only the value columns (arity = fieldArity − 1;
+  `one sig B { f: A }` → `B.f` arity **1**, upper = `A`'s pool) and is decoded as
+  `owner -> stored`. A **`lone`** sig's field is *not* stripped (`B.f` stays arity
+  2 = `B -> A`). Field upper = product of the per-column sig uppers (probe B10:
+  `B.f = B×A`; B12: an `Int` column → all 16 int atoms).
+- **Exact (`=`) subset sig has no relation and no formula (jar-verified, probe
+  B9).** `sig B = A + C` allocates **no** `B` relation and adds **no** formula; `B`
+  denotes the union `A ∪ C`. An `in` subset gets a fresh relation + `B in A`
+  (probe B8).
+- **Multiplicity formulas (jar-verified).** `some sig` (lower empty) → `some sig`
+  (probe B15). `one sig` is exact-1 bound-pinned → **no** formula (probe B13).
+  `lone sig` that grows past scope 1 → the size path emits `lone sig` (probe
+  B16); a top-level `lone` (upper ≤ 1) needs none.
+- **Builtin bounds (jar-verified).** `Int` = exactly the integer atoms; `seq/Int`
+  = exactly the first `maxseq` non-negative integer atoms (probe B18: `for 3` →
+  `{0,1,2}`; no-overall → maxseq 4 → `{0,1,2,3}`). `String` = exactly empty
+  (mettle mints no string atoms yet). The jar *also* builds `Int/min`, `Int/max`,
+  `Int/next`, `Int/zero` ordering relations; these are **Rung-4** integer
+  fidelity (see §9) and mettle does not allocate them in Rung 3. `univ`/`none`
+  are constants, never relations.
+
+mt-030 (`als_core::bounds_builder::compute_bounds`) implements exactly this,
+returning `Bounds` + a per-sig/field **denotation seam** (each sig/field's
+`RelExprId`, so the leaf/remainder/union/subset shape is prebuilt for mt-031) +
+the constraint `FormulaId`s. See `crates/als-core/tests/bounds.rs` for the pinned
+tuple-set goldens.
 
 ---
 
@@ -692,3 +762,37 @@ knowledge from this document's existing §5 prose).
 Anything this document leaves ambiguous: **test against the jar first** (extend
 `ProbeT`/`LedgerShim`), record the answer here (verdict/count) or in
 SEMANTICS_LEDGER.md (behavior), then implement.
+
+### 10.2 mt-030 bounds probe matrix (jar-verified 2026-07-16)
+
+Harness: `scratchpad/probe/BoundsShim.java` (dumps `A4Solution.getBounds()` per
+relation as name-tuples) and `edu.mit.csail.sdg.translator.DumpK2` (dumps
+`A4Solution.debugExtractKInput()` — the exact Kodkod formula + bounds as
+originally built). Both run at `symmetry=0`, `noOverflow=false`, and
+**`inferPartialInstance=false`** so the raw `BoundsComputer` output is seen
+before the `Simplifier` inlines derived relations (with inference *on*, subset/
+field relations read back `null` after solve — the reason the raw dump is
+needed). The pinned facts are folded into §1.4′ above; each maps to a committed
+golden in `crates/als-core/tests/bounds.rs`.
+
+| # | Case | Pinned observation |
+|---|---|---|
+| B1 | `sig A {} run {} for 3` | `A` lower `{}`, upper `{A$0,A$1,A$2}`; **no** size formula (upper == scope) |
+| B2 | `for exactly 3 A` | `A` lower == upper == `{A$0..A$2}`; no formula |
+| B3 | `sig A {} sig B extends A {}` | no `A` relation; `A_remainder` + `B` both upper `{A$0..A$2}`; no disjointness (1 child), no size |
+| B4 | + `sig C extends A {}` | `B`,`C`,`A_remainder` upper `{A$0..A$2}`; one formula `no (B & C)` (remainder excluded) |
+| B5 | `abstract sig A` + B,C | no `A`, **no `A_remainder`**; `no (B & C)` only |
+| B6 | `for 4 A, 2 B` (B extends A) | `B.upper = {A$0..A$3}` (whole pool, not 2); size formula `no B or (some v1,v0: B \| v1+v0 = B)` |
+| B7 | `for exactly 2 B, exactly 1 C` (disjoint uppers) | still emits `no (B & C)` — disjointness is **unconditional** |
+| B8 | `sig B in A {}` | fresh `B` lower `{}` upper `{A$0..A$2}`; formula `B in A` |
+| B9 | `sig B = A + C {}` | **no** `B` relation, **no** formula; `B` denotes `A ∪ C` |
+| B10 | `sig B { f: A }` | `B.f` arity 2, upper `B × A` (9 tuples), lower `{}` |
+| B11 | `sig B { f: A -> A }` for 2 | `B.f` arity 3, upper `B×A×A` (8 tuples) |
+| B12 | `sig A { n: Int }` | `A.n` arity 2, upper `A × {all 16 int atoms}` |
+| B13 | `one sig B { f: A }` | `B.f` arity **1** (owner stripped), upper `{A$0..A$2}`; `B` pinned `{B$0}`; field denotes `B -> B.f`; no `one B` formula |
+| B14 | `lone sig B { f: A }` | `B.f` arity **2** = `B × A` — the strip is `one`-only |
+| B15 | `some sig A {} for 3` | formula `some A` (the only one; size guaranteed by bound) |
+| B16 | `lone sig B extends A {}` for 3 | `B` grows to `{A$0..A$2}`, scope 1 → size path emits `lone B` |
+| B17 | any command, `Int` | bound exactly to the 16 int atoms `{-8..7}` |
+| B18 | `seq/Int` | `for 3` → `{0,1,2}`; no-overall (maxseq 4) → `{0,1,2,3}` |
+| B19 | `sig P {} sig C extends P {} run {} for exactly 2 P, exactly 3 C` | **accepted, SAT** — `ScopeComputer.computeLowerBound` silently *raises* `P`'s scope to the children's lower sum (2→3, exactness kept, §1.2); universe `{C$0,C$1,C$2}`, `P_remainder` upper empty, Kodkod goal = bare reflexive list (no size formula). Found in mt-030 review (tech lead); fixed in mt-029's walk (`scope.rs`), regression tests in `tests/scope.rs` + `tests/bounds.rs` |
