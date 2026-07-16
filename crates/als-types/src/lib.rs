@@ -21,9 +21,20 @@ pub mod graph;
 mod load;
 pub mod loader;
 pub mod path;
+mod resolve;
 pub mod stdlib;
+pub mod ty;
+pub mod warning;
+pub mod world;
 
 pub use error::ResolveError;
 pub use file::{FileTable, LoadedFile};
 pub use graph::{ArgRef, ModuleGraph, ModuleId, ModuleInstance, OpenEdge, ParamBinding};
 pub use loader::{FilesystemLoader, MapLoader, ModuleLoader};
+pub use resolve::{resolve, Resolved};
+pub use ty::{Product, Type};
+pub use warning::ResolveWarning;
+pub use world::{
+    Builtins, FieldId, FuncId, MacroId, Param, ResolvedCommand, ResolvedField, ResolvedFunc,
+    ResolvedMacro, ResolvedSig, ResolvedWorld, SigId, SigKind,
+};

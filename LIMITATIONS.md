@@ -3,7 +3,15 @@
 **Status:** living document · honest and current. This file shrinks as rungs are completed. It never silently lies: anything mettle cannot yet do exactly is listed here, and unsupported constructs fail loudly ("parsed, not yet solvable"), never wrongly.
 
 ## Right now (Rung 1 complete, Rung 2 in progress)
-mettle lexes, parses, and pretty-prints `.als` files (`mettle parse`, 167/167 corpus round-trip) with rustc-style caret diagnostics. Everything past syntax (resolve/typecheck, solve, visualize) is "not yet implemented" — Rung 2 (name & type resolution, `mettle check`) is in progress; see [docs/ROADMAP.md](docs/ROADMAP.md).
+mettle lexes, parses, and pretty-prints `.als` files (`mettle parse`, 167/167 corpus round-trip) with rustc-style caret diagnostics, and resolves + type-checks whole module worlds (`als-types`: module graph, clean-room stdlib, resolver core — 167/167 corpus accept). No `mettle check` CLI yet (mt-019); solving/visualization are later rungs; see [docs/ROADMAP.md](docs/ROADMAP.md).
+
+### Known resolve/typecheck-level divergences (tracked, deliberate — [ADR-0009](docs/adr/0009-fused-resolve-pass-accept-lean.md))
+All of these lean toward **over-acceptance** (mettle never wrongly rejects); the mt-020 differential gauge measures them and drives tightening.
+- **Ambiguous 0-ary name references lean accept.** The jar rejects `some g` when two same-named zero-arg funcs both match ("This name is ambiguous"); mettle picks the first minimum-weight candidate and accepts (jar-probed 2026-07-16). Call-form ambiguity still rejects (probe 15).
+- **Arity mismatches inside ambiguity-tainted formulas are suppressed** to avoid false rejects from leniently-picked candidates; fully-unambiguous mismatches reject (probe 13).
+- **Meta (`sig$`/`field$`) models resolve leniently**: `$`-bearing and unknown names in a `seen_dollar` model resolve to `univ` instead of running the reference's meta-sig synthesis phase (resolution-doc §1 phase 8).
+- **The §5.2 warning catalog is partial** (unused-binder + one var/static case). Warnings never affect the accept/reject verdict in the reference either, so the conformance gauge is unaffected.
+- **Only `util/*` is embedded** as the last-resort module fallback; the reference jar serves *any* of its bundled `models/*` (book/example models) that way. A model opening a non-util jar-embedded module fails to load in mettle until a real model needs this.
 
 ### Known syntax-level divergences from the reference (tracked, deliberate)
 - **`steps`-scope validity checks deferred to resolve.** The jar rejects `for 1:2 steps` (increment must be 1) and unbounded steps not starting at 1 at command-build time; mettle currently parses these and will enforce the same checks when trace scopes are resolved (Rung 6). Never a wrong verdict — commands don't solve yet.

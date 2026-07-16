@@ -103,6 +103,247 @@ pub enum ResolveError {
         /// Span of the offending argument.
         span: Span,
     },
+
+    // ---- mt-018: sig hierarchy (resolution-doc §3.1, §5.1) ----
+    /// Two sigs (or a sig and a reserved builtin name) share a name in one
+    /// module (`dup`, resolution-doc §3.1, probe 05). Also fires for a declared
+    /// name equal to a reserved builtin (`univ`/`Int`/`none`).
+    #[error("`{name}` is declared more than once in this module")]
+    DuplicateSig {
+        /// The clashing name.
+        name: String,
+        /// Span of the second declaration.
+        span: Span,
+    },
+
+    /// Two params of one func/pred (or two names in one decl) share a name
+    /// (`dup`, resolution-doc §3.5, §3.7).
+    #[error("`{name}` is declared more than once")]
+    DuplicateParam {
+        /// The clashing name.
+        name: String,
+        /// Span of the second declaration.
+        span: Span,
+    },
+
+    /// A sig inheritance cycle: `resolveSig` reaches a sig already on the
+    /// current resolution stack (resolution-doc §3.1, probe 07).
+    #[error("cyclic inheritance involving sig `{name}`")]
+    CyclicInheritance {
+        /// A sig on the cycle.
+        name: String,
+        /// Span of that sig's declaration.
+        span: Span,
+    },
+
+    /// A `extends`/`in`/`=` parent sig name cannot be found (resolution-doc
+    /// §3.1).
+    #[error("the sig `{name}` cannot be found")]
+    ParentSigNotFound {
+        /// The unresolved parent name.
+        name: String,
+        /// Span of the parent reference.
+        span: Span,
+    },
+
+    /// `extends` targets a subset sig — a sig can only extend a top-level sig or
+    /// a subsignature (resolution-doc §3.1).
+    #[error("a signature can only extend a toplevel signature or a subsignature, not `{name}`")]
+    ExtendsSubsetSig {
+        /// The subset-sig parent named in `extends`.
+        name: String,
+        /// Span of the parent reference.
+        span: Span,
+    },
+
+    // ---- mt-018: fields (resolution-doc §3.4, §5.1) ----
+    /// Two fields with the same label in one sig (resolution-doc §3.4).
+    #[error("field `{name}` is declared more than once in this sig")]
+    DuplicateField {
+        /// The clashing field label.
+        name: String,
+        /// Span of the second field.
+        span: Span,
+    },
+
+    /// A non-defined field bound contains a func/pred call (resolution-doc
+    /// §3.4).
+    #[error("field `{name}` declaration cannot contain a function or predicate call")]
+    FieldBoundHasCall {
+        /// The field label.
+        name: String,
+        /// Span of the offending bound.
+        span: Span,
+    },
+
+    /// A field bound to the empty set / empty relation (resolution-doc §3.4).
+    #[error("cannot bind field `{name}` to the empty set or empty relation")]
+    FieldBoundEmpty {
+        /// The field label.
+        name: String,
+        /// Span of the offending bound.
+        span: Span,
+    },
+
+    /// Two overlapping sigs declare a same-named field (`rejectNameClash`,
+    /// resolution-doc §3.4 phase 9, probe 06).
+    #[error("field `{name}` is declared in two overlapping signatures")]
+    FieldNameClash {
+        /// The clashing field label.
+        name: String,
+        /// Span of the second field.
+        span: Span,
+    },
+
+    // ---- mt-018: expression typing (resolution-doc §4, §5.1) ----
+    /// A name in an expression resolves to nothing in scope (`hint`,
+    /// resolution-doc §4.4, probes 08/09).
+    #[error("the name `{name}` cannot be found")]
+    UnknownName {
+        /// The unresolved name.
+        name: String,
+        /// Span of the reference.
+        span: Span,
+    },
+
+    /// An operator was applied to operands of incompatible arity
+    /// (`ExprBinary.error`, resolution-doc §4.2, probe 13).
+    #[error("`{op}` can be used only between expressions of compatible arity")]
+    ArityMismatch {
+        /// The operator symbol.
+        op: &'static str,
+        /// Span of the operator expression.
+        span: Span,
+    },
+
+    /// A name/call is ambiguous: more than one candidate survives the
+    /// disambiguation ladder (`ExprChoice.resolveHelper`, resolution-doc §4.4,
+    /// probe 15).
+    #[error("the name `{name}` is ambiguous due to multiple matches")]
+    AmbiguousName {
+        /// The ambiguous name.
+        name: String,
+        /// Span of the reference.
+        span: Span,
+        /// Human-readable candidate descriptions (the reference's reasons).
+        candidates: Vec<String>,
+    },
+
+    /// A failed function/predicate application — no candidate is applicable and
+    /// no relational join succeeds (resolution-doc §4.4).
+    #[error("`{name}` cannot be resolved; possible incorrect function/predicate call")]
+    BadCall {
+        /// The applied name.
+        name: String,
+        /// Span of the call.
+        span: Span,
+    },
+
+    /// A func body's arity does not match its declared return arity
+    /// (`Func.setBody`, resolution-doc §3.5, probe 35).
+    #[error("function `{name}` body arity does not match its declared return type")]
+    FuncBodyArity {
+        /// The function name.
+        name: String,
+        /// Span of the body.
+        span: Span,
+    },
+
+    // ---- mt-018: asserts / macros (resolution-doc §3.6, §3.7, §5.1) ----
+    /// Duplicate assertion name (`addAssertion`, resolution-doc §3.6).
+    #[error("the assertion `{name}` is declared more than once")]
+    DuplicateAssert {
+        /// The clashing assert name.
+        name: String,
+        /// Span of the second assert.
+        span: Span,
+    },
+
+    /// Duplicate macro name (`addMacro`, resolution-doc §3.7).
+    #[error("the macro `{name}` is declared more than once")]
+    DuplicateMacro {
+        /// The clashing macro name.
+        name: String,
+        /// Span of the second macro.
+        span: Span,
+    },
+
+    /// More than one macro of a given name is visible at a use site
+    /// (resolution-doc §4.4).
+    #[error("there are multiple macros with the name `{name}`")]
+    MultipleMacros {
+        /// The macro name.
+        name: String,
+        /// Span of the use.
+        span: Span,
+    },
+
+    /// Macro substitution exceeded the 20-unroll budget (`Macro`,
+    /// resolution-doc §3.7).
+    #[error("macro substitution too deep; possibly an infinite recursion")]
+    MacroTooDeep {
+        /// Span of the offending macro use.
+        span: Span,
+    },
+
+    // ---- mt-018: commands (resolution-doc §3.6, §5.1) ----
+    /// A `run`/`check` names a pred/fun/assert that cannot be found
+    /// (`resolveCommand`, resolution-doc §3.6, probes 32/33).
+    #[error("the command target `{name}` cannot be found")]
+    CommandTargetNotFound {
+        /// The target name.
+        name: String,
+        /// Span of the command.
+        span: Span,
+    },
+
+    /// A command target name matches more than one pred/assert ambiguously
+    /// (`resolveCommand`, resolution-doc §3.6).
+    #[error("the command target `{name}` is ambiguous")]
+    CommandTargetAmbiguous {
+        /// The target name.
+        name: String,
+        /// Span of the command.
+        span: Span,
+    },
+
+    /// A scope names a sig that cannot be found (`resolveCommand`,
+    /// resolution-doc §3.6, probe 34).
+    #[error("the sig `{name}` in a scope cannot be found")]
+    ScopeSigNotFound {
+        /// The scope-target sig name.
+        name: String,
+        /// Span of the scope entry.
+        span: Span,
+    },
+
+    /// A mutable, non-top-level sig was given a scope (`resolveCommand`,
+    /// resolution-doc §3.6).
+    #[error("mutable sig `{name}` is not top-level and cannot have scopes assigned")]
+    MutableSigScoped {
+        /// The scoped sig name.
+        name: String,
+        /// Span of the scope entry.
+        span: Span,
+    },
+
+    /// An exact scope was placed on a variable sig (`resolveCommand`,
+    /// resolution-doc §3.6).
+    #[error("sig `{name}` is variable, so its scope cannot be exact")]
+    ExactScopeOnVar {
+        /// The scoped sig name.
+        name: String,
+        /// Span of the scope entry.
+        span: Span,
+    },
+
+    /// An exact-scope parameter (`open util/ordering[exactly …]`) bound to a
+    /// variable sig (resolution-doc phase 10, §5.1 last row).
+    #[error("an exactly-scoped parameter cannot be bound to a variable sig")]
+    ExactParamVarSig {
+        /// Span of the offending open/param.
+        span: Span,
+    },
 }
 
 impl ResolveError {
@@ -117,7 +358,31 @@ impl ResolveError {
             | ResolveError::DuplicateAlias { span, .. }
             | ResolveError::OpenArgCount { span, .. }
             | ResolveError::NoneAsOpenArg { span }
-            | ResolveError::OpenParamNotFound { span, .. } => *span,
+            | ResolveError::OpenParamNotFound { span, .. }
+            | ResolveError::DuplicateSig { span, .. }
+            | ResolveError::DuplicateParam { span, .. }
+            | ResolveError::CyclicInheritance { span, .. }
+            | ResolveError::ParentSigNotFound { span, .. }
+            | ResolveError::ExtendsSubsetSig { span, .. }
+            | ResolveError::DuplicateField { span, .. }
+            | ResolveError::FieldBoundHasCall { span, .. }
+            | ResolveError::FieldBoundEmpty { span, .. }
+            | ResolveError::FieldNameClash { span, .. }
+            | ResolveError::UnknownName { span, .. }
+            | ResolveError::ArityMismatch { span, .. }
+            | ResolveError::AmbiguousName { span, .. }
+            | ResolveError::BadCall { span, .. }
+            | ResolveError::FuncBodyArity { span, .. }
+            | ResolveError::DuplicateAssert { span, .. }
+            | ResolveError::DuplicateMacro { span, .. }
+            | ResolveError::MultipleMacros { span, .. }
+            | ResolveError::MacroTooDeep { span }
+            | ResolveError::CommandTargetNotFound { span, .. }
+            | ResolveError::CommandTargetAmbiguous { span, .. }
+            | ResolveError::ScopeSigNotFound { span, .. }
+            | ResolveError::MutableSigScoped { span, .. }
+            | ResolveError::ExactScopeOnVar { span, .. }
+            | ResolveError::ExactParamVarSig { span } => *span,
         }
     }
 }

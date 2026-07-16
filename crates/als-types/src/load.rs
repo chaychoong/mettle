@@ -104,7 +104,12 @@ impl<L: ModuleLoader> Builder<'_, L> {
         let file = self.modules[module].file;
         // Clone the data we need up front: the recursion mutates `self.modules`
         // (allocating child instances), so we cannot hold a borrow across it.
-        let opens = self.files.file(file).ast_ref().opens.clone();
+        // Synthetic opens (enum → `util/ordering`, `seq` field → `util/sequniv`)
+        // are appended: the reference synthesizes these during parse (addEnum /
+        // addSeq), so mettle materializes them here where the graph is built, so
+        // the stdlib funcs resolve through the normal search order (§3.2/§4.5).
+        let mut opens = self.files.file(file).ast_ref().opens.clone();
+        opens.extend(synthetic_opens(self.files.file(file).ast_ref()));
         let parent_name = self.modules[module].module_name.clone();
         let parent_path = self.files.file(file).path.clone();
         let parent_params = self.modules[module].params.clone();
@@ -419,6 +424,101 @@ fn compute_seen_dollar(ast: &Ast) -> bool {
         } else {
             false
         }
+    })
+}
+
+/// The opens the reference synthesizes at parse time but which never appear in
+/// the AST's `open` list (resolution-doc §3.2, §4.5):
+/// - each `enum N {…}` → `open util/ordering[N]` (auto-aliased `ordering`);
+/// - any use of the `seq` field keyword → `open util/sequniv as seq`.
+///
+/// Materializing them here (rather than in the parser) keeps mt-011's AST a
+/// faithful mirror of source and confines the desugaring to the graph layer
+/// that owns module instantiation.
+fn synthetic_opens(ast: &Ast) -> Vec<Open> {
+    use als_syntax::ast::{Ident, Para};
+
+    let mut out = Vec::new();
+
+    // Alloy auto-opens `util/integer` into every module, so its arithmetic
+    // funcs (`plus`, `add`, `gte`, …) are globally available without an explicit
+    // `open` (jar-verified 2026-07-16: a model using `plus`/`add` with no open
+    // resolves). Skip `util/integer` itself to avoid a self-cycle; a module that
+    // opens it explicitly simply dedups (same file/args/alias).
+    let self_name = ast
+        .header
+        .as_ref()
+        .map(|h| join_segments(&h.name))
+        .unwrap_or_default();
+    if self_name != "util/integer" {
+        let span = synthetic_span();
+        out.push(Open {
+            module: qual(&["util", "integer"], span),
+            args: Vec::new(),
+            alias: None,
+            is_private: false,
+            span,
+        });
+    }
+    for &para_id in &ast.paragraphs {
+        if let Para::Enum(e) = &ast.paras[para_id] {
+            // `open util/ordering[N]` — target and arg are synthetic names
+            // pointing at the enum's own span (diagnostics never surface here).
+            out.push(Open {
+                module: qual(&["util", "ordering"], e.name.span),
+                args: vec![qual(&[e.name.text.as_str()], e.name.span)],
+                alias: None,
+                is_private: false,
+                span: e.span,
+            });
+        }
+    }
+
+    if uses_seq_keyword(ast) {
+        // A single `open util/sequniv as seq`; identical re-adds would dedup,
+        // but one suffices (the reference's addSeq keys on file+args+alias).
+        let span = synthetic_span();
+        out.push(Open {
+            module: qual(&["util", "sequniv"], span),
+            args: Vec::new(),
+            alias: Some(Ident {
+                text: "seq".to_owned(),
+                span,
+            }),
+            is_private: false,
+            span,
+        });
+    }
+    out
+}
+
+/// Builds a [`QualName`] from string segments at a single span.
+fn qual(segments: &[&str], span: Span) -> QualName {
+    use als_syntax::ast::Ident;
+    QualName {
+        segments: segments
+            .iter()
+            .map(|s| Ident {
+                text: (*s).to_owned(),
+                span,
+            })
+            .collect(),
+        span,
+    }
+}
+
+/// Whether the `seq` field/param multiplicity keyword (`UnOp::SeqOf`) is used
+/// anywhere in the file — the trigger for the `util/sequniv` synthetic open.
+fn uses_seq_keyword(ast: &Ast) -> bool {
+    use als_syntax::ast::UnOp;
+    ast.exprs.iter().any(|(_, e)| {
+        matches!(
+            &e.kind,
+            ExprKind::Unary {
+                op: UnOp::SeqOf,
+                ..
+            }
+        )
     })
 }
 

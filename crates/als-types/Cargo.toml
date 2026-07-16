@@ -15,3 +15,9 @@ als-syntax = { path = "../als-syntax" }
 # boilerplate-Display/Error role it plays in als-syntax/als-conform, nothing std
 # does for free. Version pinned to match the rest of the workspace.
 thiserror = "1"
+# indexmap: insertion-ordered symbol tables (ADR-0008 decision 2). Resolution
+# order = declaration order must be deterministic AND iterate in that order for
+# candidate collection (STYLE D2/C2); std gives BTreeMap (key order) or HashMap
+# (nondeterministic) but nothing insertion-ordered-and-iterable. Ubiquitous,
+# pure-Rust, zero transitive weight (P2).
+indexmap = "2"

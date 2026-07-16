@@ -41,9 +41,10 @@ fn nested_opens_walk_compute_module_path() {
     )
     .expect("nested opens resolve");
 
-    // root + H + base = 3 instances, 3 files.
-    assert_eq!(g.modules.len(), 3);
-    assert_eq!(g.files.len(), 3);
+    // root + H + base + the auto-opened `util/integer` (mt-018: Alloy makes
+    // integer funcs globally available) = 4 instances, 4 files.
+    assert_eq!(g.modules.len(), 4);
+    assert_eq!(g.files.len(), 4);
     // The chain of aliases: root --fmemory--> H --memory--> base.
     let h = g
         .follow_alias(g.root, "fmemory", g.root)
@@ -68,7 +69,8 @@ fn example_module_finds_util_sibling_on_disk() {
         ],
     )
     .expect("util sibling resolves on disk");
-    assert_eq!(g.modules.len(), 2);
+    // root + relation + auto-opened util/integer (mt-018).
+    assert_eq!(g.modules.len(), 3);
     assert!(g.follow_alias(g.root, "rel", g.root).is_some());
 }
 
@@ -112,11 +114,16 @@ fn identical_parametric_opens_merge_probe_24() {
         ],
     )
     .expect("identical re-opens allowed");
-    assert_eq!(g.modules.len(), 2, "root + one merged ordering instance");
+    // root + one merged ordering instance + auto-opened util/integer (mt-018).
+    assert_eq!(g.modules.len(), 3, "root + merged ordering + util/integer");
     let edges = &g.modules[g.root].opens;
-    assert_eq!(edges.len(), 2, "both opens kept");
+    // The two ordering opens are both kept (aliased `ordering` and `open$1`);
+    // the auto-opened util/integer is a third edge. Filter it out for the merge
+    // check.
+    let ord_edges: Vec<_> = edges.iter().filter(|e| e.alias != "integer").collect();
+    assert_eq!(ord_edges.len(), 2, "both ordering opens kept");
     assert_eq!(
-        edges[0].target, edges[1].target,
+        ord_edges[0].target, ord_edges[1].target,
         "both point at the merged instance"
     );
 }
@@ -133,11 +140,14 @@ fn identical_aliased_reopen_is_deduped_probe_seq() {
         ],
     )
     .expect("identical aliased re-open allowed");
-    assert_eq!(
-        g.modules[g.root].opens.len(),
-        1,
-        "identical re-open deduped"
-    );
+    // The two `sq` opens dedup to one edge; a separate auto-opened util/integer
+    // edge is also present (mt-018), so filter to the `sq` alias.
+    let sq_edges = g.modules[g.root]
+        .opens
+        .iter()
+        .filter(|e| e.alias == "sq")
+        .count();
+    assert_eq!(sq_edges, 1, "identical re-open deduped");
 }
 
 #[test]
@@ -153,7 +163,11 @@ fn distinct_parametric_args_are_distinct_instances_probe_25() {
         ],
     )
     .expect("distinct args, distinct instances");
-    assert_eq!(g.modules.len(), 3, "root + ordering[A] + ordering[B]");
+    assert_eq!(
+        g.modules.len(),
+        4,
+        "root + ordering[A] + ordering[B] + util/integer"
+    );
     let oa = g.follow_alias(g.root, "oa", g.root).unwrap();
     let ob = g.follow_alias(g.root, "ob", g.root).unwrap();
     assert_ne!(oa, ob);
@@ -313,8 +327,9 @@ fn parameter_substitution_grounds_through_opener() {
         ],
     )
     .expect("parameter substitution resolves");
-    // root + one mid (m1/m2 identical → merged) + one leaf.
-    assert_eq!(g.modules.len(), 3);
+    // root + one mid (m1/m2 identical → merged) + one leaf + util/integer
+    // (auto-opened, mt-018).
+    assert_eq!(g.modules.len(), 4);
     let mid = g.follow_alias(g.root, "m1", g.root).unwrap();
     let leaf = g.follow_alias(mid, "leaf", g.root).unwrap();
     // leaf's parameter is bound to the grounded concrete sig, not `elem`.
