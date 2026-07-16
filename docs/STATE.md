@@ -35,7 +35,7 @@
 
 ## Not yet started
 - Rung 3 planning (relational translation, bounds, SAT solving, instances) — awaits the owner touchpoint below.
-- Backlog beads: **mt-022** (precise relevant-type propagation — the ADR-0009 outcome's real fix; re-enables the reverted tightenings), **mt-021** (printer/dumper recursion depth; needs a small ADR). Neither is rung-gating.
+- Backlog beads: **mt-022** (precise relevant-type propagation — the ADR-0009 outcome's real fix and the LEDGER-003 gap-closing plan), **mt-023** (warning parity + `--strict`, the LEDGER-002 owner requirement; relevance classes depend on mt-022), **mt-021** (printer/dumper recursion depth; needs a small ADR). None is rung-gating.
 
 ## Next chunk (planned)
 **Rung 2 is complete.** The next step is the **owner touchpoint**: hand the product owner `cargo build -p mettle && ./target/debug/mettle check <file.als>` — try real models, and models Alloy would reject (a bad type, a misspelled name in an opened submodule) to see the same verdict + a caret in the right file. On "proceed" after that touchpoint, start **Rung 3** (relational core, vertical slice: translate → bounds → SAT → instance — see [ROADMAP.md](ROADMAP.md)); no beads filed yet, file mt-02x beads as the rung's own first chunk. mt-018's resolver output (`ResolvedWorld`) feeds `als-core`'s three-sorted IR next.
@@ -54,5 +54,9 @@
 - **LEDGER-001 — overflow default = FORBID** (approved 2026-07-15). Harness already sets the oracle to match (`no_overflow=true` default, `--allow-overflow` to flip).
 - Shim source lives **inside the crate** (`crates/als-conform/shim/`), not git-ignored `oracle/` — our own code must survive a fresh clone; only the re-downloadable jar stays ignored.
 
+## Recent owner decisions (2026-07-16)
+- **LEDGER-002 approved with an owner requirement:** warnings never flip the default verdict (matches the jar), **but mettle must catch the same issues the jar warns about** — warning parity is a conformance target (bead mt-023, incl. `mettle check --strict`); mechanism delegated to tech lead.
+- **LEDGER-003 approved** conditional on a gap-closing plan — the plan is mt-022 (precise types), after which the entry is re-proposed with fresh gauge numbers.
+
 ## Open questions for the human (non-blocking)
-- _None._ (mt-008 licensing resolved via ADR-0006; next owner touchpoint is the Rung-1 build to try.)
+- _None._ (Next owner touchpoint: the Rung-2 `mettle check` build.)

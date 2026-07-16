@@ -30,15 +30,15 @@ Test: <path to the conformance test>
 
 ---
 
-### LEDGER-002 — resolve/typecheck verdict boundary (warnings never fatal)
-**Rule:** mettle's `check` verdict is binary — ACCEPT iff the reference's `resolveAll` returns, REJECT iff it throws — and **warnings never change the verdict** (they are reported, not fatal).
-**Status:** `proposed` (drafted by tech lead 2026-07-16; facts `verified` against the jar).
-**Evidence:** Reference sources at commit `794226dd` (warnings emitted only after full success; `A4Reporter.NOP` drops them) + mt-016 probes 01/40/42 + the mt-020 differential over 150,891 alloy4fun codes ([reference/alloy4fun-resolve-pass.md](docs/reference/alloy4fun-resolve-pass.md)). See [reference/alloy6-resolution.md](docs/reference/alloy6-resolution.md) §0/§5.3.
-**Test:** `crates/als-types/tests/resolve_probes.rs` (warning cases assert ACCEPT); the `resolve_gauge` differential harness.
+### LEDGER-002 — resolve/typecheck verdict boundary (warnings never fatal) + warning parity
+**Rule:** mettle's `check` verdict is binary — ACCEPT iff the reference's `resolveAll` returns, REJECT iff it throws — and **warnings never change the default verdict** (matching the jar). **Additionally (owner requirement): mettle must catch the same issues the jar warns about** — wherever the jar emits a warning, mettle emits a corresponding warning (equivalent issue and position; wording may differ).
+**Status:** `approved` (product owner, 2026-07-16). Verdict facts `verified`; the parity requirement is a conformance **target** tracked as bead mt-023 (mechanism delegated to tech lead; a `--strict` flag promoting warnings to a nonzero exit comes with it).
+**Evidence:** Reference sources at commit `794226dd` (warnings emitted only after full success; `A4Reporter.NOP` drops them) + mt-016 probes 01/40/42 + the mt-020 differential over 150,891 alloy4fun codes ([reference/alloy4fun-resolve-pass.md](docs/reference/alloy4fun-resolve-pass.md)). See [reference/alloy6-resolution.md](docs/reference/alloy6-resolution.md) §0/§5.2/§5.3. Current gap: mettle emits only part of the §5.2 catalog (see [LIMITATIONS.md](LIMITATIONS.md)); the relevance/redundancy classes need the precise relevant-type pass (bead mt-022).
+**Test:** `crates/als-types/tests/resolve_probes.rs` (warning cases assert ACCEPT); the `resolve_gauge` differential harness (mt-023 extends it to compare warning sets).
 
 ### LEDGER-003 — overload/ambiguity resolution posture (accept-lean interim)
 **Rule:** mettle resolves overloaded names/calls by the reference's candidate ladder where its types are precise enough, and where they are not it **accepts with the first minimum-weight candidate rather than rejecting** — mettle must never reject a model the jar accepts, at the measured cost of ~4.2% over-acceptance on jar-rejected models.
-**Status:** `proposed` (drafted by tech lead 2026-07-16 per [ADR-0009](docs/adr/0009-fused-resolve-pass-accept-lean.md); measurements `verified` by the mt-020 gauge: 0 drop-in violations, 6,300 over-accepts, tightening measured-and-reverted).
+**Status:** `approved` (product owner, 2026-07-16 — "as long as we have a plan to close the similarity gap": the plan is bead **mt-022** (precise relevant-type propagation), which re-enables the reverted tightenings and re-runs the gauge; this entry is then re-proposed with the new numbers). Measurements `verified` by the mt-020 gauge: 0 drop-in violations, 6,300 over-accepts, tightening measured-and-reverted per [ADR-0009](docs/adr/0009-fused-resolve-pass-accept-lean.md).
 **Evidence:** [reference/alloy4fun-resolve-pass.md](docs/reference/alloy4fun-resolve-pass.md); divergence classes + frequencies in [LIMITATIONS.md](LIMITATIONS.md). Supersession path: backlog bead mt-022 (precise types) re-runs the gauge and re-proposes this rule.
 **Test:** `crates/als-types/tests/resolve_probes.rs` (probe 15 call-form reject; `_mt020` regression tests); the `resolve_gauge` harness.
 
