@@ -38,7 +38,7 @@
 - Backlog: **mt-021** (printer/dumper recursion depth; needs a small ADR; not rung-gating).
 
 ## Next chunk (planned)
-**mt-028 — the pinned translation & solving contract** (Rung 3's mt-016 equivalent; delegate → opus, foundational). Study the reference at `794226dd`: `A4Solution`/translator (`TranslateAlloyToKodkod`), bounds from scopes (default scopes, `exactly`, Int bitwidth atoms, `util/ordering`'s exact-bound+symmetry special-casing → the pending Ledger corner), skolemization, symmetry breaking at LEDGER-001/ADR-0002 config, instance/outcome semantics (SAT/UNSAT, instance shape, `expect`), solver boundary (what SAT4J receives). Deliverable: `docs/reference/alloy6-translation.md` + draft ADR (solver strategy: hand-rolled CDCL in `als-solve` vs vendored — the rung's biggest decision, owner-visible cost/licensing implications) + the Rung-3 bead breakdown proposal. Then file mt-029+ implementation beads.
+**PAUSED by the owner (2026-07-16): finish the current round, then stop.** The current round = mt-028 (in flight): when it reports, the tech lead reviews/merges the contract doc + draft ADR-0011 and **stops — no new delegations**. What then waits on the owner: the **solver-strategy decision** (ADR-0011, owner-visible: hand-rolled CDCL vs vendored — licensing/determinism tradeoffs) and the go-ahead to file + start the Rung-3 implementation beads. Operating contract amended (CLAUDE.md): one chunk per "proceed", no auto-chaining.
 
 ## Key syntax facts pinned this session (details in [reference/alloy6-grammar.md](reference/alloy6-grammar.md))
 - The public grammar appendix is NOT the truth; the reference's `Alloy.lex`/`Alloy.cup`/`CompFilter` at the jar's build commit are, plus jar probes for anything ambiguous.
