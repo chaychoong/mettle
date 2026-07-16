@@ -1,7 +1,9 @@
 # ADR-0011 — Rung-3 translation & solving architecture (`als-core` + `als-solve`)
 
-**Status:** Proposed · **Date:** 2026-07-16 · **Beads:** mt-028 (this contract),
-mt-029+ (implementation, to be filed)
+**Status:** Accepted (solver decision — write our own CDCL — made by the product
+owner 2026-07-16; architecture reviewed and accepted by the tech lead) ·
+**Date:** 2026-07-16 · **Beads:** mt-028 (this contract), mt-029+
+(implementation, to be filed)
 
 ## Context
 
