@@ -459,22 +459,59 @@ constants without going through the predicate.
 first/next (which pin the atom order), **not** from symmetry breaking. (jar-
 verified: probes T4, T4b — count=1 at sym 20 *and* sym 0.)
 
-**Draft LEDGER entry** (for the human to approve; do not implement until
-`approved`):
+**IMPORTANT CAVEAT (mt-028 follow-up, jar-verified 2026-07-16, probe matrix
+§10 dated entries below): this exact-constant pinning of `first`/`last`/`next`
+holds only when the ordered sig `S` has no proper subsigs, or has subsigs whose
+population is forced to coincide exactly with the whole of `S` (no genuine
+partition choice remains).** The moment `S` has a proper subsig with a
+non-exact scope, or **two or more** subsigs (even if each is individually
+`exactly`-scoped), the exact-bounds shrink is **not applied** — `pred/
+totalOrder` falls back to being solved as an ordinary Kodkod constraint, and
+genuine, un-eliminated freedom remains in **which rank of the chain carries
+which subsig tag** (this residual freedom is *not* removed by symmetry
+breaking — compare sym20 vs sym0 counts in probes T14a/T14b below, which
+differ by exactly the expected within-tag permutation factor, while the
+across-tag rank freedom persists at both settings). Part (a) of the rule —
+`S`'s **total** population being forced exact — is unaffected and holds
+unconditionally in every subsig configuration tested. See the resolved
+residual in §9 and the full matrix in §10 (probes T10–T19).
 
-> ### LEDGER-00N — `util/ordering` exact bounds & order pinning
-> **Rule:** Opening `util/ordering[S]` forces sig `S`'s scope to be **exact**, and
-> binds the order's `first`/`last`/`next` relations to **exact constants** over
-> `S`'s atoms in universe order (`first = S$0`, `last = S$<n-1>`, `next` = the
-> consecutive-atom successor relation) — so the linear order is fully pinned and
-> the ordered atoms carry no residual symmetry, independent of the symmetry-
-> breaking setting.
-> **Status:** proposed. **Evidence:** probes T4/T4b (count=1 at symmetry 20 and 0;
-> exact atom set `S$0..S$n-1` + private `ordering/Ord$0`). **Test:** _(added with
-> the Rung-3 ordering work)_.
+**Draft LEDGER entry** (for the human to approve; do not implement until
+`approved`; this is the amended draft superseding the original — see
+SEMANTICS_LEDGER.md LEDGER-004 for the formal amendment):
+
+> ### LEDGER-004 — `util/ordering` exact bounds & order pinning (amended draft)
+> **Rule:** Opening `util/ordering[S]` always forces sig `S`'s **total**
+> population to be **exact** at whatever scope `S` resolves to (independent of
+> whether the `for` clause uses `exactly`, of the multiplicity qualifier ---
+> `one`/`lone`/`some` --- on `S`, and of whether `first`/`next`/`last`/`prev`
+> are ever referenced by the command). **When `S` has no proper subsig, or has
+> subsig(s) whose combined population is forced to equal all of `S` with no
+> remaining partition choice**, the order's `first`/`last`/`next` relations are
+> additionally bound to **exact constants** over `S`'s atoms in universe order
+> (`first = S$0`, `last = S$<n-1>`, `next` = the consecutive-atom successor
+> relation) --- the linear order is then fully pinned, independent of the
+> symmetry-breaking setting. **When `S` has a proper subsig with non-exact
+> scope, or two-or-more (even fully exact) subsigs, this second half does
+> *not* apply**: `first`/`next`/`last` remain governed only by the ordinary
+> `pred/totalOrder` constraint, and genuine order freedom (which rank holds
+> which subsig tag) survives as multiple distinct satisfying instances, at
+> every symmetry-breaking setting.
+> **Status:** proposed (amended). **Evidence:** probes T4/T4b (original) plus
+> the mt-028 matrix T10-T19 (§10) — count=1 at symmetry 20 and 0 for a
+> childless ordered sig at sizes 2-6, two independent ordered sigs, an enum,
+> and a fully-collapsed subsig; count > 1 at both symmetries (with sym0 always
+> a multiple of the sym20 count, by the expected leftover permutation factor)
+> whenever the ordered sig has a genuine subsig partition choice. **Test:**
+> _(added with the Rung-3 ordering work)_.
 
 Rung 3's vertical slice includes `util/ordering` (it appears throughout the
-corpus); the general non-enum total-order path is the one to implement first.
+corpus); the general non-enum total-order path (no subsigs) is the common
+case and the one to implement first. mettle must also implement the subsig
+fallback path (real `pred/totalOrder` solving, not shrink) faithfully rather
+than assuming the shrink always applies — the corpus almost certainly contains
+ordered sigs with subsigs (e.g. temporal/state-machine idioms), and pinning
+the wrong path would silently under- or over-count instances.
 
 ---
 
@@ -554,12 +591,22 @@ matching Kodkod's CNF or enumeration order, which is impossible and not attempte
 
 ## 9. Open questions / residual uncertainty (be honest)
 
-- **The general (non-enum) `util/ordering` exact-shrink** was pinned by black-box
-  probe (T4/T4b: single instance, exact atom set) and by reading the
-  predicate-detection + `Simplifier.shrink` path; the *precise* `next` constant
-  for a >3-atom order and the interaction with a *partially* scoped ordered sig
-  were not exhaustively probed. Re-derive per-case when the Rung-3 ordering bead
-  lands, and file a Ledger test.
+- **RESOLVED (mt-028, 2026-07-16):** the general (non-enum) `util/ordering`
+  exact-shrink's precise `next` constant for orders of size 2 through 6 is now
+  jar-verified — always the plain consecutive chain `S$0->S$1->...->S$<n-1>`,
+  `first=S$0`, count=1 at both symmetry 20 and 0 for every size (probes
+  T10a-T10e, §10). **Also resolved: the interaction with a partially-scoped
+  (subsig'd) ordered sig — and the answer is a genuine correctness corner, not
+  a non-issue.** When the ordered sig has a proper subsig with non-exact scope,
+  or two-or-more subsigs (even individually `exactly`-scoped), the exact-bounds
+  shrink does **not** engage: `pred/totalOrder` is solved as an ordinary
+  constraint and real, symmetry-surviving freedom remains in which chain rank
+  carries which subsig tag (probes T11a-T11e, §5, §10). This is now folded into
+  the amended LEDGER-004 draft (§5) rather than left open — mettle's Rung-3
+  ordering implementation must special-case this (detect whether `S`'s
+  population resolves to a single determinate set before applying the
+  exact-shrink optimization; fall back to genuinely solving the total-order
+  constraint otherwise).
 - **Skolemization** is pinned structurally (depth-0 constants, `$name` naming) but
   mettle may skip it for the Rung-3 slice (quantify directly); if kept-out, note
   in LIMITATIONS that instance skolem relations won't match the jar's shape (they
@@ -607,6 +654,41 @@ and jar could differ, **the jar wins** (none diverged).
 | T8 | `run { #A = 2 } for 3` + `univ` dump | SAT; `univ={A$0, -8, -7, …, 7}` — sig atoms then ints ascending; cardinality works |
 | T9 | `run foo { some x: A | x=x } for 3`, instance dump | skolem relation **`$foo_x`** = `{A$0}` |
 
+### 10.1 LEDGER-004 exhaustive probe matrix (mt-028, jar-verified 2026-07-16)
+
+Harness: `LedgerShim.java` (scratchpad, modeled on `crates/als-conform/shim/
+OracleShim.java` and the T-series `ProbeT.java`) — drives `TranslateAlloyToKodkod.
+execute_command` via `A4Options`, dumps `A4Solution.toString()` (every relation's
+exact tuple set, including private stdlib relations like `ordering/Ord<:First` /
+`ordering/Ord<:Next`) for the first few satisfying instances of each command, plus
+the exhaustive enumerated instance count. Every case run at **both**
+`symmetry=20` and `symmetry=0`; `noOverflow=false`; solver `sat4j`; `expect` never
+used (it silently forces `symmetry=0`, reference brief gotcha). Clean-room:
+behavior probed black-box only; no upstream `.als` module text was newly read for
+this pass (the `Ord`/`First`/`Next`/`pred/totalOrder` names were already public
+knowledge from this document's existing §5 prose).
+
+| # | Case | sym20 count | sym0 count | Observation |
+|---|---|---|---|---|
+| T10a-e | `open util/ordering[S]; sig S {}; run {} for N S`, N=2..6, exhaustive | **1** (all N) | **1** (all N) | `next` is always the plain consecutive chain `S$0->S$1->...->S$<N-1>`, `first=S$0`; matches original T4/T4b at every tested size |
+| T10f | same shape + unrelated `sig T {}` (`for 3 S, 2 T`), vs. control with `open` removed | **3** both | **4** both | S/T counts identical with and without the `open` → ordering contributes exactly a **1x multiplier**, independent of unrelated sigs' own DOF and of the symmetry setting |
+| T11 (scope forms) | default scope (no `for`); `for N S`; `for exactly N S`; overall-only `for 4`; `for 1 S` | all **1** | all **1** | `exactly` keyword is redundant — ordering forces exactness regardless; `for 1 S` gives a valid degenerate order (`first=last=S$0`, `next={}`) |
+| T11b | `one sig S {}` vs `lone sig S {}` (no `for`) | both **1**, `S={S$0}` | both **1** | **`lone`'s default derived scope collapses to 1** (not the overall default 3) per §1.2's "forces...lone sig to ≤1" — so no conflict with the ordering's exactness ever arises; not a counterexample, just confirms scope derivation happens before exactness is applied |
+| T11c | `some sig S {}`, `for 3` | **1** | **1** | `some` doesn't cap below the default scope — behaves like a plain sig |
+| T12 | two independent opens: `open util/ordering[A] as ordA`, `open util/ordering[B] as ordB`, `for 3 A, 4 B` | **1** | **1** | both orders pinned fully independently; `ordA/Ord<:First`, `ordB/Ord<:First` etc. all present and separately exact |
+| T13 | `enum Color {Red,Blue,Green}`, bare `run {}` | **1** | **1** | enum auto-opens ordering; `First=Red$0` (first **declared** constant), chain `Red->Blue->Green` — same exact-constant pinning as an explicit sig |
+| **T14a** | ordered `sig A {}` + non-exact child `sig B extends A {}`, `for 3 A, 2 B` | **7** | **42** | **COUNTEREXAMPLE to the unqualified rule.** Same literal atom-name population appears with genuinely different `next`-chain shapes across instances (e.g. `A0->A1->B0` vs `A0->B0->A1` for identical `this/A`/`this/B`) — real order freedom, not a naming artifact. 7 = choose-which-ranks-are-B, `C(3,0)+C(3,1)+C(3,2)`; 42 = 7 × (3-choose-2 residual atom-identity permutations at sym0) |
+| **T14b** | same shape but child forced **exactly** 1: `for 3 A, exactly 1 B` | **3** | **6** | Isolates rank-freedom from population-freedom: **all 3 instances have the identical atom-name population** `{A$0,A$1,B$0}`, yet `B$0` occupies rank 1, 2, and 3 respectively across the 3 solutions. Proves the freedom is in the **order itself**, not in subsig membership size. 3 = `C(3,1)`; 6 = 3 × 2! (sym0 restores the within-tag atom-permutation freedom too) |
+| **T14c** | `abstract sig A {}`, `sig B,C extends A {}`, both children **exactly** scoped: `for 3 A, exactly 2 B, exactly 1 C` | **3** | (not run) | Even with **every** child individually exact, ≥2 children still leaves rank-tagging freedom: `C(3,1)=3` |
+| **T14d** | `abstract sig A {}`, `B,C extends A {}`, both children **non-exact**, `for 4 A` | **384** | **9216** | Large residual freedom (membership size × rank choice, both free) — matches original T5's "children scoped independently" plus the new rank-freedom on top |
+| **T14e** | degenerate collapse: single child forced to equal the **whole** of A: `for 3 A, exactly 3 B` (B≡A always) | **1** | (not run) | Pinning **re-engages** once there is no genuine partition choice left — atoms display as `B$0..B$2` (child's name wins in output) but the order is unique again |
+| T15 | control: **unrelated** field (not a subsig) `sig T { f: S }`, `for 3 S, 2 T` | **10** | **16** | A field reference to `S` from an unrelated sig does **not** disturb `S`'s own pinning — `ordering/Ord<:Next` stays exactly `S$0->S$1->S$2` in every enumerated instance; only `T`'s field assignment contributes the extra count. Isolates the T14 effect to **subsig partitioning specifically**, not "any relation touching S" |
+| T16 | `fact { #first.^next = 0 }` (contradicts the real 2-successor first, `for 3 S`) | **UNSAT** | — | Proves `first` is a genuine hard-bound constant, not a solver preference — no alternate atom can be chosen to dodge the fact |
+| T16b | `fact { #first.^next = 2 }` (consistent), `for 3 S` | **SAT, count=1** | — | Trivial positive control for T16 |
+| T17 | `fact { #S = 5 }`, `for 3 S` (ordering forces exact 3) | **UNSAT** | — | Behaves exactly like an ordinary `exactly`-scope/fact conflict — plain UNSAT, no special diagnostic; same code path as any other over-constrained exact scope |
+| T18 | `var sig S {}` + `open util/ordering[S]` | — | — | **Rejected before solving** (parse/resolve stage): `"Module util/ordering forces parameter to be exact but this/S variable."` — clean structural reject, not a silent accept or a solve-time surprise |
+| T19 | `open util/ordering[S]; sig S {}; run { some S }` (first/next/last never referenced) vs. same file without the `open` | **1** vs **3** | **1** vs **7** | Merely **opening** the module — with zero references to `first`/`next`/`prev`/`last` in the command — still collapses the count to the T4-style single instance. The pinning is triggered by the `open` (the private `Ord` sig's appended `pred/totalOrder` fact existing in the world), **not** by any use of the ordering functions |
+
 Anything this document leaves ambiguous: **test against the jar first** (extend
-`ProbeT`), record the answer here (verdict/count) or in SEMANTICS_LEDGER.md
-(behavior), then implement.
+`ProbeT`/`LedgerShim`), record the answer here (verdict/count) or in
+SEMANTICS_LEDGER.md (behavior), then implement.
