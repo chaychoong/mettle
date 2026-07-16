@@ -55,6 +55,7 @@ name = "als-types"
 version = "0.0.0"
 dependencies = [
  "als-syntax",
+ "thiserror",
 ]
 
 [[package]]

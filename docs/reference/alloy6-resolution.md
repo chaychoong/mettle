@@ -941,9 +941,13 @@ gauge — but mettle's own output must still be byte-stable (U4).
 - **Meta-sig (`$`) semantics** are pinned structurally (§1 phase 8) but mettle
   may defer full meta support until a model in the corpus needs it (none in
   alloytools-models rely on `sig$` beyond parse); flag via LIMITATIONS if so.
-- **`computeModulePath` corner cases** for deeply nested module names are pinned
-  by the algorithm but not corpus-exercised here; mt-017 should add module-graph
-  fixtures (nested `open`s) and differential-test them.
+- **`computeModulePath` corner cases** — resolved by mt-017. The exact reading:
+  cancel the **common leading prefix** of (parent's declared module name, target)
+  first, then climb by the *remaining* module depth + 1 and re-root only the
+  remaining target. jar-verified 2026-07-16 on real mislocated modules
+  (portus-63 zigbee: `module zigbee_join/base/event` at `trunk/base/event.als`
+  opening `zigbee_join/base/types` → ACCEPT, so the open must resolve to
+  `trunk/base/types.als`); unit fixtures live in `als-types/src/path.rs`.
 - The GUI's fatal-warning preference (§5.3) is out of scope but worth a one-line
   LIMITATIONS note so nobody wires it into `mettle check`.
 

@@ -11,3 +11,7 @@ workspace = true
 [dependencies]
 # als-syntax: name resolution and the type checker operate over the parser's AST.
 als-syntax = { path = "../als-syntax" }
+# thiserror: typed per-crate error enum (STYLE E1) for ResolveError -- same
+# boilerplate-Display/Error role it plays in als-syntax/als-conform, nothing std
+# does for free. Version pinned to match the rest of the workspace.
+thiserror = "1"
