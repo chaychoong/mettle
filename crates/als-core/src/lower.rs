@@ -95,6 +95,9 @@ pub enum Provenance {
     Fact,
     /// A synthesized field fact (multiplicity / domain / defined value).
     FieldFact(FieldId),
+    /// A synthesized field-group disjointness fact from a pre-colon `disj a, b:
+    /// …` declaration on the owning sig (translation-ref §2.5).
+    FieldDisjFact(SigId),
     /// A sig appended fact (`this` bound to the owning sig).
     AppendedFact(SigId),
     /// The command formula.
@@ -216,6 +219,19 @@ impl<'a> Lowerer<'a> {
                 });
             }
             let _ = field;
+        }
+
+        // 3b. field-group `disj` facts (the jar emits each right after its
+        // owner sig's field facts; translation-ref §2.5).
+        for (sig, s) in self.world.sigs.iter() {
+            for group in &s.field_disj_groups {
+                if let Some(f) = self.lower_field_disj_group(group, s.span)? {
+                    conjuncts.push(GoalConjunct {
+                        formula: f,
+                        provenance: Provenance::FieldDisjFact(sig),
+                    });
+                }
+            }
         }
 
         // 4. sig appended facts (`this` bound to the owning sig).
@@ -538,6 +554,81 @@ impl<'a> Lowerer<'a> {
             (None, Some(d)) => Ok(Some(d)),
             (None, None) => Ok(None),
         }
+    }
+
+    /// The pairwise-disjointness fact for a pre-colon `disj f0, f1, …: bound`
+    /// field group (translation-ref §2.5, jar-verified probes p1–p4). The jar
+    /// emits the **staged** form over the fields' full relations —
+    /// `no (f0 & f1) and no ((f0+f1) & f2) and …` — one `no` per successive
+    /// field against the union of all earlier ones. A **`var`** group is wrapped
+    /// per-conjunct in `always` (probe p5), which marks the goal temporal so the
+    /// whole command defers (§2.3) — never a silent drop. The resolver only
+    /// records groups of ≥2 fields, but the guard keeps this total.
+    fn lower_field_disj_group(
+        &mut self,
+        group: &[FieldId],
+        span: Span,
+    ) -> Result<Option<FormulaId>, TranslateError> {
+        if group.len() < 2 {
+            return Ok(None);
+        }
+        // A group is temporal iff its fields are `var` (they share one decl, so
+        // the marker is uniform); mirror the jar's per-`no` `always` wrapping.
+        let is_var = group.iter().any(|&f| self.world.fields[f].is_var);
+        let mut denote: Vec<RelExprId> = Vec::with_capacity(group.len());
+        for &f in group {
+            denote.push(*self.bounds.field_denote.get(&f).ok_or_else(|| {
+                TranslateError::LoweringUnsupported {
+                    what: format!("field `{}` has no denotation", self.world.fields[f].name),
+                    span,
+                }
+            })?);
+        }
+
+        let mut parts: Vec<FormulaId> = Vec::with_capacity(group.len() - 1);
+        // `acc` accumulates the union of all earlier fields; each stage forbids
+        // the next field from intersecting it.
+        let mut acc = denote[0];
+        for (i, &next) in denote.iter().enumerate().skip(1) {
+            let inter = self.mk_rel(
+                RelExprKind::Binary {
+                    op: RelBinOp::Intersect,
+                    lhs: acc,
+                    rhs: next,
+                },
+                span,
+            );
+            let mut no_f = self.mk_formula(
+                FormulaKind::MultTest {
+                    test: MultTest::No,
+                    expr: inter,
+                },
+                span,
+            );
+            if is_var {
+                self.mark_temporal("always", span);
+                no_f = self.mk_formula(
+                    FormulaKind::TemporalUnary {
+                        op: TemporalUnOp::Always,
+                        body: no_f,
+                    },
+                    span,
+                );
+            }
+            parts.push(no_f);
+            // No need to extend the union past the last stage.
+            if i + 1 < denote.len() {
+                acc = self.mk_rel(
+                    RelExprKind::Binary {
+                        op: RelBinOp::Union,
+                        lhs: acc,
+                        rhs: next,
+                    },
+                    span,
+                );
+            }
+        }
+        Ok(Some(self.conjoin(parts, span)))
     }
 
     /// The per-declaration field multiplicity + membership constraints on

@@ -332,6 +332,7 @@ impl<'g> Resolver<'g> {
             is_builtin: true,
             mult: None,
             fields: Vec::new(),
+            field_disj_groups: Vec::new(),
             appended_fact: None,
             ty: Type::unary(id),
         });

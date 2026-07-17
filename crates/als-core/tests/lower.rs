@@ -66,6 +66,15 @@ fn all_str(ir: &Ir, conjuncts: &[GoalConjunct]) -> String {
         .join(" && ")
 }
 
+/// The pretty-printed field-group `disj` conjunct (the single `FieldDisjFact`).
+fn disj_str(ir: &Ir, conjuncts: &[GoalConjunct]) -> String {
+    let c = conjuncts
+        .iter()
+        .find(|c| matches!(c.provenance, als_core::Provenance::FieldDisjFact(_)))
+        .expect("field-disj conjunct");
+    pf(ir, c.formula)
+}
+
 // ---------------------------------------------------------------------------
 // jar-verified goldens
 // ---------------------------------------------------------------------------
@@ -168,6 +177,60 @@ fn golden_disj_decl_guard() {
     assert_eq!(
         command_str(&ir, &cj),
         "(all x: A | (all y: A | (no (x & y) => !(x = y))))"
+    );
+}
+
+#[test]
+fn golden_field_disj_two_fields() {
+    // sig E {} sig S { disj a, b: set E } run {} for 3
+    // jar goal (DumpK2 probe p1): after both fields' mult+domain facts —
+    //   no (this/S.a & this/S.b)
+    let (ir, cj) = build("sig E {}\nsig S { disj a, b: set E }\nrun {} for 3\n");
+    assert_eq!(disj_str(&ir, &cj), "no (S.a & S.b)");
+}
+
+#[test]
+fn golden_field_disj_three_fields_staged() {
+    // sig E {} sig S { disj a, b, c: set E } run {} for 3
+    // jar goal (DumpK2 probe p2): the staged pairwise form
+    //   no ((this/S.a + this/S.b) & this/S.c) and no (this/S.a & this/S.b)
+    // (mettle emits the same conjuncts in incremental order, translation-ref
+    // §10.3 divergence (b): `and` is associative).
+    let (ir, cj) = build("sig E {}\nsig S { disj a, b, c: set E }\nrun {} for 3\n");
+    assert_eq!(
+        disj_str(&ir, &cj),
+        "(no (S.a & S.b) and no ((S.a + S.b) & S.c))"
+    );
+}
+
+#[test]
+fn golden_field_disj_arity_two() {
+    // sig E {} sig S { disj f, g: E -> E } run {} for 3
+    // jar goal (DumpK2 probe p3): disjointness is over the full field relations
+    //   no (this/S.f & this/S.g)
+    let (ir, cj) = build("sig E {}\nsig S { disj f, g: E -> E }\nrun {} for 3\n");
+    assert_eq!(disj_str(&ir, &cj), "no (S.f & S.g)");
+}
+
+#[test]
+fn golden_field_disj_implicit_one() {
+    // sig E {} sig S { disj a, b: E } run {} for 3
+    // jar goal (DumpK2 probe p4): the implicit-`one` on each field does not
+    // change the disj fact —
+    //   no (this/S.a & this/S.b)
+    let (ir, cj) = build("sig E {}\nsig S { disj a, b: E }\nrun {} for 3\n");
+    assert_eq!(disj_str(&ir, &cj), "no (S.a & S.b)");
+}
+
+#[test]
+fn field_disj_var_group_defers() {
+    // sig E {} sig S { var disj a, b: set E } run {} for 3
+    // jar goal (DumpK2 probe p5): each `no` is wrapped in `always` — temporal,
+    // so the whole command defers (§2.3), never a silent drop / wrong verdict.
+    let e = try_build("sig E {}\nsig S { var disj a, b: set E }\nrun {} for 3\n").unwrap_err();
+    assert!(
+        matches!(e, TranslateError::TemporalUnsupported { .. }),
+        "{e:?}"
     );
 }
 

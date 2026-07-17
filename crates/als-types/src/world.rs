@@ -112,6 +112,13 @@ pub struct ResolvedSig {
     pub mult: Option<SigMult>,
     /// Fields declared in this sig, in source order.
     pub fields: Vec<FieldId>,
+    /// Field groups declared together under a pre-colon `disj` modifier
+    /// (`disj a, b: bound`), in source order, each holding the ≥2 [`FieldId`]s
+    /// of one such declaration. Their fields are pairwise disjoint per owner
+    /// atom; mt-038 lowers each group to the staged `no (f0 & f1) and no
+    /// ((f0+f1) & f2) and …` fact (translation-ref §2.5, jar-verified). Empty
+    /// for a sig with no `disj`-marked multi-name field declaration.
+    pub field_disj_groups: Vec<Vec<FieldId>>,
     /// The sig's appended-fact block body (`sig A { … } { fact }`), if written —
     /// an `ExprId` in this sig's [`Self::module`], resolved with an implicit
     /// `this: A` binding (resolution-doc §3.3). mt-031 lowers it as a fact.

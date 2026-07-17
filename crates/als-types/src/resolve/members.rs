@@ -203,6 +203,10 @@ impl Resolver<'_> {
 
         let owner_ty = self.world.sigs[sig].ty.clone();
         let field_ty = owner_ty.product(&self.world, &bound_ty);
+        // A pre-colon `disj a, b: …` marks the group's fields pairwise disjoint
+        // per owner atom (translation-ref §2.5); collect their ids for the
+        // lowerer, in source order, alongside the field allocation.
+        let mut group: Vec<crate::world::FieldId> = Vec::new();
         for name in &decl.names {
             // Duplicate label within this sig.
             if self.world.sigs[sig]
@@ -227,6 +231,11 @@ impl Resolver<'_> {
                 bound: decl.bound,
             });
             self.world.sigs[sig].fields.push(fid);
+            group.push(fid);
+        }
+        // Only a `disj` group of ≥2 fields yields a disjointness fact.
+        if decl.is_disj && group.len() >= 2 {
+            self.world.sigs[sig].field_disj_groups.push(group);
         }
     }
 

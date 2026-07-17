@@ -438,22 +438,20 @@ fn higher_order_arrow_quantifier_defers() {
 
 // ===================== known limitation (mt-037 owns) =====================
 
-/// KNOWN GAP (root-caused by mt-034, fix owned by mt-037): a field-group `disj`
-/// is dropped. `disj a, b: set E` declares `a`/`b` pairwise disjoint, so
+/// mt-038 regression pin: a field-group `disj` synthesizes the pairwise
+/// disjointness fact. `disj a, b: set E` declares `a`/`b` pairwise disjoint, so
 /// `all s: S | no (s.a & s.b)` is a **theorem** — jar UNSAT (no counterexample).
-/// mettle's `als_types::ResolvedField` does not record the `disj` marker (the
-/// `Decl` AST carries `is_disj`), so the lowerer never synthesizes the
-/// disjointness and mettle finds a **spurious counterexample → SAT**. This is
-/// the sole cause of the `mediaAssets.als[3]` (`check PasteNotAffectHidden`)
-/// baseline disagreement (translation-ref §10.5). The self-check *passes* on the
-/// instance (mettle's goal is genuinely satisfied — it is just too weak), so this
-/// is a lowering/synthesized-fact gap, not an encoder bug. When mt-037 records
-/// field-`disj` and synthesizes it, this flips to UNSAT — update the assertion
-/// then.
+/// mettle now records the `disj` marker (`ResolvedSig::field_disj_groups`) and
+/// the lowerer emits `no (S.a & S.b)`, so the `check` is UNSAT to match. This
+/// was the sole `mediaAssets.als[3]` (`check PasteNotAffectHidden`) baseline
+/// disagreement (translation-ref §10.5); previously mettle dropped the fact and
+/// found a spurious counterexample (SAT).
 #[test]
-fn field_disj_dropped_known_gap() {
-    // jar: UNSAT (theorem). mettle (current, wrong): SAT.
-    assert_sat("sig E {}\nsig S { disj a, b: set E }\nassert D { all s: S | no (s.a & s.b) }\ncheck D for 3\n");
+fn field_disj_synthesizes_disjointness() {
+    // jar: UNSAT (theorem) — the disjointness makes `no (s.a & s.b)` valid.
+    assert_unsat(
+        "sig E {}\nsig S { disj a, b: set E }\nassert D { all s: S | no (s.a & s.b) }\ncheck D for 3\n",
+    );
     // Control: without `disj` the assertion is genuinely violable — SAT in both.
     assert_sat(
         "sig E {}\nsig S { a, b: set E }\nassert D { all s: S | no (s.a & s.b) }\ncheck D for 3\n",

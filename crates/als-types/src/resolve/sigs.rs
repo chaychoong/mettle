@@ -203,6 +203,7 @@ impl Resolver<'_> {
             is_builtin: false,
             mult,
             fields: Vec::new(),
+            field_disj_groups: Vec::new(),
             appended_fact,
             ty: Type::empty(),
         });

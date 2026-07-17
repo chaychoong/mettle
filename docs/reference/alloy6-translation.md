@@ -833,6 +833,21 @@ the top-level `this.f in (A->B)`.
 | L12 | `one sig Cfg { limit: one A }` | field relation `Cfg -> Cfg.limit` | a **`one`-sig** field is denoted `owner -> stored` (mt-030 seam), so `this.f` and a bare `Cfg.limit` both join the singleton owner back on (§1.4′ B13) |
 | L13 | `all disj x, y \| φ` | disjointness guard | a decl `disj` modifier adds pairwise `no (xi & xj)`: an **antecedent** for `all`/`no`, a **conjunct** for `some` and inside `one`/`lone`'s comprehension; `no x \| φ` ⇒ `all x \| ¬φ`; `one`/`lone x \| φ` ⇒ `one`/`lone { x \| φ }` (§2.3) |
 | L14 | `disj[A, B, C]` | `no (A&B) and no ((A+B)&C)` | the `disj[…]` builtin expands to the **staged** pairwise form (§2.2) |
+| L15 | `sig S { disj a, b: set E }` (2-field group) | `no (this/S.a & this/S.b)` | a pre-colon **field-group `disj`** adds one `no (fi & fj)` conjunct over the **full field relations** — emitted **after both fields' mult+domain facts** and before the command formula (jar-verified probe p1, mt-038) |
+| L16 | `disj a, b, c: set E` (3-field group) | `no ((this/S.a + this/S.b) & this/S.c) and no (this/S.a & this/S.b)` | the group takes the **staged** pairwise form (same shape as `disj[…]`, L14): stage `k` forbids `f_k` from meeting `f_0+…+f_{k-1}`. mettle emits the same conjuncts in incremental order (`no(a&b) and no((a+b)&c)`; §10.3 divergence (b), `and` associative) (probe p2) |
+| L17 | `disj f, g: E -> E` (arity-2 group) | `no (this/S.f & this/S.g)` | disjointness is over the **whole** (arity-3) field relations, independent of the field arity (probe p3) |
+| L18 | `disj a, b: E` (implicit-`one` group) | `no (this/S.a & this/S.b)` | the per-field implicit `one` (L1) does not change the disj fact (probe p4) |
+| L19 | `var disj a, b: set E` (var group) | `always (no (this/S.a & this/S.b))` | a **`var`** group wraps each `no` in `always` — temporal, so mettle **defers** the whole command (`TranslateError::TemporalUnsupported`, §2.3), never a silent drop (probe p5) |
+
+**Conjunct position (jar-verified, probes p1–p6).** The field-group `disj` fact
+is emitted as a **field-level conjunct**: right after **all** of the owner sig's
+per-field mult+domain facts (§2.5 item 2) and **before** the command formula
+(§2.5 item 3). mettle places it in a dedicated `Provenance::FieldDisjFact(SigId)`
+conjunct group between the field-facts loop and the appended-facts loop; being a
+plain conjunction the exact position is verdict-neutral (semantic congruence).
+The `als-types` seam is `ResolvedSig::field_disj_groups: Vec<Vec<FieldId>>`
+(populated in `resolve_one_field`, source order, groups of ≥2 fields only). The
+control `sig S { a, b: set E }` (no `disj`) emits **no** such conjunct (probe p7).
 
 The choice-recording seam that makes this possible (mt-031 Part A,
 [reference/alloy6-resolution.md](alloy6-resolution.md) §4.4) is documented in
@@ -976,6 +991,15 @@ never synthesizes the disjointness. Confirmed minimally (jar-verified reasoning)
 D for 3` is a theorem (jar UNSAT) yet mettle returns **SAT** (spurious
 counterexample); the `disj`-less control is SAT in both. **Fix is not contained
 to `lower.rs`** — it needs an `als-types` change to record the field-group
-disjointness plus a lowering conjunct — so it is deferred to **mt-038** (the
-pre-mt-037 lowering-gaps bead; mt-037 re-gauges). Pinned as
-`field_disj_dropped_known_gap` in `tests/solve.rs`.
+disjointness plus a lowering conjunct.
+
+**RESOLVED (mt-038, 2026-07-17).** `als_types::ResolvedSig` now carries
+`field_disj_groups: Vec<Vec<FieldId>>` (populated in `resolve_one_field`, a pure
+widening — resolve verdicts/diagnostics byte-identical), and the lowerer
+synthesizes the staged `no (fi & fj)` fact per group
+(`Provenance::FieldDisjFact`, §10.3 rows L15–L19, jar-pinned by probes p1–p7).
+The `mediaAssets.als[3]` disagreement clears — the `check` is now UNSAT in both.
+Regression pin renamed `field_disj_synthesizes_disjointness` in
+`tests/solve.rs`; goldens `golden_field_disj_*` / `field_disj_var_group_defers`
+in `tests/lower.rs`. `firewire.als` uses the same construct but stays behind a
+higher-order-quantifier typed defer (expected).
