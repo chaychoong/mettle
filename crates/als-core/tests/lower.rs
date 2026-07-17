@@ -75,6 +75,15 @@ fn disj_str(ir: &Ir, conjuncts: &[GoalConjunct]) -> String {
     pf(ir, c.formula)
 }
 
+/// The pretty-printed first `Fact` conjunct.
+fn fact_str(ir: &Ir, conjuncts: &[GoalConjunct]) -> String {
+    let c = conjuncts
+        .iter()
+        .find(|c| matches!(c.provenance, als_core::Provenance::Fact))
+        .expect("fact conjunct");
+    pf(ir, c.formula)
+}
+
 // ---------------------------------------------------------------------------
 // jar-verified goldens
 // ---------------------------------------------------------------------------
@@ -856,4 +865,89 @@ fn ho_universal_polarity_defers_typed() {
         try_build("sig A {}\nrun foo { all x: A | some r: set A | x in r } for 3\n"),
         Err(TranslateError::HigherOrder { .. })
     ));
+}
+
+// ---------------------------------------------------------------------------
+// int-sorted expression in relation position (mt-038 D)
+// ---------------------------------------------------------------------------
+// `lower_rel`'s entry now mirrors `lower_int`'s existing Rel->AtomToInt guard:
+// an int-sorted subexpression (`#e`, an Int-returning call, a `let`-bound int
+// value) reaching relation position implicitly casts via `Int[·]`
+// (translation-ref §2.1's `IntToAtom` row). Needed because several callers
+// always lower through `lower_rel` regardless of the value's real sort: a call
+// argument (`bind_call_params`), a `let` binding's value, and a genuinely
+// relational `+`/`-` operand. `+`/`-` themselves stay relational union/diff at
+// every sortedness (resolution §4.5: "no automatic int<->Int coercion" — `1 +
+// 2` is the set `{1,2}`, never `3`) — only the *operand* needs the cast.
+
+#[test]
+fn int_operand_of_relational_plus_promotes() {
+    // fact { #A = #B + 1 }  run {} for 3
+    // jar dump (DumpK2, probe p1, scratchpad/probe/plus/p1.als): the generated
+    // Kodkod code builds `x13.union(x15)` (Expression.union, NOT
+    // IntExpression.plus) for `#B + 1`, confirming `+` stays relational union
+    // even between two int-sorted operands (resolution §4.5) — the jar casts
+    // each operand via `Int[·]` first: `Int[#A] = (Int[#B] + Int[1])`. Before
+    // this fix, `#B` (a bare `Card` reaching `lower_rel` as a union operand)
+    // hit the "unary operator in a relation position" typed defer.
+    let (ir, cj) = build("sig A {}\nsig B {}\nfact { #A = #B + 1 }\nrun {} for 3\n");
+    assert_eq!(fact_str(&ir, &cj), "Int[#A] = (Int[#B] + Int[1])");
+}
+
+#[test]
+fn let_bound_int_value_promotes_in_relation_position() {
+    // sig A {}  pred p { let t = #A | t > 0 }  run p for 3
+    // A `let` binding's value is always lowered via `lower_rel` (unchanged);
+    // with the guard, an int-sorted value (`#A`) promotes to `Int[#A]` instead
+    // of erroring. `t`'s own later int-position use round-trips through
+    // `AtomToInt(IntToAtom(#A))` — the reference's documented `int[Int[x]] ==
+    // x` shortcut (translation-ref §2.4), semantically inert.
+    let (ir, cj) = build("sig A {}\npred p { let t = #A | t > 0 }\nrun p for 3\n");
+    assert_eq!(command_str(&ir, &cj), "int[Int[#A]] > 0");
+}
+
+#[test]
+fn int_returning_call_arg_promotes_before_inlining() {
+    // sig A {}  pred p { plus[#A, 1] = 2 }  run p for 3
+    // `util/integer` is auto-opened into every module (resolution §4.5), so
+    // `plus` is reachable unqualified. `bind_call_params` always lowers call
+    // arguments via `lower_rel`; before this fix, the bare `#A` argument to
+    // `plus[..]` hit the same typed defer as the top-level case.
+    assert!(try_build("sig A {}\npred p { plus[#A, 1] = 2 }\nrun p for 3\n").is_ok());
+}
+
+// ---------------------------------------------------------------------------
+// explicit-receiver call binding (mt-038 D)
+// ---------------------------------------------------------------------------
+// `bind_call_params` bound a receiver-pred's `this` unconditionally to the
+// *caller's own* current `this` (`lookup_binder("this")`), which is only
+// correct for an *implicit* receiver (a bare call forwarding an enclosing
+// sig's `this`). An *explicit* join-syntax receiver (`ks.iterator[args]`,
+// resolution §3.5's box-join sugar for `iterator[ks, args]`) was silently
+// dropped: since the `this` branch never consumed from the argument queue,
+// every explicit arg shifted one parameter left and the receiver vanished —
+// "unbound variable `this`" if the body referenced it, or a silently wrong
+// binding (an argument doing double duty as both a real param and the
+// never-bound receiver) if it didn't. `CallChoice::args` already carries the
+// receiver as `args[0]` whenever `implicit_this` is false (verified empirically
+// against `als_types::resolve`'s recorded choices) — `implicit_this` now
+// threads through `inline_pred`/`inline_fun`/`inline_fun_int` so the receiver
+// is read from there instead of re-derived.
+
+#[test]
+fn explicit_receiver_binds_this_from_the_join() {
+    // sig A { f: set A }  sig B {}  pred A.foo[x: B] { some this.f }
+    // run { some a: A, b: B | a.foo[b] } for 3
+    // jar dump (DumpK2, scratchpad/probe/recv/r2.als): `a.foo[b]` inlines to
+    // `some (a . A.f)` — `this` bound to the join's LHS `a`, not any ambient
+    // `this` (there is none here: the call sits inside a `run` block, not
+    // another receiver-pred/appended-fact body).
+    let (ir, cj) = build(
+        "sig A { f: set A }\nsig B {}\npred A.foo[x: B] { some this.f }\n\
+         run { some a: A, b: B | a.foo[b] } for 3\n",
+    );
+    assert_eq!(
+        command_str(&ir, &cj),
+        "(some a: A | (some b: B | some (a . A.f)))"
+    );
 }

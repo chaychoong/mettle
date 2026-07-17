@@ -17,3 +17,7 @@
 
 # OS cruft
 .DS_Store
+
+# Jar-probe harnesses + probe models (DumpK2 etc.): local evidence for the
+# pinned facts in docs/reference/*; recreatable from those docs' descriptions.
+/scratchpad/

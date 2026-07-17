@@ -1302,7 +1302,7 @@ impl<'a> Lowerer<'a> {
     ) -> Result<FormulaId, TranslateError> {
         match self.choice(ctx, e) {
             Some(ExprChoice::Name(NameChoice::Call0(func))) => {
-                self.inline_pred(ctx, *func, &[], span)
+                self.inline_pred(ctx, *func, &[], true, span)
             }
             Some(ExprChoice::Name(NameChoice::Macro(mc))) => {
                 let mc = mc.clone();
@@ -1310,7 +1310,7 @@ impl<'a> Lowerer<'a> {
             }
             Some(ExprChoice::Spine(SpineChoice::Call(cc))) => {
                 let cc = cc.clone();
-                self.inline_pred(ctx, cc.func, &cc.args, span)
+                self.inline_pred(ctx, cc.func, &cc.args, cc.implicit_this, span)
             }
             Some(ExprChoice::Spine(SpineChoice::Builtin { op })) => {
                 self.lower_builtin_formula(ctx, *op, e, span)
@@ -1555,6 +1555,22 @@ impl<'a> Lowerer<'a> {
     fn lower_rel(&mut self, ctx: Ctx, e: ExprId) -> Result<RelExprId, TranslateError> {
         let node = self.ast(ctx.module).exprs[e].clone();
         let span = node.span;
+        // An int-sorted expression in relation position implicitly casts to its
+        // `Int` atom (`Int[·]`, translation-ref §2.1's `IntToAtom` row) — the
+        // symmetric counterpart of `lower_int`'s Rel->AtomToInt guard below.
+        // Reachable whenever an Int-valued subexpression (`#e`, a call to an
+        // Int-returning func, a `let`-bound int value) surfaces where a relation
+        // is expected: a call argument (`bind_call_params` always lowers args via
+        // `lower_rel`, regardless of the callee param's type), a `let` binding
+        // value, or an operand of a genuinely relational `+`/`-`/`&` (jar-verified
+        // probe p1, `scratchpad/probe/plus/p1.als`: `#A = #B + 1` lowers to
+        // `Int[#A] = Int[#B] + Int[1]` — `+` stays relational **union** per
+        // resolution §4.5's "no automatic int<->Int coercion" rule; only the
+        // *operand* needs the cast, never the operator).
+        if self.sort_of(ctx, e) == Sort::Int {
+            let ie = self.lower_int(ctx, e)?;
+            return Ok(self.mk_rel(RelExprKind::IntToAtom(ie), span));
+        }
         match node.kind {
             ExprKind::Name(_) | ExprKind::AtName(_) => self.lower_name_rel(ctx, e, span),
             ExprKind::This => self.lower_this(span),
@@ -1684,7 +1700,7 @@ impl<'a> Lowerer<'a> {
                     Ok(fd)
                 }
             }
-            NameChoice::Call0(func) => self.inline_fun(ctx, *func, &[], span),
+            NameChoice::Call0(func) => self.inline_fun(ctx, *func, &[], true, span),
             NameChoice::Builtin(_) => Err(TranslateError::LoweringUnsupported {
                 what: "integer-ordering builtin (fun/min|max|next|prev) is Rung 4".to_owned(),
                 span,
@@ -1745,7 +1761,7 @@ impl<'a> Lowerer<'a> {
         match choice {
             Some(ExprChoice::Spine(SpineChoice::Join)) => self.lower_join_structural(ctx, e, span),
             Some(ExprChoice::Spine(SpineChoice::Call(cc))) => {
-                self.inline_fun(ctx, cc.func, &cc.args, span)
+                self.inline_fun(ctx, cc.func, &cc.args, cc.implicit_this, span)
             }
             Some(ExprChoice::Spine(SpineChoice::Builtin {
                 op: BuiltinCall::IntAtom,
@@ -2050,7 +2066,7 @@ impl<'a> Lowerer<'a> {
                         Ok(self.mk_int(IntExprKind::AtomToInt(r), span))
                     }
                     Some(ExprChoice::Spine(SpineChoice::Call(cc))) => {
-                        self.inline_fun_int(ctx, cc.func, &cc.args, span)
+                        self.inline_fun_int(ctx, cc.func, &cc.args, cc.implicit_this, span)
                     }
                     _ => Err(TranslateError::LoweringUnsupported {
                         what: "integer-position spine".to_owned(),
@@ -2088,7 +2104,7 @@ impl<'a> Lowerer<'a> {
                 // A 0-ary fun returning an int, inlined.
                 match self.choice(ctx, e).cloned() {
                     Some(ExprChoice::Name(NameChoice::Call0(func))) => {
-                        self.inline_fun_int(ctx, func, &[], span)
+                        self.inline_fun_int(ctx, func, &[], true, span)
                     }
                     _ => Err(TranslateError::LoweringUnsupported {
                         what: "integer-position name".to_owned(),
@@ -2623,16 +2639,21 @@ impl<'a> Lowerer<'a> {
     // ============================ calls / macros ============================
 
     /// Inlines a pred body as a formula, binding each parameter to the
-    /// (lowered) argument (translation-ref §3.5). The receiver (`implicit_this`
-    /// on the call) is the caller's current `this`.
+    /// (lowered) argument (translation-ref §3.5). `implicit_this` mirrors the
+    /// call's [`als_types::choice::CallChoice::implicit_this`]: when `true` the
+    /// receiver is the caller's current `this` (a bare call inside another
+    /// receiver-pred/appended-fact body); when `false` the receiver is an
+    /// **explicit** join-syntax argument (`ks.iterator[..]` desugars to
+    /// `iterator[ks, ..]`, resolution §3.5) already present as `args[0]`.
     fn inline_pred(
         &mut self,
         ctx: Ctx,
         func: FuncIdx,
         args: &[ExprId],
+        implicit_this: bool,
         span: Span,
     ) -> Result<FormulaId, TranslateError> {
-        let (fmod, body, pushed) = self.bind_call_params(ctx, func, args, span)?;
+        let (fmod, body, pushed) = self.bind_call_params(ctx, func, args, implicit_this, span)?;
         let fctx = self.ctx(fmod);
         let r = self.lower_formula(fctx, body);
         for _ in 0..pushed {
@@ -2642,15 +2663,17 @@ impl<'a> Lowerer<'a> {
         r
     }
 
-    /// Inlines a fun body as a relation.
+    /// Inlines a fun body as a relation. See [`Self::inline_pred`] for
+    /// `implicit_this`.
     fn inline_fun(
         &mut self,
         ctx: Ctx,
         func: FuncIdx,
         args: &[ExprId],
+        implicit_this: bool,
         span: Span,
     ) -> Result<RelExprId, TranslateError> {
-        let (fmod, body, pushed) = self.bind_call_params(ctx, func, args, span)?;
+        let (fmod, body, pushed) = self.bind_call_params(ctx, func, args, implicit_this, span)?;
         let fctx = self.ctx(fmod);
         let r = self.lower_rel(fctx, body);
         for _ in 0..pushed {
@@ -2660,15 +2683,17 @@ impl<'a> Lowerer<'a> {
         r
     }
 
-    /// Inlines a fun body as an integer.
+    /// Inlines a fun body as an integer. See [`Self::inline_pred`] for
+    /// `implicit_this`.
     fn inline_fun_int(
         &mut self,
         ctx: Ctx,
         func: FuncIdx,
         args: &[ExprId],
+        implicit_this: bool,
         span: Span,
     ) -> Result<IntExprId, TranslateError> {
-        let (fmod, body, pushed) = self.bind_call_params(ctx, func, args, span)?;
+        let (fmod, body, pushed) = self.bind_call_params(ctx, func, args, implicit_this, span)?;
         let fctx = self.ctx(fmod);
         let r = self.lower_int(fctx, body);
         for _ in 0..pushed {
@@ -2686,6 +2711,7 @@ impl<'a> Lowerer<'a> {
         ctx: Ctx,
         func: FuncIdx,
         args: &[ExprId],
+        implicit_this: bool,
         span: Span,
     ) -> Result<(ModuleId, ExprId, usize), TranslateError> {
         // Recursion guard: refuse if this func is already being inlined.
@@ -2698,7 +2724,10 @@ impl<'a> Lowerer<'a> {
         let f = self.world.funcs[func].clone();
         let params = f.params.clone();
         let has_recv = params.first().is_some_and(|p| p.name == "this");
-        // Lower each explicit argument in the *caller's* context first.
+        // Lower each explicit argument in the *caller's* context first. When the
+        // receiver is explicit (`implicit_this` false), it is already `args[0]`
+        // (`CallChoice::args` is "in parameter order", receiver included
+        // whenever it isn't implicit) — lowered here like any other argument.
         let mut arg_rels: Vec<RelExprId> = Vec::with_capacity(args.len());
         for &a in args {
             arg_rels.push(self.lower_rel(ctx, a)?);
@@ -2706,9 +2735,19 @@ impl<'a> Lowerer<'a> {
         let mut pushed = 0usize;
         let mut arg_iter = arg_rels.into_iter();
         for p in &params {
-            // Bind the receiver `this` to the caller's current `this`.
             if p.name == "this" && has_recv {
-                let this = self.lookup_binder("this", span)?;
+                let this = if implicit_this {
+                    // Bind the receiver `this` to the caller's current `this`.
+                    self.lookup_binder("this", span)?
+                } else {
+                    // The receiver is the join's explicit LHS, first in `args`.
+                    arg_iter
+                        .next()
+                        .ok_or_else(|| TranslateError::LoweringUnsupported {
+                            what: format!("call to `{}`: missing receiver", f.name),
+                            span,
+                        })?
+                };
                 self.binders.push(("this".to_owned(), Binding::Expr(this)));
                 pushed += 1;
                 continue;
