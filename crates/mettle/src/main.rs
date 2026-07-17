@@ -1,25 +1,32 @@
 //! The `mettle` CLI.
 //!
-//! Rung 1 shipped `parse`; Rung 2 adds `check`, the names-and-types
-//! human-testable front end:
+//! Rung 1 shipped `parse`; Rung 2 added `check`, the names-and-types
+//! human-testable front end; Rung 3 adds `exec`, which drives a model's
+//! commands to a verdict:
 //!
 //! ```text
 //! mettle parse <file.als> [--ast]
 //! mettle check <file.als>
+//! mettle exec <file.als> [--command <sel>] [--allow-overflow] [--conflicts N] [--encode-budget N]
 //! ```
 //!
 //! `parse` parses a module and, on success, prints it back as canonical
 //! Alloy 6 source (or, with `--ast`, the span-free structural dump).
 //! `check` additionally loads the module graph (`open`s and all) and runs
 //! the mt-018 resolver/type checker, printing any warnings and a one-line
-//! success summary. Parse/lex/resolve errors render to stderr as a
-//! rustc-style caret-and-label block (mt-013, [`diagnostics`]) with exit
-//! code 1; usage or I/O problems exit with code 2.
+//! success summary. `exec` (mt-036, [`exec`]) goes one rung further: for
+//! each `run`/`check` command in the root module it runs the full
+//! `compute_universe` → `compute_bounds` → `lower_command` → `solve_goal`
+//! pipeline and prints the verdict (and any SAT instance / counterexample).
+//! Parse/lex/resolve errors render to stderr as a rustc-style caret-and-label
+//! block (mt-013, [`diagnostics`]) with exit code 1; usage or I/O problems
+//! exit with code 2.
 //!
 //! This crate is the only place that renders diagnostics or touches process
-//! exit codes (STYLE E3); `als-syntax`/`als-types` stay print-free.
+//! exit codes (STYLE E3); `als-syntax`/`als-types`/`als-core` stay print-free.
 
 mod diagnostics;
+mod exec;
 
 use std::io::{self, Write as _};
 use std::process::ExitCode;
@@ -42,6 +49,7 @@ fn run(args: &[String]) -> Result<(), ExitCode> {
     match args.first().map(String::as_str) {
         Some("parse") => run_parse(&args[1..]),
         Some("check") => run_check(&args[1..]),
+        Some("exec") => exec::run_exec(&args[1..]),
         Some("-h" | "--help") | None => {
             print_usage();
             // A bare `--help`/no-args is a successful help request; an
@@ -64,16 +72,25 @@ fn print_usage() {
     eprintln!(
         "usage: mettle parse <file.als> [--ast]\n\
          \x20\x20\x20\x20\x20mettle check <file.als> [--strict]\n\
+         \x20\x20\x20\x20\x20mettle exec <file.als> [--command <name|index>] [--allow-overflow]\n\
+         \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20[--conflicts N] [--encode-budget N]\n\
          \n\
          Subcommands:\n\
          \x20\x20parse <file.als>       parse a module and print it back as canonical Alloy 6\n\
          \x20\x20check <file.als>       load, resolve, and type-check a module (and its opens)\n\
+         \x20\x20exec <file.als>        run every root-module command to a verdict/instance\n\
          \n\
          Options (parse):\n\
          \x20\x20--ast                  print the span-free structural AST dump instead of source\n\
          \n\
          Options (check):\n\
-         \x20\x20--strict               exit non-zero if any warning fired (verdict unchanged)"
+         \x20\x20--strict               exit non-zero if any warning fired (verdict unchanged)\n\
+         \n\
+         Options (exec):\n\
+         \x20\x20--command <sel>        run one command only: by 0-based index, label, or target name\n\
+         \x20\x20--allow-overflow       wrap on integer overflow instead of excluding the instance\n\
+         \x20\x20--conflicts N          cap SAT search effort (default: unlimited)\n\
+         \x20\x20--encode-budget N      cap encode effort (default: unlimited)"
     );
 }
 
