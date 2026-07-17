@@ -812,9 +812,27 @@ impl<'a, 'g> Cx<'a, 'g> {
                         subt.clone()
                     }
                 };
-                let _ = p;
                 let mut sub = self.resolve(e, &s);
                 self.typecheck_as_set(&mut sub, self.expr(e).span);
+                // Recording-only precise pass (mt-035): the operand type `s` above
+                // is the operand's own binary shape, which leaves a bare `next`/
+                // `prev` under `^`/`*` ambiguous between `util/ordering`'s
+                // `elem->elem` and the auto-opened `util/integer`'s `Int->Int` — so
+                // no choice is recorded and lowering an ordering model defers. When
+                // this closure sits inside a join, the context relevant type `p`
+                // carries the disambiguating binary shape (the reference's
+                // `resolveClosure(p, sub.type)`). Re-resolve the operand against
+                // `p`'s binary part purely to record the right leaf choice; discard
+                // the type AND truncate errors + warnings so the accept/reject +
+                // warning gauge stays byte-identical (invariance rule).
+                let pbin = p.extract(&self.r.world, 2);
+                if pbin.has_entries() {
+                    let nerr = self.errors.len();
+                    let nwarn = self.warnings.len();
+                    let _ = self.resolve(e, &pbin);
+                    self.errors.truncate(nerr);
+                    self.warnings.truncate(nwarn);
+                }
                 let closed = sub.ty.closure(&self.r.world);
                 if !sub.err && closed.is_error() && !self.lenient() {
                     self.err(ResolveError::UnaryNotBinary {

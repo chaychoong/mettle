@@ -40,7 +40,7 @@ pub use resolve::{resolve, Resolved};
 pub use ty::{Product, Type};
 pub use warning::{jar_stem_class, ResolveWarning};
 pub use world::{
-    Builtins, CmdTargetResolved, CommandScope, FieldId, FuncId, MacroId, Param, ResolvedCommand,
-    ResolvedFact, ResolvedField, ResolvedFunc, ResolvedMacro, ResolvedSig, ResolvedWorld, SigId,
-    SigKind,
+    Builtins, CmdTargetResolved, CommandScope, FieldId, FuncId, MacroId, OrderingInstance, Param,
+    ResolvedCommand, ResolvedFact, ResolvedField, ResolvedFunc, ResolvedMacro, ResolvedSig,
+    ResolvedWorld, SigId, SigKind,
 };

@@ -96,6 +96,7 @@ pub fn compute_bounds(world: &ResolvedWorld, scoped: &ScopedUniverse, ir: &mut I
     builder.build_prim_denotations();
     builder.alloc_subset_sigs();
     builder.alloc_fields();
+    builder.pin_ordering();
     builder.emit_prim_constraints();
     builder.finish()
 }
@@ -117,6 +118,9 @@ struct BoundsBuilder<'a> {
     leaf_rel: BTreeMap<SigId, RelId>,
     /// The `<Sig>_remainder` relation of a non-abstract sig with children.
     remainder_rel: BTreeMap<SigId, RelId>,
+    /// The **stored** relation of each field (the arity-stripped one for a
+    /// `one`-sig owner) — mt-035 rebinds `util/ordering`'s `First`/`Next` here.
+    field_rel: BTreeMap<FieldId, RelId>,
     // --- outputs being assembled ---
     bounds: Bounds,
     sig_denote: BTreeMap<SigId, RelExprId>,
@@ -144,6 +148,7 @@ impl<'a> BoundsBuilder<'a> {
             upper: BTreeMap::new(),
             leaf_rel: BTreeMap::new(),
             remainder_rel: BTreeMap::new(),
+            field_rel: BTreeMap::new(),
             bounds,
             sig_denote: BTreeMap::new(),
             field_denote: BTreeMap::new(),
@@ -286,10 +291,22 @@ impl<'a> BoundsBuilder<'a> {
             } else if !sig.is_abstract {
                 let name = format!("{}_remainder", sig.qualified_name);
                 let rel = self.alloc_named(&name, 1, sig.span);
-                self.bounds.bind(
-                    rel,
-                    RelBound::new(TupleSet::empty(1), unary_tupleset(&self.floating(id))),
-                );
+                let floating = unary_tupleset(&self.floating(id));
+                // An **exact** non-abstract parent pins its remainder to *all*
+                // its floating atoms (lower == upper), so `#sig` equals its exact
+                // scope — the children only re-tag those atoms, they cannot shrink
+                // the parent (translation-ref §1.4; the reference binds
+                // `A_remainder` exactly, jar-verified probe T14a). A non-exact
+                // parent keeps the ordinary `[{}, floating]` bound, so its
+                // population may float below scope (probe B6). Without this an
+                // `exactly N`/`util/ordering` parent with a subsig under-counts
+                // (its remainder could go empty).
+                let bound = if self.is_exact(id) {
+                    RelBound::exact(floating)
+                } else {
+                    RelBound::new(TupleSet::empty(1), floating)
+                };
+                self.bounds.bind(rel, bound);
                 self.remainder_rel.insert(id, rel);
             }
         }
@@ -429,6 +446,7 @@ impl<'a> BoundsBuilder<'a> {
             let rel = self.alloc_named(&name, stored_arity, field.span);
             self.bounds
                 .bind(rel, RelBound::new(TupleSet::empty(stored_arity), upper));
+            self.field_rel.insert(fid, rel);
             let stored = self.mk_rel_expr(RelExprKind::Relation(rel), field.span);
             let denote = if one_sig {
                 // The stored relation is the value columns; the field is the
@@ -446,6 +464,70 @@ impl<'a> BoundsBuilder<'a> {
                 stored
             };
             self.field_denote.insert(fid, denote);
+        }
+    }
+
+    // ========================= util/ordering =========================
+
+    /// Pins `util/ordering`'s `First`/`Next` field relations to exact constants
+    /// over the ordered sig's atoms in universe order (mt-035, LEDGER-004 part
+    /// (b), translation-ref §5). This reproduces the reference `Simplifier`'s
+    /// exact-bounds shrink on the native total-order relations — the source of
+    /// `count = 1` for a childless / enum ordered sig at *every* symmetry setting
+    /// (probes T10/T11/T12/T13, jar-verified sym0 = 1).
+    ///
+    /// **Eligibility (jar-verified sym0, translation-ref §10.1).** The shrink
+    /// engages only when the ordered sig `S`'s atom set is fully determined with
+    /// no interchangeable atoms: `S` has **no proper subsig** (a leaf — its own
+    /// exact atoms `S$0..`), OR `S` is an **`enum`** (its members are `one`
+    /// singletons, each atom in its own named sig). A sig with a genuine subsig
+    /// partition choice — a proper subsig whose atoms are freely interchangeable
+    /// — is left unpinned even when the child fills all of `S` (probe T14e:
+    /// `for 3 A, exactly 3 B` is sym0 count **6**, not 1; the jar's sym20 = 1 is
+    /// pure symmetry breaking, which mettle does not do). There `first`/`next`
+    /// are governed only by the `pred/totalOrder` fact formula (`lower.rs`), and
+    /// the enumerated count is the full `n!` set of linear orders. The `enum`
+    /// case is the one parent-with-children that pins (probe T13): a non-enum
+    /// parent with all-`one` children does **not** (jar-verified sym0 = 6).
+    fn pin_ordering(&mut self) {
+        for inst in self.world.ordering.clone() {
+            let elem = inst.elem;
+            // Eligibility: leaf sig, or an enum (all-`one`-singleton children).
+            let eligible = self.kids(elem).is_empty() || self.world.sigs[elem].is_enum;
+            if !eligible {
+                continue;
+            }
+            // `S`'s determined atoms in universe order (== lower == upper: part
+            // (a) forces `S` exact, and an enum's members are `one` sigs).
+            let atoms: Vec<AtomId> = self
+                .upper
+                .get(&elem)
+                .map(|s| s.iter().copied().collect())
+                .unwrap_or_default();
+            let (Some(&first_rel), Some(&next_rel)) = (
+                self.field_rel.get(&inst.first),
+                self.field_rel.get(&inst.next),
+            ) else {
+                continue;
+            };
+            // Only the `one`-sig-`Ord` stored shape (arity 1 `First`, arity 2
+            // `Next`) is pinnable to a plain atom order; anything else falls back
+            // to the `pred/totalOrder` formula.
+            if self.ir.relations[first_rel].arity != 1 || self.ir.relations[next_rel].arity != 2 {
+                continue;
+            }
+            // first = { S$0 } (empty for a degenerate empty ordered sig).
+            let mut first_set = TupleSet::empty(1);
+            if let Some(&a0) = atoms.first() {
+                first_set.insert(Tuple::new(vec![a0]));
+            }
+            self.bounds.rebind(first_rel, RelBound::exact(first_set));
+            // next = { S$0->S$1, S$1->S$2, ... } — the consecutive-atom chain.
+            let mut next_set = TupleSet::empty(2);
+            for pair in atoms.windows(2) {
+                next_set.insert(Tuple::new(vec![pair[0], pair[1]]));
+            }
+            self.bounds.rebind(next_rel, RelBound::exact(next_set));
         }
     }
 
@@ -520,6 +602,39 @@ impl<'a> BoundsBuilder<'a> {
     /// inexact `#sig <= scope` case.
     fn emit_size(&mut self, sig: SigId) {
         let scope = usize::try_from(self.scope_of(sig)).unwrap_or(usize::MAX);
+        // Exact sig whose atoms are **not** already bound-pinned to `scope`: an
+        // **abstract** parent with non-exact children (probe T14d) — its own
+        // population has no relation of its own and no exact remainder to pin it,
+        // so `A = ⋃children` could float below `scope`. Force `#sig = scope` with
+        // `scope` disjoint element-witnesses covering it (translation-ref §1.4,
+        // the reference's exact-abstract-parent constraint). Leaf and
+        // non-abstract-parent exact sigs are already pinned (their leaf bound /
+        // exact remainder), and a fully-`exactly`-childed abstract parent has its
+        // lower already at `scope`, so this fires only for the genuine gap.
+        // The children's *enforced* lower atoms (each child relation's own lower
+        // bound) — for an abstract parent this is all that pins `A = ⋃children`,
+        // since `A` has no relation of its own. `self.lower[&sig]` cannot be used:
+        // it folds in `sig`'s minted atoms, which for an abstract parent are not
+        // bound to any relation.
+        let child_lower: BTreeSet<AtomId> = self
+            .kids(sig)
+            .iter()
+            .flat_map(|k| self.lower[k].iter().copied())
+            .collect();
+        if self.is_exact(sig)
+            && self.world.sigs[sig].is_abstract
+            && !self.kids(sig).is_empty()
+            && child_lower.len() < scope
+        {
+            let denote = self.denote_sig(sig);
+            let span = self.sig_span(sig);
+            let f = match scope {
+                0 => self.mk_formula(mult_test(MultTest::No, denote), span),
+                n => self.build_size_witness_exact(sig, denote, n, span),
+            };
+            self.constraints.push(f);
+            return;
+        }
         if self.upper[&sig].len() <= scope {
             return;
         }
@@ -577,6 +692,75 @@ impl<'a> BoundsBuilder<'a> {
             },
             span,
         );
+        // Wrap innermost-first so v0 is the outermost quantifier.
+        for &v in vars.iter().rev() {
+            body = self.mk_formula(
+                FormulaKind::Quant {
+                    kind: QuantKind::Some,
+                    var: v,
+                    bound: denote,
+                    body,
+                },
+                span,
+            );
+        }
+        body
+    }
+
+    /// Builds `some v0..v_{n-1}: sig | (v0 + .. + v_{n-1}) = sig and
+    /// pairwise-disjoint` — `n` **distinct** element-witnesses covering the sig,
+    /// so `#sig = n` exactly (translation-ref §1.4). Unlike
+    /// [`Self::build_size_witness`] (a `<= n` cap with freely-overlapping
+    /// witnesses), the staged disjointness makes it an equality, matching the
+    /// reference's exact-abstract-parent form (probe T14d).
+    fn build_size_witness_exact(
+        &mut self,
+        sig: SigId,
+        denote: RelExprId,
+        n: usize,
+        span: Span,
+    ) -> FormulaId {
+        let name = self.world.sigs[sig].name.clone();
+        let vars: Vec<_> = (0..n)
+            .map(|k| {
+                self.ir.vars.alloc(Var {
+                    name: format!("{name}_ex{k}"),
+                    arity: 1,
+                    span,
+                })
+            })
+            .collect();
+        let var_exprs: Vec<RelExprId> = vars
+            .iter()
+            .map(|&v| self.mk_rel_expr(RelExprKind::Var(v), span))
+            .collect();
+        let union = self.union_of(&var_exprs, span);
+        let mut parts = vec![self.mk_formula(
+            FormulaKind::RelCompare {
+                op: RelCmpOp::Equal,
+                lhs: union,
+                rhs: denote,
+            },
+            span,
+        )];
+        // Staged pairwise disjointness: `no (v_k & (v_0 + .. + v_{k-1}))`.
+        for k in 1..n {
+            let prev = self.union_of(&var_exprs[..k], span);
+            let inter = self.mk_rel_expr(
+                RelExprKind::Binary {
+                    op: RelBinOp::Intersect,
+                    lhs: var_exprs[k],
+                    rhs: prev,
+                },
+                span,
+            );
+            parts.push(self.mk_formula(mult_test(MultTest::No, inter), span));
+        }
+        let mut body = if parts.len() == 1 {
+            parts.pop().unwrap()
+        } else {
+            self.mk_formula(FormulaKind::And(parts), span)
+        };
         // Wrap innermost-first so v0 is the outermost quantifier.
         for &v in vars.iter().rev() {
             body = self.mk_formula(

@@ -2030,15 +2030,27 @@ impl<'a> Lowerer<'a> {
                 }
             }
             BuiltinCall::TotalOrder => {
-                // `pred/totalOrder[elem, first, next]` — mt-035 replaces this with
-                // exact-bounds special-casing (LEDGER-004). This bead lowers it
-                // as its clean-room stdlib body would; that body is not a single
-                // IR primitive, so defer here (the stdlib pred is inlined as an
-                // ordinary call elsewhere when written as `util/ordering` funcs).
-                Err(TranslateError::LoweringUnsupported {
-                    what: "`pred/totalOrder` builtin (mt-035)".to_owned(),
-                    span,
-                })
+                // `pred/totalOrder[elem, first, next]` (translation-ref §5/§2.2,
+                // LEDGER-004): the hand-built total-order formula the reference's
+                // non-native path uses, semantically equivalent to Kodkod's native
+                // `ord[next, elem, first, last]`. `next` is the immediate-successor
+                // relation of a single linear chain over `elem`, `first` its minimum.
+                // Exactly the `n!` orderings over a fixed `elem` of size `n` satisfy
+                // it, so the enumerated count matches the jar's sym0 column whenever
+                // the ordered sig has a genuine partition choice (bounds pinning does
+                // not engage — probes T14a-e). When pinning *does* engage
+                // (bounds_builder), `first`/`next` are exact constants and this
+                // formula is trivially satisfied.
+                if args.len() != 3 {
+                    return Err(TranslateError::LoweringUnsupported {
+                        what: "`pred/totalOrder` with other than 3 arguments".to_owned(),
+                        span,
+                    });
+                }
+                let elem = self.lower_rel(ctx, args[0])?;
+                let first = self.lower_rel(ctx, args[1])?;
+                let next = self.lower_rel(ctx, args[2])?;
+                Ok(self.total_order_formula(elem, first, next, span))
             }
             BuiltinCall::IntCast | BuiltinCall::IntAtom => {
                 Err(TranslateError::LoweringUnsupported {
@@ -2286,6 +2298,133 @@ impl<'a> Lowerer<'a> {
 
     fn not(&mut self, f: FormulaId, span: Span) -> FormulaId {
         self.mk_formula(FormulaKind::Not(f), span)
+    }
+
+    /// The hand-built `pred/totalOrder[elem, first, next]` formula (LEDGER-004,
+    /// translation-ref §5/§2.2): `first` is the unique minimum, `next` is the
+    /// functional/injective immediate-successor relation of a single acyclic
+    /// chain that reaches all of `elem`. Its models are exactly the `n!`
+    /// linear orders over a fixed `elem`, so it pins the enumerated count in the
+    /// subsig partition-choice case where the bounds pinning does not engage.
+    fn total_order_formula(
+        &mut self,
+        elem: RelExprId,
+        first: RelExprId,
+        next: RelExprId,
+        span: Span,
+    ) -> FormulaId {
+        let mut parts: Vec<FormulaId> = Vec::with_capacity(5);
+        // `one first`.
+        parts.push(self.mk_formula(
+            FormulaKind::MultTest {
+                test: MultTest::One,
+                expr: first,
+            },
+            span,
+        ));
+        // `no next.first` — `first` has no predecessor (rules out cycles).
+        let pred_of_first = self.mk_rel(
+            RelExprKind::Binary {
+                op: RelBinOp::Join,
+                lhs: next,
+                rhs: first,
+            },
+            span,
+        );
+        parts.push(self.mk_formula(
+            FormulaKind::MultTest {
+                test: MultTest::No,
+                expr: pred_of_first,
+            },
+            span,
+        ));
+        // `all e: elem | lone e.next` — each element has ≤ 1 successor.
+        let ev = self.ir.vars.alloc(Var {
+            name: "totalOrder_e".to_owned(),
+            arity: 1,
+            span,
+        });
+        let ev_expr = self.mk_rel(RelExprKind::Var(ev), span);
+        let e_next = self.mk_rel(
+            RelExprKind::Binary {
+                op: RelBinOp::Join,
+                lhs: ev_expr,
+                rhs: next,
+            },
+            span,
+        );
+        let lone_succ = self.mk_formula(
+            FormulaKind::MultTest {
+                test: MultTest::Lone,
+                expr: e_next,
+            },
+            span,
+        );
+        parts.push(self.mk_formula(
+            FormulaKind::Quant {
+                kind: QuantKind::All,
+                var: ev,
+                bound: elem,
+                body: lone_succ,
+            },
+            span,
+        ));
+        // `all e: elem | lone next.e` — each element has ≤ 1 predecessor.
+        let pv = self.ir.vars.alloc(Var {
+            name: "totalOrder_p".to_owned(),
+            arity: 1,
+            span,
+        });
+        let pv_expr = self.mk_rel(RelExprKind::Var(pv), span);
+        let next_e = self.mk_rel(
+            RelExprKind::Binary {
+                op: RelBinOp::Join,
+                lhs: next,
+                rhs: pv_expr,
+            },
+            span,
+        );
+        let lone_pred = self.mk_formula(
+            FormulaKind::MultTest {
+                test: MultTest::Lone,
+                expr: next_e,
+            },
+            span,
+        );
+        parts.push(self.mk_formula(
+            FormulaKind::Quant {
+                kind: QuantKind::All,
+                var: pv,
+                bound: elem,
+                body: lone_pred,
+            },
+            span,
+        ));
+        // `elem in first.*next` — every element is reachable from `first`.
+        let star_next = self.mk_rel(
+            RelExprKind::Unary {
+                op: RelUnOp::ReflexiveClosure,
+                expr: next,
+            },
+            span,
+        );
+        let reach = self.mk_rel(
+            RelExprKind::Binary {
+                op: RelBinOp::Join,
+                lhs: first,
+                rhs: star_next,
+            },
+            span,
+        );
+        parts.push(self.mk_formula(
+            FormulaKind::RelCompare {
+                op: RelCmpOp::Subset,
+                lhs: elem,
+                rhs: reach,
+            },
+            span,
+        ));
+        self.conjoin(parts, span)
     }
 
     fn mark_temporal(&mut self, op: &'static str, span: Span) {

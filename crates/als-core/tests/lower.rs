@@ -521,3 +521,22 @@ fn icmp(o: IntCmpOp) -> &'static str {
         IntCmpOp::Ge => ">=",
     }
 }
+
+#[test]
+fn scratch_ordering_defer_probe() {
+    let src = "open util/ordering[S]\nsig S {}\nrun {} for 3 S\n";
+    match try_build(src) {
+        Ok(()) => eprintln!("SCRATCH: lowered OK"),
+        Err(e) => eprintln!("SCRATCH: defer = {e:?}"),
+    }
+    let src2 = "open util/ordering[S]\nsig S {}\nrun { some first } for 3 S\n";
+    match try_build(src2) {
+        Ok(()) => eprintln!("SCRATCH2: lowered OK"),
+        Err(e) => eprintln!("SCRATCH2: defer = {e:?}"),
+    }
+    let src3 = "open util/ordering[S]\nsig S {}\nrun { S = first.*next } for 3 S\n";
+    match try_build(src3) {
+        Ok(()) => eprintln!("SCRATCH3: lowered OK"),
+        Err(e) => eprintln!("SCRATCH3: defer = {e:?}"),
+    }
+}

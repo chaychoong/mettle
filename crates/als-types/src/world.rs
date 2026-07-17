@@ -330,8 +330,30 @@ pub struct ResolvedWorld {
     /// Resolution choices for every name/spine node (mt-031 widening): the seam
     /// [`crate::choice`] documents, so the lowerer never re-derives §4.4.
     pub choices: crate::choice::ChoiceTable,
+    /// Every `util/ordering` module instance in the world (mt-035, LEDGER-004):
+    /// the ordered sig plus the private `Ord` sig's `First`/`Next` field
+    /// relations the bounds phase pins to exact constants when eligible. Enum
+    /// auto-opened orderings land here too (probe T13). Populated last, after
+    /// fields exist; identified by the stdlib module's resolved identity, never
+    /// by a user alias.
+    pub ordering: Vec<OrderingInstance>,
     /// Builtin sig handles (resolution-doc §4.1).
     pub builtins: Builtins,
+}
+
+/// One resolved `open util/ordering[S]` instance (mt-035, LEDGER-004 /
+/// translation-ref §5). The bounds phase reads this to (a) know `S` is
+/// force-exact (also carried command-side by
+/// [`ResolvedCommand::additional_exact`]) and (b) pin `first`/`next` to exact
+/// constants over `S`'s atoms when `S` has no genuine subsig partition choice.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct OrderingInstance {
+    /// The ordered sig `S` (the module's `exactly elem` argument).
+    pub elem: SigId,
+    /// The private `Ord` sig's `First: set elem` field.
+    pub first: FieldId,
+    /// The private `Ord` sig's `Next: elem -> elem` field.
+    pub next: FieldId,
 }
 
 impl ResolvedWorld {

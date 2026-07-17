@@ -260,6 +260,18 @@ impl Bounds {
         assert!(previous.is_none(), "relation bound twice: {rel:?}");
     }
 
+    /// Replaces the bound of an **already-bound** `rel` (mt-035): the
+    /// `util/ordering` pinning tightens `First`/`Next` from their ordinary
+    /// field bounds to exact constants after `alloc_fields` bound them.
+    ///
+    /// # Panics
+    /// Panics if `rel` is not already bound — the pinning targets a field
+    /// relation the bounds builder allocated.
+    pub fn rebind(&mut self, rel: RelId, bound: RelBound) {
+        let previous = self.bounds.insert(rel, bound);
+        assert!(previous.is_some(), "rebind of an unbound relation: {rel:?}");
+    }
+
     /// The bound for `rel`, if bound.
     #[must_use]
     pub fn get(&self, rel: RelId) -> Option<&RelBound> {

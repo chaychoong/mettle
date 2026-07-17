@@ -119,6 +119,7 @@ impl<'g> Resolver<'g> {
             commands: Vec::new(),
             facts: Vec::new(),
             choices: crate::choice::ChoiceTable::new(),
+            ordering: Vec::new(),
             // Placeholder builtins; seeded first thing in `run`.
             builtins: Builtins {
                 univ: SigId::from_index(0),
@@ -188,6 +189,83 @@ impl<'g> Resolver<'g> {
         }
         // Phase 11: commands (targets + scopes).
         self.resolve_commands();
+
+        // mt-035 (LEDGER-004): `util/ordering` exact-scope propagation + the
+        // ordering-instance seam the bounds phase pins `first`/`next` from. Purely
+        // additive metadata — the accept/reject verdict + warnings are unchanged
+        // (invariance rule), so it runs even after the early-bail checkpoints.
+        self.resolve_ordering();
+    }
+
+    /// Populates the `util/ordering` exact-scope + pinning seam (mt-035,
+    /// LEDGER-004, translation-ref §5).
+    ///
+    /// **Part (a) — exact scope.** Any module parameter marked `exactly` (the
+    /// reference's `additionalExactScopes` mechanism, jar-verified general — not
+    /// ordering-specific) forces its argument sig to an exact scope. `util/
+    /// ordering[exactly elem]` is the one stdlib module that uses it (enums
+    /// auto-open it), but a user module `foo[exactly x]` behaves identically.
+    /// Every command gets the same set; the scope layer already honors
+    /// [`ResolvedCommand::additional_exact`].
+    ///
+    /// **Part (b) — the pinning seam.** The stdlib ordering module is detected by
+    /// its resolved identity (module header name `util/ordering` + the private
+    /// `Ord` sig with `First`/`Next` fields), never by a user alias, so `open
+    /// util/ordering[S] as foo` and enum auto-opens are both caught. The bounds
+    /// phase reads [`ResolvedWorld::ordering`] to pin `first`/`next` when eligible.
+    fn resolve_ordering(&mut self) {
+        // Part (a): collect every exactly-param argument sig, deterministically.
+        let mut exact: Vec<SigId> = Vec::new();
+        for m in 0..self.graph.modules.len() {
+            let mid = ModuleId::from_index(m);
+            for binding in &self.graph.modules[mid].params {
+                if binding.is_exact {
+                    if let Some(&sig) = self.mods[m].param_sigs.get(&binding.param) {
+                        exact.push(sig);
+                    }
+                }
+            }
+        }
+        exact.sort_unstable_by_key(|s| s.index());
+        exact.dedup();
+        for cmd in &mut self.world.commands {
+            cmd.additional_exact = exact.clone();
+        }
+
+        // Part (b): the ordering-instance seam, in ModuleId order (determinism).
+        let mut instances: Vec<crate::world::OrderingInstance> = Vec::new();
+        for m in 0..self.graph.modules.len() {
+            let mid = ModuleId::from_index(m);
+            if self.graph.modules[mid].module_name != ["util", "ordering"] {
+                continue;
+            }
+            // The single `exactly elem` parameter's bound sig.
+            let Some(elem) = self.graph.modules[mid]
+                .params
+                .iter()
+                .find(|b| b.is_exact)
+                .and_then(|b| self.mods[m].param_sigs.get(&b.param).copied())
+            else {
+                continue;
+            };
+            // The private `Ord` sig declared in this instance, with `First`/`Next`.
+            let mut first = None;
+            let mut next = None;
+            for (fid, field) in self.world.fields.iter() {
+                if self.world.sigs[field.owner].module != mid {
+                    continue;
+                }
+                match field.name.as_str() {
+                    "First" => first = Some(fid),
+                    "Next" => next = Some(fid),
+                    _ => {}
+                }
+            }
+            if let (Some(first), Some(next)) = (first, next) {
+                instances.push(crate::world::OrderingInstance { elem, first, next });
+            }
+        }
+        self.world.ordering = instances;
     }
 
     /// Seeds the five builtin sigs as fixed `SigId`s (resolution-doc §4.1).
