@@ -515,6 +515,9 @@ impl<'a> Lowerer<'a> {
         let mut skolem_constraints: Vec<FormulaId> = Vec::new();
         for &d in &param_decls {
             let decl = ast.decls[d].clone();
+            if decl.is_bound_disj {
+                return Err(bound_disj_unpinned(ast.exprs[decl.bound].span));
+            }
             let set_expr = self.lower_decl_bound_set(ctx, &decl)?;
             let arity =
                 self.ir_arity(set_expr)
@@ -598,6 +601,9 @@ impl<'a> Lowerer<'a> {
         let module = self.world.sigs[owner].module;
         let ctx = self.ctx(module);
         let span = field.span;
+        if field.is_bound_disj {
+            return Err(bound_disj_unpinned(span));
+        }
         let field_denote = *self.bounds.field_denote.get(&fid).ok_or_else(|| {
             TranslateError::LoweringUnsupported {
                 what: format!("field `{}` has no denotation", field.name),
@@ -669,35 +675,7 @@ impl<'a> Lowerer<'a> {
             ))
         };
 
-        // Domain constraint `(f.univ…) in owner` — the field's first column
-        // lies in the owner (translation-ref §2.5, jar-verified). Arity = the
-        // field's full arity; join `univ` (arity-1) `arity-1` times to project to
-        // the first column.
-        let full_arity = self.world.fields[fid].ty.arity().filter(|&a| a >= 2);
-        let domain = if let Some(arity) = full_arity {
-            let mut proj = field_denote;
-            let univ = self.mk_rel(RelExprKind::Const(RelConst::Univ), span);
-            for _ in 0..(arity - 1) {
-                proj = self.mk_rel(
-                    RelExprKind::Binary {
-                        op: RelBinOp::Join,
-                        lhs: proj,
-                        rhs: univ,
-                    },
-                    span,
-                );
-            }
-            Some(self.mk_formula(
-                FormulaKind::RelCompare {
-                    op: RelCmpOp::Subset,
-                    lhs: proj,
-                    rhs: owner_denote,
-                },
-                span,
-            ))
-        } else {
-            None
-        };
+        let domain = self.field_domain_constraint(fid, field_denote, owner_denote, span);
 
         match (quant, domain) {
             (Some(q), Some(d)) => Ok(Some(self.conjoin(vec![q, d], span))),
@@ -705,6 +683,41 @@ impl<'a> Lowerer<'a> {
             (None, Some(d)) => Ok(Some(d)),
             (None, None) => Ok(None),
         }
+    }
+
+    /// The field domain constraint `(f.univ…) in owner` — the field's first
+    /// column lies in the owner (translation-ref §2.5, jar-verified). Arity =
+    /// the field's full arity; join `univ` (arity-1) `arity-1` times to project
+    /// to the first column. `None` for a unary field (a `one`-sig-stripped
+    /// denotation carries no owner column to constrain).
+    fn field_domain_constraint(
+        &mut self,
+        fid: FieldId,
+        field_denote: RelExprId,
+        owner_denote: RelExprId,
+        span: Span,
+    ) -> Option<FormulaId> {
+        let arity = self.world.fields[fid].ty.arity().filter(|&a| a >= 2)?;
+        let mut proj = field_denote;
+        let univ = self.mk_rel(RelExprKind::Const(RelConst::Univ), span);
+        for _ in 0..(arity - 1) {
+            proj = self.mk_rel(
+                RelExprKind::Binary {
+                    op: RelBinOp::Join,
+                    lhs: proj,
+                    rhs: univ,
+                },
+                span,
+            );
+        }
+        Some(self.mk_formula(
+            FormulaKind::RelCompare {
+                op: RelCmpOp::Subset,
+                lhs: proj,
+                rhs: owner_denote,
+            },
+            span,
+        ))
     }
 
     /// The pairwise-disjointness fact for a pre-colon `disj f0, f1, …: bound`
@@ -2146,6 +2159,11 @@ impl<'a> Lowerer<'a> {
         let mut pushed = 0;
         for &d in decls {
             let decl = self.ast(ctx.module).decls[d].clone();
+            if decl.is_bound_disj {
+                return Err(bound_disj_unpinned(
+                    self.ast(ctx.module).exprs[decl.bound].span,
+                ));
+            }
             let bound = self.lower_decl_bound_set(ctx, &decl)?;
             for name in &decl.names {
                 let vid = self.ir.vars.alloc(Var {
@@ -2317,6 +2335,11 @@ impl<'a> Lowerer<'a> {
         let mut disj_parts: Vec<FormulaId> = Vec::new();
         for &d in decls {
             let decl = self.ast(ctx.module).decls[d].clone();
+            if decl.is_bound_disj {
+                return Err(bound_disj_unpinned(
+                    self.ast(ctx.module).exprs[decl.bound].span,
+                ));
+            }
             if self.decl_is_higher_order(ctx, decl.bound) {
                 let bound_span = self.ast(ctx.module).exprs[decl.bound].span;
                 if !matches!(regime, SkolemRegime::Allowed) {
@@ -3512,6 +3535,19 @@ fn tupleset_closure(a: &TupleSet) -> Option<TupleSet> {
 }
 
 /// Whether `op` is a declaration-bound multiplicity marker.
+/// The typed defer for a post-colon `disj` bound (`f: disj e`, `x: disj e`):
+/// cross-binding value disjointness whose synthesized fact is not yet
+/// jar-pinned (mt-040). Every decl-binding site refuses it through this one
+/// helper — silently dropping it would under-constrain the goal, the same
+/// wrong-verdict class as the mt-038 field-group `disj` gap (STYLE E5; zero
+/// corpus incidence, pinned by `post_colon_disj_defers_typed`).
+fn bound_disj_unpinned(span: Span) -> TranslateError {
+    TranslateError::LoweringUnsupported {
+        what: "post-colon `disj` declaration bound".to_owned(),
+        span,
+    }
+}
+
 fn is_mult_marker(op: UnOp) -> bool {
     matches!(
         op,

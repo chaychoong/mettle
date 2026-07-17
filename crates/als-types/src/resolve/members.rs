@@ -228,6 +228,7 @@ impl Resolver<'_> {
                 is_var: decl.is_var,
                 is_private: decl.is_private,
                 is_defined: defined,
+                is_bound_disj: decl.is_bound_disj,
                 bound: decl.bound,
             });
             self.world.sigs[sig].fields.push(fid);

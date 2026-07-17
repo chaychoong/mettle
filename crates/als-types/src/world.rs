@@ -129,6 +129,10 @@ pub struct ResolvedSig {
 }
 
 /// A resolved field (resolution-doc §3.4).
+// The four flags faithfully mirror independent surface-decl markers
+// (`var`/`private`/`= e`/`: disj`); packing them into an enum would invent
+// structure the reference doesn't have.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ResolvedField {
     /// Field label.
@@ -146,6 +150,11 @@ pub struct ResolvedField {
     pub is_private: bool,
     /// `f = e` defined field (resolved in the later pass).
     pub is_defined: bool,
+    /// Post-colon `disj` bound (`f: disj e`, resolution-doc §3.4): distinct
+    /// owner atoms map to pairwise-disjoint values. Recorded so the lowerer can
+    /// refuse it typed (mt-038; the synthesized fact itself is unpinned —
+    /// mt-040) rather than silently under-constrain. Never resolve-visible.
+    pub is_bound_disj: bool,
     /// The field's declaration bound expression — an `ExprId` in the owner
     /// sig's module (mt-031 widening). For a non-defined field this is the type
     /// bound (`set A`, `A -> one A`, …) whose multiplicity markers mt-031 turns

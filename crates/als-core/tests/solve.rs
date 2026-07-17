@@ -521,3 +521,21 @@ fn determinism_two_runs_identical() {
     let b = matches!(run(src, 0).0, SolveVerdict::Sat(_));
     assert_eq!(a, b);
 }
+
+/// Post-colon `disj` (`f: disj e` on a field, `x: disj e` on a quantifier or
+/// run-pred param decl) declares cross-binding value disjointness. Its exact
+/// synthesized fact is not yet jar-pinned (mt-040) — until then every such
+/// site must **defer typed**, never silently drop the constraint (the same
+/// under-constraint class as the mt-038 field-group `disj` bug). Zero corpus
+/// incidence; this pins the negative space.
+#[test]
+fn post_colon_disj_defers_typed() {
+    // Field bound.
+    assert!(lower_defers(
+        "sig E {}\nsig S { f: disj set E }\nrun {} for 3\n"
+    ));
+    // Quantifier decl bound.
+    assert!(lower_defers(
+        "sig E {}\nrun { all x, y: disj E | x = y } for 3\n"
+    ));
+}
