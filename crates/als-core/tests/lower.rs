@@ -158,6 +158,199 @@ fn golden_arrow_right_one_multiplicity() {
     );
 }
 
+// -- mt-039: nested multiplicity arrows in field bounds ---------------------
+//
+// Jar-verified 2026-07-17 (`scratchpad/probe/nested/n1..n7`, `DumpK2`, symmetry
+// 0, noOverflow false, inferPartialInstance false) — translation-ref §10.3
+// probes n1-n7. All models: `sig A {} sig B {} sig C {} sig S { f: <bound> }
+// run {} for 3` (n6 adds `sig D {}`). The recursive rule (§2.1): a marked side
+// that is itself an arrow recurses fully rather than testing one multiplicity
+// (probe n1); a compound side (no single named relation) is destructured into
+// fresh `univ` leaf variables guarded by its own recursive constraint on the
+// reconstructed tuple, because Kodkod can decl-bind one variable directly over
+// a *named* relation of any arity but not over a literal nested product
+// (probe n3); both an outer column mark and a nested recursion can coexist
+// (probe n7). Per divergence (e), a column asserting nothing new (no mark,
+// other side not an arrow) is omitted, at any recursion depth.
+
+#[test]
+fn golden_nested_arrow_right_nested_marked_inner() {
+    // n1: f: A -> (B one -> one C)
+    // jar: this.f in (A->B->C) and
+    //   (all v0:A | v0.(this.f) in (B->C) and
+    //     (all v1:B | one(v1.(v0.(this.f))) and (v1.(v0.(this.f))) in C) and
+    //     (all v2:C | one((v0.(this.f)).v2) and ((v0.(this.f)).v2) in B)) and
+    //   (all v3:univ,v4:univ | <guard> implies ((this.f).v3).v4 in A)
+    // the outer A column is unmarked and the RHS-of-implies is bare
+    // membership (divergence e) — mettle omits that whole redundant block.
+    let (ir, cj) =
+        build("sig A {}\nsig B {}\nsig C {}\nsig S { f: A -> (B one -> one C) }\nrun {} for 3\n");
+    let field = pf(&ir, cj[0].formula);
+    assert!(
+        field.contains("(this . S.f) in (A -> (B -> C))"),
+        "membership: {field}"
+    );
+    assert!(
+        field.contains(
+            "all _c0: A | ((_c0 . (this . S.f)) in (B -> C) \
+            and (all _c1: B | one (_c1 . (_c0 . (this . S.f)))) \
+            and (all _c2: C | one ((_c0 . (this . S.f)) . _c2)))"
+        ),
+        "recursive inner one/one columns: {field}"
+    );
+    assert!(
+        !field.contains(": univ |"),
+        "outer A column unmarked, other side plain -> fully redundant, omitted: {field}"
+    );
+}
+
+#[test]
+fn golden_nested_arrow_outer_marked_plain_inner() {
+    // n2: f: A one -> (B -> C)
+    // jar: this.f in (A->B->C) and (all v0:A | v0.(this.f) in (B->C)) and
+    //   (all v1:univ,v2:univ | (v2->v1) in (B->C) implies
+    //     (one(((this.f).v1).v2) and ((this.f).v1).v2 in A))
+    // the inner B->C is flat/unmarked (right quantifier keeps only the
+    // redundant-but-harmless recursive membership); the outer `one` survives
+    // in the left quantifier over the compound RHS, destructured via fresh
+    // univ leaves (Kodkod can't decl-bind one var over a literal product).
+    let (ir, cj) =
+        build("sig A {}\nsig B {}\nsig C {}\nsig S { f: A one -> (B -> C) }\nrun {} for 3\n");
+    let field = pf(&ir, cj[0].formula);
+    assert!(
+        field.contains("(this . S.f) in (A -> (B -> C))"),
+        "membership: {field}"
+    );
+    assert!(
+        field.contains("all _c0: A | (_c0 . (this . S.f)) in (B -> C)"),
+        "unmarked inner recursion (membership only): {field}"
+    );
+    assert!(
+        field.contains(
+            "all _c1: univ | (all _c2: univ | \
+            ((_c1 -> _c2) in (B -> C) => one (((this . S.f) . _c2) . _c1)))"
+        ),
+        "outer `one` over the compound RHS, univ-leaf destructured: {field}"
+    );
+}
+
+#[test]
+fn golden_nested_arrow_left_nested() {
+    // n3: f: (A -> B) one -> one C
+    // jar: this.f in (A->B->C) and
+    //   (all v0:univ,v1:univ | (v0->v1) in (A->B) implies
+    //     (one(v1.(v0.(this.f))) and (v1.(v0.(this.f))) in C)) and
+    //   (all v2:C | one((this.f).v2) and (this.f).v2 in (A->B))
+    // the compound LHS is destructured for the right (rhs_mult) column; the
+    // left (lhs_mult) column iterates the plain C directly.
+    let (ir, cj) =
+        build("sig A {}\nsig B {}\nsig C {}\nsig S { f: (A -> B) one -> one C }\nrun {} for 3\n");
+    let field = pf(&ir, cj[0].formula);
+    assert!(
+        field.contains("(this . S.f) in ((A -> B) -> C)"),
+        "membership: {field}"
+    );
+    assert!(
+        field.contains(
+            "all _c0: univ | (all _c1: univ | \
+            ((_c0 -> _c1) in (A -> B) => one (_c1 . (_c0 . (this . S.f)))))"
+        ),
+        "compound-LHS right column, univ-leaf destructured: {field}"
+    );
+    assert!(
+        field.contains(
+            "all _c2: C | (one ((this . S.f) . _c2) \
+            and ((this . S.f) . _c2) in (A -> B))"
+        ),
+        "left column over plain C, recursing into the compound LHS: {field}"
+    );
+}
+
+#[test]
+fn golden_nested_arrow_some_lone_columns() {
+    // n4: f: A -> (B some -> lone C)
+    // jar mirrors n1's shape with `lone`/`some` swapped in for `one`/`one`:
+    //   (all v1:B | lone(...)) and (all v2:C | some(...))
+    let (ir, cj) =
+        build("sig A {}\nsig B {}\nsig C {}\nsig S { f: A -> (B some -> lone C) }\nrun {} for 3\n");
+    let field = pf(&ir, cj[0].formula);
+    assert!(
+        field.contains(
+            "all _c0: A | ((_c0 . (this . S.f)) in (B -> C) \
+            and (all _c1: B | lone (_c1 . (_c0 . (this . S.f)))) \
+            and (all _c2: C | some ((_c0 . (this . S.f)) . _c2)))"
+        ),
+        "some/lone column mult mapping preserved under recursion: {field}"
+    );
+}
+
+#[test]
+fn golden_nested_arrow_lone_outer() {
+    // n5: f: A lone -> (B -> C) — mirrors n2 with `lone` instead of `one`.
+    let (ir, cj) =
+        build("sig A {}\nsig B {}\nsig C {}\nsig S { f: A lone -> (B -> C) }\nrun {} for 3\n");
+    let field = pf(&ir, cj[0].formula);
+    assert!(
+        field.contains(
+            "all _c1: univ | (all _c2: univ | \
+            ((_c1 -> _c2) in (B -> C) => lone (((this . S.f) . _c2) . _c1)))"
+        ),
+        "outer `lone` over the compound RHS: {field}"
+    );
+}
+
+#[test]
+fn golden_nested_arrow_three_deep() {
+    // n6: f: A -> (B -> (C one -> one D)) — three levels of recursion compose:
+    // the outermost A/[B->(C->D)] column is fully unmarked on both sides (A
+    // plain, unmarked) so it is omitted entirely (no `univ` leaves needed at
+    // the top); the middle B/[C->D] column recurses one level further to
+    // reach the innermost `one`/`one` on C, D.
+    let (ir, cj) = build(
+        "sig A {}\nsig B {}\nsig C {}\nsig D {}\n\
+         sig S { f: A -> (B -> (C one -> one D)) }\nrun {} for 3\n",
+    );
+    let field = pf(&ir, cj[0].formula);
+    assert!(
+        field.contains("(this . S.f) in (A -> (B -> (C -> D)))"),
+        "membership: {field}"
+    );
+    assert!(
+        field.contains(
+            "all _c0: A | ((_c0 . (this . S.f)) in (B -> (C -> D)) \
+             and (all _c1: B | ((_c1 . (_c0 . (this . S.f))) in (C -> D) \
+             and (all _c2: C | one (_c2 . (_c1 . (_c0 . (this . S.f))))) \
+             and (all _c3: D | one ((_c1 . (_c0 . (this . S.f))) . _c3)))))"
+        ),
+        "three levels of recursion: {field}"
+    );
+    assert!(
+        !field.contains(": univ |"),
+        "every column along the way is unmarked except the innermost one/one \
+         (checked via plain decl-bound vars, never needing univ leaves): {field}"
+    );
+}
+
+#[test]
+fn golden_nested_arrow_double_mark() {
+    // n7: f: A -> some (B one -> one C) — an outer column mark AND a nested
+    // arrow coexist: the jar (and mettle) emit BOTH the `some` mult test AND
+    // the full recursive one/one structure on the same joined value.
+    let (ir, cj) = build(
+        "sig A {}\nsig B {}\nsig C {}\nsig S { f: A -> some (B one -> one C) }\nrun {} for 3\n",
+    );
+    let field = pf(&ir, cj[0].formula);
+    assert!(
+        field.contains(
+            "all _c0: A | (some (_c0 . (this . S.f)) \
+             and (_c0 . (this . S.f)) in (B -> C) \
+             and (all _c1: B | one (_c1 . (_c0 . (this . S.f)))) \
+             and (all _c2: C | one ((_c0 . (this . S.f)) . _c2)))"
+        ),
+        "outer `some` mult test AND the recursive inner one/one, both present: {field}"
+    );
+}
+
 #[test]
 fn golden_defined_field_equals_value() {
     // sig A { r: set A, s = r } — the defined field `s` becomes `this.s = this.r`.

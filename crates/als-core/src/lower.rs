@@ -165,6 +165,19 @@ enum Sort {
     Rel,
 }
 
+/// Which side of a join a peeled arrow-column leaf variable lands on
+/// (translation-ref §2.1, §10.3 probes n1/n3/n6): the *right* column
+/// (checking `rhs`'s shape, iterating `lhs`'s tuples) peels each leaf onto
+/// the **left** of the accumulator, in the type's own left-to-right column
+/// order; the *left* column (checking `lhs`'s shape, iterating `rhs`'s
+/// tuples) peels onto the **right**, in reverse (rightmost column peeled
+/// first). See [`Lowerer::arrow_column`]/[`Lowerer::arrow_join_leaves`].
+#[derive(Copy, Clone)]
+enum JoinDir {
+    FromLeft,
+    FromRight,
+}
+
 struct Lowerer<'a> {
     world: &'a ResolvedWorld,
     graph: &'a ModuleGraph,
@@ -664,13 +677,16 @@ impl<'a> Lowerer<'a> {
                 }
                 Ok(out)
             }
-            // A single arrow product with (optional) column multiplicities.
+            // An arrow product (flat or nested) with (optional) per-level
+            // column multiplicities.
             ExprKind::Arrow {
                 lhs,
                 lhs_mult,
                 rhs_mult,
                 rhs,
-            } => self.arrow_field_constraint(ctx, this_f, *lhs, *lhs_mult, *rhs_mult, *rhs, span),
+            } => self.arrow_value_constraint(
+                ctx, this_f, *lhs, *lhs_mult, *rhs_mult, *rhs, span, &mut 0,
+            ),
             // A plain relation bound: implicit `one` for a unary value.
             _ => {
                 let rel = self.lower_rel(ctx, bound)?;
@@ -698,114 +714,328 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// A single-arrow field bound `A m -> n B` (arity-2 value): membership
-    /// `this.f in A->B`, plus per-column multiplicity — `all a: A | n (a.this.f)`
-    /// and `all b: B | m ((this.f).b)` (translation-ref §2.1 arrow row).
+    /// A relation-valued field bound's arrow constraint `A m -> n B`,
+    /// generalizing the flat case to arbitrarily nested arrows (translation-
+    /// ref §2.1 arrow row, §10.3 probes L4 + mt-039 n1-n7 — jar-verified
+    /// 2026-07-17): membership `value in (lhs -> rhs)`, plus two per-column
+    /// quantifiers — one over `lhs`'s tuples enforcing `rhs_mult`/`rhs`'s own
+    /// shape on the joined-from-the-left remainder, one over `rhs`'s tuples
+    /// enforcing `lhs_mult`/`lhs`'s own shape on the joined-from-the-right
+    /// preimage. A side that is itself `ExprKind::Arrow` recurses fully
+    /// (probe n1: `A -> (B one -> one C)`) rather than testing a single
+    /// multiplicity — this reproduces the jar's nested per-column
+    /// quantifiers exactly. `value` may be any relation expression of the
+    /// arrow's total arity, not just `this.f`: a reusable seam for
+    /// skolem-relation multiplicity constraints.
+    ///
+    /// `col` numbers the per-call fresh variables `_c0`, `_c1`, … in
+    /// allocation order (starting at 0 for the top-level call, threaded
+    /// through recursion) — matching the pre-existing flat-case naming
+    /// exactly, so `golden_arrow_right_one_multiplicity` is unchanged.
+    ///
+    /// Per §10.3 divergence (e), a column that would assert nothing new (no
+    /// multiplicity marker on that side, and the other side is not itself an
+    /// arrow to recurse into) is omitted entirely — matching the flat case's
+    /// existing, tested behavior of never emitting the jar's redundant
+    /// per-column membership (always entailed by the top-level membership,
+    /// at any recursion depth: a joined slice of a value known to lie in a
+    /// flat product is trivially a subset of the corresponding sub-product).
     #[allow(clippy::too_many_arguments)]
-    fn arrow_field_constraint(
+    fn arrow_value_constraint(
         &mut self,
         ctx: Ctx,
-        this_f: RelExprId,
+        value: RelExprId,
         lhs: ExprId,
         lhs_mult: Option<Mult>,
         rhs_mult: Option<Mult>,
         rhs: ExprId,
         span: Span,
+        col: &mut u32,
     ) -> Result<Vec<FormulaId>, TranslateError> {
-        // Only a flat binary arrow (both sides unary) is handled; nested arrows
-        // or a non-unary side defer (never a wrong constraint).
-        if matches!(
-            &self.ast(ctx.module).exprs[lhs].kind,
-            ExprKind::Arrow { .. }
-        ) || matches!(
-            &self.ast(ctx.module).exprs[rhs].kind,
-            ExprKind::Arrow { .. }
-        ) {
-            return Err(TranslateError::LoweringUnsupported {
-                what: "nested multiplicity arrow in a field bound".to_owned(),
-                span,
-            });
-        }
-        let a = self.lower_rel(ctx, lhs)?;
-        let b = self.lower_rel(ctx, rhs)?;
+        let lhs_rel = self.lower_rel(ctx, lhs)?;
+        let rhs_rel = self.lower_rel(ctx, rhs)?;
         let product = self.mk_rel(
             RelExprKind::Binary {
                 op: RelBinOp::Product,
-                lhs: a,
-                rhs: b,
+                lhs: lhs_rel,
+                rhs: rhs_rel,
             },
             span,
         );
         let membership = self.mk_formula(
             FormulaKind::RelCompare {
                 op: RelCmpOp::Subset,
-                lhs: this_f,
+                lhs: value,
                 rhs: product,
             },
             span,
         );
         let mut out = vec![membership];
-        // Right multiplicity `n` on B: `all a: A | n (a . this.f)`.
-        if let Some(test) = mult_test_of(rhs_mult) {
-            let av = self.ir.vars.alloc(Var {
-                name: "_c0".to_owned(),
-                arity: 1,
-                span,
-            });
-            let ave = self.mk_rel(RelExprKind::Var(av), span);
-            let image = self.mk_rel(
-                RelExprKind::Binary {
-                    op: RelBinOp::Join,
-                    lhs: ave,
-                    rhs: this_f,
-                },
-                span,
-            );
-            let inner = self.mk_formula(FormulaKind::MultTest { test, expr: image }, span);
-            out.push(self.mk_formula(
-                FormulaKind::Quant {
-                    kind: QuantKind::All,
-                    var: av,
-                    bound: a,
-                    body: inner,
-                },
-                span,
-            ));
+        // Right column: for each tuple of `lhs`, the joined-from-the-left
+        // remainder must satisfy `rhs`'s shape.
+        out.extend(self.arrow_column(
+            ctx,
+            value,
+            lhs,
+            JoinDir::FromLeft,
+            rhs,
+            rhs_mult,
+            span,
+            col,
+        )?);
+        // Left column: symmetric, over `rhs`'s tuples against `lhs`'s shape.
+        out.extend(self.arrow_column(
+            ctx,
+            value,
+            rhs,
+            JoinDir::FromRight,
+            lhs,
+            lhs_mult,
+            span,
+            col,
+        )?);
+        Ok(out)
+    }
+
+    /// One column of [`Self::arrow_value_constraint`]: quantify over `iter`'s
+    /// tuples and, for each, constrain the `value`/tuple join (peeled per
+    /// `dir`) against `other`'s shape via [`Self::arrow_check`]. A plain
+    /// (non-`Arrow`) `iter` decl-binds one variable directly over its own
+    /// denotation, of its own arity (Kodkod decl-binds any-arity relations
+    /// with a single tuple variable) — this is the flat case. A compound
+    /// (`Arrow`) `iter` has no single named relation to decl-bind, so it
+    /// destructures into fresh `univ` leaf variables guarded by its own
+    /// recursive constraint on the reconstructed tuple (probe n3: `(A -> B)
+    /// one -> one C`'s left-nested column). Returns no formula when there is
+    /// nothing to assert (divergence (e)) — checked *before* any variable is
+    /// allocated, so a redundant column costs nothing.
+    #[allow(clippy::too_many_arguments)]
+    // `inner_lhs_mult`/`inner_rhs_mult` name the two sides of one destructured
+    // Arrow decl (mirroring the arrow's own field names); renaming either
+    // would obscure which is which.
+    #[allow(clippy::similar_names)]
+    fn arrow_column(
+        &mut self,
+        ctx: Ctx,
+        value: RelExprId,
+        iter: ExprId,
+        dir: JoinDir,
+        other: ExprId,
+        other_mult: Option<Mult>,
+        span: Span,
+        col: &mut u32,
+    ) -> Result<Vec<FormulaId>, TranslateError> {
+        let other_is_arrow = matches!(
+            &self.ast(ctx.module).exprs[other].kind,
+            ExprKind::Arrow { .. }
+        );
+        if mult_test_of(other_mult).is_none() && !other_is_arrow {
+            return Ok(vec![]);
         }
-        // Left multiplicity `m` on A: `all b: B | m (this.f . b)`.
-        if let Some(test) = mult_test_of(lhs_mult) {
-            let bv = self.ir.vars.alloc(Var {
-                name: "_c1".to_owned(),
-                arity: 1,
+
+        if matches!(
+            &self.ast(ctx.module).exprs[iter].kind,
+            ExprKind::Arrow { .. }
+        ) {
+            let ExprKind::Arrow {
+                lhs: inner_lhs,
+                lhs_mult: inner_lhs_mult,
+                rhs_mult: inner_rhs_mult,
+                rhs: inner_rhs,
+            } = self.ast(ctx.module).exprs[iter].kind.clone()
+            else {
+                unreachable!("just matched ExprKind::Arrow above");
+            };
+            let (leaves, recon) = self.arrow_leaf_vars(ctx, iter, span, col)?;
+            let joined = self.arrow_join_leaves(value, &leaves, dir, span);
+            let body = self.arrow_check(ctx, joined, other, other_mult, span, col)?;
+            if body.is_empty() {
+                return Ok(vec![]);
+            }
+            let guard_parts = self.arrow_value_constraint(
+                ctx,
+                recon,
+                inner_lhs,
+                inner_lhs_mult,
+                inner_rhs_mult,
+                inner_rhs,
                 span,
-            });
-            let bve = self.mk_rel(RelExprKind::Var(bv), span);
-            let preimage = self.mk_rel(
-                RelExprKind::Binary {
-                    op: RelBinOp::Join,
-                    lhs: this_f,
-                    rhs: bve,
+                col,
+            )?;
+            let guard = self.conjoin(guard_parts, span);
+            let body_f = self.conjoin(body, span);
+            let implies = self.mk_formula(
+                FormulaKind::Implies {
+                    antecedent: guard,
+                    consequent: body_f,
                 },
                 span,
             );
-            let inner = self.mk_formula(
-                FormulaKind::MultTest {
-                    test,
-                    expr: preimage,
-                },
+            let univ = self.mk_rel(RelExprKind::Const(RelConst::Univ), span);
+            let mut acc = implies;
+            for &v in leaves.iter().rev() {
+                acc = self.mk_formula(
+                    FormulaKind::Quant {
+                        kind: QuantKind::All,
+                        var: v,
+                        bound: univ,
+                        body: acc,
+                    },
+                    span,
+                );
+            }
+            return Ok(vec![acc]);
+        }
+
+        let iter_rel = self.lower_rel(ctx, iter)?;
+        let arity = self
+            .ir_arity(iter_rel)
+            .ok_or_else(|| TranslateError::LoweringUnsupported {
+                what: "arrow operand of unknown arity".to_owned(),
                 span,
+            })?;
+        let var = self.fresh_col_var(arity, span, col);
+        let joined = self.arrow_join_leaves(value, std::slice::from_ref(&var), dir, span);
+        let body = self.arrow_check(ctx, joined, other, other_mult, span, col)?;
+        if body.is_empty() {
+            return Ok(vec![]);
+        }
+        let body_f = self.conjoin(body, span);
+        Ok(vec![self.mk_formula(
+            FormulaKind::Quant {
+                kind: QuantKind::All,
+                var,
+                bound: iter_rel,
+                body: body_f,
+            },
+            span,
+        )])
+    }
+
+    /// The multiplicity test and/or recursive structure `other` imposes on a
+    /// joined value: a `MultTest` when `other_mult` is present, the full
+    /// `arrow_value_constraint` when `other` is itself an arrow — both, if
+    /// both apply (probe n7: `A -> some (B one -> one C)` marks the outer
+    /// column AND recurses into the inner arrow simultaneously).
+    fn arrow_check(
+        &mut self,
+        ctx: Ctx,
+        joined: RelExprId,
+        other: ExprId,
+        other_mult: Option<Mult>,
+        span: Span,
+        col: &mut u32,
+    ) -> Result<Vec<FormulaId>, TranslateError> {
+        let mut out = Vec::new();
+        if let Some(test) = mult_test_of(other_mult) {
+            out.push(self.mk_formula(FormulaKind::MultTest { test, expr: joined }, span));
+        }
+        if let ExprKind::Arrow {
+            lhs,
+            lhs_mult,
+            rhs_mult,
+            rhs,
+        } = self.ast(ctx.module).exprs[other].kind.clone()
+        {
+            out.extend(
+                self.arrow_value_constraint(ctx, joined, lhs, lhs_mult, rhs_mult, rhs, span, col)?,
             );
-            out.push(self.mk_formula(
-                FormulaKind::Quant {
-                    kind: QuantKind::All,
-                    var: bv,
-                    bound: b,
-                    body: inner,
-                },
-                span,
-            ));
         }
         Ok(out)
+    }
+
+    /// Allocates one fresh `univ`-bound variable per leaf (non-`Arrow`
+    /// operand) of an arrow-shaped `expr`, plus the `RelExpr` reconstructing
+    /// those leaves' product in the type's natural left-to-right column
+    /// order (probes n1/n3/n6, §10.3): Kodkod decl-binds one variable
+    /// directly over a *named* relation of any arity, but a literal nested
+    /// arrow type has no such relation, so the jar destructures it leaf by
+    /// leaf over `univ` instead.
+    fn arrow_leaf_vars(
+        &mut self,
+        ctx: Ctx,
+        expr: ExprId,
+        span: Span,
+        col: &mut u32,
+    ) -> Result<(Vec<crate::ir::VarId>, RelExprId), TranslateError> {
+        if let ExprKind::Arrow { lhs, rhs, .. } = self.ast(ctx.module).exprs[expr].kind.clone() {
+            let (mut lvars, lrel) = self.arrow_leaf_vars(ctx, lhs, span, col)?;
+            let (rvars, rrel) = self.arrow_leaf_vars(ctx, rhs, span, col)?;
+            lvars.extend(rvars);
+            let tuple = self.mk_rel(
+                RelExprKind::Binary {
+                    op: RelBinOp::Product,
+                    lhs: lrel,
+                    rhs: rrel,
+                },
+                span,
+            );
+            Ok((lvars, tuple))
+        } else {
+            let rel = self.lower_rel(ctx, expr)?;
+            let arity = self
+                .ir_arity(rel)
+                .ok_or_else(|| TranslateError::LoweringUnsupported {
+                    what: "arrow operand of unknown arity".to_owned(),
+                    span,
+                })?;
+            let var = self.fresh_col_var(arity, span, col);
+            let var_e = self.mk_rel(RelExprKind::Var(var), span);
+            Ok((vec![var], var_e))
+        }
+    }
+
+    /// A fresh arrow-column variable, named `_cN` in allocation order.
+    fn fresh_col_var(&mut self, arity: usize, span: Span, col: &mut u32) -> crate::ir::VarId {
+        let name = format!("_c{col}");
+        *col += 1;
+        self.ir.vars.alloc(Var { name, arity, span })
+    }
+
+    /// Peels a column's leaf variables off `value` one at a time (probes
+    /// n1/n3/n6): `FromLeft` peels left-to-right, each leaf joining onto the
+    /// current **left** (`leaf . acc`) — the right-column/`rhs`-checking
+    /// idiom. `FromRight` peels right-to-left, each leaf joining onto the
+    /// current **right** (`acc . leaf`) — the left-column/`lhs`-checking
+    /// idiom. A single-leaf slice (the flat case) reduces to one join,
+    /// matching the pre-existing `av.this_f` / `this_f.bve` shape exactly.
+    fn arrow_join_leaves(
+        &mut self,
+        value: RelExprId,
+        leaves: &[crate::ir::VarId],
+        dir: JoinDir,
+        span: Span,
+    ) -> RelExprId {
+        let mut acc = value;
+        match dir {
+            JoinDir::FromLeft => {
+                for &v in leaves {
+                    let var_e = self.mk_rel(RelExprKind::Var(v), span);
+                    acc = self.mk_rel(
+                        RelExprKind::Binary {
+                            op: RelBinOp::Join,
+                            lhs: var_e,
+                            rhs: acc,
+                        },
+                        span,
+                    );
+                }
+            }
+            JoinDir::FromRight => {
+                for &v in leaves.iter().rev() {
+                    let var_e = self.mk_rel(RelExprKind::Var(v), span);
+                    acc = self.mk_rel(
+                        RelExprKind::Binary {
+                            op: RelBinOp::Join,
+                            lhs: acc,
+                            rhs: var_e,
+                        },
+                        span,
+                    );
+                }
+            }
+        }
+        acc
     }
 
     /// A sig appended fact `sig A {…}{ φ }` — `φ` with `this` bound to `A`

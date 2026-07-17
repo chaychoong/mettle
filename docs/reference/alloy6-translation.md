@@ -839,6 +839,50 @@ the top-level `this.f in (A->B)`.
 | L18 | `disj a, b: E` (implicit-`one` group) | `no (this/S.a & this/S.b)` | the per-field implicit `one` (L1) does not change the disj fact (probe p4) |
 | L19 | `var disj a, b: set E` (var group) | `always (no (this/S.a & this/S.b))` | a **`var`** group wraps each `no` in `always` — temporal, so mettle **defers** the whole command (`TranslateError::TemporalUnsupported`, §2.3), never a silent drop (probe p5) |
 
+**mt-039 nested-arrow field-bound probes (jar-verified 2026-07-17, probes n1–n7,
+`scratchpad/probe/nested/n1..n7`).** `arrow_field_constraint` (§2.1's L4 row)
+previously handled only a **flat** binary arrow `A m -> n B`; any arrow with a
+side that is itself an arrow (`f: A -> (B one -> one C)`, `f: (A -> B) one ->
+one C`, …) hit a typed defer. Probes n1–n7 (all `sig A {} sig B {} sig C {}
+sig S { f: <bound> } run {} for 3`; n6 adds `sig D {}`) pin the reference's
+recursive per-column translation, `DumpK2`, symmetry 0, noOverflow false,
+`inferPartialInstance` false, `this/X` shortened to `X` and multi-line dumps
+compacted to one line (same convention as L1–L19; no other change):
+
+| # | Case | Jar goal (relevant conjunct) | Pinned fact |
+|---|---|---|---|
+| L20 | n1: `f: A -> (B one -> one C)` (right-nested, inner marked) | `all this:S \| (this.f) in (A->(B->C)) and (all v0:A \| (v0.(this.f)) in (B->C) and (all v1:B \| one(v1.(v0.(this.f))) and (v1.(v0.(this.f))) in C) and (all v2:C \| one((v0.(this.f)).v2) and ((v0.(this.f)).v2) in B)) and (all v3:univ,v4:univ \| ((v4->v3) in (B->C) and (all v5:B \| one(v5.(v4->v3)) and (v5.(v4->v3)) in C) and (all v6:C \| one((v4->v3).v6) and ((v4->v3).v6) in B)) implies (((this.f).v3).v4) in A)` | a side that is itself an arrow **recurses fully** (the `all v0:A` block re-derives the nested type's own membership + per-column tests on the joined remainder) rather than testing one multiplicity; the trailing `v3,v4` block is the outer (unmarked) column and is **fully redundant** (its only consequent is bare membership in `A`, entailed by the top membership at any recursion depth) — mettle omits it entirely (divergence (e) generalized) |
+| L21 | n2: `f: A one -> (B -> C)` (outer marked, plain inner) | `all this:S \| (this.f) in (A->(B->C)) and (all v0:A \| (v0.(this.f)) in (B->C)) and (all v1:univ,v2:univ \| (v2->v1) in (B->C) implies (one(((this.f).v1).v2) and (((this.f).v1).v2) in A))` | the inner `B->C` is flat/unmarked so its own column tests are empty (only the redundant-but-harmless recursive membership survives, kept per the existing L4 policy of never omitting a recursive call's own top membership); the outer `one` lands on the **left** column, which must destructure the compound RHS `(B->C)` into fresh `univ` leaves (`v1,v2`) since Kodkod has no single named relation to decl-bind against a literal product |
+| L22 | n3: `f: (A -> B) one -> one C` (left-nested) | `all this:S \| (this.f) in ((A->B)->C) and (all v0:univ,v1:univ \| (v0->v1) in (A->B) implies (one(v1.(v0.(this.f))) and (v1.(v0.(this.f))) in C)) and (all v2:C \| one((this.f).v2) and ((this.f).v2) in (A->B))` | the compound **LHS** is destructured for the right (`rhs_mult`) column exactly as a compound RHS would be (§10.3's arrow recursion is symmetric in which side is compound); the left (`lhs_mult`) column iterates the plain `C` directly, decl-bound as usual |
+| L23 | n4: `f: A -> (B some -> lone C)` | `all this:S \| (this.f) in (A->(B->C)) and (all v0:A \| (v0.(this.f)) in (B->C) and (all v1:B \| lone(v1.(v0.(this.f))) and (v1.(v0.(this.f))) in C) and (all v2:C \| some((v0.(this.f)).v2) and ((v0.(this.f)).v2) in B)) and (all v3:univ,v4:univ \| ((v4->v3) in (B->C) and (all v5:B \| lone(v5.(v4->v3)) and (v5.(v4->v3)) in C) and (all v6:C \| some((v4->v3).v6) and ((v4->v3).v6) in B)) implies (((this.f).v3).v4) in A)` | `some`/`lone` map through the recursion exactly like `one` (L20) — the column-to-test mapping (`rhs_mult` tested over the LHS's tuples, `lhs_mult` over the RHS's) is unchanged by nesting depth; the trailing `v3,v4` block is again fully redundant (outer unmarked) and omitted |
+| L24 | n5: `f: A lone -> (B -> C)` (mirrors n2 with `lone`) | `all this:S \| (this.f) in (A->(B->C)) and (all v0:A \| (v0.(this.f)) in (B->C)) and (all v1:univ,v2:univ \| (v2->v1) in (B->C) implies (lone(((this.f).v1).v2) and (((this.f).v1).v2) in A))` | confirms L21's shape generalizes to every `Mult` variant, not just `one` |
+| L25 | n6: `f: A -> (B -> (C one -> one D))` (three levels) | `all this:S \| (this.f) in (A->(B->(C->D))) and (all v0:A \| (v0.(this.f)) in (B->(C->D)) and (all v1:B \| (v1.(v0.(this.f))) in (C->D) and (all v2:C \| one(v2.(v1.(v0.(this.f)))) and (v2.(v1.(v0.(this.f)))) in D) and (all v3:D \| one((v1.(v0.(this.f))).v3) and ((v1.(v0.(this.f))).v3) in C)) and (all v4:univ,v5:univ \| ((v5->v4) in (C->D) and (all v6:C \| one(v6.(v5->v4)) and (v6.(v5->v4)) in D) and (all v7:D \| one((v5->v4).v7) and ((v5->v4).v7) in C)) implies (((v0.(this.f)).v4).v5) in B)) and (all v8:univ,v9:univ,v10:univ \| ((v10->v9->v8) in (B->(C->D)) and (all v11:B \| (v11.(v10->v9->v8)) in (C->D) and (all v12:C \| one(v12.(v11.(v10->v9->v8))) and (v12.(v11.(v10->v9->v8))) in D) and (all v13:D \| one((v11.(v10->v9->v8)).v13) and ((v11.(v10->v9->v8)).v13) in C)) and (all v14:univ,v15:univ \| ((v15->v14) in (C->D) and (all v16:C \| one(v16.(v15->v14)) and (v16.(v15->v14)) in D) and (all v17:D \| one((v15->v14).v17) and ((v15->v14).v17) in C)) implies (((v10->v9->v8).v14).v15) in B)) implies ((((this.f).v8).v9).v10) in A)` | the recursion composes to arbitrary depth: the innermost `one/one` on `C,D` is reached through **two** levels of plain decl-bound quantifiers (`v0:A`, `v1:B`); every column along the way is unmarked except the innermost, so **both** univ-leaf blocks (`v4,v5` and `v8,v9,v10`) are fully redundant (bare membership consequents) and mettle omits them — the lowered goal keeps only the plain-decl-bound chain down to the real `one`/`one` tests |
+| L26 | n7: `f: A -> some (B one -> one C)` (double mark: outer column **and** nested arrow) | `all this:S \| (this.f) in (A->(B->C)) and (all v0:A \| some(v0.(this.f)) and (v0.(this.f)) in (B->C) and (all v1:B \| one(v1.(v0.(this.f))) and (v1.(v0.(this.f))) in C) and (all v2:C \| one((v0.(this.f)).v2) and ((v0.(this.f)).v2) in B)) and (all v3:univ,v4:univ \| ((v4->v3) in (B->C) and (all v5:B \| one(v5.(v4->v3)) and (v5.(v4->v3)) in C) and (all v6:C \| one((v4->v3).v6) and ((v4->v3).v6) in B)) implies (((this.f).v3).v4) in A)` | an outer column mark (`some`, the `rhs_mult` of the *outer* arrow) and a nested arrow's own marks **coexist and both apply**: the `all v0:A` block carries *both* the `some` mult test *and* the full recursive membership/column structure of the nested type — proving the two are independent, additive checks, not a choice between "test a multiplicity" and "recurse" |
+
+Rule (jar-verified, generalizes L4): translating `r in (lhs m-> n rhs)` for any
+relation-valued `r` is a function of `(r, lhs, m, n, rhs)` that emits membership
+`r in (lhs_flat -> rhs_flat)` plus two columns — one iterating `lhs`'s own
+tuples and checking `n`/`rhs`'s shape on the joined-from-the-left remainder,
+one iterating `rhs`'s tuples checking `m`/`lhs`'s shape on the
+joined-from-the-right preimage. "Checking a side's shape" means: emit a
+`MultTest` if that side carries a multiplicity mark, **and** recurse the same
+function if that side is itself an arrow — both apply if both are present
+(L26). "Iterating a side's tuples" decl-binds one variable directly when the
+side is a plain (non-arrow) relation of any arity (Kodkod decl-binds any-arity
+relations with a single tuple variable); when the side is itself an arrow it
+has no single named relation to bind against, so it destructures into one
+fresh `univ`-bound variable per leaf (a leaf is a non-arrow operand, however
+deep), guarded by the recursive membership+column check on the reconstructed
+leaf-tuple (L20's `v3,v4` block, L22's `v0,v1` block, L26's outer `v3,v4`
+block). A column whose "check" is empty — no mark on that side, and the other
+side is not itself an arrow to recurse into — is omitted entirely (§10.3's
+existing divergence (e), which generalizes cleanly to any recursion depth: a
+joined slice of a value already known to lie in a flat product is trivially a
+subset of the corresponding sub-product, so the redundant membership is safe
+to drop at every depth, not just the top level). mettle: `als_core::lower::
+Lowerer::arrow_value_constraint` (`crates/als-core/src/lower.rs`), a reusable
+seam over any `RelExprId`, not hard-wired to `this.f`.
+
 **Conjunct position (jar-verified, probes p1–p6).** The field-group `disj` fact
 is emitted as a **field-level conjunct**: right after **all** of the owner sig's
 per-field mult+domain facts (§2.5 item 2) and **before** the command formula
