@@ -36,9 +36,17 @@
 //! - **String literals** → [`TranslateError::StringUnsupported`] (Rung 4).
 //! - Exotic field multiplicity shapes, higher-order (lean) macros, and
 //!   unhandled command-target shapes → [`TranslateError::LoweringUnsupported`].
-//! - **Skolemization is skipped** (ADR-0011 / translation-ref §2.3): quantifiers
-//!   are lowered directly. Skolem relations never appear in instances; this is
-//!   never a verdict change (recorded in LIMITATIONS).
+//! - **Higher-order quantification that cannot be skolemized** (a HO decl at
+//!   universal polarity, or nested under a universal) →
+//!   [`TranslateError::HigherOrder`], matching the reference's
+//!   `HigherOrderDeclException` (translation-ref §2.3/§10.6).
+//! - **Skolemization** (translation-ref §2.3/§10.6, mt-038): first-order
+//!   quantifiers are lowered directly (ADR-0011); a **higher-order** existential
+//!   decl (`some r: set A`, `some f: A one -> one B`, a relation-valued run-pred
+//!   param) that is not under a universal is replaced by a fresh **free skolem
+//!   relation** minted into [`LoweredGoal::skolem_bounds`] — the only way to solve
+//!   it, and what makes ringlead/firewire lowerable. Effective polarity is threaded
+//!   as [`Pol`]; the sound upper of a skolem's bound is [`Lowerer::abstract_upper`].
 
 // Pervasive, harmless stylistic lints in this walk: `e`/`a`/`b`/`l`/`r` are the
 // domain-idiomatic names for expression ids and operands (STYLE N4); several
@@ -51,6 +59,8 @@
     clippy::unused_self
 )]
 
+use std::collections::BTreeMap;
+
 use als_syntax::ast::{Ast, BinOp, CmpOp, Const, Decl, ExprId, ExprKind, Mult, Quant, UnOp};
 use als_syntax::{ArenaId, Span};
 use als_types::choice::{BuiltinCall, ExprChoice, NameChoice, SpineChoice};
@@ -58,12 +68,13 @@ use als_types::{
     ChoiceTable, CmdTargetResolved, FieldId, ModuleGraph, ModuleId, ResolvedWorld, SigId,
 };
 
+use crate::bounds::{RelBound, Tuple, TupleSet};
 use crate::bounds_builder::BoundsResult;
 use crate::error::TranslateError;
 use crate::ir::{
     CompDecl, Formula, FormulaId, FormulaKind, IntBinOp, IntCmpOp, IntExpr, IntExprId, IntExprKind,
-    Ir, MultTest, QuantKind, RelBinOp, RelCmpOp, RelConst, RelExpr, RelExprId, RelExprKind,
-    RelUnOp, TemporalBinOp, TemporalUnOp, Var,
+    Ir, MultTest, QuantKind, RelBinOp, RelCmpOp, RelConst, RelExpr, RelExprId, RelExprKind, RelId,
+    RelUnOp, Relation, TemporalBinOp, TemporalUnOp, Var,
 };
 use crate::scope::ScopedUniverse;
 
@@ -75,6 +86,15 @@ pub struct LoweredGoal {
     pub goal: FormulaId,
     /// The top-level conjuncts with provenance, in §2.5 order.
     pub conjuncts: Vec<GoalConjunct>,
+    /// The **skolem relations** minted for higher-order existential decls
+    /// (translation-ref §2.3/§10.6): each freshly-allocated [`RelId`] with its
+    /// [`RelBound`] (lower `{}`, upper = the sound abstract upper of the decl's
+    /// bound). The solve driver binds these into the [`crate::bounds::Bounds`]
+    /// before allocating primaries, so the encoder / decoder / self-check treat a
+    /// skolem exactly like any other bounded relation (zero downstream
+    /// special-casing). Empty for a goal with no skolemizable HO decl. In `RelId`
+    /// allocation order (source-walk order — deterministic, STYLE D1).
+    pub skolem_bounds: Vec<(RelId, RelBound)>,
 }
 
 /// One top-level conjunct of the goal, with where it came from.
@@ -124,6 +144,7 @@ pub fn lower_command(
     // bounds builder already consumed it into the denotation seam. It stays in
     // the signature for mt-033 (CNF encoding needs the universe).
     let _ = scoped;
+    let cmd_label = skolem_command_label(world, command_index);
     let mut lowerer = Lowerer {
         world,
         graph,
@@ -132,8 +153,34 @@ pub fn lower_command(
         binders: Vec::new(),
         inline_stack: Vec::new(),
         temporal: None,
+        pol: Pol::asserted(),
+        cmd_label,
+        skolem_bounds: Vec::new(),
+        var_bound: BTreeMap::new(),
     };
     lowerer.lower(command_index)
+}
+
+/// The skolem-name label for a command (translation-ref §2.3/§10.6, probe T9):
+/// its explicit `label:` prefix; else, for `run p`/`check a`, the target
+/// name; else empty (skolems fall back to `$<var>`). A `$` in the label makes
+/// the reference drop the prefix, so mettle does too.
+fn skolem_command_label(world: &ResolvedWorld, command_index: usize) -> String {
+    let Some(cmd) = world.commands.get(command_index) else {
+        return String::new();
+    };
+    let label = match &cmd.label {
+        Some(l) if !l.contains('$') => l.clone(),
+        Some(_) => return String::new(),
+        None => match &cmd.target {
+            CmdTargetResolved::Named(funcs) => funcs
+                .first()
+                .map(|&f| world.funcs[f].name.clone())
+                .unwrap_or_default(),
+            _ => String::new(),
+        },
+    };
+    label
 }
 
 /// A lexical binding active during lowering: mirrors the checker's env so a
@@ -178,6 +225,37 @@ enum JoinDir {
     FromRight,
 }
 
+/// The skolemization polarity of the formula node currently being lowered
+/// (translation-ref §2.3/§10.6). Threaded through [`Lowerer::lower_formula`] so a
+/// higher-order existential decl can be recognized as *skolemizable* — an
+/// effective existential (in the NNF of the whole goal) not in the scope of any
+/// universal — without materializing the NNF.
+#[derive(Copy, Clone)]
+struct Pol {
+    /// Whether this node appears **positively** in the goal (an even number of
+    /// negations above it). Flipped by `not`, by an `implies` antecedent, and set
+    /// `false` for a `check`'s negated command body before its lowering.
+    positive: bool,
+    /// Whether skolemization is **blocked** here regardless of polarity: set once
+    /// we descend under an effective-**universal** quantifier (a skolem constant
+    /// would have to become a skolem function, depth ≥ 1), or into a non-monotone
+    /// context (`iff`, an int/formula-ITE condition, a comprehension/`sum` body, a
+    /// temporal body). Monotone `and`/`or` leave it unchanged, so a top-level
+    /// existential stays skolemizable under them.
+    blocked: bool,
+}
+
+impl Pol {
+    /// The initial polarity of a top-level goal conjunct that is asserted
+    /// directly (a fact, a `run` command body): positive, nothing blocked.
+    fn asserted() -> Self {
+        Pol {
+            positive: true,
+            blocked: false,
+        }
+    }
+}
+
 struct Lowerer<'a> {
     world: &'a ResolvedWorld,
     graph: &'a ModuleGraph,
@@ -191,6 +269,24 @@ struct Lowerer<'a> {
     /// The first temporal construct hit (deferred at the end, translation-ref
     /// §2.3): `(op, span)`.
     temporal: Option<(&'static str, Span)>,
+    /// The current skolemization polarity (translation-ref §10.6). Saved and
+    /// restored around every polarity-changing recursion; read at HO decl sites.
+    pol: Pol,
+    /// Skolem label for names: `$<cmd_label>_<var>` (T9). Empty ⇒ `$<var>`.
+    cmd_label: String,
+    /// Skolem relations minted this command, with their bounds (see
+    /// [`LoweredGoal::skolem_bounds`]). In allocation (source-walk) order.
+    skolem_bounds: Vec<(RelId, RelBound)>,
+    /// Each bound variable's declared bound expression, for [`Self::abstract_upper`]
+    /// (translation-ref §10.6): a skolem whose bound depends on an enclosing
+    /// existential variable `t` (`some r: f[t] one -> one g[t] | …`) is still a
+    /// constant skolem — its upper is the *`t`-independent* over-approximation
+    /// `f[upper(T)]`, sound because `r ⊆ f[t] ⊆ f[upper(T)]` (join/product are
+    /// monotone) and the membership constraint still ties `r` to the chosen `t`.
+    /// Only populated for first-order vars (a skolem never sits under a universal,
+    /// so every enclosing var referenced here is itself existential — the reorder
+    /// `∃r∃t = ∃t∃r` that justifies the constant skolem holds).
+    var_bound: BTreeMap<crate::ir::VarId, RelExprId>,
 }
 
 impl<'a> Lowerer<'a> {
@@ -213,9 +309,12 @@ impl<'a> Lowerer<'a> {
             });
         }
 
-        // 2. every reachable module fact.
+        // 2. every reachable module fact — asserted at the top level, so a
+        // higher-order existential inside one is skolemizable (translation-ref
+        // §10.6): positive polarity, nothing blocked.
         for fact in &self.world.facts {
             let ctx = self.ctx(fact.module);
+            self.pol = Pol::asserted();
             let f = self.lower_formula(ctx, fact.body)?;
             conjuncts.push(GoalConjunct {
                 formula: f,
@@ -223,7 +322,13 @@ impl<'a> Lowerer<'a> {
             });
         }
 
-        // 3. synthesized field facts.
+        // 3. synthesized field facts. Each is `all this: owner | …`, so a
+        // nested HO existential in a defined-field value is under a universal —
+        // blocked from skolemization (translation-ref §10.6).
+        self.pol = Pol {
+            positive: true,
+            blocked: true,
+        };
         for (fid, field) in self.world.fields.iter() {
             if let Some(f) = self.lower_field_facts(fid)? {
                 conjuncts.push(GoalConjunct {
@@ -247,7 +352,12 @@ impl<'a> Lowerer<'a> {
             }
         }
 
-        // 4. sig appended facts (`this` bound to the owning sig).
+        // 4. sig appended facts (`this` bound to the owning sig) — `all this: A |
+        // φ`, so a nested HO existential is under a universal (blocked).
+        self.pol = Pol {
+            positive: true,
+            blocked: true,
+        };
         for (sig, s) in self.world.sigs.iter() {
             if let Some(body) = s.appended_fact {
                 let f = self.lower_appended_fact(sig, s.module, body)?;
@@ -271,7 +381,11 @@ impl<'a> Lowerer<'a> {
         }
 
         let goal = self.conjoin(conjuncts.iter().map(|c| c.formula).collect(), cmd.span);
-        Ok(LoweredGoal { goal, conjuncts })
+        Ok(LoweredGoal {
+            goal,
+            conjuncts,
+            skolem_bounds: std::mem::take(&mut self.skolem_bounds),
+        })
     }
 
     /// Builds the command formula (translation-ref §2.5(3)).
@@ -282,12 +396,25 @@ impl<'a> Lowerer<'a> {
         match cmd.target.clone() {
             CmdTargetResolved::Block { body, module } => {
                 let ctx = self.ctx(module);
+                // A `check {block}` negates the block, so the body lowers at
+                // **negative** polarity (its HO universals are effective
+                // existentials — translation-ref §10.6); a `run {block}` is
+                // asserted directly (positive).
+                self.pol = Pol {
+                    positive: !is_check,
+                    blocked: false,
+                };
                 let f = self.lower_formula(ctx, body)?;
                 Ok(if is_check { self.not(f, span) } else { f })
             }
             CmdTargetResolved::Assert { body, module } => {
-                // `check a`: the assertion body, negated (SAT = counterexample).
+                // `check a`: the assertion body, negated (SAT = counterexample) —
+                // so the body lowers at negative polarity.
                 let ctx = self.ctx(module);
+                self.pol = Pol {
+                    positive: false,
+                    blocked: false,
+                };
                 let f = self.lower_formula(ctx, body)?;
                 Ok(self.not(f, span))
             }
@@ -373,42 +500,46 @@ impl<'a> Lowerer<'a> {
                 span,
             });
             var_bounds.push((vid, bound));
+            self.var_bound.insert(vid, bound);
             self.binders.push(("this".to_owned(), Binding::Var(vid)));
             pushed += 1;
         }
+        // A run-pred param is a **top-level existential** (positive polarity,
+        // nothing blocked) — always skolemizable (translation-ref §10.6, probe
+        // T9f). A param that is set-valued (an explicit `set`/`some`/`lone` marker)
+        // or higher-arity (default `set`, the jar's free skolem relation) is
+        // minted as a free relation with its membership/multiplicity constraint;
+        // a plain unary param (default `one`) stays a first-order existential over
+        // its atoms.
+        self.pol = Pol::asserted();
+        let mut skolem_constraints: Vec<FormulaId> = Vec::new();
         for &d in &param_decls {
             let decl = ast.decls[d].clone();
-            // A run-pred param is existentially bound **one atom at a time**
-            // below — sound only for a unary `one`-mult param (the unary decl
-            // default). A higher-arity param defaults to `set` (the jar binds it
-            // as a free skolem *relation*, any subset of its bound), and an
-            // explicit `set`/`some`/`lone` marker is set-valued on any arity —
-            // per-tuple binding would be a silently wrong (over-strong) goal.
-            // Typed defer instead (STYLE E5); free-relation params are mt-038.
-            if let ExprKind::Unary { op, .. } = &ast.exprs[decl.bound].kind {
-                if is_mult_marker(*op) && !matches!(op, UnOp::OneOf) {
-                    return Err(TranslateError::LoweringUnsupported {
-                        what: "run pred with a set-valued (`set`/`some`/`lone`) parameter"
-                            .to_owned(),
-                        span: ast.exprs[decl.bound].span,
-                    });
-                }
-            }
-            let bound = self.lower_decl_bound_set(ctx, &decl)?;
-            if self.ir_arity(bound) != Some(1) {
-                return Err(TranslateError::LoweringUnsupported {
-                    what: "run pred with a higher-arity (relation-valued) parameter".to_owned(),
-                    span,
-                });
-            }
+            let set_expr = self.lower_decl_bound_set(ctx, &decl)?;
+            let arity =
+                self.ir_arity(set_expr)
+                    .ok_or_else(|| TranslateError::LoweringUnsupported {
+                        what: "run pred param of unknown arity".to_owned(),
+                        span,
+                    })?;
+            let bound_span = ast.exprs[decl.bound].span;
+            let is_higher_order = arity >= 2 || self.decl_is_higher_order(ctx, decl.bound);
             for name in &decl.names {
-                let vid = self.ir.vars.alloc(Var {
-                    name: name.text.clone(),
-                    arity: 1,
-                    span: name.span,
-                });
-                var_bounds.push((vid, bound));
-                self.binders.push((name.text.clone(), Binding::Var(vid)));
+                if is_higher_order {
+                    let x = self.mint_skolem(ctx, &name.text, &decl, name.span)?;
+                    skolem_constraints
+                        .extend(self.skolem_decl_constraints(ctx, x, &decl, bound_span)?);
+                    self.binders.push((name.text.clone(), Binding::Expr(x)));
+                } else {
+                    let vid = self.ir.vars.alloc(Var {
+                        name: name.text.clone(),
+                        arity: 1,
+                        span: name.span,
+                    });
+                    var_bounds.push((vid, set_expr));
+                    self.var_bound.insert(vid, set_expr);
+                    self.binders.push((name.text.clone(), Binding::Var(vid)));
+                }
                 pushed += 1;
             }
         }
@@ -416,7 +547,14 @@ impl<'a> Lowerer<'a> {
         for _ in 0..pushed {
             self.binders.pop();
         }
+        // `∃ params. (skolem-constraints ∧ body)` — the skolem relations are free
+        // (their existential is discharged by being real relations); the FO params
+        // and the receiver wrap as `some` quantifiers.
         let mut acc = body_f?;
+        if !skolem_constraints.is_empty() {
+            skolem_constraints.push(acc);
+            acc = self.mk_formula(FormulaKind::And(skolem_constraints), span);
+        }
         for (vid, bound) in var_bounds.into_iter().rev() {
             acc = self.mk_formula(
                 FormulaKind::Quant {
@@ -1108,8 +1246,13 @@ impl<'a> Lowerer<'a> {
                 then_branch,
                 else_branch,
             } => {
-                // A formula-valued ITE: `(cond and then) or (not cond and else)`.
-                let c = self.lower_formula(ctx, cond)?;
+                // A formula-valued ITE: `(cond and then) or (not cond and else)`;
+                // `cond` appears in both polarities, so block skolemization in it.
+                let saved = self.pol;
+                self.pol.blocked = true;
+                let c = self.lower_formula(ctx, cond);
+                self.pol = saved;
+                let c = c?;
                 let t = self.lower_formula(ctx, then_branch)?;
                 let el = self.lower_formula(ctx, else_branch)?;
                 let nc = self.not(c, span);
@@ -1192,8 +1335,12 @@ impl<'a> Lowerer<'a> {
     ) -> Result<FormulaId, TranslateError> {
         match op {
             UnOp::Not => {
-                let f = self.lower_formula(ctx, expr)?;
-                Ok(self.not(f, span))
+                // `not` flips skolemization polarity (translation-ref §10.6).
+                let saved = self.pol;
+                self.pol.positive = !self.pol.positive;
+                let f = self.lower_formula(ctx, expr);
+                self.pol = saved;
+                Ok(self.not(f?, span))
             }
             UnOp::No | UnOp::Some | UnOp::Lone | UnOp::One => {
                 let r = self.lower_rel(ctx, expr)?;
@@ -1212,10 +1359,21 @@ impl<'a> Lowerer<'a> {
             | UnOp::Before
             | UnOp::Historically
             | UnOp::Once => {
-                let body = self.lower_formula(ctx, expr)?;
+                // A temporal body defers the whole command; block skolemization
+                // within it (a skolem constant is not sound under `always`).
+                let saved = self.pol;
+                self.pol.blocked = true;
+                let body = self.lower_formula(ctx, expr);
+                self.pol = saved;
                 let (kind, name) = temporal_un(op);
                 self.mark_temporal(name, span);
-                Ok(self.mk_formula(FormulaKind::TemporalUnary { op: kind, body }, span))
+                Ok(self.mk_formula(
+                    FormulaKind::TemporalUnary {
+                        op: kind,
+                        body: body?,
+                    },
+                    span,
+                ))
             }
             _ => Err(TranslateError::LoweringUnsupported {
                 what: "unary operator in a formula position".to_owned(),
@@ -1244,7 +1402,13 @@ impl<'a> Lowerer<'a> {
                 Ok(self.mk_formula(FormulaKind::Or(vec![l, r]), span))
             }
             BinOp::Implies => {
-                let l = self.lower_formula(ctx, lhs)?;
+                // `a implies b` ≡ `¬a ∨ b`: the antecedent flips polarity, the
+                // consequent keeps it (translation-ref §10.6).
+                let saved = self.pol;
+                self.pol.positive = !saved.positive;
+                let l = self.lower_formula(ctx, lhs);
+                self.pol = saved;
+                let l = l?;
                 let r = self.lower_formula(ctx, rhs)?;
                 Ok(self.mk_formula(
                     FormulaKind::Implies {
@@ -1255,13 +1419,22 @@ impl<'a> Lowerer<'a> {
                 ))
             }
             BinOp::Iff => {
-                let l = self.lower_formula(ctx, lhs)?;
-                let r = self.lower_formula(ctx, rhs)?;
-                Ok(self.mk_formula(FormulaKind::Iff(l, r), span))
+                // Both sides appear in both polarities (non-monotone): block
+                // skolemization within them.
+                let saved = self.pol;
+                self.pol.blocked = true;
+                let l = self.lower_formula(ctx, lhs);
+                let r = self.lower_formula(ctx, rhs);
+                self.pol = saved;
+                Ok(self.mk_formula(FormulaKind::Iff(l?, r?), span))
             }
             BinOp::Until | BinOp::Releases | BinOp::Since | BinOp::Triggered => {
-                let l = self.lower_formula(ctx, lhs)?;
-                let r = self.lower_formula(ctx, rhs)?;
+                let saved = self.pol;
+                self.pol.blocked = true;
+                let l = self.lower_formula(ctx, lhs);
+                let r = self.lower_formula(ctx, rhs);
+                self.pol = saved;
+                let (l, r) = (l?, r?);
                 let (kind, name) = temporal_bin(op);
                 self.mark_temporal(name, span);
                 Ok(self.mk_formula(
@@ -1419,7 +1592,11 @@ impl<'a> Lowerer<'a> {
                 then_branch,
                 else_branch,
             } => {
-                let c = self.lower_formula(ctx, cond)?;
+                let saved = self.pol;
+                self.pol.blocked = true;
+                let c = self.lower_formula(ctx, cond);
+                self.pol = saved;
+                let c = c?;
                 let t = self.lower_rel(ctx, then_branch)?;
                 let el = self.lower_rel(ctx, else_branch)?;
                 Ok(self.mk_rel(
@@ -1789,8 +1966,14 @@ impl<'a> Lowerer<'a> {
         body: ExprId,
         span: Span,
     ) -> Result<RelExprId, TranslateError> {
+        // A comprehension is a set-builder: its decls are never skolemized
+        // (`bind_decls` uses the denied regime), and its body is a non-monotone
+        // membership test — block skolemization within it.
+        let saved = self.pol;
+        self.pol.blocked = true;
         let (comp_decls, disj, pushed) = self.bind_decls(ctx, decls, span)?;
         let body_f = self.lower_formula(ctx, body);
+        self.pol = saved;
         for _ in 0..pushed {
             self.binders.pop();
         }
@@ -1885,7 +2068,11 @@ impl<'a> Lowerer<'a> {
                 then_branch,
                 else_branch,
             } => {
-                let c = self.lower_formula(ctx, cond)?;
+                let saved = self.pol;
+                self.pol.blocked = true;
+                let c = self.lower_formula(ctx, cond);
+                self.pol = saved;
+                let c = c?;
                 let t = self.lower_int(ctx, then_branch)?;
                 let el = self.lower_int(ctx, else_branch)?;
                 Ok(self.mk_int(
@@ -1955,7 +2142,10 @@ impl<'a> Lowerer<'a> {
                 pushed += 1;
             }
         }
+        let saved = self.pol;
+        self.pol.blocked = true;
         let body_i = self.lower_int(ctx, body);
+        self.pol = saved;
         for _ in 0..pushed {
             self.binders.pop();
         }
@@ -1992,8 +2182,40 @@ impl<'a> Lowerer<'a> {
                 span,
             }),
             Quant::All | Quant::Some | Quant::No => {
-                let (var_bounds, disj, pushed) = self.bind_decls_vars(ctx, decls, span)?;
+                // Skolemization regime (translation-ref §10.6): a higher-order
+                // decl skolemizes iff this quantifier is an effective existential
+                // in the goal's NNF and nothing above it is blocked. `some` is
+                // effective-existential at positive polarity; `all`/`no` (`= all
+                // ¬`) at negative polarity.
+                let positive = self.pol.positive;
+                let effective_existential = match quant {
+                    Quant::Some => positive,
+                    Quant::All | Quant::No => !positive,
+                    Quant::One | Quant::Lone | Quant::Sum => unreachable!("handled elsewhere"),
+                };
+                let regime = if effective_existential && !self.pol.blocked {
+                    SkolemRegime::Allowed
+                } else {
+                    SkolemRegime::Denied
+                };
+                let bound_decls = self.bind_decls_vars(ctx, decls, span, regime)?;
+                let pushed = bound_decls.pushed;
+
+                // Body polarity: `all` keeps it (monotone), `no` flips it
+                // (`all ¬`); the body is under a universal iff this quant is
+                // effective-universal.
+                let body_positive = if matches!(quant, Quant::No) {
+                    !positive
+                } else {
+                    positive
+                };
+                let saved = self.pol;
+                self.pol = Pol {
+                    positive: body_positive,
+                    blocked: self.pol.blocked || !effective_existential,
+                };
                 let body_f = self.lower_formula(ctx, body);
+                self.pol = saved;
                 for _ in 0..pushed {
                     self.binders.pop();
                 }
@@ -2007,14 +2229,25 @@ impl<'a> Lowerer<'a> {
                 if matches!(quant, Quant::No) {
                     inner = self.not(inner, span);
                 }
-                // disj guard: All/No use implication; Some uses conjunction.
-                if let Some(d) = disj {
+                // Guards: FO-decl pairwise disjointness + every skolem decl's
+                // membership/multiplicity/disjointness constraint. `some`
+                // conjoins them (`∃`, discharged in place); `all`/`no` make them
+                // the antecedent (`∀`-shape, the enclosing `!` of a `check`
+                // discharges the effective `∃` — probe T9c).
+                let mut guards: Vec<FormulaId> = Vec::new();
+                if let Some(d) = bound_decls.fo_disj {
+                    guards.push(d);
+                }
+                guards.extend(bound_decls.skolem_constraints);
+                if !guards.is_empty() {
                     inner = if matches!(quant, Quant::Some) {
-                        self.mk_formula(FormulaKind::And(vec![d, inner]), span)
+                        guards.push(inner);
+                        self.mk_formula(FormulaKind::And(guards), span)
                     } else {
+                        let antecedent = self.conjoin(guards, span);
                         self.mk_formula(
                             FormulaKind::Implies {
-                                antecedent: d,
+                                antecedent,
                                 consequent: inner,
                             },
                             span,
@@ -2022,7 +2255,7 @@ impl<'a> Lowerer<'a> {
                     };
                 }
                 let mut acc = inner;
-                for (vid, bound) in var_bounds.into_iter().rev() {
+                for (vid, bound) in bound_decls.fo.into_iter().rev() {
                     acc = self.mk_formula(
                         FormulaKind::Quant {
                             kind,
@@ -2048,52 +2281,51 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// Binds a decl list into fresh IR quantifier vars, returning `(var, bound)`
-    /// pairs (in order), the optional pairwise-disjointness formula from `disj`
-    /// markers, and the count of pushed binders.
+    /// Binds a decl list, splitting **first-order** decls (bound as fresh IR
+    /// quantifier vars over the bound's tuples) from **higher-order** decls
+    /// (translation-ref §2.3/§10.6). A HO decl ranges over *sub-relations*, not
+    /// tuples — a non-`one` unary marker (`some r: set A`) or a multiplicity-marked
+    /// arrow (`some r: A one -> one B`). Under [`SkolemRegime::Allowed`] a HO decl
+    /// is **skolemized** (a fresh free relation + its membership/multiplicity
+    /// constraint, [`Self::skolem_decl`]); under [`SkolemRegime::Denied`] it is a
+    /// typed `HigherOrder` defer — never a per-tuple wrong verdict (a plain product
+    /// `A -> B` stays first-order: one pair per binding, the jar's reading).
     fn bind_decls_vars(
         &mut self,
         ctx: Ctx,
         decls: &[als_syntax::ast::DeclId],
         span: Span,
-    ) -> Result<(VarBounds, Option<FormulaId>, usize), TranslateError> {
-        let mut var_bounds = Vec::new();
+        regime: SkolemRegime,
+    ) -> Result<BoundDecls, TranslateError> {
+        let mut out = BoundDecls::default();
         let mut disj_parts: Vec<FormulaId> = Vec::new();
-        let mut pushed = 0;
         for &d in decls {
             let decl = self.ast(ctx.module).decls[d].clone();
-            // A decl bound that ranges over *sub-relations* rather than tuples is
-            // genuinely higher-order (the jar skolemizes it away; mettle does
-            // not — ADR-0011). Two shapes: a non-`one` unary marker
-            // (`some r: set A`), and — the gap mt-035's ordering models exposed —
-            // an **arrow bound carrying a multiplicity mark** (`some r: A one ->
-            // one B`, `some tree: Node lone -> Node`), which constrains the whole
-            // relation `r`, not a single tuple. A plain product `A -> B` (no
-            // marks) stays first-order: the var binds one pair at a time, the
-            // jar's reading (closure.als[0]). Binding a multiplicity-marked arrow
-            // per-tuple would silently over-constrain (a single pair where a whole
-            // injective/functional relation is meant) — a typed defer instead,
-            // never a wrong verdict (STYLE E5; belongs to mt-038's bucket).
-            if let ExprKind::Unary { op, .. } = &self.ast(ctx.module).exprs[decl.bound].kind {
-                if is_mult_marker(*op) && !matches!(op, UnOp::OneOf) {
-                    return Err(TranslateError::LoweringUnsupported {
-                        what: "higher-order quantifier decl (`set`/`some`/`lone` bound)".to_owned(),
-                        span: self.ast(ctx.module).exprs[decl.bound].span,
-                    });
+            if self.decl_is_higher_order(ctx, decl.bound) {
+                let bound_span = self.ast(ctx.module).exprs[decl.bound].span;
+                if !matches!(regime, SkolemRegime::Allowed) {
+                    return Err(TranslateError::HigherOrder { span: bound_span });
                 }
-            }
-            if self.bound_is_higher_order(ctx, decl.bound) {
-                return Err(TranslateError::LoweringUnsupported {
-                    what: "higher-order quantifier decl (multiplicity-marked arrow bound)"
-                        .to_owned(),
-                    span: self.ast(ctx.module).exprs[decl.bound].span,
-                });
+                // Skolemize each name of the group; collect them for a `disj`.
+                let mut group: Vec<RelExprId> = Vec::new();
+                for name in &decl.names {
+                    let x = self.mint_skolem(ctx, &name.text, &decl, name.span)?;
+                    out.skolem_constraints
+                        .extend(self.skolem_decl_constraints(ctx, x, &decl, bound_span)?);
+                    self.binders.push((name.text.clone(), Binding::Expr(x)));
+                    out.pushed += 1;
+                    group.push(x);
+                }
+                if decl.is_disj && group.len() >= 2 {
+                    self.push_pairwise_disjoint(&group, span, &mut out.skolem_constraints);
+                }
+                continue;
             }
             let bound = self.lower_decl_bound_set(ctx, &decl)?;
-            // A quantified var ranges over the bound's *tuples* (the decl's
-            // implicit `one`, translation-ref §2.3) — its arity is the bound's.
-            // `all R: univ->univ` binds `R` to one pair at a time, exactly the
-            // jar's first-order reading (closure.als[0] is jar-SAT this way).
+            // A first-order quantified var ranges over the bound's *tuples* (the
+            // decl's implicit `one`, translation-ref §2.3) — its arity is the
+            // bound's. `all R: univ->univ` binds `R` to one pair at a time,
+            // exactly the jar's first-order reading (closure.als[0] is jar-SAT).
             let arity =
                 self.ir_arity(bound)
                     .ok_or_else(|| TranslateError::LoweringUnsupported {
@@ -2107,37 +2339,222 @@ impl<'a> Lowerer<'a> {
                     arity,
                     span: name.span,
                 });
-                var_bounds.push((vid, bound));
+                out.fo.push((vid, bound));
+                self.var_bound.insert(vid, bound);
                 self.binders.push((name.text.clone(), Binding::Var(vid)));
-                pushed += 1;
+                out.pushed += 1;
                 group.push(self.mk_rel(RelExprKind::Var(vid), name.span));
             }
             if decl.is_disj && group.len() >= 2 {
                 self.push_pairwise_disjoint(&group, span, &mut disj_parts);
             }
         }
-        let disj = if disj_parts.is_empty() {
+        out.fo_disj = if disj_parts.is_empty() {
             None
         } else {
             Some(self.conjoin(disj_parts, span))
         };
-        Ok((var_bounds, disj, pushed))
+        Ok(out)
+    }
+
+    /// Whether a decl bound is genuinely higher-order (translation-ref §10.6): a
+    /// non-`one` unary multiplicity marker, or a multiplicity-marked arrow. A
+    /// plain product `A -> B` (no marks) is first-order (one pair per binding).
+    fn decl_is_higher_order(&self, ctx: Ctx, bound: ExprId) -> bool {
+        if let ExprKind::Unary { op, .. } = &self.ast(ctx.module).exprs[bound].kind {
+            if is_mult_marker(*op) && !matches!(op, UnOp::OneOf) {
+                return true;
+            }
+        }
+        self.bound_is_higher_order(ctx, bound)
+    }
+
+    /// Mints a fresh skolem relation `$<cmdLabel>_<var>` for a higher-order decl
+    /// (translation-ref §10.6, probe T9): arity = the decl's bound-set arity, lower
+    /// `{}`, upper = the sound abstract upper of the bound's denotation. Records
+    /// `(rel, bound)` for [`LoweredGoal::skolem_bounds`] and returns the relation
+    /// expression the var binds to.
+    fn mint_skolem(
+        &mut self,
+        ctx: Ctx,
+        var: &str,
+        decl: &Decl,
+        span: Span,
+    ) -> Result<RelExprId, TranslateError> {
+        let set_expr = self.lower_decl_bound_set(ctx, decl)?;
+        let arity = self
+            .ir_arity(set_expr)
+            .ok_or(TranslateError::HigherOrder { span })?;
+        let upper = self
+            .abstract_upper(set_expr)
+            .ok_or(TranslateError::HigherOrder { span })?;
+        debug_assert_eq!(upper.arity(), arity, "skolem abstract-upper arity mismatch");
+        let name = if self.cmd_label.is_empty() {
+            format!("${var}")
+        } else {
+            format!("${}_{}", self.cmd_label, var)
+        };
+        let rel = self.ir.relations.alloc(Relation { name, arity, span });
+        let lower = TupleSet::empty(arity);
+        self.skolem_bounds.push((rel, RelBound::new(lower, upper)));
+        Ok(self.mk_rel(RelExprKind::Relation(rel), span))
+    }
+
+    /// The membership + multiplicity constraint conjuncts on a skolem relation
+    /// `x`, from its decl's bound shape (translation-ref §10.6, probes T9a/b/f/g):
+    /// a unary marker → `x in A` (+ `some`/`lone` test); a mult-marked (or plain
+    /// higher-arity) arrow → the shared [`Self::arrow_value_constraint`]; any other
+    /// bound → membership only.
+    fn skolem_decl_constraints(
+        &mut self,
+        ctx: Ctx,
+        x: RelExprId,
+        decl: &Decl,
+        span: Span,
+    ) -> Result<Vec<FormulaId>, TranslateError> {
+        let bound = decl.bound;
+        match self.ast(ctx.module).exprs[bound].kind.clone() {
+            ExprKind::Unary { op, expr } if is_mult_marker(op) => {
+                // `exactly A` means `x = A`, not `x in A`; defer rather than
+                // emit a weaker membership (never a wrong verdict, STYLE E5).
+                if matches!(op, UnOp::ExactlyOf) {
+                    return Err(TranslateError::HigherOrder { span });
+                }
+                let rel = self.lower_rel(ctx, expr)?;
+                let mut cs = vec![self.mk_formula(
+                    FormulaKind::RelCompare {
+                        op: RelCmpOp::Subset,
+                        lhs: x,
+                        rhs: rel,
+                    },
+                    span,
+                )];
+                if let Some(test) = mult_of_marker(op) {
+                    cs.push(self.mk_formula(FormulaKind::MultTest { test, expr: x }, span));
+                }
+                Ok(cs)
+            }
+            ExprKind::Arrow {
+                lhs,
+                lhs_mult,
+                rhs_mult,
+                rhs,
+            } => self.arrow_value_constraint(ctx, x, lhs, lhs_mult, rhs_mult, rhs, span, &mut 0),
+            _ => {
+                // A plain (non-arrow, non-marked) bound of arity ≥ 2, e.g. a
+                // run-pred param `r: someBinaryRel`: membership only (default
+                // `set`).
+                let rel = self.lower_rel(ctx, bound)?;
+                Ok(vec![self.mk_formula(
+                    FormulaKind::RelCompare {
+                        op: RelCmpOp::Subset,
+                        lhs: x,
+                        rhs: rel,
+                    },
+                    span,
+                )])
+            }
+        }
+    }
+
+    /// A sound **upper bound** for the denotation of a lowered relation
+    /// expression, by abstract evaluation against the existing [`Bounds`]
+    /// (translation-ref §10.6): sig/field relations → their upper set, constants,
+    /// product/union/intersect/difference/override/join/transpose/closure. Returns
+    /// `None` for anything not soundly boundable (a bound depending on an outer
+    /// variable, a comprehension, an `Int[·]` cast, an ITE, a prime) → the caller
+    /// defers. Deterministic: every set is `BTreeSet`-backed.
+    fn abstract_upper(&self, r: RelExprId) -> Option<TupleSet> {
+        match &self.ir.rel_exprs[r].kind {
+            RelExprKind::Relation(rel) => Some(self.bounds.bounds.get(*rel)?.upper().clone()),
+            RelExprKind::Const(RelConst::None) => Some(TupleSet::empty(1)),
+            RelExprKind::Const(RelConst::Univ) => Some(self.univ_upper()),
+            RelExprKind::Const(RelConst::Iden) => Some(self.iden_upper()),
+            RelExprKind::Binary { op, lhs, rhs } => {
+                let a = self.abstract_upper(*lhs)?;
+                // `a - b ⊆ a` and `a & b ⊆ a` need no upper for `b` — so a
+                // right operand mettle cannot bound (a comprehension) does not
+                // sink the whole bound (this is what unlocks messaging.als's
+                // `some r: (MsgsLiveOnTick[t] - {…}) one -> one …`).
+                match op {
+                    RelBinOp::Diff => Some(a),
+                    RelBinOp::Intersect => match self.abstract_upper(*rhs) {
+                        Some(b) => tupleset_intersect(&a, &b),
+                        None => Some(a),
+                    },
+                    RelBinOp::Product => Some(tupleset_product(&a, &self.abstract_upper(*rhs)?)),
+                    RelBinOp::Union => tupleset_union(&a, &self.abstract_upper(*rhs)?),
+                    // `a ++ b ⊆ a ∪ b`: sound only with `b`'s upper.
+                    RelBinOp::Override => tupleset_union(&a, &self.abstract_upper(*rhs)?),
+                    RelBinOp::Join => tupleset_join(&a, &self.abstract_upper(*rhs)?),
+                }
+            }
+            RelExprKind::Unary { op, expr } => {
+                let a = self.abstract_upper(*expr)?;
+                match op {
+                    RelUnOp::Transpose => tupleset_transpose(&a),
+                    RelUnOp::Closure => tupleset_closure(&a),
+                    RelUnOp::ReflexiveClosure => {
+                        let c = tupleset_closure(&a)?;
+                        tupleset_union(&c, &self.iden_upper())
+                    }
+                }
+            }
+            // A bound variable is over-approximated by the upper of its own
+            // declared bound (an enclosing existential — see `var_bound`): a
+            // sound, `t`-independent upper for a skolem bound like `f[t]`.
+            RelExprKind::Var(v) => {
+                let bound = *self.var_bound.get(v)?;
+                self.abstract_upper(bound)
+            }
+            // A comprehension, an int-atom cast, a prime, or an ITE is not a
+            // constant over the bounds — no sound static upper (defer).
+            RelExprKind::Prime(_)
+            | RelExprKind::IfThenElse { .. }
+            | RelExprKind::Comprehension { .. }
+            | RelExprKind::IntToAtom(_) => None,
+        }
+    }
+
+    /// `univ`'s upper bound: every atom, unary.
+    fn univ_upper(&self) -> TupleSet {
+        let mut ts = TupleSet::empty(1);
+        for (atom, _) in self.bounds.bounds.universe.iter() {
+            ts.insert(Tuple::new(vec![atom]));
+        }
+        ts
+    }
+
+    /// `iden`'s upper bound: `{(a, a) | a ∈ univ}`.
+    fn iden_upper(&self) -> TupleSet {
+        let mut ts = TupleSet::empty(2);
+        for (atom, _) in self.bounds.bounds.universe.iter() {
+            ts.insert(Tuple::new(vec![atom, atom]));
+        }
+        ts
     }
 
     /// Like [`Self::bind_decls_vars`] but returns [`CompDecl`]s for a
-    /// comprehension (each var + its unary bound).
+    /// comprehension (each var + its unary bound). Comprehension decls are never
+    /// skolemized (a set-builder is genuinely higher-order over its members), so it
+    /// always uses [`SkolemRegime::Denied`] — a HO comprehension decl defers.
     fn bind_decls(
         &mut self,
         ctx: Ctx,
         decls: &[als_syntax::ast::DeclId],
         span: Span,
     ) -> Result<(Vec<CompDecl>, Option<FormulaId>, usize), TranslateError> {
-        let (var_bounds, disj, pushed) = self.bind_decls_vars(ctx, decls, span)?;
-        let comp = var_bounds
+        let bound = self.bind_decls_vars(ctx, decls, span, SkolemRegime::Denied)?;
+        debug_assert!(
+            bound.skolem_constraints.is_empty(),
+            "denied regime cannot mint skolems"
+        );
+        let comp = bound
+            .fo
             .into_iter()
             .map(|(var, bound)| CompDecl { var, bound })
             .collect();
-        Ok((comp, disj, pushed))
+        Ok((comp, bound.fo_disj, bound.pushed))
     }
 
     fn push_pairwise_disjoint(
@@ -2930,6 +3347,130 @@ type FuncIdx = als_types::FuncId;
 
 /// A list of quantifier/`sum` variables with their (unary) bounds, in order.
 type VarBounds = Vec<(crate::ir::VarId, RelExprId)>;
+
+/// Whether higher-order decls in a decl list may be skolemized here
+/// (translation-ref §10.6). `Denied` at an effective-universal quantifier, under a
+/// blocked context, or in a comprehension — a HO decl then defers typed.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum SkolemRegime {
+    Allowed,
+    Denied,
+}
+
+/// The outcome of binding a decl list ([`Lowerer::bind_decls_vars`]): the
+/// first-order `(var, bound)` pairs, their pairwise-disjointness guard, the
+/// skolem decls' membership/multiplicity constraints, and the binder count.
+#[derive(Default)]
+struct BoundDecls {
+    /// First-order `(var, bound)` pairs, in order (wrapped as nested quantifiers).
+    fo: VarBounds,
+    /// Pairwise disjointness of `disj`-marked first-order groups, if any.
+    fo_disj: Option<FormulaId>,
+    /// Membership/multiplicity/disjointness constraints of skolemized HO decls.
+    skolem_constraints: Vec<FormulaId>,
+    /// Count of pushed binders (to pop after the body).
+    pushed: usize,
+}
+
+/// The Cartesian product of two tuple sets (arity a+b).
+fn tupleset_product(a: &TupleSet, b: &TupleSet) -> TupleSet {
+    let mut out = TupleSet::empty(a.arity() + b.arity());
+    for ta in a.iter() {
+        for tb in b.iter() {
+            let mut atoms = ta.atoms().to_vec();
+            atoms.extend_from_slice(tb.atoms());
+            out.insert(Tuple::new(atoms));
+        }
+    }
+    out
+}
+
+/// The union of two same-arity tuple sets (`None` on arity mismatch — a lowering
+/// bug the type checker precludes).
+fn tupleset_union(a: &TupleSet, b: &TupleSet) -> Option<TupleSet> {
+    if a.arity() != b.arity() {
+        return None;
+    }
+    let mut out = a.clone();
+    for t in b.iter() {
+        out.insert(t.clone());
+    }
+    Some(out)
+}
+
+/// The intersection of two same-arity tuple sets.
+fn tupleset_intersect(a: &TupleSet, b: &TupleSet) -> Option<TupleSet> {
+    if a.arity() != b.arity() {
+        return None;
+    }
+    let mut out = TupleSet::empty(a.arity());
+    for t in a.iter() {
+        if b.contains(t) {
+            out.insert(t.clone());
+        }
+    }
+    Some(out)
+}
+
+/// The relational join of two tuple sets over the shared middle column (result
+/// arity a+b-2), or `None` if either is unary (join arity would be < 1).
+fn tupleset_join(a: &TupleSet, b: &TupleSet) -> Option<TupleSet> {
+    if a.arity() < 2 && b.arity() < 2 {
+        return None;
+    }
+    let out_arity = a.arity() + b.arity() - 2;
+    if out_arity < 1 {
+        return None;
+    }
+    let mut out = TupleSet::empty(out_arity);
+    for ta in a.iter() {
+        let left = ta.atoms();
+        let mid = *left.last()?;
+        for tb in b.iter() {
+            let right = tb.atoms();
+            if right[0] == mid {
+                let mut atoms = left[..left.len() - 1].to_vec();
+                atoms.extend_from_slice(&right[1..]);
+                out.insert(Tuple::new(atoms));
+            }
+        }
+    }
+    Some(out)
+}
+
+/// The transpose of a binary tuple set (`None` if not arity 2).
+fn tupleset_transpose(a: &TupleSet) -> Option<TupleSet> {
+    if a.arity() != 2 {
+        return None;
+    }
+    let mut out = TupleSet::empty(2);
+    for t in a.iter() {
+        let atoms = t.atoms();
+        out.insert(Tuple::new(vec![atoms[1], atoms[0]]));
+    }
+    Some(out)
+}
+
+/// The transitive closure of a binary tuple set (a sound upper for `^r`), by
+/// fixpoint (`None` if not arity 2). Deterministic (`BTreeSet` throughout).
+fn tupleset_closure(a: &TupleSet) -> Option<TupleSet> {
+    if a.arity() != 2 {
+        return None;
+    }
+    let mut out = a.clone();
+    loop {
+        let step = tupleset_join(&out, a)?;
+        let mut grew = false;
+        for t in step.iter() {
+            if out.insert(t.clone()) {
+                grew = true;
+            }
+        }
+        if !grew {
+            return Some(out);
+        }
+    }
+}
 
 /// Whether `op` is a declaration-bound multiplicity marker.
 fn is_mult_marker(op: UnOp) -> bool {

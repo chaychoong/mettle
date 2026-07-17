@@ -135,6 +135,22 @@ pub enum TranslateError {
         span: Span,
     },
 
+    /// The command's goal requires **higher-order quantification that cannot be
+    /// skolemized** (translation-ref §2.3/§10.6): a higher-order decl — one
+    /// ranging over sub-relations (`some r: set A`, `some f: A one -> one B`) or a
+    /// relation-valued run-pred param — at **universal** polarity, or nested in
+    /// the scope of a universal quantifier. mettle skolemizes effective-existential
+    /// HO decls into free relations; the rest are exactly what the reference's
+    /// `HigherOrderDeclException` rejects, so mettle raises the same message as a
+    /// typed defer (never a wrong verdict, STYLE E5). The bound whose upper set
+    /// mettle could not soundly abstract also lands here (a decl bound depending on
+    /// an outer variable, a comprehension, an `Int[·]` cast).
+    #[error("Analysis cannot be performed since it requires higher-order quantification that could not be skolemized")]
+    HigherOrder {
+        /// Span of the offending higher-order decl.
+        span: Span,
+    },
+
     /// Encoding this command outgrew the configured effort budget
     /// ([`crate::SolveOptions::encode_budget`]) — a **resource guard**, not a
     /// model reject: the goal is well-formed but grounding it would exhaust
@@ -166,6 +182,7 @@ impl TranslateError {
             | TranslateError::TemporalUnsupported { span, .. }
             | TranslateError::StringUnsupported { span }
             | TranslateError::LoweringUnsupported { span, .. }
+            | TranslateError::HigherOrder { span }
             | TranslateError::CapacityExceeded { span, .. } => *span,
         }
     }

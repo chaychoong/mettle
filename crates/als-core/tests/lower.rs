@@ -777,3 +777,83 @@ fn icmp(o: IntCmpOp) -> &'static str {
         IntCmpOp::Ge => ">=",
     }
 }
+// ---------------------------------------------------------------------------
+// higher-order skolemization goldens (mt-038, translation-ref §10.6, probes T9)
+// ---------------------------------------------------------------------------
+// The jar dump (DumpK2) shows the quantifier before Kodkod's internal
+// skolemization, with the skolem-named variable `<cmdLabel>_<var>`; mettle mints
+// the free relation `$<cmdLabel>_<var>` directly at lowering and discharges the
+// quantifier. Divergences (translation-ref §10.3): mettle omits the jar's
+// redundant per-arrow-column memberships (e); and for a `check`-of-assert the
+// resolved command carries no assert name, so the skolem falls back to `$<var>`
+// (the reference names it `Inj_f`) — cosmetic only (instances are never diffed).
+
+#[test]
+fn golden_skolem_set_unary() {
+    // run foo { some r: set A | some r } for 3
+    // jar dump T9a: (some foo_r: set this/A | some foo_r) — Kodkod skolemizes
+    // `foo_r` to a free relation ⊆ upper(A); replacement = `$foo_r in A` ∧ body.
+    let (ir, cj) = build("sig A {}\nrun foo { some r: set A | some r } for 3\n");
+    assert_eq!(command_str(&ir, &cj), "($foo_r in A and some $foo_r)");
+}
+
+#[test]
+fn golden_skolem_marked_arrow() {
+    // run foo { some f: A one -> one B | some f } for 3
+    // jar dump T9b: some foo_f: set A->B | foo_f in (A->B) and
+    //   (all v0 | one(v0.foo_f) and (v0.foo_f) in B) and
+    //   (all v1 | one(foo_f.v1) and (foo_f.v1) in A) and some foo_f
+    // mettle: same, redundant per-column memberships omitted (divergence e).
+    let (ir, cj) = build("sig A {}\nsig B {}\nrun foo { some f: A one -> one B | some f } for 3\n");
+    assert_eq!(
+        command_str(&ir, &cj),
+        "($foo_f in (A -> B) and (all _c0: A | one (_c0 . $foo_f)) \
+         and (all _c1: B | one ($foo_f . _c1)) and some $foo_f)"
+    );
+}
+
+#[test]
+fn golden_skolem_check_negated_universal() {
+    // assert Inj { all f: A lone -> B | some f } check Inj for 3
+    // jar dump T9c: !(all Inj_f: set A->B | (Inj_f in (A->B) and
+    //   (all v0:A | (v0.Inj_f) in B) and (all v1:B | lone(Inj_f.v1) and
+    //   (Inj_f.v1) in A)) implies some Inj_f)
+    // The check's `!` makes the universal `f` an effective existential →
+    // skolemizable; the decl-constraint becomes the antecedent (probe T9c).
+    let (ir, cj) =
+        build("sig A {}\nsig B {}\nassert Inj { all f: A lone -> B | some f }\ncheck Inj for 3\n");
+    assert_eq!(
+        command_str(&ir, &cj),
+        "!((($f in (A -> B) and (all _c0: B | lone ($f . _c0))) => some $f))"
+    );
+}
+
+#[test]
+fn golden_skolem_run_pred_relational_param() {
+    // pred p[r: A -> B] { some r } run p for 3
+    // jar dump T9f: some p_r: set A->B | p_r in (A->B) and some p_r
+    let (ir, cj) = build("sig A {}\nsig B {}\npred p[r: A -> B] { some r }\nrun p for 3\n");
+    assert_eq!(command_str(&ir, &cj), "($p_r in (A -> B) and some $p_r)");
+}
+
+#[test]
+fn golden_skolem_run_pred_set_unary_param() {
+    // pred q[s: set A] { some s } run q — a set-marked unary param.
+    let (ir, cj) = build("sig A {}\npred q[s: set A] { some s }\nrun q for 3\n");
+    assert_eq!(command_str(&ir, &cj), "($q_s in A and some $q_s)");
+}
+
+#[test]
+fn ho_universal_polarity_defers_typed() {
+    // `all r: set A | …` is effective-universal → jar HigherOrderDeclException,
+    // mettle `TranslateError::HigherOrder` (probe T9d).
+    assert!(matches!(
+        try_build("sig A {}\nrun foo { all r: set A | some r } for 3\n"),
+        Err(TranslateError::HigherOrder { .. })
+    ));
+    // A HO existential nested under a universal `all x: A` (probe T9e).
+    assert!(matches!(
+        try_build("sig A {}\nrun foo { all x: A | some r: set A | x in r } for 3\n"),
+        Err(TranslateError::HigherOrder { .. })
+    ));
+}

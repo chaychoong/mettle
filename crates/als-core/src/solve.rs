@@ -199,11 +199,21 @@ fn translate(
     opts: SolveOptions,
 ) -> Result<Translated, TranslateError> {
     let mut cnf = Cnf::new();
-    let (prim, primary_vars, layout) = allocate_primaries(&bounds.bounds, &mut cnf);
+    // Bind the goal's skolem relations (translation-ref §10.6): a higher-order
+    // existential decl minted a free relation with lower `{}` and upper = the
+    // sound abstract upper of its bound. Adding them to the bounds is the whole
+    // seam — the primary allocator, encoder, decoder, and self-check treat a
+    // skolem exactly like any other bounded relation (zero special-casing). Bound
+    // by `RelId` (allocation, source-walk order), so numbering stays deterministic.
+    let mut aug_bounds = bounds.bounds.clone();
+    for (rel, bound) in &goal.skolem_bounds {
+        aug_bounds.bind(*rel, bound.clone());
+    }
+    let (prim, primary_vars, layout) = allocate_primaries(&aug_bounds, &mut cnf);
 
     let encoder = Encoder::new(
         ir,
-        &bounds.bounds,
+        &aug_bounds,
         &prim,
         cnf,
         scoped.bitwidth,

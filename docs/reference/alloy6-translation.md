@@ -340,9 +340,25 @@ resolution contract's "both sides `is_int`" case (resolution §4.5, probe 02).
   `$foo_x`), or `<funcName>_<var>` inside a function body, or just `<var>` when
   the enclosing command/func label already contains `$` (anonymous `run$2` →
   `$x`). (jar-verified: probe T9 — `run foo { some x: A | … }` → skolem `$foo_x`.)
-  For the Rung-3 slice mettle may skip skolemization entirely and quantify
+  For **first-order** decls mettle skips skolemization entirely and quantifies
   directly (skolemization is an optimization + a nicer instance, never a verdict
   change) — see ADR-0011.
+- **Higher-order decls are the exception (mt-038, §10.6):** a decl that ranges
+  over *sub-relations* rather than tuples — a non-`one` unary marker (`some r: set
+  A`), a multiplicity-marked arrow bound (`some f: A one -> one B`), or a run-pred
+  param that is higher-arity or `set`/`some`/`lone`-marked — **cannot** be lowered
+  first-order and is skolemizable *only* when it is an effective existential not in
+  the scope of a universal (the depth-0 rule). mettle mints a fresh **free
+  relation** `$<cmdLabel>_<var>` (lower `{}`, upper = the sound abstract upper of
+  the decl bound's denotation), conjoins the decl's membership + multiplicity
+  constraint (unary → `$r in bound` + `some`/`lone` test; arrow → the shared
+  `arrow_value_constraint`), binds the var to that relation, and drops the
+  quantifier. A HO decl that is **not** skolemizable (universal polarity, or under
+  a universal) is what the jar's `HigherOrderDeclException` rejects — "Analysis
+  cannot be performed since it requires higher-order quantification that could not
+  be skolemized" — and mettle raises the same as a typed `TranslateError::
+  HigherOrder`, never a wrong verdict. Full polarity rule + probes T9a–T9g in
+  §10.6.
 
 ### 2.4 Integers, cardinality, `sum` — under overflow
 
@@ -1047,3 +1063,54 @@ Regression pin renamed `field_disj_synthesizes_disjointness` in
 `tests/solve.rs`; goldens `golden_field_disj_*` / `field_disj_var_group_defers`
 in `tests/lower.rs`. `firewire.als` uses the same construct but stays behind a
 higher-order-quantifier typed defer (expected).
+
+### 10.6 mt-038 higher-order skolemization probes (jar-verified 2026-07-17)
+
+Harness: `scratchpad/probe/DumpK2.java` (`debugExtractKInput()`, symmetry 0,
+noOverflow false, `inferPartialInstance` false) over `scratchpad/probe/ho/*.als`.
+The dump is the Kodkod goal **before** Kodkod's internal skolemization (the
+solver log line `optimizing bounds and formula (… skolemizing)` runs *after*
+`debugExtractKInput`), so it shows the quantifier with its **skolem-named
+variable** (`<cmdLabel>_<var>`) and the decl-membership/multiplicity conjuncts A4
+attaches, but not the free relation Kodkod mints. That free relation carries
+lower `{}` and upper = the constant upper bound of the decl's bound expression,
+and is named `$<cmdLabel>_<var>` in a decoded instance (probe T9). mettle mints it
+directly at lowering (a real `Ir::relations` entry + `Bounds` entry) since it has
+no separate Kodkod skolemization pass.
+
+| # | Case | Jar dump (relevant conjunct) | Pinned fact |
+|---|---|---|---|
+| T9a | `run foo { some r: set A \| some r }` | `some foo_r: set this/A \| some foo_r` | a top-level existential over a `set`-marked unary decl skolemizes: variable `foo_r` = `<cmdLabel>_<var>`; skolem relation upper = `upper(A)`, lower `{}`; replacement = membership `$foo_r in A` (Kodkod adds it internally from the decl expr) ∧ body. `set` adds **no** multiplicity test |
+| T9b | `run foo { some f: A one -> one B \| some f }` | `some foo_f: set this/A -> this/B \| foo_f in (A->B) and (all v0:A \| one(v0.foo_f) and (v0.foo_f) in B) and (all v1:B \| one(foo_f.v1) and (foo_f.v1) in A) and some f` | a mult-marked arrow decl skolemizes to a relation of the arrow's arity, upper = `upper(A)×upper(B)`; the replacement is exactly `arrow_value_constraint` (membership + per-column mults) ∧ body — the same seam the field-bound path (L4/L20–L26) uses. mettle omits the redundant per-column memberships (divergence (e)) |
+| T9c | `assert Inj { all f: A lone -> B \| some f } check Inj` | `!(all Inj_f: set A -> B \| (Inj_f in (A->B) and (all v0:A \| (v0.Inj_f) in B) and (all v1:B \| lone(Inj_f.v1) and (Inj_f.v1) in A)) implies some Inj_f)` | under a `check` (outer `!`), a **universal** HO decl is skolemizable — after NNF `!all` is `∃`. The replacement is `(decl-constraint) implies body`; the enclosing `!` turns `!(⋯ ⟹ some f)` into `decl-constraint ∧ ¬(some f)` — the counterexample form. Confirms the polarity rule: an `all` at **negative** polarity is effective-existential and emits `Implies(bound_constraint(X), body)` |
+| T9d | `run foo { all r: set A \| some r }` | `ERROR: edu.mit.csail.sdg.alloy4.ErrorType: Analysis cannot be performed since it requires higher-order quantification that could not be skolemized.` | a HO `all` at **positive** polarity (effective-universal) is **not** skolemizable → the jar raises `HigherOrderDeclException`, an **error**, not a verdict. mettle defers with the same message text (typed, never a wrong verdict) |
+| T9e | `run foo { all x: A \| some r: set A \| x in r }` | same `ERROR` as T9d | a HO existential **nested under a universal** (`all x`) cannot be skolemized at depth 0 (would need a skolem *function*). Same error; mettle defers |
+| T9f | `pred p[r: A -> B] { some r } run p` | `some p_r: set this/A -> this/B \| p_r in (A->B) and some p_r` | a run-pred **relation-valued parameter** (arity ≥ 2, default `set`) is a top-level existential → skolemized as a free relation, membership `$p_r in (A->B)` ∧ body. Variable `p_r` = `<predName>_<var>`. A plain product bound adds membership only (no per-column mults) |
+| T9g | `run foo { some r: lone A \| some r }` / `some r: some A \| no r` | `some foo_r: lone this/A \| some foo_r` / `some foo_r: some this/A \| no foo_r` | `lone`/`some`-marked unary decls skolemize like `set` but add the matching multiplicity test on `$foo_r` (`lone $foo_r` / `some $foo_r`) alongside membership |
+
+**The polarity rule (as implemented in `bind_decls_vars`/`run_pred`, mt-038).**
+mettle does not NNF the goal; it threads a `SkolemPolarity { positive, blocked }`
+through `lower_formula` (`positive` flips on `not`, on an `implies` antecedent, and
+is set false for a `check`'s negated body before lowering; `blocked` is set by an
+effective-**universal** quantifier body and by non-monotone contexts —
+`iff`/int-ITE condition — and by comprehension/`sum`/temporal bodies). A HO decl
+is **skolemizable** iff its quantifier is effective-existential *and* `!blocked`:
+a `some` at positive polarity (emit `And([bound_constraint(X), body]`), or an
+`all`/`no` at negative polarity (emit `Implies(bound_constraint(X), body)` /
+`Implies(bound_constraint(X), Not(body))`; the enclosing `!` discharges it). This
+is sound in a non-NNF lowering because the surrounding context down to the goal
+root is a monotone Boolean context (∧/∨ only — `blocked` excludes ∀ and
+non-monotone connectives) with the tracked parity, so `∃` pulls to the top past
+∧/∨/∨-with-free-var without a skolem function. Everything else keeps a typed
+defer aligned with the jar's `HigherOrderDeclException` text (`TranslateError::
+HigherOrder`). Run-pred params are top-level (`positive`, `!blocked`) → always
+skolemizable. **The skolem's upper bound** is a small sound abstract evaluation
+over the lowered bound `RelExpr` against the existing `Bounds` (`abstract_upper`):
+sig/field relations → their upper set, `univ`/`none`/`iden` constants, product,
+union, intersect (∩ of uppers), difference (upper of lhs), override (∪ of uppers),
+join (relational join of uppers), transpose, `^`/`*` closure; anything else
+(a bound-variable-dependent bound, comprehension, `Int[·]`, ITE, prime) → `None` →
+typed defer. First-order quantifiers are **never** skolemized (ADR-0011 unchanged);
+the SB-0 "skolemization count divergence" note (§10.4) therefore still applies only
+to first-order goals mettle chooses not to skolemize, and the pinned SB-0 goldens
+(no HO decls) are unchanged.

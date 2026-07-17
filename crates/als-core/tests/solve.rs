@@ -399,7 +399,7 @@ fn ledger004_unrelated_field_still_pins_count_16() {
     assert_eq!(count(src, 0), 16);
 }
 
-// ============ higher-order relation quantifier — typed defer ============
+// ======= higher-order quantifier skolemization (mt-038, §10.6) =======
 
 /// Whether command 0 of `src` defers at lowering (a typed `TranslateError`,
 /// never a wrong verdict — STYLE E5).
@@ -413,27 +413,78 @@ fn lower_defers(src: &str) -> bool {
     lower_command(&world, &graph, &scoped, &bounds, &mut ir, 0).is_err()
 }
 
-/// A quantifier whose bound is a **multiplicity-marked arrow** (`some r: A one
-/// -> one B | …`, `some tree: Node lone -> Node | …`) ranges over sub-relations,
-/// not tuples — genuinely higher-order (the jar skolemizes it; mettle does not).
-/// It is a typed defer, never a per-tuple wrong verdict. This is the gap the
-/// mt-035 ordering models exposed (ringlead/firewire over-/under-constrained
-/// before the defer). A plain arrow bound stays first-order (one pair per
-/// binding, the jar's reading), and a sig quantifier is unaffected.
+/// A **top-level existential** whose bound is higher-order — a mult-marked arrow
+/// (`some r: A one -> one B`, `some tree: N lone -> N`) or a `set`-marked unary —
+/// now **skolemizes** into a free relation instead of deferring (translation-ref
+/// §10.6, probes T9a/T9b). This was the gap the mt-035 ordering models exposed
+/// (ringlead/firewire). Jar-verified via the `DumpK2` probe harness: each of these
+/// solves (SAT) rather than raising `HigherOrderDeclException`.
 #[test]
-fn higher_order_arrow_quantifier_defers() {
+fn higher_order_existential_skolemizes_sat() {
+    // jar: SAT — some 2-atom relation `r ⊆ A×B` that is injective + total-ish and
+    // non-empty exists at scope 3.
+    assert_sat("sig A {}\nsig B {}\nrun { some r: A one -> one B | some r } for 3\n");
+    // jar: SAT — a partial-function successor tree over N.
+    assert_sat("sig N {}\nrun { some tree: N lone -> N | N in N.tree } for 3\n");
+    // jar: SAT — `some r: set A | some r` (a non-empty subset of A exists).
+    assert_sat("sig A {}\nrun foo { some r: set A | some r } for 3\n");
+    // A plain product bound is first-order (a single pair) — no skolem, still SAT.
+    assert_sat("sig A {}\nsig B {}\nrun { some r: A -> B | some r } for 2\n");
+    // A first-order sig quantifier is unaffected — still SAT.
+    assert_sat("sig A {}\nrun { some x: A | x = x } for 2\n");
+}
+
+/// A higher-order decl at **universal** polarity, or nested under a universal,
+/// cannot be skolemized at depth 0 — the jar raises `HigherOrderDeclException`
+/// ("Analysis cannot be performed since it requires higher-order quantification
+/// that could not be skolemized"). mettle defers with the same typed error
+/// (`TranslateError::HigherOrder`), never a wrong verdict (probes T9d/T9e,
+/// jar-verified).
+#[test]
+fn higher_order_universal_defers_typed() {
+    // `all r: set A | …` — effective-universal, not skolemizable (jar: ERROR).
     assert!(lower_defers(
-        "sig A {}\nsig B {}\nrun { some r: A one -> one B | some r }\n"
+        "sig A {}\nrun foo { all r: set A | some r } for 3\n"
     ));
+    // A HO existential nested under a universal `all x: A` (jar: ERROR).
     assert!(lower_defers(
-        "sig N {}\nrun { some tree: N lone -> N | N in N.tree }\n"
+        "sig A {}\nrun foo { all x: A | some r: set A | x in r } for 3\n"
     ));
-    // A plain product bound is first-order (a single pair) — must NOT defer.
-    assert!(!lower_defers(
-        "sig A {}\nsig B {}\nrun { some r: A -> B | some r } for 2\n"
-    ));
-    // A first-order sig quantifier is unaffected.
-    assert!(!lower_defers("sig A {}\nrun { some x: A | x = x } for 2\n"));
+}
+
+/// A `check` negates the assertion, so a **universal** higher-order decl in the
+/// assertion body becomes an effective existential after NNF and **is**
+/// skolemizable (translation-ref §10.6, probe T9c). `all f: A lone -> B | some f`
+/// asserts every injective partial map A→B is non-empty; the empty map is a
+/// counterexample, so the `check` is SAT (a counterexample found) in the jar.
+#[test]
+fn higher_order_check_negation_skolemizes_sat() {
+    // jar: SAT (counterexample = the empty relation, which is `lone` per column
+    // yet not `some`).
+    assert_sat("sig A {}\nsig B {}\nassert Inj { all f: A lone -> B | some f }\ncheck Inj for 3\n");
+}
+
+/// A run-pred **relation-valued parameter** binds as a free skolem relation
+/// (translation-ref §10.6, probe T9f): `pred p[r: A -> B] { some r } run p` is
+/// SAT (some non-empty A→B relation exists). A `set`-marked unary param likewise.
+#[test]
+fn run_pred_relational_param_skolemizes_sat() {
+    // jar: SAT.
+    assert_sat("sig A {}\nsig B {}\npred p[r: A -> B] { some r }\nrun p for 3\n");
+    // jar: SAT — a `set`-marked unary param.
+    assert_sat("sig A {}\npred q[s: set A] { some s }\nrun q for 3\n");
+    // A plain unary param (default `one`) stays first-order — still SAT.
+    assert_sat("sig A {}\npred u[x: A] { x = x }\nrun u for 2\n");
+}
+
+/// A skolem's membership constraint is real: `some r: some A | some r` demands a
+/// non-empty subset of `A`, but the fact `no A` empties `A`, so no witness exists
+/// — jar UNSAT. Confirms the skolem is bounded/constrained by its decl, not free
+/// to roam the whole universe (translation-ref §10.6).
+#[test]
+fn higher_order_skolem_membership_unsat() {
+    // jar: UNSAT.
+    assert_unsat("sig A {}\nfact { no A }\nrun { some r: some A | some r } for 3\n");
 }
 
 // ===================== known limitation (mt-037 owns) =====================
