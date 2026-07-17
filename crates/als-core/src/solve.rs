@@ -32,15 +32,31 @@ use crate::ir::{Ir, RelId};
 use crate::lower::LoweredGoal;
 use crate::scope::ScopedUniverse;
 
-/// Solver knobs (translation-ref §2.4). Currently just the LEDGER-001 overflow
-/// switch; kept as a struct so mt-036/Rung-4 can extend it without churning the
-/// driver signature.
+/// Solver knobs (translation-ref §2.4): the LEDGER-001 overflow switch plus the
+/// **deterministic effort budgets**. Kept as a struct so mt-036/Rung-4 can
+/// extend it without churning the driver signature.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub struct SolveOptions {
     /// Whether integer overflow **wraps** (`true`) or **excludes the instance**.
     /// The default (`false`) is mettle's canonical **forbid** per LEDGER-001 —
     /// which is exactly `bool::default()`, so `Default` is derived.
     pub allow_overflow: bool,
+    /// Maximum SAT conflicts [`solve_goal`] may analyze before giving up with
+    /// [`SolveVerdict::Unknown`]; `None` (default) = unlimited. A **fixed
+    /// function of the input** (STYLE D1), unlike a wall-clock timeout: the same
+    /// goal with the same budget exhausts identically on every machine. When
+    /// the budget stops a solve, all effort stops with it — nothing keeps
+    /// allocating in the background (the mt-035 corpus-OOM lesson).
+    pub conflict_budget: Option<u64>,
+    /// Maximum **encode effort** — gate requests (folded or not), join
+    /// pair-scans, and CNF clauses — before the encoder fails with
+    /// [`TranslateError::CapacityExceeded`]; `None` (default) = unlimited. The
+    /// grounding-side guard, bounding both memory *and time*: a goal whose
+    /// primary-variable count looks small can still ground to a
+    /// machine-exhausting CNF, and a constant-heavy goal can burn hours in a
+    /// grounded walk that folds every gate away and would never trip a plain
+    /// clause cap. Deterministic — a pure count of the traversal (STYLE D1).
+    pub encode_budget: Option<u64>,
 }
 
 /// A solving verdict for one command.
@@ -51,6 +67,12 @@ pub enum SolveVerdict {
     Sat(Instance),
     /// Unsatisfiable (no `run` instance / no `check` counterexample).
     Unsat,
+    /// No verdict: the [`SolveOptions::conflict_budget`] was exhausted first.
+    /// Only reachable when a budget is set — an unbudgeted solve never returns
+    /// this. Not a verdict about the model, and never conflated with one
+    /// (STYLE E5); callers surface it as "gave up", the way the jar surfaces a
+    /// solver timeout.
+    Unknown,
 }
 
 /// A decoded instance: one concrete [`TupleSet`] per relation, over the command
@@ -186,7 +208,7 @@ fn translate(
         cnf,
         scoped.bitwidth,
         scoped.sig_atom_count,
-        opts.allow_overflow,
+        opts,
     );
     let (goal_bool, mut cnf) = encoder.finish_goal(goal.goal)?;
 
@@ -237,7 +259,9 @@ fn decode(layout: &[RelDecode], universe: &Universe, assign: &Assignment) -> Ins
 /// # Errors
 /// A [`TranslateError`] when the goal contains a construct outside the Rung-3
 /// encoder slice (integer arithmetic / `sum` / int-`ITE`, or — as an internal
-/// invariant failure — a temporal node); never a wrong verdict (STYLE E5).
+/// invariant failure — a temporal node), or [`TranslateError::CapacityExceeded`]
+/// when a configured [`SolveOptions::clause_cap`] is outgrown; never a wrong
+/// verdict (STYLE E5).
 pub fn solve_goal(
     ir: &Ir,
     scoped: &ScopedUniverse,
@@ -250,14 +274,17 @@ pub fn solve_goal(
         return Ok(SolveVerdict::Unsat);
     }
     let mut solver = CdclSolver::new(&t.cnf);
-    Ok(match solver.solve() {
-        Outcome::Sat(model) => {
-            let inst = decode(&t.layout, &t.universe, &model);
-            debug_self_check(ir, scoped, goal, &inst, *opts);
-            SolveVerdict::Sat(inst)
-        }
-        Outcome::Unsat => SolveVerdict::Unsat,
-    })
+    Ok(
+        match solver.solve_within(opts.conflict_budget.unwrap_or(u64::MAX)) {
+            None => SolveVerdict::Unknown,
+            Some(Outcome::Sat(model)) => {
+                let inst = decode(&t.layout, &t.universe, &model);
+                debug_self_check(ir, scoped, goal, &inst, *opts);
+                SolveVerdict::Sat(inst)
+            }
+            Some(Outcome::Unsat) => SolveVerdict::Unsat,
+        },
+    )
 }
 
 /// A deterministic enumerator over the **distinct instances** of one command
@@ -265,6 +292,12 @@ pub fn solve_goal(
 /// instance and blocks its primary-variable projection; the sequence ends at the
 /// first `Unsat`. Blocking over primary variables (never Tseitin auxiliaries)
 /// makes the count the **raw / SB-0** model count (ADR-0002 counting net).
+///
+/// Enumeration is **exact by contract** and ignores
+/// [`SolveOptions::conflict_budget`]: a budget-truncated enumeration would be a
+/// silently wrong count, the one thing the counting net exists to prevent. The
+/// [`SolveOptions::encode_budget`] guard *does* apply (it fails [`enumerate`]
+/// loudly at translate time, corrupting nothing).
 #[derive(Debug)]
 pub struct InstanceEnumerator<'a> {
     solver: CdclSolver,

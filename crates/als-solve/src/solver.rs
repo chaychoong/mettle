@@ -295,24 +295,55 @@ impl CdclSolver {
     /// May be called repeatedly; after a `Sat` outcome, [`CdclSolver::add_clause`]
     /// a blocking clause to enumerate the next model (learned clauses persist).
     pub fn solve(&mut self) -> Outcome {
+        match self.solve_within(u64::MAX) {
+            Some(outcome) => outcome,
+            // `u64::MAX` conflicts cannot be reached before the heat death of
+            // the machine; the unbounded entry never observes exhaustion.
+            None => unreachable!("u64::MAX conflict budget exhausted"),
+        }
+    }
+
+    /// Decides the current formula within a **deterministic effort budget**:
+    /// at most `conflict_limit` conflicts are analyzed before giving up.
+    ///
+    /// Returns `None` when the budget is exhausted without a verdict — the
+    /// bounded analogue of a wall-clock timeout that is a fixed function of the
+    /// input (STYLE D1/D4): the same formula with the same limit exhausts (or
+    /// not) identically on every machine, unlike a kill-after-N-seconds harness.
+    ///
+    /// On exhaustion the solver backtracks to level 0 and **remains usable**:
+    /// clauses learned so far are sound resolvents and are retained, so a later
+    /// `solve`/`solve_within` (or `add_clause`) continues correctly. Nothing
+    /// keeps running in the background — when this returns, all effort stops
+    /// and interim search state above level 0 is freed. That containment is the
+    /// point: callers that used to abandon a worker thread on a wall-clock
+    /// timeout leaked a live, allocating search forever (the mt-035 corpus OOM).
+    pub fn solve_within(&mut self, conflict_limit: u64) -> Option<Outcome> {
         if self.unsat {
-            return Outcome::Unsat;
+            return Some(Outcome::Unsat);
         }
         // Level-0 propagation of any units added since the last solve.
         if self.propagate().is_some() {
             self.unsat = true;
-            return Outcome::Unsat;
+            return Some(Outcome::Unsat);
         }
         let mut luby = Luby::new();
         let mut restart_limit = RESTART_BASE * luby.next();
         let mut conflicts_since_restart: u64 = 0;
+        let mut total_conflicts: u64 = 0;
 
         loop {
             if let Some(confl) = self.propagate() {
                 if self.decision_level() == 0 {
                     self.unsat = true;
-                    return Outcome::Unsat;
+                    return Some(Outcome::Unsat);
                 }
+                if total_conflicts >= conflict_limit {
+                    // Budget exhausted: stop cleanly, keep what was learned.
+                    self.cancel_until(0);
+                    return None;
+                }
+                total_conflicts += 1;
                 conflicts_since_restart += 1;
                 let (learnt, bt_level) = self.analyze(confl);
                 self.cancel_until(bt_level);
@@ -326,7 +357,7 @@ impl CdclSolver {
                     continue;
                 }
                 match self.pick_branch() {
-                    None => return Outcome::Sat(self.extract_model()),
+                    None => return Some(Outcome::Sat(self.extract_model())),
                     Some(lit) => {
                         self.trail_lim.push(self.trail.len());
                         let ok = self.enqueue(lit, None);
@@ -874,6 +905,37 @@ mod tests {
         assert!(model.value(x) && model.value(y));
         solver.add_clause(block(&model, &[x, y]));
         assert_eq!(solver.solve(), Outcome::Unsat);
+    }
+
+    #[test]
+    fn solve_within_exhausts_and_recovers() {
+        // (x∨y)(x∨¬y)(¬x∨y)(¬x∨¬y): UNSAT, and no verdict is reachable without
+        // analyzing at least one conflict.
+        let mut cnf = Cnf::new();
+        let x = var(&mut cnf);
+        let y = var(&mut cnf);
+        cnf.add_clause(vec![Lit::positive(x), Lit::positive(y)]);
+        cnf.add_clause(vec![Lit::positive(x), Lit::negative(y)]);
+        cnf.add_clause(vec![Lit::negative(x), Lit::positive(y)]);
+        cnf.add_clause(vec![Lit::negative(x), Lit::negative(y)]);
+        let mut solver = CdclSolver::new(&cnf);
+        // Zero budget: the first conflict exhausts it — no verdict.
+        assert_eq!(solver.solve_within(0), None);
+        // The solver stays usable: an unbounded solve completes correctly.
+        assert_eq!(solver.solve(), Outcome::Unsat);
+    }
+
+    #[test]
+    fn solve_within_no_conflicts_ignores_budget() {
+        // A unit-only problem solves by propagation alone: zero budget suffices.
+        let mut cnf = Cnf::new();
+        let x = var(&mut cnf);
+        cnf.add_clause(vec![Lit::positive(x)]);
+        let mut solver = CdclSolver::new(&cnf);
+        match solver.solve_within(0) {
+            Some(Outcome::Sat(a)) => assert!(a.value(x)),
+            other => panic!("expected SAT within zero conflicts, got {other:?}"),
+        }
     }
 
     #[test]

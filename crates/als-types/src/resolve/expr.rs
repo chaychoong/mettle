@@ -257,16 +257,21 @@ impl<'a, 'g> Cx<'a, 'g> {
     }
 
     /// Walks the winning reading's base structure, recording each nested join
-    /// node and base name (mt-031). Join bases never carry implicit `this`.
-    fn flush_rec(&mut self, rec: &RecNode) {
+    /// node and base name (mt-031). `receiver` is the operand the base is joined
+    /// onto (the join arg to its left), used to decide whether a sig-field base
+    /// keeps its implicit `this` (see [`Self::field_base_uses_raw`]).
+    fn flush_rec(&mut self, rec: &RecNode, receiver: Option<ExprId>) {
         match rec {
             RecNode::Name { expr, choice } => {
-                let nc = choice.to_choice(true);
+                let join_base = self.field_base_uses_raw(choice, receiver);
+                let nc = choice.to_choice(join_base);
                 self.record_name(*expr, nc);
             }
             RecNode::Join { expr, arg, base } => {
                 self.record_spine(*expr, SpineChoice::Join);
-                self.flush_rec(base);
+                // The base is joined onto `arg` (`arg . base`), so `arg` is its
+                // receiver for the implicit-`this` decision.
+                self.flush_rec(base, Some(*arg));
                 // The nested join's argument is never finalized in place (it is
                 // buried as a base), so resolve it standalone to record its
                 // choices — discarding any errors/warnings (verdict-neutral, the
@@ -275,6 +280,37 @@ impl<'a, 'g> Cx<'a, 'g> {
             }
             RecNode::Sub | RecNode::Opaque => {}
         }
+    }
+
+    /// Whether a sig-field appearing as a join base uses the **raw** relation
+    /// (implicit `this` stripped) rather than `this.field`.
+    ///
+    /// A field of the current sig only ever carries the implicit-`this`
+    /// (`THIS.join(field)`) candidate (resolution-doc §3.3). When such a field is
+    /// a join base `recv . field`, the receiver `recv` replaces `this` — but only
+    /// when the **raw** relation actually joins with it, i.e. `recv`'s last column
+    /// meets the field's owner column. That is the type-directed candidate choice
+    /// `ExprChoice` makes (§4.4, min-weight prefers the penalty-free raw reading
+    /// when it type-checks). When the raw join has no tuple (the receiver instead
+    /// fills the field's declared domain, as in `holds[slot]` for a `State` field
+    /// `holds`), implicit `this` is **kept** so the arg joins `this.field`.
+    fn field_base_uses_raw(&self, choice: &CandOrigin, receiver: Option<ExprId>) -> bool {
+        let CandOrigin::Field {
+            implicit_this: true,
+            field,
+        } = choice
+        else {
+            // Non-field, or a field already without implicit `this`: unaffected
+            // (`to_choice`'s `join_base` only touches an implicit-`this` field).
+            return true;
+        };
+        let Some(recv) = receiver else {
+            // A bare field base with no receiver keeps its implicit `this`.
+            return false;
+        };
+        let recv_ty = self.infer(recv);
+        let raw = &self.r.world.fields[*field].ty;
+        recv_ty.join(&self.r.world, raw).has_tuple(&self.r.world)
     }
 
     /// Resolves `arg` against its own bottom-up type solely to **record** its
@@ -2416,10 +2452,11 @@ impl<'a, 'g> Cx<'a, 'g> {
     /// join / call, and (for a join) its base name — then finalizes it.
     fn finalize_recorded(&mut self, e: ExprId, reading: Reading, p: &Type) -> R {
         match &reading.fin {
-            Fin::Join { base, .. } => {
+            Fin::Join { base, left, .. } => {
                 self.record_spine(e, SpineChoice::Join);
                 let base = base.clone();
-                self.flush_rec(&base);
+                let receiver = *left;
+                self.flush_rec(&base, Some(receiver));
             }
             Fin::Call {
                 func,

@@ -31,6 +31,8 @@ fn solve(src: &str) -> Solved {
         match solve_goal(&ir, &scoped, &goal, &bounds, &SolveOptions::default()).expect("solve") {
             SolveVerdict::Sat(inst) => inst,
             SolveVerdict::Unsat => panic!("expected SAT for a corruption test:\n{src}"),
+            // No budget set (default options), so `Unknown` is unreachable.
+            SolveVerdict::Unknown => unreachable!("unbudgeted solve returned Unknown"),
         };
     Solved {
         ir,

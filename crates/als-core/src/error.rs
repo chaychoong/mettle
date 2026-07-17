@@ -134,6 +134,20 @@ pub enum TranslateError {
         /// Span of the construct.
         span: Span,
     },
+
+    /// Encoding this command outgrew the configured effort budget
+    /// ([`crate::SolveOptions::encode_budget`]) — a **resource guard**, not a
+    /// model reject: the goal is well-formed but grounding it would exhaust
+    /// memory or time. The analogue of the reference's engine capacity errors
+    /// (the baseline's jar-side `Error` bucket); never a wrong verdict
+    /// (STYLE E5).
+    #[error("the problem is too large to encode: exceeded the encode budget of {cap}")]
+    CapacityExceeded {
+        /// The effort budget that was exceeded.
+        cap: u64,
+        /// Span of the goal node being encoded when the budget ran out.
+        span: Span,
+    },
 }
 
 impl TranslateError {
@@ -151,7 +165,8 @@ impl TranslateError {
             | TranslateError::BitwidthTooLarge { span, .. }
             | TranslateError::TemporalUnsupported { span, .. }
             | TranslateError::StringUnsupported { span }
-            | TranslateError::LoweringUnsupported { span, .. } => *span,
+            | TranslateError::LoweringUnsupported { span, .. }
+            | TranslateError::CapacityExceeded { span, .. } => *span,
         }
     }
 }

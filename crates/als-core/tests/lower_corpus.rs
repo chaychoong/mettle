@@ -42,7 +42,9 @@ fn defer_bucket(e: &TranslateError) -> &'static str {
         TranslateError::StringUnsupported { .. } => "string",
         TranslateError::LoweringUnsupported { .. } => "not-yet-lowerable",
         // Scope-phase errors cannot reach the lowerer (the universe already
-        // succeeded), but keep the match exhaustive.
+        // succeeded) and the clause cap is an encode-phase guard, but keep the
+        // match exhaustive.
+        TranslateError::CapacityExceeded { .. } => "capacity",
         TranslateError::ScopeOnSubset { .. }
         | TranslateError::ScopeOnEnum { .. }
         | TranslateError::StringScopeNotExact { .. }

@@ -37,6 +37,8 @@ fn assert_sat(src: &str) {
     match verdict {
         SolveVerdict::Sat(inst) => assert_bounds_respected(&inst, &bounds),
         SolveVerdict::Unsat => panic!("expected SAT (jar-verified), got UNSAT:\n{src}"),
+        // No budget set (default options), so `Unknown` is unreachable.
+        SolveVerdict::Unknown => unreachable!("unbudgeted solve returned Unknown"),
     }
 }
 
@@ -102,6 +104,24 @@ fn acyclicity_unsat() {
 fn subset_in_sigs_sat() {
     assert_sat(
         "sig A {}\nsig B in A {}\nsig C in A {}\nrun { some B and some C and no (B & C) } for 3\n",
+    );
+}
+
+/// REGRESSION (latent mt-031 resolver bug, surfaced by the corpus solve sweep
+/// on `examples/systems/javatypes_soundness.als`): a sig field used as a
+/// **box-join base** inside its own sig fact, where the join arg does *not* fill
+/// the field's owner column (`holds[S]` for a `State`/`Obj` field
+/// `holds: S -> lone V`), must keep its implicit `this` (`this.holds`) so the arg
+/// joins the field's declared domain — arity 1 — not the raw owner-headed
+/// relation (arity 2). The old resolver stripped implicit `this` from *every*
+/// join base, so `holds[S] & V` intersected an arity-2 with an arity-1 and the
+/// encoder panicked (`intersect arity mismatch`). Jar accepts the model; this
+/// minimal shape is SAT (some `Obj` maps a slot to a value). The full model's
+/// command [0] is UNSAT per the corpus baseline (`check TypeSoundness for 3`).
+#[test]
+fn sig_field_boxjoin_keeps_implicit_this_sat() {
+    assert_sat(
+        "sig V {}\nsig S {}\nsig Obj { holds: S -> lone V } { some holds[S] & V }\nrun {} for 3\n",
     );
 }
 

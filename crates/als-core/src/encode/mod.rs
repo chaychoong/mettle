@@ -74,6 +74,18 @@ pub(crate) struct Encoder<'a> {
     universe_len: usize,
     /// LEDGER-001 overflow switch: `false` (default) forbids, `true` wraps.
     allow_overflow: bool,
+    /// Resource guard ([`crate::SolveOptions::encode_budget`]): encoding fails
+    /// with [`TranslateError::CapacityExceeded`] once the spent effort — gate
+    /// requests (folded or not, via [`Circuit`]), join pair-scans, and CNF
+    /// clauses — outgrows this budget, instead of grounding until the machine
+    /// runs out of memory (or time: constant-heavy matrices fold every gate
+    /// away, so a clause count alone never trips while the walk still burns
+    /// hours). `None` = unlimited. Checked in the memoising node wrappers,
+    /// which every grounding re-visit passes through, so spend between checks
+    /// is bounded by one node's own work.
+    encode_budget: Option<u64>,
+    /// Effort spent so far (see [`Encoder::encode_budget`]); grows only.
+    ops: u64,
     /// Active grounding bindings: quantifier/comprehension var → its atom tuple.
     env: BTreeMap<VarId, Tuple>,
     /// Overflow flags gathered from integer ops; `¬flag` is conjoined into the
@@ -87,7 +99,8 @@ pub(crate) struct Encoder<'a> {
 
 impl<'a> Encoder<'a> {
     /// Creates an encoder over a freshly-minted (primary-variables-installed)
-    /// CNF pool.
+    /// CNF pool. `opts` carries the LEDGER-001 overflow switch and the encode
+    /// budget; the solver-side knobs it also holds are not read here.
     pub(crate) fn new(
         ir: &'a Ir,
         bounds: &'a Bounds,
@@ -95,7 +108,7 @@ impl<'a> Encoder<'a> {
         cnf: Cnf,
         bitwidth: u32,
         int_start: usize,
-        allow_overflow: bool,
+        opts: crate::solve::SolveOptions,
     ) -> Self {
         let universe_len = bounds.universe.len();
         Self {
@@ -106,7 +119,9 @@ impl<'a> Encoder<'a> {
             bitwidth,
             int_start,
             universe_len,
-            allow_overflow,
+            allow_overflow: opts.allow_overflow,
+            encode_budget: opts.encode_budget,
+            ops: 0,
             env: BTreeMap::new(),
             overflow_flags: Vec::new(),
             matrix_cache: BTreeMap::new(),
@@ -137,9 +152,23 @@ impl<'a> Encoder<'a> {
 
     // ------------------------------------------------------------------ gates
 
-    /// A transient gate builder over the CNF (constructed per call; stateless).
+    /// A transient gate builder over the CNF (constructed per call; effort is
+    /// metered into [`Encoder::ops`]).
     fn circ(&mut self) -> Circuit<'_> {
-        Circuit::new(&mut self.cnf)
+        Circuit::new(&mut self.cnf, &mut self.ops)
+    }
+
+    /// The encode-budget resource guard (see the [`Encoder::encode_budget`]
+    /// field): fails the encode once the spent effort outgrows the budget.
+    /// `span` locates the node being encoded when the budget ran out (for the
+    /// caret render).
+    fn check_capacity(&self, span: als_syntax::Span) -> Result<(), TranslateError> {
+        match self.encode_budget {
+            Some(cap) if self.ops + self.cnf.clauses().len() as u64 > cap => {
+                Err(TranslateError::CapacityExceeded { cap, span })
+            }
+            _ => Ok(()),
+        }
     }
 
     // ------------------------------------------------------------- relations
@@ -151,6 +180,7 @@ impl<'a> Encoder<'a> {
                 return Ok(m.clone());
             }
         }
+        self.check_capacity(self.ir.rel_exprs[id].span)?;
         let m = self.rel_uncached(id)?;
         if self.env.is_empty() {
             self.matrix_cache.insert(id, m.clone());
@@ -342,6 +372,9 @@ impl<'a> Encoder<'a> {
         debug_assert!(arity >= 1, "join produces arity 0");
         // Group contributions per result tuple, then or-reduce.
         let mut groups: BTreeMap<Tuple, Vec<(Bool, Bool)>> = BTreeMap::new();
+        // The pair scan is the encoder's one quadratic that creates no gates on
+        // a mismatch — meter it so the encode budget sees the work.
+        self.ops += (a.len() as u64).saturating_mul(b.len() as u64);
         for (ta, av) in a.iter() {
             let mid = ta.atoms()[ta.arity() - 1];
             for (tb, bv) in b.iter() {
@@ -444,6 +477,7 @@ impl<'a> Encoder<'a> {
                 return Ok(b);
             }
         }
+        self.check_capacity(self.ir.formulas[id].span)?;
         let b = self.formula_uncached(id)?;
         if self.env.is_empty() {
             self.formula_cache.insert(id, b);
@@ -673,6 +707,7 @@ impl<'a> Encoder<'a> {
                 return Ok(v.clone());
             }
         }
+        self.check_capacity(self.ir.int_exprs[id].span)?;
         let v = self.int_uncached(id)?;
         if self.env.is_empty() {
             self.int_cache.insert(id, v.clone());

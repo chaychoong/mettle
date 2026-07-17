@@ -349,7 +349,29 @@ impl<'a> Lowerer<'a> {
         }
         for &d in &param_decls {
             let decl = ast.decls[d].clone();
+            // A run-pred param is existentially bound **one atom at a time**
+            // below — sound only for a unary `one`-mult param (the unary decl
+            // default). A higher-arity param defaults to `set` (the jar binds it
+            // as a free skolem *relation*, any subset of its bound), and an
+            // explicit `set`/`some`/`lone` marker is set-valued on any arity —
+            // per-tuple binding would be a silently wrong (over-strong) goal.
+            // Typed defer instead (STYLE E5); free-relation params are mt-038.
+            if let ExprKind::Unary { op, .. } = &ast.exprs[decl.bound].kind {
+                if is_mult_marker(*op) && !matches!(op, UnOp::OneOf) {
+                    return Err(TranslateError::LoweringUnsupported {
+                        what: "run pred with a set-valued (`set`/`some`/`lone`) parameter"
+                            .to_owned(),
+                        span: ast.exprs[decl.bound].span,
+                    });
+                }
+            }
             let bound = self.lower_decl_bound_set(ctx, &decl)?;
+            if self.ir_arity(bound) != Some(1) {
+                return Err(TranslateError::LoweringUnsupported {
+                    what: "run pred with a higher-arity (relation-valued) parameter".to_owned(),
+                    span,
+                });
+            }
             for name in &decl.names {
                 let vid = self.ir.vars.alloc(Var {
                     name: name.text.clone(),
@@ -1719,12 +1741,34 @@ impl<'a> Lowerer<'a> {
         let mut pushed = 0;
         for &d in decls {
             let decl = self.ast(ctx.module).decls[d].clone();
+            // An explicit non-`one` marker (`set`/`some`/`lone`) makes the decl
+            // range over *subsets*, not tuples — genuinely higher-order. The jar
+            // errors on these (no skolemization in mettle, ADR-0011); a typed
+            // defer, never a silently-per-tuple wrong verdict (STYLE E5).
+            if let ExprKind::Unary { op, .. } = &self.ast(ctx.module).exprs[decl.bound].kind {
+                if is_mult_marker(*op) && !matches!(op, UnOp::OneOf) {
+                    return Err(TranslateError::LoweringUnsupported {
+                        what: "higher-order quantifier decl (`set`/`some`/`lone` bound)".to_owned(),
+                        span: self.ast(ctx.module).exprs[decl.bound].span,
+                    });
+                }
+            }
             let bound = self.lower_decl_bound_set(ctx, &decl)?;
+            // A quantified var ranges over the bound's *tuples* (the decl's
+            // implicit `one`, translation-ref §2.3) — its arity is the bound's.
+            // `all R: univ->univ` binds `R` to one pair at a time, exactly the
+            // jar's first-order reading (closure.als[0] is jar-SAT this way).
+            let arity =
+                self.ir_arity(bound)
+                    .ok_or_else(|| TranslateError::LoweringUnsupported {
+                        what: "quantifier over a bound of unknown arity".to_owned(),
+                        span,
+                    })?;
             let mut group: Vec<RelExprId> = Vec::new();
             for name in &decl.names {
                 let vid = self.ir.vars.alloc(Var {
                     name: name.text.clone(),
-                    arity: 1,
+                    arity,
                     span: name.span,
                 });
                 var_bounds.push((vid, bound));
@@ -2306,6 +2350,11 @@ impl<'a> Lowerer<'a> {
     /// chain that reaches all of `elem`. Its models are exactly the `n!`
     /// linear orders over a fixed `elem`, so it pins the enumerated count in the
     /// subsig partition-choice case where the bounds pinning does not engage.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one pinned formula built clause by clause; splitting would scatter \
+                  the LEDGER-004 shape across helpers"
+    )]
     fn total_order_formula(
         &mut self,
         elem: RelExprId,

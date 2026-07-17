@@ -49,12 +49,18 @@ impl Bool {
 /// the lifetime of one command's translation.
 pub struct Circuit<'a> {
     cnf: &'a mut Cnf,
+    /// Encode-effort meter (the encoder's, threaded through): each gate
+    /// *request* costs its input width, **whether or not constant folding
+    /// elides the gate** — folded requests are exactly the work a clause cap
+    /// alone cannot see (a grounded walk over constant-heavy matrices burns
+    /// time while minting nothing). A deterministic pure count (STYLE D1).
+    ops: &'a mut u64,
 }
 
 impl<'a> Circuit<'a> {
-    /// Wraps a CNF for gate construction.
-    pub fn new(cnf: &'a mut Cnf) -> Self {
-        Self { cnf }
+    /// Wraps a CNF for gate construction, metering effort into `ops`.
+    pub fn new(cnf: &'a mut Cnf, ops: &'a mut u64) -> Self {
+        Self { cnf, ops }
     }
 
     /// The negation of `b` — never mints a variable (`¬` is free on a literal).
@@ -81,6 +87,7 @@ impl<'a> Circuit<'a> {
     /// `z ↔ ⋀ lᵢ`.
     #[must_use]
     pub fn and_many(&mut self, items: Vec<Bool>) -> Bool {
+        *self.ops += items.len() as u64 + 1;
         let mut lits = Vec::with_capacity(items.len());
         for b in items {
             match b {
@@ -110,6 +117,7 @@ impl<'a> Circuit<'a> {
     /// Disjunction of many values (the De Morgan dual of [`Circuit::and_many`]).
     #[must_use]
     pub fn or_many(&mut self, items: Vec<Bool>) -> Bool {
+        *self.ops += items.len() as u64 + 1;
         let mut lits = Vec::with_capacity(items.len());
         for b in items {
             match b {
@@ -215,8 +223,9 @@ mod tests {
         let mut cnf = Cnf::new();
         let x = cnf.fresh_var();
         let y = cnf.fresh_var();
+        let mut ops = 0u64;
         let g = {
-            let mut c = Circuit::new(&mut cnf);
+            let mut c = Circuit::new(&mut cnf, &mut ops);
             build(&mut c, Bool::var(x), Bool::var(y))
         };
         match g {
@@ -268,11 +277,15 @@ mod tests {
     #[test]
     fn constants_fold() {
         let mut cnf = Cnf::new();
-        let mut c = Circuit::new(&mut cnf);
+        let mut ops = 0u64;
+        let mut c = Circuit::new(&mut cnf, &mut ops);
         assert_eq!(c.and(Bool::TRUE, Bool::FALSE), Bool::FALSE);
         assert_eq!(c.or(Bool::TRUE, Bool::FALSE), Bool::TRUE);
         assert_eq!(c.not(Bool::TRUE), Bool::FALSE);
-        // No auxiliary variables were minted for constant folding.
+        // No auxiliary variables were minted for constant folding…
         assert_eq!(cnf.num_vars(), 0);
+        // …but the folded gate requests were still metered (the effort a
+        // clause count alone cannot see).
+        assert!(ops > 0, "folded gates must still cost effort");
     }
 }

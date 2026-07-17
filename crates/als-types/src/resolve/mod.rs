@@ -229,7 +229,7 @@ impl<'g> Resolver<'g> {
         exact.sort_unstable_by_key(|s| s.index());
         exact.dedup();
         for cmd in &mut self.world.commands {
-            cmd.additional_exact = exact.clone();
+            cmd.additional_exact.clone_from(&exact);
         }
 
         // Part (b): the ordering-instance seam, in ModuleId order (determinism).

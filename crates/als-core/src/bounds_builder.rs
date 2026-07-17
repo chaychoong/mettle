@@ -756,10 +756,14 @@ impl<'a> BoundsBuilder<'a> {
             );
             parts.push(self.mk_formula(mult_test(MultTest::No, inter), span));
         }
-        let mut body = if parts.len() == 1 {
-            parts.pop().unwrap()
-        } else {
-            self.mk_formula(FormulaKind::And(parts), span)
+        // `parts` always holds at least the equality; a lone part needs no `And`.
+        let mut body = match parts.pop() {
+            Some(only) if parts.is_empty() => only,
+            Some(last) => {
+                parts.push(last);
+                self.mk_formula(FormulaKind::And(parts), span)
+            }
+            None => unreachable!("witness parts always include the equality"),
         };
         // Wrap innermost-first so v0 is the outermost quantifier.
         for &v in vars.iter().rev() {

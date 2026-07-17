@@ -215,8 +215,9 @@ mod tests {
     fn card_equals(n: usize, target: i64, width: usize) -> bool {
         let mut cnf = Cnf::new();
         let vars: Vec<Var> = (0..n).map(|_| cnf.fresh_var()).collect();
+        let mut ops = 0u64;
         let eq = {
-            let mut circ = Circuit::new(&mut cnf);
+            let mut circ = Circuit::new(&mut cnf, &mut ops);
             let mut ib = IntBuilder::new(&mut circ, width);
             let mut acc = vec![Bool::FALSE];
             for &v in &vars {
@@ -256,8 +257,9 @@ mod tests {
     fn signed_lt_orders_negatives_below_positives() {
         // -1 < 1 : build constants and assert lt is constant-true.
         let mut cnf = Cnf::new();
+        let mut ops = 0u64;
         let (lt1, lt2, eqn) = {
-            let mut circ = Circuit::new(&mut cnf);
+            let mut circ = Circuit::new(&mut cnf, &mut ops);
             let mut ib = IntBuilder::new(&mut circ, 4);
             let neg1 = IntVal::constant(-1, 4);
             let pos1 = IntVal::constant(1, 4);
@@ -276,8 +278,9 @@ mod tests {
     fn add_signed_wraps_and_flags_overflow() {
         // 7 + 1 at bitwidth 4 overflows (max is 7).
         let mut cnf = Cnf::new();
+        let mut ops = 0u64;
         let (val_is_neg8, overflow) = {
-            let mut circ = Circuit::new(&mut cnf);
+            let mut circ = Circuit::new(&mut cnf, &mut ops);
             let mut ib = IntBuilder::new(&mut circ, 4);
             let seven = IntVal::constant(7, 4);
             let one = IntVal::constant(1, 4);
@@ -292,8 +295,9 @@ mod tests {
         assert_eq!(overflow, Bool::Const(true), "signed overflow flagged");
         // A non-overflowing add: 2 + 3 = 5, no flag.
         let mut cnf2 = Cnf::new();
+        let mut ops2 = 0u64;
         let (val5, ovf2) = {
-            let mut circ = Circuit::new(&mut cnf2);
+            let mut circ = Circuit::new(&mut cnf2, &mut ops2);
             let mut ib = IntBuilder::new(&mut circ, 4);
             let (sum, ovf) = ib.add_signed(&IntVal::constant(2, 4), &IntVal::constant(3, 4));
             (ib.eq(&sum, &IntVal::constant(5, 4)), ovf)
