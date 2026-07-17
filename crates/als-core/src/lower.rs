@@ -1741,10 +1741,18 @@ impl<'a> Lowerer<'a> {
         let mut pushed = 0;
         for &d in decls {
             let decl = self.ast(ctx.module).decls[d].clone();
-            // An explicit non-`one` marker (`set`/`some`/`lone`) makes the decl
-            // range over *subsets*, not tuples — genuinely higher-order. The jar
-            // errors on these (no skolemization in mettle, ADR-0011); a typed
-            // defer, never a silently-per-tuple wrong verdict (STYLE E5).
+            // A decl bound that ranges over *sub-relations* rather than tuples is
+            // genuinely higher-order (the jar skolemizes it away; mettle does
+            // not — ADR-0011). Two shapes: a non-`one` unary marker
+            // (`some r: set A`), and — the gap mt-035's ordering models exposed —
+            // an **arrow bound carrying a multiplicity mark** (`some r: A one ->
+            // one B`, `some tree: Node lone -> Node`), which constrains the whole
+            // relation `r`, not a single tuple. A plain product `A -> B` (no
+            // marks) stays first-order: the var binds one pair at a time, the
+            // jar's reading (closure.als[0]). Binding a multiplicity-marked arrow
+            // per-tuple would silently over-constrain (a single pair where a whole
+            // injective/functional relation is meant) — a typed defer instead,
+            // never a wrong verdict (STYLE E5; belongs to mt-038's bucket).
             if let ExprKind::Unary { op, .. } = &self.ast(ctx.module).exprs[decl.bound].kind {
                 if is_mult_marker(*op) && !matches!(op, UnOp::OneOf) {
                     return Err(TranslateError::LoweringUnsupported {
@@ -1752,6 +1760,13 @@ impl<'a> Lowerer<'a> {
                         span: self.ast(ctx.module).exprs[decl.bound].span,
                     });
                 }
+            }
+            if self.bound_is_higher_order(ctx, decl.bound) {
+                return Err(TranslateError::LoweringUnsupported {
+                    what: "higher-order quantifier decl (multiplicity-marked arrow bound)"
+                        .to_owned(),
+                    span: self.ast(ctx.module).exprs[decl.bound].span,
+                });
             }
             let bound = self.lower_decl_bound_set(ctx, &decl)?;
             // A quantified var ranges over the bound's *tuples* (the decl's
@@ -1828,6 +1843,30 @@ impl<'a> Lowerer<'a> {
                     span,
                 ));
             }
+        }
+    }
+
+    /// Whether a quantifier decl bound is genuinely **higher-order** — it ranges
+    /// over sub-relations, not tuples — so it cannot be lowered first-order and
+    /// must defer (translation-ref §2.3). A plain product `A -> B` (no marks) is
+    /// first-order (one pair per binding, closure.als[0]); an arrow carrying any
+    /// multiplicity mark (`A one -> one B`, `Node lone -> Node`) constrains the
+    /// whole relation the var ranges over, which is second-order. Walks the arrow
+    /// tree so a mark on any column is caught.
+    fn bound_is_higher_order(&self, ctx: Ctx, e: ExprId) -> bool {
+        match &self.ast(ctx.module).exprs[e].kind {
+            ExprKind::Arrow {
+                lhs,
+                lhs_mult,
+                rhs_mult,
+                rhs,
+            } => {
+                lhs_mult.is_some()
+                    || rhs_mult.is_some()
+                    || self.bound_is_higher_order(ctx, *lhs)
+                    || self.bound_is_higher_order(ctx, *rhs)
+            }
+            _ => false,
         }
     }
 

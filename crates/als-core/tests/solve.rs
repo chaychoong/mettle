@@ -269,6 +269,173 @@ fn check_test1_sat_skolem_count_divergence() {
     assert_eq!(count(src, 0), 464);
 }
 
+// ================= util/ordering exact bounds (LEDGER-004) =================
+// The approved two-part rule, tested as two DISTINCT behaviors at symmetry 0
+// (mettle's regime — ADR-0002). Every count is jar-verified via OracleShim
+// (`--symmetry 0 --enumerate exhaustive`, noOverflow forbid); the tests never
+// run the jar (STYLE U3).
+//
+// (a) PINNING ENGAGES — the ordered sig has no partition choice (a childless
+//     leaf, or an enum): `first`/`last`/`next` are bound to exact constants over
+//     the atoms in universe order, so the linear order is fully determined and
+//     exactly ONE instance survives at sym0 (probes T4/T4b/T10/T12/T13/T19).
+// (b) PINNING DOES NOT ENGAGE — a proper subsig leaves genuine order freedom:
+//     `first`/`next` are governed only by the hand-built `pred/totalOrder`
+//     formula, so multiple instances survive, the raw sym0 count being
+//     (partition choices) × (n! linear orders) (probes T14a/b/c/e, T15).
+
+/// (a) A childless ordered sig is pinned to a single linear order — exactly ONE
+/// instance at sym0, for every size N=2..6 (probes T10a-e/T4b, jar sym0 = 1).
+/// The order is `S$0 -> S$1 -> … -> S$<N-1>`; uniqueness comes from the exact
+/// bounds on `first`/`next`, not symmetry breaking (mettle does none).
+#[test]
+fn ledger004_childless_ordered_sig_pins_single_instance() {
+    for n in 2..=6 {
+        let src = format!("open util/ordering[A]\nsig A {{}}\nrun {{}} for {n} A\n");
+        assert_eq!(
+            count(src.as_str(), 0),
+            1,
+            "childless ordered sig, for {n} A"
+        );
+    }
+}
+
+/// (a) Merely *opening* the module pins the order even when `first`/`next`/
+/// `last` are never referenced by the command: `run { some A }` has ONE
+/// instance with the open, and **7** without it (probe T19, jar sym0 = 1 vs 7).
+#[test]
+fn ledger004_open_alone_pins_single_instance() {
+    assert_eq!(
+        count("open util/ordering[A]\nsig A {}\nrun { some A }\n", 0),
+        1
+    );
+    // Control: no `open` → the 7 non-empty subsets of a 3-atom set (probe T3).
+    assert_eq!(count("sig A {}\nrun { some A } for 3\n", 0), 7);
+}
+
+/// (a) An `enum` auto-opens ordering with the same single-instance pinning —
+/// `first` = the first declared constant, chain in declaration order (probe
+/// T13, jar sym0 = 1).
+#[test]
+fn ledger004_enum_pins_single_instance() {
+    assert_eq!(count("enum Color { Red, Blue, Green }\nrun {}\n", 0), 1);
+}
+
+/// (a) Two independent `open util/ordering` on distinct sigs pin independently —
+/// still ONE combined instance (probe T12, jar sym0 = 1).
+#[test]
+fn ledger004_two_independent_opens_pin() {
+    let src = "open util/ordering[A] as oa\nopen util/ordering[B] as ob\n\
+               sig A {}\nsig B {}\nrun {} for 3 A, 4 B\n";
+    assert_eq!(count(src, 0), 1);
+}
+
+/// (a) The pin is a genuine hard constant, not a solver preference: a fact
+/// asserting `first & last` is non-empty is UNSAT over 3 pinned atoms (first =
+/// S$0, last = S$2, disjoint) yet SAT over 1 (first = last), proving no
+/// alternate atom can be chosen to dodge the fact (probe T16, jar UNSAT). Also
+/// exercises the inlined `first`/`last` funcs (`last = elem - next.elem`).
+#[test]
+fn ledger004_pin_is_hard_constant() {
+    assert_unsat(
+        "open util/ordering[S] as ord\nsig S {}\n\
+                  fact { some (ord/first & ord/last) }\nrun {} for 3 S\n",
+    );
+    assert_sat(
+        "open util/ordering[S] as ord\nsig S {}\n\
+                fact { some (ord/first & ord/last) }\nrun {} for 1 S\n",
+    );
+}
+
+/// (b) A non-abstract ordered sig with a proper (inexact) subsig leaves genuine
+/// order freedom — pinning does NOT engage, the `pred/totalOrder` formula
+/// governs `first`/`next`, and the raw sym0 count is (subset choices for B) ×
+/// (3! orders) = 7 × 6 = **42** for `for 3 A, 2 B` (probe T14a, jar sym0 = 42).
+#[test]
+fn ledger004_subsig_partition_no_pin_count_42() {
+    let src = "open util/ordering[A]\nsig A {}\nsig B extends A {}\nrun {} for 3 A, 2 B\n";
+    assert_eq!(count(src, 0), 42);
+}
+
+/// (b) Rank freedom isolated from population freedom: with the subsig forced to
+/// exactly one atom, the instances share the identical atom population but seat
+/// B at a different chain rank — sym0 count **6** = 3 ranks × 2! (probe T14b,
+/// jar sym0 = 6).
+#[test]
+fn ledger004_subsig_rank_freedom_count_6() {
+    let src = "open util/ordering[A]\nsig A {}\nsig B extends A {}\nrun {} for 3 A, exactly 1 B\n";
+    assert_eq!(count(src, 0), 6);
+}
+
+/// (b) Two children under an abstract ordered parent, each `exactly`-scoped,
+/// still leave rank-tagging freedom — sym0 count **6** (probe T14c, jar-verified
+/// sym0 = 6 on 2026-07-17; the matrix's earlier `3` was the sym20 value).
+#[test]
+fn ledger004_abstract_two_exact_children_count_6() {
+    let src = "open util/ordering[A]\nabstract sig A {}\nsig B, C extends A {}\n\
+               run {} for 3 A, exactly 2 B, exactly 1 C\n";
+    assert_eq!(count(src, 0), 6);
+}
+
+/// (b) The degenerate collapse (`exactly 3 B` under `3 A`, so B ≡ A): the jar's
+/// count-1 for this case is a **symmetry-breaking** effect (sym20 only). At
+/// sym0 the exact-constant pinning does NOT re-engage and the raw count is
+/// 3! = **6** (jar-verified sym0 = 6 on 2026-07-17). mettle, a sym0 engine,
+/// must not pin here — its eligibility rule (childless-or-enum) correctly does
+/// not, matching the jar's raw count.
+#[test]
+fn ledger004_subsig_full_collapse_no_pin_at_sym0_count_6() {
+    let src = "open util/ordering[A]\nsig A {}\nsig B extends A {}\nrun {} for 3 A, exactly 3 B\n";
+    assert_eq!(count(src, 0), 6);
+}
+
+/// (b-control) A field reference to the ordered sig from an *unrelated* sig does
+/// NOT disturb its pinning — only a subsig partition does (probe T15). `sig T {
+/// f: S }` over `for 3 S, 2 T` keeps S's order pinned and the count is entirely
+/// T's field freedom: sym0 = **16** (jar sym0 = 16).
+#[test]
+fn ledger004_unrelated_field_still_pins_count_16() {
+    let src = "open util/ordering[S]\nsig S {}\nsig T { f: S }\nrun {} for 3 S, 2 T\n";
+    assert_eq!(count(src, 0), 16);
+}
+
+// ============ higher-order relation quantifier — typed defer ============
+
+/// Whether command 0 of `src` defers at lowering (a typed `TranslateError`,
+/// never a wrong verdict — STYLE E5).
+fn lower_defers(src: &str) -> bool {
+    let loader = MapLoader::new().with("root.als", src);
+    let graph = ModuleGraph::load("root.als", &loader).expect("load");
+    let world = resolve(&graph).expect("resolve").world;
+    let scoped = compute_universe(&world, &world.commands[0]).expect("universe");
+    let mut ir = Ir::default();
+    let bounds = compute_bounds(&world, &scoped, &mut ir);
+    lower_command(&world, &graph, &scoped, &bounds, &mut ir, 0).is_err()
+}
+
+/// A quantifier whose bound is a **multiplicity-marked arrow** (`some r: A one
+/// -> one B | …`, `some tree: Node lone -> Node | …`) ranges over sub-relations,
+/// not tuples — genuinely higher-order (the jar skolemizes it; mettle does not).
+/// It is a typed defer, never a per-tuple wrong verdict. This is the gap the
+/// mt-035 ordering models exposed (ringlead/firewire over-/under-constrained
+/// before the defer). A plain arrow bound stays first-order (one pair per
+/// binding, the jar's reading), and a sig quantifier is unaffected.
+#[test]
+fn higher_order_arrow_quantifier_defers() {
+    assert!(lower_defers(
+        "sig A {}\nsig B {}\nrun { some r: A one -> one B | some r }\n"
+    ));
+    assert!(lower_defers(
+        "sig N {}\nrun { some tree: N lone -> N | N in N.tree }\n"
+    ));
+    // A plain product bound is first-order (a single pair) — must NOT defer.
+    assert!(!lower_defers(
+        "sig A {}\nsig B {}\nrun { some r: A -> B | some r } for 2\n"
+    ));
+    // A first-order sig quantifier is unaffected.
+    assert!(!lower_defers("sig A {}\nrun { some x: A | x = x } for 2\n"));
+}
+
 // ===================== known limitation (mt-037 owns) =====================
 
 /// KNOWN GAP (root-caused by mt-034, fix owned by mt-037): a field-group `disj`
