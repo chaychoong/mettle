@@ -23,8 +23,8 @@ use std::time::Duration;
 use als_core::bounds::Bounds;
 use als_core::ir::Ir;
 use als_core::{
-    compute_bounds, compute_universe, lower_command, solve_goal, BoundsResult, LoweredGoal,
-    ScopedUniverse, SolveOptions, SolveVerdict,
+    compute_bounds, compute_universe, lower_command, self_check, solve_goal, BoundsResult,
+    LoweredGoal, ScopedUniverse, SolveOptions, SolveVerdict,
 };
 use als_types::{resolve, FilesystemLoader, ModuleGraph};
 
@@ -72,19 +72,28 @@ fn primary_var_count(bounds: &Bounds) -> usize {
 }
 
 /// Solves `(ir, scoped, goal, bounds)` on a worker thread with a budget.
-/// Returns `Some(Ok(sat))` on completion, `Some(Err(()))` on an encode defer,
-/// `None` on over-budget.
+/// Returns `Some(Ok((sat, self_check_failure)))` on completion — where a SAT
+/// instance additionally gets the **checked-mode self-check** (mt-034): the
+/// instance is re-evaluated against its own goal and any failure is returned as a
+/// message (`None` = passed). `Some(Err(()))` is an encode defer, `None` is
+/// over-budget.
 fn solve_budgeted(
     ir: Ir,
     scoped: ScopedUniverse,
     goal: LoweredGoal,
     bounds: BoundsResult,
-) -> Option<Result<bool, ()>> {
+) -> Option<Result<(bool, Option<String>), ()>> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        let r = match solve_goal(&ir, &scoped, &goal, &bounds, &SolveOptions::default()) {
-            Ok(SolveVerdict::Sat(_)) => Ok(true),
-            Ok(SolveVerdict::Unsat) => Ok(false),
+        let opts = SolveOptions::default();
+        let r = match solve_goal(&ir, &scoped, &goal, &bounds, &opts) {
+            Ok(SolveVerdict::Sat(inst)) => {
+                let sc = self_check(&ir, &scoped, &goal, &inst, &opts)
+                    .err()
+                    .map(|f| f.to_string());
+                Ok((true, sc))
+            }
+            Ok(SolveVerdict::Unsat) => Ok((false, None)),
             Err(_) => Err(()),
         };
         let _ = tx.send(r);
@@ -146,6 +155,7 @@ fn corpus_solve() {
     let mut disagree = 0usize;
     let mut disagreements: Vec<String> = Vec::new();
     let mut nondet: Vec<String> = Vec::new();
+    let mut selfcheck_failures: Vec<String> = Vec::new();
 
     for path in &files {
         let Ok(canon) = std::fs::canonicalize(path) else {
@@ -205,7 +215,12 @@ fn corpus_solve() {
                     *buckets.entry("encode_defer").or_default() += 1;
                     continue;
                 }
-                Some(Ok(sat)) => sat,
+                Some(Ok((sat, self_check_fail))) => {
+                    if let Some(msg) = self_check_fail {
+                        selfcheck_failures.push(format!("{rel}[{idx}]: {msg}"));
+                    }
+                    sat
+                }
             };
             *buckets
                 .entry(if sat { "solved_sat" } else { "solved_unsat" })
@@ -214,7 +229,8 @@ fn corpus_solve() {
             // Determinism (small commands only, to bound cost).
             if nvars <= DETERMINISM_MAX_VARS {
                 if let Some((ir2, bounds2, goal2)) = build() {
-                    if let Some(Ok(sat2)) = solve_budgeted(ir2, scoped.clone(), goal2, bounds2) {
+                    if let Some(Ok((sat2, _))) = solve_budgeted(ir2, scoped.clone(), goal2, bounds2)
+                    {
                         if sat2 != sat {
                             nondet.push(format!("{rel}[{idx}]"));
                         }
@@ -246,6 +262,19 @@ fn corpus_solve() {
     for n in &nondet {
         eprintln!("  NON-DETERMINISTIC {n}");
     }
+    eprintln!("self-check: {} failures", selfcheck_failures.len());
+    for s in &selfcheck_failures {
+        eprintln!("  SELF-CHECK-FAIL {s}");
+    }
 
     assert!(nondet.is_empty(), "non-deterministic verdicts: {nondet:?}");
+    // Every solved SAT instance must satisfy its own goal (mt-034, translation-ref
+    // §6). The one baseline disagreement — `mediaAssets.als[3]` (`check
+    // PasteNotAffectHidden`, jar UNSAT / mettle SAT) — is an *under-constrained
+    // goal* (a dropped field-`disj`; §10.4), so its instance genuinely satisfies
+    // mettle's own (too-weak) goal and self-checks clean: zero failures expected.
+    assert!(
+        selfcheck_failures.is_empty(),
+        "self-check failures (mettle solver/encoder bugs): {selfcheck_failures:?}"
+    );
 }

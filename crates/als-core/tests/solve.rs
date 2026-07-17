@@ -249,6 +249,30 @@ fn check_test1_sat_skolem_count_divergence() {
     assert_eq!(count(src, 0), 464);
 }
 
+// ===================== known limitation (mt-037 owns) =====================
+
+/// KNOWN GAP (root-caused by mt-034, fix owned by mt-037): a field-group `disj`
+/// is dropped. `disj a, b: set E` declares `a`/`b` pairwise disjoint, so
+/// `all s: S | no (s.a & s.b)` is a **theorem** — jar UNSAT (no counterexample).
+/// mettle's `als_types::ResolvedField` does not record the `disj` marker (the
+/// `Decl` AST carries `is_disj`), so the lowerer never synthesizes the
+/// disjointness and mettle finds a **spurious counterexample → SAT**. This is
+/// the sole cause of the `mediaAssets.als[3]` (`check PasteNotAffectHidden`)
+/// baseline disagreement (translation-ref §10.5). The self-check *passes* on the
+/// instance (mettle's goal is genuinely satisfied — it is just too weak), so this
+/// is a lowering/synthesized-fact gap, not an encoder bug. When mt-037 records
+/// field-`disj` and synthesizes it, this flips to UNSAT — update the assertion
+/// then.
+#[test]
+fn field_disj_dropped_known_gap() {
+    // jar: UNSAT (theorem). mettle (current, wrong): SAT.
+    assert_sat("sig E {}\nsig S { disj a, b: set E }\nassert D { all s: S | no (s.a & s.b) }\ncheck D for 3\n");
+    // Control: without `disj` the assertion is genuinely violable — SAT in both.
+    assert_sat(
+        "sig E {}\nsig S { a, b: set E }\nassert D { all s: S | no (s.a & s.b) }\ncheck D for 3\n",
+    );
+}
+
 // ============================== determinism ==============================
 
 /// D1/U4: two independent solves of the same command give the same verdict and

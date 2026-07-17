@@ -27,6 +27,7 @@ use crate::bounds::{Bounds, Tuple, TupleSet, Universe};
 use crate::bounds_builder::BoundsResult;
 use crate::encode::{Bool, Encoder, PrimaryMap};
 use crate::error::TranslateError;
+use crate::eval::self_check;
 use crate::ir::{Ir, RelId};
 use crate::lower::LoweredGoal;
 use crate::scope::ScopedUniverse;
@@ -75,6 +76,44 @@ impl Instance {
     /// Iterates `(rel, tuples)` in `RelId` order.
     pub fn iter(&self) -> impl Iterator<Item = (RelId, &TupleSet)> {
         self.rels.iter().map(|(&r, ts)| (r, ts))
+    }
+
+    /// Builds an instance directly from a universe and per-relation values —
+    /// for the evaluator differential (`tests/eval_differential.rs`) and future
+    /// REPL construction. The solver's own instances come from [`decode`]; this
+    /// is the constructor external callers need to hand the [`crate::eval`]uator
+    /// a hand-built candidate. Relations are keyed in `RelId` order.
+    #[must_use]
+    pub fn from_relations(
+        universe: Universe,
+        rels: impl IntoIterator<Item = (RelId, TupleSet)>,
+    ) -> Self {
+        Instance {
+            universe,
+            rels: rels.into_iter().collect(),
+        }
+    }
+}
+
+/// Debug-only self-check (ADR-0011 decision 5, translation-ref §6): re-evaluate a
+/// found instance against the **full goal** and fail loudly if it does not
+/// satisfy its own formula — a mettle solver/encoder bug, never a user error.
+/// Compiled out of release builds; [`crate::eval::self_check`] is the equivalent
+/// checked-mode entry the differential and corpus tests call.
+fn debug_self_check(
+    ir: &Ir,
+    scoped: &ScopedUniverse,
+    goal: &LoweredGoal,
+    inst: &Instance,
+    opts: SolveOptions,
+) {
+    #[cfg(debug_assertions)]
+    if let Err(failure) = self_check(ir, scoped, goal, inst, &opts) {
+        debug_assert!(false, "self-check failed (a mettle bug): {failure}");
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = (ir, scoped, goal, inst, opts);
     }
 }
 
@@ -212,7 +251,11 @@ pub fn solve_goal(
     }
     let mut solver = CdclSolver::new(&t.cnf);
     Ok(match solver.solve() {
-        Outcome::Sat(model) => SolveVerdict::Sat(decode(&t.layout, &t.universe, &model)),
+        Outcome::Sat(model) => {
+            let inst = decode(&t.layout, &t.universe, &model);
+            debug_self_check(ir, scoped, goal, &inst, *opts);
+            SolveVerdict::Sat(inst)
+        }
         Outcome::Unsat => SolveVerdict::Unsat,
     })
 }
@@ -223,15 +266,21 @@ pub fn solve_goal(
 /// first `Unsat`. Blocking over primary variables (never Tseitin auxiliaries)
 /// makes the count the **raw / SB-0** model count (ADR-0002 counting net).
 #[derive(Debug)]
-pub struct InstanceEnumerator {
+pub struct InstanceEnumerator<'a> {
     solver: CdclSolver,
     primary_vars: Vec<Var>,
     layout: Vec<RelDecode>,
     universe: Universe,
     done: bool,
+    // Self-check inputs (ADR-0011 decision 5): every enumerated SAT instance is
+    // re-evaluated against the full goal (debug builds).
+    ir: &'a Ir,
+    scoped: &'a ScopedUniverse,
+    goal: &'a LoweredGoal,
+    opts: SolveOptions,
 }
 
-impl Iterator for InstanceEnumerator {
+impl Iterator for InstanceEnumerator<'_> {
     type Item = Instance;
 
     /// The next distinct instance, or `None` when the space is exhausted.
@@ -246,6 +295,7 @@ impl Iterator for InstanceEnumerator {
             }
             Outcome::Sat(model) => {
                 let inst = decode(&self.layout, &self.universe, &model);
+                debug_self_check(self.ir, self.scoped, self.goal, &inst, self.opts);
                 let clause = block(&model, &self.primary_vars);
                 if clause.is_empty() {
                     // No primary variables ⇒ a single distinguishable instance.
@@ -264,13 +314,13 @@ impl Iterator for InstanceEnumerator {
 /// # Errors
 /// As [`solve_goal`] — a [`TranslateError`] for a construct outside the encoder
 /// slice.
-pub fn enumerate(
-    ir: &Ir,
-    scoped: &ScopedUniverse,
-    goal: &LoweredGoal,
+pub fn enumerate<'a>(
+    ir: &'a Ir,
+    scoped: &'a ScopedUniverse,
+    goal: &'a LoweredGoal,
     bounds: &BoundsResult,
     opts: &SolveOptions,
-) -> Result<InstanceEnumerator, TranslateError> {
+) -> Result<InstanceEnumerator<'a>, TranslateError> {
     let t = translate(ir, scoped, goal, bounds, *opts)?;
     // A trivially-UNSAT goal (the encoded `Bool` folded to constant-false) gets an
     // empty clause, so the solver reports UNSAT on the first `next()` and the
@@ -286,5 +336,9 @@ pub fn enumerate(
         layout: t.layout,
         universe: t.universe,
         done: false,
+        ir,
+        scoped,
+        goal,
+        opts: *opts,
     })
 }

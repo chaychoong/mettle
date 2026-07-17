@@ -920,10 +920,62 @@ integer/counting fidelity is Rung 4 (ADR-0011).
 solved (28 SAT / 28 UNSAT), 68 over-budget** (grounding-heavy goals —
 quantifiers ground without env-aware caching this rung, a non-gating perf item),
 **zero panics, deterministic** (a second solve of each small command gives the
-same verdict). Against the 234-verdict `baselines/` overlap, **one**
-disagreement remains: `mediaAssets.als` `check PasteCut` (`mettle=SAT /
-jar=UNSAT`), a genuine encoder-side under-constraint on a complex multi-field
-`check` — mt-034's instance self-check should localize it; mt-037 owns the fix.
-(The pre-fix numbers — 81 solved / 44 agree / 12 disagree at 5s — dropped 11
-disagreements to the scope fix; some previously-trivial wrong-scope commands
-became real problems and moved to over-budget.)
+same verdict). Against the `baselines/` overlap, **one**
+disagreement remains: `mediaAssets.als[3]` `check PasteNotAffectHidden`
+(`mettle=SAT / jar=UNSAT`) — root-caused by mt-034 below. (The pre-fix numbers —
+81 solved / 44 agree / 12 disagree at 5s — dropped 11 disagreements to the scope
+fix; some previously-trivial wrong-scope commands became real problems and moved
+to over-budget.)
+
+### 10.5 mt-034 evaluator + self-check net (jar/baseline-verified 2026-07-17)
+
+**Evaluator design.** A direct three-sorted evaluator over a concrete
+`Instance` (`crates/als-core/src/eval.rs`, this §6): each `Formula` →
+`bool`, `RelExpr` → `TupleSet`, `IntExpr` → `i64`. It is an **independent
+second implementation** of the same semantics the mt-033 encoder emits as SAT
+gates — quantifiers/comprehensions ground over their bound's concrete tuples,
+closure is a concrete fixpoint, cardinality/`int[·]`/`Int[·]` read the Int-atom
+range (§1.3). It handles exactly the encoder's slice (no arithmetic/`sum`/int-ITE
+— same typed defer, so the two stay a **matched pair**); temporal kinds return a
+typed error (never reached — lowering defers temporal). **Overflow (§2.4):** the
+encoder accepts an instance iff `goal ∧ ⋀ᵢ¬overflowᵢ`; the evaluator mirrors this
+as `goal_holds ∧ (allow_overflow ∨ ¬overflowed)`, tracking `#e` count overflow
+(count > signed max) and `int[·]` per-step signed-add overflow. A solver-produced
+instance never overflows (the solver conjoined every `¬overflowᵢ`), so the
+self-check never rejects one on overflow; the path exists only so the brute-force
+differential's accept-set equals the solver's.
+
+**Encoder↔evaluator differential (the strongest net, all equal).** For a dozen+
+small hand models we brute-force **every** candidate instance (each relation's
+`upper∖lower` tuples on/off) and count those the evaluator accepts; the count
+equals mt-033's `enumerate` SB-0 count for every model
+(`tests/eval_differential.rs`): `some`/`all`/`one`/`lone`/`no`, closure &
+acyclicity, `*`-closure, `in`-subset sigs, `one`/`lone` field multiplicity,
+`#A=#B` and `#A=2`, override (`++`), `<:`/`:>`, transpose, comprehension,
+union/intersect/diff. Two independent semantics agreeing on exact counts is the
+real gauge.
+
+**Corpus self-check (0 failures).** `solve_corpus` now re-evaluates every solved
+SAT instance against its full goal in checked mode: **0 self-check failures**
+across all 167 files (28 SAT solved), `mediaAssets.als[3]` included.
+
+**mediaAssets root cause — an *under-constrained goal*, not an encoder bug.** The
+lone baseline disagreement is `mediaAssets.als[3]` `check PasteNotAffectHidden`
+(mettle SAT / jar UNSAT) — **not** `PasteCut`, which is `[2]` and agrees SAT/SAT;
+earlier notes (including §10.4 above, now corrected) mislabeled it. The mt-034
+self-check **passes** on mettle's SAT instance: the instance genuinely satisfies
+mettle's own goal, which is strictly **weaker** than the jar's. The missing
+constraint is the **field-group `disj`**: `sig CatalogState { disj hidden,
+showing: set assets }` declares `hidden`/`showing` pairwise disjoint (`all cs |
+no (cs.hidden & cs.showing)`), and combined with the appended fact
+`hidden+showing = assets` it pins `cs".hidden` under `paste` (which never
+mentions `hidden`), making the assertion a theorem. The `Decl` AST carries
+`is_disj` (`als-syntax`) but `als_types::ResolvedField` drops it, so the lowerer
+never synthesizes the disjointness. Confirmed minimally (jar-verified reasoning):
+`sig E {} sig S { disj a, b: set E } assert D { all s: S | no (s.a & s.b) } check
+D for 3` is a theorem (jar UNSAT) yet mettle returns **SAT** (spurious
+counterexample); the `disj`-less control is SAT in both. **Fix is not contained
+to `lower.rs`** — it needs an `als-types` change to record the field-group
+disjointness plus a lowering conjunct — so it is deferred to **mt-038** (the
+pre-mt-037 lowering-gaps bead; mt-037 re-gauges). Pinned as
+`field_disj_dropped_known_gap` in `tests/solve.rs`.
