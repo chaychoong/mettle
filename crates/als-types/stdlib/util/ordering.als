@@ -39,8 +39,8 @@ pred gte [e1, e2: elem] { e1 = e2 or gt[e1, e2] }
 fun larger [e1, e2: elem]: elem { lte[e1, e2] => e2 else e1 }
 fun smaller [e1, e2: elem]: elem { lte[e1, e2] => e1 else e2 }
 
-fun max [es: set elem]: lone elem { es - es.^next }
-fun min [es: set elem]: lone elem { es - es.^prev }
+fun max [es: set elem]: lone elem { es - es.^prev }
+fun min [es: set elem]: lone elem { es - es.^next }
 
 assert correct {
     pred/totalOrder[elem, first, next]
