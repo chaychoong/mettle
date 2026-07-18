@@ -150,9 +150,28 @@ pub struct MacroChoice {
     pub body_choices: Box<ChoiceTable>,
     /// Set when the checker resolved the body **accept-lean** (a higher-order
     /// macro whose parameter is a callable passed by name — resolution-doc
-    /// §3.7): its body cannot be faithfully replayed, so the lowerer defers with
-    /// a typed error rather than lowering it wrongly.
+    /// §3.7): its body is resolved with the parameter bound only by type, so the
+    /// verdict never wrongly rejects.
     pub lean: bool,
+    /// The callables passed by bare name to a higher-order (`lean`) macro
+    /// (mt-040): each `(param_index, callable)` pair records which func/pred a
+    /// callable-by-name argument names, so the lowerer can bind the parameter and
+    /// inline `param[args]` as the real call. Empty for ordinary macros; a `lean`
+    /// macro with an unresolved callable argument (ambiguous / macro-valued) has
+    /// no entry for it, so lowering defers typed rather than guessing.
+    pub callables: Vec<(usize, CallableChoice)>,
+}
+
+/// A func/pred passed to a higher-order macro by bare name (resolution-doc §3.7,
+/// mt-040). The macro body invokes the parameter as `param[args]`; the lowerer
+/// binds the parameter to this callable and inlines the call.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct CallableChoice {
+    /// The resolved func/pred the argument name refers to.
+    pub func: FuncId,
+    /// Whether the callable is a predicate (its `param[..]`/`param` use is a
+    /// formula) rather than a function (a relational value).
+    pub is_pred: bool,
 }
 
 /// The choice table: `(ModuleId, ExprId)` → the resolved [`ExprChoice`]. Keyed

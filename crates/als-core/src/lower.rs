@@ -193,6 +193,10 @@ enum Binding {
     /// already-lowered value expression (substituted in place, the reference's
     /// inlining).
     Expr(RelExprId),
+    /// A callable (func/pred) passed to a higher-order macro by bare name (§3.7,
+    /// mt-040): the parameter is invoked as `param[args]` in the body and inlined
+    /// as the real call, never used as a relational value.
+    Callable(als_types::CallableChoice),
 }
 
 /// A resolution context: the module the expression lives in and the choice
@@ -601,9 +605,6 @@ impl<'a> Lowerer<'a> {
         let module = self.world.sigs[owner].module;
         let ctx = self.ctx(module);
         let span = field.span;
-        if field.is_bound_disj {
-            return Err(bound_disj_unpinned(span));
-        }
         let field_denote = *self.bounds.field_denote.get(&fid).ok_or_else(|| {
             TranslateError::LoweringUnsupported {
                 what: format!("field `{}` has no denotation", field.name),
@@ -677,12 +678,123 @@ impl<'a> Lowerer<'a> {
 
         let domain = self.field_domain_constraint(fid, field_denote, owner_denote, span);
 
-        match (quant, domain) {
-            (Some(q), Some(d)) => Ok(Some(self.conjoin(vec![q, d], span))),
-            (Some(q), None) => Ok(Some(q)),
-            (None, Some(d)) => Ok(Some(d)),
-            (None, None) => Ok(None),
+        // A post-colon `disj` field bound (`f: disj e`) adds cross-atom value
+        // disjointness: for distinct owner atoms `this != that`,
+        // `no (this.f & that.f)` — uniform at any field arity/multiplicity
+        // (translation-ref §10.3 L27–L28).
+        let disj = if field.is_bound_disj {
+            Some(self.field_bound_disj_fact(field.is_var, field_denote, owner_denote, span))
+        } else {
+            None
+        };
+
+        let mut parts: Vec<FormulaId> = [quant, domain, disj].into_iter().flatten().collect();
+        match parts.len() {
+            0 => Ok(None),
+            1 => Ok(Some(parts.remove(0))),
+            _ => Ok(Some(self.conjoin(parts, span))),
         }
+    }
+
+    /// The post-colon-`disj` cross-atom value-disjointness fact (mt-040):
+    /// `all this: owner | all that: owner | this != that implies no (this.f &
+    /// that.f)` — distinct owner atoms map to disjoint field values (jar-verified
+    /// `DumpK2`; `this.f`/`that.f` are the owner-joined value slices, so the shape
+    /// is uniform across field arity and multiplicity). A `var` field wraps the
+    /// `no` in `always`, matching the field-group-`disj` convention (§2.2 /
+    /// [`Self::lower_field_disj_group`]); such a command defers temporal anyway.
+    fn field_bound_disj_fact(
+        &mut self,
+        is_var: bool,
+        field_denote: RelExprId,
+        owner_denote: RelExprId,
+        span: Span,
+    ) -> FormulaId {
+        let this_var = self.ir.vars.alloc(Var {
+            name: "this".to_owned(),
+            arity: 1,
+            span,
+        });
+        let that_var = self.ir.vars.alloc(Var {
+            name: "that".to_owned(),
+            arity: 1,
+            span,
+        });
+        let this_e = self.mk_rel(RelExprKind::Var(this_var), span);
+        let that_e = self.mk_rel(RelExprKind::Var(that_var), span);
+        let join = |s: &mut Self, atom: RelExprId| {
+            s.mk_rel(
+                RelExprKind::Binary {
+                    op: RelBinOp::Join,
+                    lhs: atom,
+                    rhs: field_denote,
+                },
+                span,
+            )
+        };
+        let this_f = join(self, this_e);
+        let that_f = join(self, that_e);
+        let inter = self.mk_rel(
+            RelExprKind::Binary {
+                op: RelBinOp::Intersect,
+                lhs: this_f,
+                rhs: that_f,
+            },
+            span,
+        );
+        let mut no_f = self.mk_formula(
+            FormulaKind::MultTest {
+                test: MultTest::No,
+                expr: inter,
+            },
+            span,
+        );
+        if is_var {
+            self.mark_temporal("always", span);
+            no_f = self.mk_formula(
+                FormulaKind::TemporalUnary {
+                    op: TemporalUnOp::Always,
+                    body: no_f,
+                },
+                span,
+            );
+        }
+        // `this != that`: negate the equality of the two owner variables.
+        let eq = self.mk_formula(
+            FormulaKind::RelCompare {
+                op: RelCmpOp::Equal,
+                lhs: this_e,
+                rhs: that_e,
+            },
+            span,
+        );
+        let neq = self.not(eq, span);
+        let implies = self.mk_formula(
+            FormulaKind::Implies {
+                antecedent: neq,
+                consequent: no_f,
+            },
+            span,
+        );
+        // `all that: owner | …` then `all this: owner | …`.
+        let all_that = self.mk_formula(
+            FormulaKind::Quant {
+                kind: QuantKind::All,
+                var: that_var,
+                bound: owner_denote,
+                body: implies,
+            },
+            span,
+        );
+        self.mk_formula(
+            FormulaKind::Quant {
+                kind: QuantKind::All,
+                var: this_var,
+                bound: owner_denote,
+                body: all_that,
+            },
+            span,
+        )
     }
 
     /// The field domain constraint `(f.univ…) in owner` — the field's first
@@ -1313,6 +1425,17 @@ impl<'a> Lowerer<'a> {
         e: ExprId,
         span: Span,
     ) -> Result<FormulaId, TranslateError> {
+        // A higher-order-macro callable parameter applied as a formula
+        // (`axiom[no_p]`, or bare `axiom`) inlines the recorded pred (mt-040).
+        if let Some((c, args)) = self.callable_head(ctx, e) {
+            if !c.is_pred {
+                return Err(TranslateError::LoweringUnsupported {
+                    what: "higher-order-macro function parameter in a formula position".to_owned(),
+                    span,
+                });
+            }
+            return self.inline_pred(ctx, c.func, &args, false, span);
+        }
         match self.choice(ctx, e) {
             Some(ExprChoice::Name(NameChoice::Call0(func))) => {
                 self.inline_pred(ctx, *func, &[], true, span)
@@ -1807,6 +1930,18 @@ impl<'a> Lowerer<'a> {
         e: ExprId,
         span: Span,
     ) -> Result<RelExprId, TranslateError> {
+        // A higher-order-macro callable parameter applied as a relation
+        // (`f[x]` where `f` is a function argument) inlines the recorded fun.
+        if let Some((c, args)) = self.callable_head(ctx, e) {
+            if c.is_pred {
+                return Err(TranslateError::LoweringUnsupported {
+                    what: "higher-order-macro predicate parameter in a relation position"
+                        .to_owned(),
+                    span,
+                });
+            }
+            return self.inline_fun(ctx, c.func, &args, false, span);
+        }
         let choice = self.choice(ctx, e).cloned();
         match choice {
             Some(ExprChoice::Spine(SpineChoice::Join)) => self.lower_join_structural(ctx, e, span),
@@ -2892,12 +3027,6 @@ impl<'a> Lowerer<'a> {
         mc: &als_types::MacroChoice,
         span: Span,
     ) -> Result<usize, TranslateError> {
-        if mc.lean {
-            return Err(TranslateError::LoweringUnsupported {
-                what: "higher-order macro (callable-by-name argument)".to_owned(),
-                span,
-            });
-        }
         let arg_ctx = self.ctx(mc.arg_module);
         let params = self.world.macros[mc.macro_id].params.clone();
         if params.len() != mc.args.len() {
@@ -2906,15 +3035,23 @@ impl<'a> Lowerer<'a> {
                 span,
             });
         }
-        let mut arg_rels: Vec<RelExprId> = Vec::with_capacity(mc.args.len());
-        for &a in &mc.args {
-            arg_rels.push(self.lower_rel(arg_ctx, a)?);
+        // A higher-order (lean) macro binds each callable-by-name parameter to its
+        // recorded callable (`param[args]` inlines the real call); every other
+        // parameter is an ordinary relational argument (mt-040). A callable
+        // parameter the checker could not pin (not in `callables`) has no relation
+        // value, so `lower_rel` below defers it typed. Compute every binding before
+        // pushing so an argument that defers leaves the binder stack unchanged.
+        let mut bindings: Vec<(String, Binding)> = Vec::with_capacity(params.len());
+        for (i, name) in params.iter().enumerate() {
+            let b = if let Some((_, c)) = mc.callables.iter().find(|(j, _)| *j == i) {
+                Binding::Callable(c.clone())
+            } else {
+                Binding::Expr(self.lower_rel(arg_ctx, mc.args[i])?)
+            };
+            bindings.push((name.clone(), b));
         }
-        let mut pushed = 0;
-        for (name, av) in params.iter().zip(arg_rels) {
-            self.binders.push((name.clone(), Binding::Expr(av)));
-            pushed += 1;
-        }
+        let pushed = bindings.len();
+        self.binders.extend(bindings);
         Ok(pushed)
     }
 
@@ -3157,19 +3294,63 @@ impl<'a> Lowerer<'a> {
     fn lookup_binder(&mut self, name: &str, span: Span) -> Result<RelExprId, TranslateError> {
         for (n, b) in self.binders.iter().rev() {
             if n == name {
-                return Ok(match b {
+                return match b {
                     Binding::Var(vid) => {
                         let vid = *vid;
-                        self.mk_rel(RelExprKind::Var(vid), span)
+                        Ok(self.mk_rel(RelExprKind::Var(vid), span))
                     }
-                    Binding::Expr(id) => *id,
-                });
+                    Binding::Expr(id) => Ok(*id),
+                    // A higher-order-macro callable parameter has no relational
+                    // value; it is only meaningful applied (`param[args]`), handled
+                    // by `callable_head` before this lookup (mt-040).
+                    Binding::Callable(_) => Err(TranslateError::LoweringUnsupported {
+                        what: format!("callable parameter `{name}` used as a value"),
+                        span,
+                    }),
+                };
             }
         }
         Err(TranslateError::LoweringUnsupported {
             what: format!("unbound variable `{name}`"),
             span,
         })
+    }
+
+    /// The callable bound to `name` (innermost-first), if it is a higher-order
+    /// macro's callable-by-name parameter (mt-040).
+    fn lookup_callable(&self, name: &str) -> Option<als_types::CallableChoice> {
+        self.binders.iter().rev().find_map(|(n, b)| match b {
+            Binding::Callable(c) if n == name => Some(c.clone()),
+            _ => None,
+        })
+    }
+
+    /// If `e` is an application of a higher-order-macro callable parameter
+    /// (`param` or `param[args]`), returns the callable and its argument exprs
+    /// (mt-040). Only a bare-name head bound to a [`Binding::Callable`] matches.
+    fn callable_head(
+        &self,
+        ctx: Ctx,
+        e: ExprId,
+    ) -> Option<(als_types::CallableChoice, Vec<ExprId>)> {
+        match &self.ast(ctx.module).exprs[e].kind {
+            ExprKind::Name(qn) => {
+                let [seg] = qn.segments.as_slice() else {
+                    return None;
+                };
+                self.lookup_callable(&seg.text).map(|c| (c, Vec::new()))
+            }
+            ExprKind::BoxJoin { target, args } => {
+                let ExprKind::Name(qn) = &self.ast(ctx.module).exprs[*target].kind else {
+                    return None;
+                };
+                let [seg] = qn.segments.as_slice() else {
+                    return None;
+                };
+                self.lookup_callable(&seg.text).map(|c| (c, args.clone()))
+            }
+            _ => None,
+        }
     }
 
     fn lower_this(&mut self, span: Span) -> Result<RelExprId, TranslateError> {
@@ -3594,13 +3775,14 @@ fn tupleset_closure(a: &TupleSet) -> Option<TupleSet> {
     }
 }
 
-/// Whether `op` is a declaration-bound multiplicity marker.
-/// The typed defer for a post-colon `disj` bound (`f: disj e`, `x: disj e`):
-/// cross-binding value disjointness whose synthesized fact is not yet
-/// jar-pinned (mt-040). Every decl-binding site refuses it through this one
-/// helper — silently dropping it would under-constrain the goal, the same
-/// wrong-verdict class as the mt-038 field-group `disj` gap (STYLE E5; zero
-/// corpus incidence, pinned by `post_colon_disj_defers_typed`).
+/// The typed defer for a post-colon `disj` bound on a **quantifier / run-pred
+/// param** decl (`x: disj e`). The jar rejects this at resolve ("Local variable
+/// … cannot be bound to a 'disjoint' expression", jar-probed 2026-07-18); mettle
+/// accepts it leniently (mt-027 over-accept class) and defers here rather than
+/// synthesizing a fact for a construct the reference forbids (STYLE E5; zero
+/// corpus incidence, pinned by `post_colon_disj_quant_decl_defers_typed`). The
+/// post-colon `disj` **field** bound (`f: disj e`) is jar-pinned and lowered
+/// (mt-040, [`Lowerer::field_bound_disj_fact`]).
 fn bound_disj_unpinned(span: Span) -> TranslateError {
     TranslateError::LoweringUnsupported {
         what: "post-colon `disj` declaration bound".to_owned(),
@@ -3608,6 +3790,7 @@ fn bound_disj_unpinned(span: Span) -> TranslateError {
     }
 }
 
+/// Whether `op` is a declaration-bound multiplicity marker.
 fn is_mult_marker(op: UnOp) -> bool {
     matches!(
         op,

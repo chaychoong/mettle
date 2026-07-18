@@ -81,6 +81,22 @@ Test: <path to the conformance test>
 
 ---
 
+### LEDGER-009 — `run`/`check` target resolution (own-module-first)
+**Rule:** A **bare** (unqualified) `run`/`check` command target `<name>` is resolved **own-module-first**: the jar first searches the command's own (root) module's own preds/funcs (for `run`) or assertions (for `check`) via `getRawQS`, and **only if the own module declares no such name** falls back to `getRawNQS` over **all reachable opened modules**; therefore a same-named pred/fun in the user's own module **shadows** any opened-module candidate, including the auto-opened `util/integer` `add`/`sub`. If the own module has the name it is used unconditionally (never an ambiguity against opened candidates); if the fallback finds **≥2** candidates across opened modules it is `ErrorSyntax "The name \"<name>\" is ambiguous."`; a **qualified** target (`m/name`) uses `getRawQS` only (no NQS fallback).
+**Status:** `verified` (mt-040, 2026-07-18) — zero open residuals; every corner (own vs auto-opened util, own vs opened user module, own fun vs opened fun, no-own NQS fallback, multi-opened ambiguity, qualified target) probed shut below.
+**Evidence:** jar-verified 2026-07-18 (OpenJDK 21, `oracle/org.alloytools.alloy.dist.jar` 6.2.0, sat4j, symmetry 0, noOverflow true; harness `ProbeR4.java`, session scratchpad). Decisive probe pairs (each contrives the two candidates to give **different verdicts**):
+- **own pred shadows auto-opened util fun** — `sig S{} one sig A{} pred add{no A} run add for 3` → **UNSAT** (the own pred `no A`, always false, is run; not the `util/integer` `add` fun).
+- **own pred, explicit `open util/integer`** — `open util/integer … pred add{some S} run add for 3` → **SAT** count 5 (own pred).
+- **own fun shadows opened util fun (no ambiguity)** — `open util/integer … fun add:S{S} run add for 3` → **SAT** count 3 (own fun; no "ambiguous").
+- **own pred shadows opened user-module pred** — root `pred dup{no A}` (`one sig A`) over `open usermod` where `usermod` has `pred dup{some T}` → **UNSAT** (root pred).
+- **no own candidate → NQS fallback** — `open util/integer … run add for 3` (no own `add`) → **SAT** count 3 (the util fun is used).
+- **multi-opened → ambiguous** — `open modA` + `open modB` each with `pred foo`, no own `foo`, `run foo` → `ErrorSyntax "The name \"foo\" is ambiguous."`.
+- **qualified opened target fails** — `open util/integer … run util/integer/add for 3` → `ErrorSyntax "The predicate/function \"util/integer/add\" cannot be found."`.
+Source: `CompModule.resolveCommand`/`resolveCommands` (`getRawQS(4,·)` then `getRawNQS(this,4,·)` for run; kind `2` for check), commit `794226dd`. mettle's current `lookup_run_target` collects candidates from **every** reachable module with no own-module priority, so an own-module pred colliding with the auto-opened `util/integer` `add`/`sub` yields ≥2 candidates and defers typed (`overloaded run target`, 2 corpus commands: `addressBook.als[0]`, `addressBook1e.als[0]`) — a verdict-neutral defer, never a wrong answer.
+**Test:** `crates/als-core/tests/lower.rs::run_target_own_module_first` — jar-pinned, `#[ignore = "awaiting LEDGER-009 approval"]` (own-module `pred add` shadowing the auto-opened `util/integer/add` must lower to the user pred). Flips on approval, when `lookup_run_target` gains the own-module-first rule.
+
+---
+
 ## Corners that NEED entries (tracked; not yet written)
 These are known to be behavior-defining and version-sensitive. Each becomes a numbered, verified, approved entry before the code that depends on it ships.
 
@@ -89,7 +105,7 @@ These are known to be behavior-defining and version-sensitive. Each becomes a nu
 - **`util/ordering`** — the relations/bounds it induces (`first`/`next`/`last`, total order pinned to atom order) and the analyzer's exact-bounds + symmetry special-casing for the `exactly`-marked param (resolve-level structure pinned in [reference/alloy6-resolution.md](docs/reference/alloy6-resolution.md) §7.1; solve-level behavior needs its entry at Rung 3).
 - **Clean-room stdlib body semantics** — the mt-015 judgment calls that only solving can verify: `util/time` macro bodies, `util/relation` `complete`, rank arithmetic in `natural`/`sequence`/`seqrel` (flagged in the mt-015 report and [reference/alloy4fun-resolve-pass.md](docs/reference/alloy4fun-resolve-pass.md); each becomes an entry when Rung 3-4 differential runs exercise it).
 - **Cardinality `#`** — filed: [LEDGER-006](#ledger-006--cardinality-) (mt-043, `verified`).
-- **Overloading resolution** — resolve-level accept/reject pinned by [LEDGER-003](#ledger-003--overloadambiguity-resolution-posture-accept-lean-interim) (proposed); anything solve-visible (which candidate's *value* is used) still needs its own entry.
+- **Overloading resolution** — resolve-level accept/reject pinned by [LEDGER-003](#ledger-003--overloadambiguity-resolution-posture-accept-lean-interim) (proposed); the solve-visible **`run`/`check` target** choice (own-module-first) is filed as [LEDGER-009](#ledger-009--runcheck-target-resolution-own-module-first) (mt-040, `verified`); any other solve-visible candidate-value choice still needs its own entry.
 - **`seq` semantics** — filed: [LEDGER-008](#ledger-008--seq-semantics) (mt-043, `verified` for the builtin-special behavior; `util/sequniv`/`seqrel` *body* semantics remain under the clean-room-stdlib corner below).
 - **String** — filed: [LEDGER-007](#ledger-007--string) (mt-043, `verified`): referenced-literal collection + `"String%d"` padding + `max(N,#referenced)` exact-scope expansion + non-exact-scope reject.
 - **Type/relevance checking** — accept/reject boundary pinned by [LEDGER-002](#ledger-002--resolvetypecheck-verdict-boundary-warnings-never-fatal) (proposed); the per-warning firing conditions remain open (resolution-doc §9).

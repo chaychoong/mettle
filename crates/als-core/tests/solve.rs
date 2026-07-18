@@ -522,22 +522,41 @@ fn determinism_two_runs_identical() {
     assert_eq!(a, b);
 }
 
-/// Post-colon `disj` (`f: disj e` on a field, `x: disj e` on a quantifier or
-/// run-pred param decl) declares cross-binding value disjointness. Its exact
-/// synthesized fact is not yet jar-pinned (mt-040) — until then every such
-/// site must **defer typed**, never silently drop the constraint (the same
-/// under-constraint class as the mt-038 field-group `disj` bug). Zero corpus
-/// incidence; this pins the negative space.
+/// A post-colon `disj` on a **field** (`f: disj e`) is jar-pinned and lowered
+/// (mt-040) — see `field_bound_disj_*` below. A post-colon `disj` on a
+/// **quantifier / run-pred param** decl (`x: disj e`) is a jar **resolve error**
+/// ("Local variable ... cannot be bound to a 'disjoint' expression", jar-probed
+/// 2026-07-18): mettle accepts it leniently at resolve (mt-027 over-accept
+/// class) and must **defer typed** at lowering, never silently drop the
+/// constraint. Zero corpus incidence; this pins that negative space.
 #[test]
-fn post_colon_disj_defers_typed() {
-    // Field bound.
-    assert!(lower_defers(
-        "sig E {}\nsig S { f: disj set E }\nrun {} for 3\n"
-    ));
-    // Quantifier decl bound.
+fn post_colon_disj_quant_decl_defers_typed() {
+    // Quantifier decl bound — the jar rejects this at resolve; mettle defers.
     assert!(lower_defers(
         "sig E {}\nrun { all x, y: disj E | x = y } for 3\n"
     ));
+}
+
+/// A post-colon `disj` field bound (`f: disj e`) adds cross-atom value
+/// disjointness (mt-040): for distinct owner atoms `this != that`,
+/// `no (this.f & that.f)`. Jar-pinned via `DumpK2` (the exact Kodkod formula)
+/// and decisive SAT/UNSAT probes (jar 6.2.0, sym 0, noOverflow true,
+/// 2026-07-18).
+#[test]
+fn field_bound_disj_lowers() {
+    // Distinct owners sharing a value is forbidden ⟹ UNSAT (jar UNSAT).
+    assert_unsat(
+        "sig B {}\nsig A { f: disj set B }\n\
+         run { some a1, a2: A | a1 != a2 and some (a1.f & a2.f) } for 4\n",
+    );
+    // The same model without `disj` allows the overlap ⟹ SAT (jar SAT) —
+    // proves the disjointness fact is what forbids it, not some other constraint.
+    assert_sat(
+        "sig B {}\nsig A { f: set B }\n\
+         run { some a1, a2: A | a1 != a2 and some (a1.f & a2.f) } for 4\n",
+    );
+    // A disj field is otherwise satisfiable (jar SAT).
+    assert_sat("sig B {}\nsig A { f: disj set B }\nrun { some A } for 3\n");
 }
 
 /// A multiplicity-marked arrow on the right of `in` constrains the columns,
@@ -588,4 +607,46 @@ fn ordering_min_max_pinned() {
     assert_sat(&format!(
         "{opening}run {{ min[A] = first and max[A] = last and min[A] != max[A] }} for exactly 3 A\n"
     ));
+}
+
+// ---------------------------------------------------------------------------
+// mt-040 (a): 0-param relation-valued macro used as a join base
+// ---------------------------------------------------------------------------
+// A top-level `let adjacent = <relation>` (0 params) invoked as a spine base
+// (`n.adjacent`, `adjacent[n]` = `n.adjacent`) records nothing at the checker's
+// `infer_zero_macro` type path, so the lowerer used to defer ("name without a
+// recorded resolution"). The checker now carries the macro id on the winning
+// base reading and `flush_rec` records a `NameChoice::Macro`, so the lowerer
+// replays the macro body.  jar-verified 2026-07-18 (sym 0, noOverflow true).
+#[test]
+fn macro_valued_join_base_lowers() {
+    // `n.adjacent` = `n.rel`; every node has a successor ⟹ SAT for 3
+    // (jar: SAT count 3).
+    assert_sat(
+        "sig Node { rel: set Node }\nlet adjacent = rel\n\
+         pred p { all n: Node | some n.adjacent }\nrun p for 3\n",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// mt-040 (b): callable passed to a higher-order macro by bare name
+// ---------------------------------------------------------------------------
+// `let m[axiom] { axiom[args] }` invoked `m[pred_name]`: the checker resolves
+// the body accept-lean (verdict-neutral) but now records which func/pred each
+// callable-by-name argument names (`MacroChoice::callables`); the lowerer binds
+// the parameter and inlines the real call.  Both verdicts jar-verified
+// 2026-07-18 (sym 0, noOverflow true).
+#[test]
+fn higher_order_macro_callable_by_name_lowers() {
+    // `checkIt[isEmpty]` ⟹ `isEmpty[S]` = `no S`; S may be empty ⟹ SAT count 1.
+    assert_sat(
+        "sig S {}\npred isEmpty[x: set S] { no x }\n\
+         let checkIt[axiom] { axiom[S] }\nrun { checkIt[isEmpty] } for 3\n",
+    );
+    // `assertIt[nonEmpty]` ⟹ `nonEmpty[none]` = `some none` = false ⟹ UNSAT.
+    // Discriminates a correct inline from treating `axiom` as a relation.
+    assert_unsat(
+        "sig S {}\npred nonEmpty[x: set S] { some x }\n\
+         let assertIt[axiom] { axiom[none] }\nrun { assertIt[nonEmpty] } for 3\n",
+    );
 }

@@ -951,3 +951,24 @@ fn explicit_receiver_binds_this_from_the_join() {
         "(some a: A | (some b: B | some (a . A.f)))"
     );
 }
+
+// ---------------------------------------------------------------------------
+// mt-040 (c): `run`/`check` target own-module priority (LEDGER-009, PINNED)
+// ---------------------------------------------------------------------------
+// A bare `run add` where the user's own module declares `pred add` AND the
+// auto-opened `util/integer` exposes `fun add`: the jar resolves the target
+// own-module-first (`getRawQS` before `getRawNQS`), so the user's pred is run
+// and `util/integer/add` is shadowed (LEDGER-009, jar-verified 2026-07-18:
+// `pred add { no A }` with `one sig A` ⟹ UNSAT — the own pred, always false).
+// mettle's `lookup_run_target` currently collects candidates from every
+// reachable module with no own-module priority, so it sees two `add`s and
+// defers typed ("overloaded run target"). Shipping the own-module-first rule is
+// a solve-visible candidate choice reserved for owner approval; this test is
+// ready to flip when LEDGER-009 is approved and the rule lands.
+#[test]
+#[ignore = "awaiting LEDGER-009 approval"]
+fn run_target_own_module_first() {
+    // Own-module `pred add` shadows the auto-opened `util/integer/add`; the
+    // command must lower (to the user pred), not defer as overloaded.
+    assert!(try_build("one sig A {}\nsig S {}\npred add { no A }\nrun add for 3\n").is_ok());
+}

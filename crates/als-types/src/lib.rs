@@ -29,8 +29,8 @@ pub mod warning;
 pub mod world;
 
 pub use choice::{
-    BuiltinCall, BuiltinValue, CallChoice, ChoiceTable, ExprChoice, MacroChoice, NameChoice,
-    SpineChoice,
+    BuiltinCall, BuiltinValue, CallChoice, CallableChoice, ChoiceTable, ExprChoice, MacroChoice,
+    NameChoice, SpineChoice,
 };
 pub use error::ResolveError;
 pub use file::{FileTable, LoadedFile};

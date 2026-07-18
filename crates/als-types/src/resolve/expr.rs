@@ -38,7 +38,7 @@ use crate::error::ResolveError;
 use crate::graph::ModuleId;
 use crate::ty::Type;
 use crate::warning::ResolveWarning;
-use crate::world::{FieldId, FuncId, SigId};
+use crate::world::{FieldId, FuncId, MacroId, SigId};
 
 use super::Resolver;
 
@@ -91,6 +91,13 @@ enum CandOrigin {
     Builtin(BuiltinValue),
     /// A lexically-bound variable.
     Var(String),
+    /// A 0-param relation-valued `let` macro used as a value — a spine base
+    /// (`s.adjacent`, `adjacent[s]`) where `adjacent` is a top-level 0-param
+    /// macro (mt-040). The winning reading carries the macro id so [`Cx::flush_rec`]
+    /// can expand + record a [`NameChoice::Macro`] at the macro name's node (the
+    /// bare-name path records this directly via [`Cx::expand_macro`]; the spine
+    /// path is the immutable readings pass, so recording is deferred to flush).
+    Macro(MacroId),
 }
 
 impl CandOrigin {
@@ -109,6 +116,11 @@ impl CandOrigin {
             CandOrigin::Call0(f) => NameChoice::Call0(*f),
             CandOrigin::Builtin(b) => NameChoice::Builtin(*b),
             CandOrigin::Var(n) => NameChoice::Var(n.clone()),
+            // A macro base needs expansion (resolve its body for this site), which
+            // is mutable; [`Cx::flush_rec`] handles it before reaching `to_choice`.
+            CandOrigin::Macro(_) => {
+                unreachable!("CandOrigin::Macro is expanded in flush_rec, never via to_choice")
+            }
         }
     }
 }
@@ -197,9 +209,13 @@ enum RecNode {
         /// Its base.
         base: Box<RecNode>,
     },
-    /// A compound base (paren/closure/nested) resolved via the warning-only
-    /// pass; its inner choices are recorded there, so nothing to flush here.
-    Sub,
+    /// A compound base (paren/closure/nested sub-expr) at `expr` — the base of a
+    /// join whose right operand is not a distributed name leaf. When such a base
+    /// is buried inside an *outer* spine (`fr . (w.*co_pa)`), the verdict path's
+    /// warning-only compound-right resolve never reaches it, so [`Cx::flush_rec`]
+    /// resolves it standalone (recording-only) to record its inner choices
+    /// (mt-040).
+    Sub(ExprId),
     /// Nothing to record here.
     Opaque,
 }
@@ -263,9 +279,17 @@ impl<'a, 'g> Cx<'a, 'g> {
     fn flush_rec(&mut self, rec: &RecNode, receiver: Option<ExprId>) {
         match rec {
             RecNode::Name { expr, choice } => {
-                let join_base = self.field_base_uses_raw(choice, receiver);
-                let nc = choice.to_choice(join_base);
-                self.record_name(*expr, nc);
+                if let CandOrigin::Macro(mid) = choice {
+                    // A 0-param macro used as a spine base (`s.adjacent`,
+                    // `adjacent[s]`): expand its body for this site and record a
+                    // `NameChoice::Macro`, exactly as the bare-name path does via
+                    // `expand_macro` (mt-040).
+                    self.record_zero_macro(*expr, *mid);
+                } else {
+                    let join_base = self.field_base_uses_raw(choice, receiver);
+                    let nc = choice.to_choice(join_base);
+                    self.record_name(*expr, nc);
+                }
             }
             RecNode::Join { expr, arg, base } => {
                 self.record_spine(*expr, SpineChoice::Join);
@@ -278,7 +302,15 @@ impl<'a, 'g> Cx<'a, 'g> {
                 // node already resolved as part of the outer spine).
                 self.record_operand(*arg);
             }
-            RecNode::Sub | RecNode::Opaque => {}
+            RecNode::Sub(e) => {
+                // A compound base (`*co_pa`, `(w.*co_pa)`) buried under an outer
+                // spine: the verdict never re-resolves it (LIMITATIONS
+                // compound-right rule), so record its inner choices standalone —
+                // errors/warnings discarded, so the verdict/warning set is
+                // byte-identical (mt-040).
+                self.record_operand(*e);
+            }
+            RecNode::Opaque => {}
         }
     }
 
@@ -325,6 +357,62 @@ impl<'a, 'g> Cx<'a, 'g> {
         self.warnings.truncate(nwarn);
     }
 
+    /// Records a [`NameChoice::Macro`] for a 0-param relation-valued macro used
+    /// as a spine base (mt-040), mirroring the recording tail of
+    /// [`Self::expand_macro`] for the no-argument case: resolve the macro body in
+    /// its own module (recording the body's per-site choices in a nested table)
+    /// and stamp the replay record at the macro-name node `e`. Recording-only —
+    /// errors/warnings from the body pass are discarded (the model already
+    /// resolved via the immutable `infer_zero_macro` type; the verdict and warning
+    /// set stay byte-identical).
+    fn record_zero_macro(&mut self, e: ExprId, mid: MacroId) {
+        if self.unroll == 0 {
+            return;
+        }
+        let mac = self.r.world.macros[mid].clone();
+        let mut sub = Cx::new(self.r, mac.module);
+        sub.unroll = self.unroll - 1;
+        sub.rootsig = self.rootsig;
+        // Resolve the body against its own bottom-up relevant type (as the
+        // set-position entry points do) purely to populate the nested choice
+        // table; the resulting type is unused here.
+        let bp = sub.infer(mac.body).remove_bool_and_int(self.int_sig());
+        let _ = sub.resolve(mac.body, &bp);
+        let mc = MacroChoice {
+            macro_id: mid,
+            body_module: mac.module,
+            args: Vec::new(),
+            arg_module: self.module,
+            body_choices: Box::new(std::mem::take(&mut sub.choices)),
+            lean: false,
+            callables: Vec::new(),
+        };
+        self.record_name(e, NameChoice::Macro(mc));
+    }
+
+    /// The single func/pred a callable-by-name macro argument names (mt-040), or
+    /// `None` when the argument is not a bare callable name, or resolves to
+    /// several overloads / a macro (left for the lowerer to defer). Overload
+    /// selection is deliberately conservative: only an unambiguous single
+    /// func/pred is recorded.
+    fn single_callable(&self, a: ExprId) -> Option<crate::choice::CallableChoice> {
+        if !self.arg_is_callable_by_name(a) {
+            return None;
+        }
+        let ExprKind::Name(qn) = &self.expr(a).kind else {
+            return None;
+        };
+        let segs = super::strip_this(qn.segments.iter().map(|s| s.text.clone()).collect());
+        let funcs = self.lookup_funcs(&segs);
+        let [only] = funcs.as_slice() else {
+            return None;
+        };
+        Some(crate::choice::CallableChoice {
+            func: *only,
+            is_pred: self.r.world.funcs[*only].is_pred,
+        })
+    }
+
     /// The [`RecNode`] describing a base reading (its head name / nested join /
     /// compound sub-expr), for recording the winning spine.
     fn rec_of(reading: &Reading) -> RecNode {
@@ -341,8 +429,13 @@ impl<'a, 'g> Cx<'a, 'g> {
                 arg: *left,
                 base: base.clone(),
             },
-            Fin::Sub(_) => RecNode::Sub,
-            Fin::Call { .. } | Fin::BadCall { .. } | Fin::Unknown { .. } => RecNode::Opaque,
+            Fin::Sub(e) => RecNode::Sub(*e),
+            // A nested func/pred call buried as a compound-right base
+            // (`rf_pa.(Ghost[g])`): its spine node (`head_expr`) is never
+            // finalized in place, so record it by standalone resolve (mt-040).
+            Fin::Call { .. } | Fin::BadCall { .. } => RecNode::Sub(reading.head_expr),
+            // A genuinely-unknown / lenient placeholder base has nothing to record.
+            Fin::Unknown { .. } => RecNode::Opaque,
         }
     }
 
@@ -1593,6 +1686,20 @@ impl<'a, 'g> Cx<'a, 'g> {
         // in the body becomes a real call. Resolve such a body **accept-lean**
         // (drop its errors), so the approximation never wrongly rejects (mt-020).
         let lean = arg_exprs.iter().any(|&a| self.arg_is_callable_by_name(a));
+        // For a higher-order (lean) macro, record which func/pred each
+        // callable-by-name argument names, so the lowerer can bind the parameter
+        // and inline `param[args]` (mt-040). An argument we cannot pin to a single
+        // callable (ambiguous, or a macro-valued callable) is left unrecorded, so
+        // lowering defers typed rather than guessing.
+        let callables: Vec<(usize, crate::choice::CallableChoice)> = if lean {
+            arg_exprs
+                .iter()
+                .enumerate()
+                .filter_map(|(i, &a)| self.single_callable(a).map(|c| (i, c)))
+                .collect()
+        } else {
+            Vec::new()
+        };
         let mac = self.r.world.macros[mid].clone();
         let mut sub = Cx::new(self.r, mac.module);
         sub.unroll = self.unroll - 1;
@@ -1610,6 +1717,7 @@ impl<'a, 'g> Cx<'a, 'g> {
             arg_module: self.module,
             body_choices: Box::new(std::mem::take(&mut sub.choices)),
             lean,
+            callables,
         };
         if matches!(self.expr(e).kind, ExprKind::Name(_) | ExprKind::AtName(_)) {
             self.record_name(e, NameChoice::Macro(mc));
@@ -2246,13 +2354,20 @@ impl<'a, 'g> Cx<'a, 'g> {
                 if out.is_empty() {
                     // A 0-param macro applied via box/join: expand to its body type.
                     if let Some(t) = self.infer_zero_macro(&segs) {
+                        // Carry the macro id so `flush_rec` records a
+                        // `NameChoice::Macro` at this base (mt-040) — the spine
+                        // readings pass is immutable, so recording is deferred to
+                        // the mutable finalize/flush.
+                        let mid = self
+                            .lookup_macro(&segs)
+                            .filter(|&m| self.r.world.macros[m].params.is_empty());
                         out.push(Reading {
                             ty: t,
                             weight: 0,
                             reason: segs.join("/"),
                             fin: Fin::Leaf,
                             head_expr: e,
-                            head_choice: None,
+                            head_choice: mid.map(CandOrigin::Macro),
                         });
                         return out;
                     }
