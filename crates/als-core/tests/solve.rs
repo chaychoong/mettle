@@ -539,3 +539,53 @@ fn post_colon_disj_defers_typed() {
         "sig E {}\nrun { all x, y: disj E | x = y } for 3\n"
     ));
 }
+
+/// A multiplicity-marked arrow on the right of `in` constrains the columns,
+/// exactly like a field decl of that shape (`isIn`; the hotel2.als
+/// `Room<:keys in Room lone-> Key` fact). Silently stripping the marks
+/// lowered it to a plain product and produced the mt-037 wrong verdict:
+/// mettle=SAT (a key in two rooms) vs jar=UNSAT. Both goldens jar-verified
+/// 2026-07-18.
+#[test]
+fn in_mult_arrow_rhs_enforces_columns() {
+    // `lone ->`: each Key in at most one Room ⇒ a shared key is UNSAT.
+    assert_unsat(
+        "sig Key {}\nsig Room { keys: set Key }\n\
+         fact { Room<:keys in Room lone-> Key }\n\
+         run { some k: Key | #(keys.k) > 1 } for 2 Room, 2 Key\n",
+    );
+    // Control: without the fact the same goal is SAT.
+    assert_sat(
+        "sig Key {}\nsig Room { keys: set Key }\n\
+         run { some k: Key | #(keys.k) > 1 } for 2 Room, 2 Key\n",
+    );
+}
+
+/// A multiplicity-marked arrow anywhere except a decl bound or an `in`
+/// right-hand side (e.g. an `=` side) has no faithful plain-relation value;
+/// it must defer typed, never silently strip to a product (STYLE E5).
+#[test]
+fn mult_arrow_outside_in_rhs_defers_typed() {
+    assert!(lower_defers(
+        "sig A {}\nsig B {}\nrun { some r: A -> B | r = A lone-> B } for 2\n"
+    ));
+}
+
+/// `util/ordering`'s `min`/`max` funs, pinned against the jar (all three
+/// verdicts jar-verified 2026-07-18). The clean-room stdlib originally shipped
+/// the two bodies swapped (`min` returned the maximum) — caught by the mt-037
+/// solve gauge as the hotel1.als[0] wrong verdict: `nextKey`'s `min` walked
+/// the ordering backwards, excluding the book's counterexample.
+#[test]
+fn ordering_min_max_pinned() {
+    let opening = "open util/ordering[A]\nsig A {}\n";
+    assert_unsat(&format!(
+        "{opening}run {{ min[A] != first }} for exactly 3 A\n"
+    ));
+    assert_unsat(&format!(
+        "{opening}run {{ max[A] != last }} for exactly 3 A\n"
+    ));
+    assert_sat(&format!(
+        "{opening}run {{ min[A] = first and max[A] = last and min[A] != max[A] }} for exactly 3 A\n"
+    ));
+}

@@ -903,8 +903,8 @@ impl<'a> Lowerer<'a> {
         span: Span,
         col: &mut u32,
     ) -> Result<Vec<FormulaId>, TranslateError> {
-        let lhs_rel = self.lower_rel(ctx, lhs)?;
-        let rhs_rel = self.lower_rel(ctx, rhs)?;
+        let lhs_rel = self.lower_rel_stripped(ctx, lhs)?;
+        let rhs_rel = self.lower_rel_stripped(ctx, rhs)?;
         let product = self.mk_rel(
             RelExprKind::Binary {
                 op: RelBinOp::Product,
@@ -1527,6 +1527,30 @@ impl<'a> Lowerer<'a> {
                         span,
                     ));
                 }
+                // `x in A m -> n B`: the reference translates a
+                // multiplicity-marked arrow on the `in` right-hand side as
+                // membership over the stripped product PLUS the per-column
+                // multiplicity constraints — the same conjunct set a field
+                // decl of that shape produces (`isIn`; jar-verified via the
+                // hotel2.als `Room<:keys in Room lone-> Key` fact, mt-037).
+                // A marked arrow anywhere else (incl. an `=` side) falls
+                // through to `lower_rel`'s typed defer.
+                if matches!(op, CmpOp::In) && self.bound_is_higher_order(ctx, rhs) {
+                    let ExprKind::Arrow {
+                        lhs: alhs,
+                        lhs_mult,
+                        rhs_mult,
+                        rhs: arhs,
+                    } = self.ast(ctx.module).exprs[rhs].kind.clone()
+                    else {
+                        unreachable!("bound_is_higher_order is true only for ExprKind::Arrow");
+                    };
+                    let l = self.lower_rel_promote(ctx, lhs, l_int)?;
+                    let cs = self.arrow_value_constraint(
+                        ctx, l, alhs, lhs_mult, rhs_mult, arhs, span, &mut 0,
+                    )?;
+                    return Ok(self.mk_formula(FormulaKind::And(cs), span));
+                }
                 let l = self.lower_rel_promote(ctx, lhs, l_int)?;
                 let r = self.lower_rel_promote(ctx, rhs, r_int)?;
                 let rop = if matches!(op, CmpOp::Eq) {
@@ -1604,6 +1628,19 @@ impl<'a> Lowerer<'a> {
             ExprKind::Binary { op, lhs, rhs } => self.lower_binary_rel(ctx, e, op, lhs, rhs, span),
             ExprKind::BoxJoin { .. } => self.lower_spine_rel(ctx, e, span),
             ExprKind::Arrow { lhs, rhs, .. } => {
+                // A multiplicity-marked arrow is only meaningful as a decl
+                // bound or an `in` right-hand side (both handled by
+                // [`Self::arrow_value_constraint`] callers). Anywhere else,
+                // silently stripping the marks lowered `Room lone-> Key` to a
+                // plain product and produced a wrong verdict (hotel2.als,
+                // mt-037): defer typed instead (STYLE E5).
+                if self.bound_is_higher_order(ctx, e) {
+                    return Err(TranslateError::LoweringUnsupported {
+                        what: "multiplicity-marked arrow outside a declaration or `in` bound"
+                            .to_owned(),
+                        span,
+                    });
+                }
                 let l = self.lower_rel(ctx, lhs)?;
                 let r = self.lower_rel(ctx, rhs)?;
                 Ok(self.mk_rel(
@@ -2656,7 +2693,30 @@ impl<'a> Lowerer<'a> {
             ExprKind::Unary { op, expr } if is_mult_marker(*op) => *expr,
             _ => decl.bound,
         };
-        self.lower_rel(ctx, bound)
+        self.lower_rel_stripped(ctx, bound)
+    }
+
+    /// Lowers an arrow tree to its plain-product value, deliberately ignoring
+    /// multiplicity marks. Only for callers that enforce the marks themselves —
+    /// [`Self::arrow_value_constraint`]'s membership product and the skolem
+    /// bound of [`Self::lower_decl_bound_set`]; everywhere else, a marked arrow
+    /// must go through `lower_rel` and hit its typed defer instead of being
+    /// silently weakened.
+    fn lower_rel_stripped(&mut self, ctx: Ctx, e: ExprId) -> Result<RelExprId, TranslateError> {
+        if let ExprKind::Arrow { lhs, rhs, .. } = self.ast(ctx.module).exprs[e].kind {
+            let span = self.span_of(ctx, e);
+            let l = self.lower_rel_stripped(ctx, lhs)?;
+            let r = self.lower_rel_stripped(ctx, rhs)?;
+            return Ok(self.mk_rel(
+                RelExprKind::Binary {
+                    op: RelBinOp::Product,
+                    lhs: l,
+                    rhs: r,
+                },
+                span,
+            ));
+        }
+        self.lower_rel(ctx, e)
     }
 
     // ============================ calls / macros ============================
