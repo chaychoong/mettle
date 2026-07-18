@@ -20,10 +20,24 @@ path = "src/bin/conform.rs"
 name = "resolve-gauge"
 path = "src/bin/resolve_gauge.rs"
 
+# mt-037 differential solve gauge + SB-0 counting net: drives mettle's own
+# solve pipeline over the corpus, diffs verdicts against the cached baselines
+# (`baselines/*-verdict.json`), and — under `--count` — enumerates SB-0 model
+# counts against the pinned jar for goals with no skolemizable/ordered-abstract
+# count divergence (ADR-0002, LIMITATIONS).
+[[bin]]
+name = "solve-gauge"
+path = "src/bin/solve_gauge.rs"
+
 [dependencies]
+# als-core: the solve-gauge drives mettle's own solve pipeline
+# (compute_universe + compute_bounds + lower_command + solve_goal + enumerate)
+# and walks the lowered IR to classify SB-0 count-divergence families.
+als-core = { path = "../als-core" }
 # als-types / als-syntax: the resolve-gauge bin drives mettle's own
 # load+resolve pipeline (ModuleGraph::load_with_source + als_types::resolve)
-# to produce the mettle-side ACCEPT/REJECT verdict it diffs against the jar.
+# to produce the mettle-side ACCEPT/REJECT verdict it diffs against the jar;
+# the solve-gauge reuses the resolved world for its counting-eligibility rules.
 als-types = { path = "../als-types" }
 als-syntax = { path = "../als-syntax" }
 # thiserror: typed per-crate error enum (STYLE E1) for the harness's own

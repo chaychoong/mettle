@@ -1,0 +1,2156 @@
+{
+  "files": [
+    {
+      "file": "corpus/portus-63/expert-models/2scxlb3tbo5bmvmwplglqils7a5uarmx-talks/scc.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Default",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/2scxlb3tbo5bmvmwplglqils7a5uarmx-talks/scc_mp.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "mp_poscheck_a",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/3zltn65gds66b6f4q3lvbtgdkb6snmuu-alloy/fullsub2.als",
+      "outcome": {
+        "type": "timeout"
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/3zltn65gds66b6f4q3lvbtgdkb6snmuu-alloy/hc-atd/converge.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "show",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/3zltn65gds66b6f4q3lvbtgdkb6snmuu-alloy/hc-atd/hc7.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "show",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/3zltn65gds66b6f4q3lvbtgdkb6snmuu-alloy/hc-jwb/hc4.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "show",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/3zltn65gds66b6f4q3lvbtgdkb6snmuu-alloy/mesh.als",
+      "outcome": {
+        "type": "timeout"
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/3zltn65gds66b6f4q3lvbtgdkb6snmuu-alloy/question.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "dryElementWetNodes",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "dryElementWetNodes2",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/3zltn65gds66b6f4q3lvbtgdkb6snmuu-alloy/wetdry.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "allWetToDry",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "allDryToWet",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/5x4l2fj5nfbq3cz2dumwdt57g3kig3rd-litmustestgen/c11_perturbed.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Hb",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "Coh",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "Rf",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "NaRf",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 4,
+            "label": "Rmw",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 5,
+            "label": "Simp",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 6,
+            "label": "Com",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 7,
+            "label": "union",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 8,
+            "label": "sanity",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/5x4l2fj5nfbq3cz2dumwdt57g3kig3rd-litmustestgen/scc_perturbed_scflip.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "sc_per_loc",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "no_thin_air",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "rmw_atomicity",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "causality",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 4,
+            "label": "causality_scflip",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 5,
+            "label": "union",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 6,
+            "label": "union_scflip",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/5x4l2fj5nfbq3cz2dumwdt57g3kig3rd-litmustestgen/tso_perturbed.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "sc_per_loc",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "rmw_atomicity",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "causality",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "union",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/7d25ioxqmue65lp6ntzz735gpbg4fmgq-amazon-snapshot-spec/serializableSnapshotIsolation.als",
+      "outcome": {
+        "type": "timeout"
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/7d25ioxqmue65lp6ntzz735gpbg4fmgq-amazon-snapshot-spec/textbookSnapshotIsolation.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "check$1",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Algorithms/LC-Lenses/lc-lenses.als",
+      "outcome": {
+        "type": "timeout"
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/ERTMS/ertms_1A.als",
+      "outcome": {
+        "type": "timeout"
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/ETL_SCD/etl_scd.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "consistentDataObject",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "consistentMapping",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "addAudit",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "addAuditCorrect",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 4,
+            "label": "addDimension",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 5,
+            "label": "addDimensionCorrect",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 6,
+            "label": "updateDimension",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 7,
+            "label": "updateDimensionCorrect",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/OLAPUsagePrefs/OLAPUsagePrefs.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "run$1",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "CheckRules",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "run$3",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "CheckStrongRules",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 4,
+            "label": "run$5",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/PTCRISync/ptcris_v0_6_0_draft.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "IMPORTED_S1",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "IMPORTED_S2",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "IMPORTED_S3",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "IMPORTED_S4",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 4,
+            "label": "IMPORTED_S5",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 5,
+            "label": "IMPORTED_S6",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 6,
+            "label": "EXPORTED_S1",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 7,
+            "label": "EXPORTED_S3",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 8,
+            "label": "EXPORTED_S4",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 9,
+            "label": "EXPORTED_S5",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 10,
+            "label": "EXPORTED_S6",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 11,
+            "label": "SYNC_S1",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 12,
+            "label": "BASE0",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 13,
+            "label": "BASE1",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 14,
+            "label": "BASE2",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 15,
+            "label": "BASE3",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 16,
+            "label": "BASE4",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 17,
+            "label": "BASE5",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 18,
+            "label": "BASE6",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 19,
+            "label": "BASE7",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Puzzles/FarmerCrossing/farmer_pt.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "run$1",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/CD2DBS_keys/dbs.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Conforms",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/CD2DBS_keys/dbs_inst.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Default",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/CD2DBS_simple/dbs.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Default",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/CD2DBS_simple/dbs_inst.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Default",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als",
+      "outcome": {
+        "type": "timeout"
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/trace.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "total",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/FM2CF/fm2cfs.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "R_1_good",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "R_2_good",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "R_3_good",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "R_2",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 4,
+            "label": "R_3",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 5,
+            "label": "R_x",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 6,
+            "label": "R_x_good",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 7,
+            "label": "check$8",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 8,
+            "label": "run$9",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 9,
+            "label": "run$10",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/HSM2NHSM/NHSM.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Default",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/HotelLocking/HotelExact.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "BadSafety",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "GoodSafety",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/HotelLocking/HotelVar.als",
+      "outcome": {
+        "type": "timeout"
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als",
+      "outcome": {
+        "type": "timeout"
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/discovery/INSLabel.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "LookupConforms2",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "Lookup",
+            "check": false,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/distributed-hashtable/chord2.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "FindSuccessorWorks",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/distributed-hashtable/chordbugmodel.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "ShowMe1Node",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "ShowMeGood",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "ShowMeCorrectSuccessorEg",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "ShowMe3",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 4,
+            "label": "FindSuccessorWorks",
+            "check": false,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 5,
+            "label": "StrongerFindSuccessorWorks",
+            "check": true,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/gc/marksweepgc.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Soundness1",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "Soundness2",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "Completeness",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/mapping/view-backing.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "zippishOK",
+            "check": true,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/multicasting/iolus.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "OutsiderCantRead",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/mutex/dijkstra-2-process.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Deadlock",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "ShowDijkstra",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "DijkstraPreventsDeadlocks",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/mutex/dijkstra-K-state.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "TraceShorterThanMaxSimpleLoop",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "TwoPrivileged",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "Closure",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/mutex/peterson.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "TwoRun",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "ThreeRun",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "Safety",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "NotStuck",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/ietf-rfcs/rfc7617-BasicAuth/basic-auth.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "run$1",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/logic/syllogism/syllogism.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "check$1",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "check$2",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/models/file-system/file_system.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "check$1",
+            "check": true,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "check$2",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/models/java/java-map.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "verify",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/models/java/javatypes.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Show",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/models/java/javatypes_soundness.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "TypeSoundness",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "TypeSoundness",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/models/logic/philosophers.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "run$1",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "Liveliness",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/models/microsoft-com/com.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Theorem1",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "Theorem2",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "Theorem3",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "Theorem4a",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 4,
+            "label": "Theorem4b",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/paper-examples/jackson-cacm-2019/origin-tracking.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "run$1",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "check$2",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/puzzles/coloring/color-australia.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "colors",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/puzzles/einstein/einstein-wikipedia.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "run$1",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/puzzles/farmer-chicken-fox/farmer.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "solvePuzzle",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "NoQuantumObjects",
+            "check": true,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/puzzles/halmos-handshake/handshake.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "P10",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "P12",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "P14",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "P16",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/puzzles/money.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "run$1",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/puzzles/tower-hanoi/hanoi.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Game1",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "Game2",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/simple-models/4-bit-adder/4-bit-adder.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "run$1",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/simple-models/books/birthday.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "DelIsUndo",
+            "check": true,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/simple-models/games/life.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Square",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "Show",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "interesting",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/simple-models/genealogy/genealogy.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Show",
+            "check": false,
+            "expects": true,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/simple-models/no-solution/trivial.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "run$1",
+            "check": false,
+            "expects": false,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/simple-models/state-machine/flip-flop.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "show",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/simple-models/state-machine/reset-flipflop-with-enable.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "show",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/utilities/time/overlapping-ranges.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "check$1",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/utilities/trace/trace.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "total",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/lkicptlz3eklrbu7ppmltlkebwrvzhdq-zigbee-alloy-svn-to-git/trunk/base/event.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "run$1",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/lkicptlz3eklrbu7ppmltlkebwrvzhdq-zigbee-alloy-svn-to-git/trunk/base/neighbor.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Default",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/lkicptlz3eklrbu7ppmltlkebwrvzhdq-zigbee-alloy-svn-to-git/trunk/base/node.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Default",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/lkicptlz3eklrbu7ppmltlkebwrvzhdq-zigbee-alloy-svn-to-git/trunk/base/random_event.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "run$1",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/lkicptlz3eklrbu7ppmltlkebwrvzhdq-zigbee-alloy-svn-to-git/trunk/base/types.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "Default",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/oujlbmnutprdhddstyudppn7t35n43os-CANBus/CANBus.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "NumOfState",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "OutOfOrder",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/tso_transistency_perturbed.als",
+      "outcome": {
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "sc_per_loc",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "rmw_atomicity",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "causality",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "invlpg",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 4,
+            "label": "tlb_causality",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als",
+      "outcome": {
+        "type": "timeout"
+      }
+    },
+    {
+      "file": "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als",
+      "outcome": {
+        "type": "timeout"
+      }
+    }
+  ],
+  "totals": {
+    "commands": 158,
+    "with_expect": 48,
+    "matches": 45,
+    "mismatches": 3,
+    "timeouts": 10,
+    "errors": 0
+  }
+}

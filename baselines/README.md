@@ -25,3 +25,17 @@ Triage (2026-07-15, tech lead):
 
 When mettle solves, the comparison set is the 234 per-command verdicts in the
 JSON, not just the expect subset.
+
+## portus-63-verdict.json (2026-07-17, mt-037)
+
+158 commands / 63 model files (+deps): **45/48 expect-matches, 3 mismatches,
+10 file timeouts, 0 errors.**
+
+Triage (2026-07-17, tech lead):
+- **3 mismatches** (`dijkstra-2-process.als` ShowDijkstra, `peterson.als`
+  TwoRun/ThreeRun): portus vendors copies of the same upstream models already
+  triaged above — same stale expects, the jar's UNSAT is the oracle.
+- **10 timeouts** at 60s (fullsub2, mesh, serializableSnapshotIsolation,
+  lc-lenses, ertms_1A, elevator_spl_events, HotelVar, correctChord, and the two
+  TransForm `util/` minimality scripts): genuinely large problems; no verdict
+  cached, so the solve gauge reports their commands as `no_baseline`.
