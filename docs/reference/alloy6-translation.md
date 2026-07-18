@@ -267,7 +267,8 @@ The `BoundsShim`/`DumpK2` probes (§10.2) dumped `A4Solution.getBounds()` and
   `{0,1,2}`; no-overall → maxseq 4 → `{0,1,2,3}`). `String` = exactly empty
   (mettle mints no string atoms yet). The jar *also* builds `Int/min`, `Int/max`,
   `Int/next`, `Int/zero` ordering relations; these are **Rung-4** integer
-  fidelity (see §9) and mettle does not allocate them in Rung 3. `univ`/`none`
+  fidelity (pinned in [§12](#12-integer-builtin-relations-intminmaxnextzero-rung-4-mt-043))
+  and mettle does not allocate them in Rung 3. `univ`/`none`
   are constants, never relations.
 
 mt-030 (`als_core::bounds_builder::compute_bounds`) implements exactly this,
@@ -369,8 +370,16 @@ resolution contract's "both sides `is_int`" case (resolution §4.5, probe 02).
 - `sum x: B | ie` → the Kodkod sum quantifier (mettle `IntExprKind::Sum`).
 - The `fun/…` arithmetic (`plus`/`minus`/`mul`/`div`/`rem`, `IPLUS`/`IMINUS`/…)
   → the matching Kodkod `IntExpression` op (`plus`/`minus`/`multiply`/`divide`/
-  `modulo`/`shl`/`shr`/`sha`). There is a peephole: `IPLUS` of `0` and `max+1`
-  collapses (a `NEXT`-relation encoding detail).
+  `modulo`/`shl`/`shr`/`sha`). **The full per-op semantics (wraparound, div/rem
+  sign conventions, div-by-zero, MIN/−1, shift kinds) and the exact forbid-mode
+  polarity rule are pinned in the Rung-4 [§11](#11-integer-arithmetic-at-bitwidth-rung-4-mt-043).**
+  Note the surface operators `+`/`-` are **relational** union/difference (`PLUS`/
+  `MINUS` cases), never integer add — integer arithmetic is only ever the `fun/…`
+  operator forms (`IPLUS`/`IMINUS`/`MUL`/…) (resolution §4.5, "no int↔Int
+  coercion"). One real peephole exists, and it is on **`MINUS`**, not `IPLUS`
+  (correcting an earlier note): `0 - (max+1)` folds to the constant `min` so the
+  most-negative literal (`-8` at bw 4) can be written without an out-of-range
+  intermediate (`TranslateAlloyToKodkod`, `ExprBinary` `MINUS` case).
 - **Overflow semantics live entirely in Kodkod's int translation**, switched by
   `Options.setNoOverflow(opt.noOverflow)` and `IntEncoding.TWOSCOMPLEMENT` at the
   chosen bitwidth. With `noOverflow=false` (jar headless default) arithmetic
@@ -381,6 +390,9 @@ resolution contract's "both sides `is_int`" case (resolution §4.5, probe 02).
   (wraps to −2) with overflow allowed, **UNSAT** with overflow forbidden.)
   Rung 3 defers full integer/counting fidelity to Rung 4 (ADR-0011); the overflow
   *switch* and its semantics are pinned here so Rung 4 implements one reference.
+  **The forbid-mode constraint is polarity- and quantifier-sensitive (Milicevic/
+  Jackson semantics), not a flat `∧ ¬overflow`; the exact rule is pinned in
+  [§11.3](#113-forbid-mode-the-milicevicjackson-polarity-rule).**
 
 ### 2.5 Facts & command formula assembly
 
@@ -696,21 +708,31 @@ matching Kodkod's CNF or enumeration order, which is impossible and not attempte
 - **Skolemization** is pinned structurally (depth-0 constants, `$name` naming) but
   mettle may skip it for the Rung-3 slice (quantify directly); if kept-out, note
   in LIMITATIONS that instance skolem relations won't match the jar's shape (they
-  never affect the verdict).
+  never affect the verdict). **UPDATE (mt-043):** the first-order skolemization
+  rule (naming, depth-0 gate, nesting, SB-0 count effect) is now fully pinned in
+  [§15](#15-first-order-skolemization-rung-4-mt-043) so mt-047 can make the
+  `skip_fo_skolem` counting family exact; mt-038 already implemented the
+  higher-order half (§10.6).
 - **The `Simplifier` / `inferPartialInstance`** does more than the ordering shrink
   (general partial-instance inference); its full behavior was not pinned because
   it is a **performance** pass that cannot change the verdict (it only tightens
   bounds a sound solve would respect anyway). mettle may ship Rung 3 without it.
-- **Integer/bitwidth fidelity beyond the overflow switch** (division/remainder
-  rounding, `sum` overflow, `seq/Int` bounds) defers to Rung 4; §2.4 pins the
-  switch and the two's-complement encoding, not every arithmetic corner.
+- **RESOLVED (mt-043, 2026-07-18):** integer/bitwidth fidelity beyond the overflow
+  switch (division/remainder rounding + sign, div-by-zero, MIN/−1, shifts, `sum`,
+  integer if-then-else, `#` cardinality overflow, the `Int/min|max|next|zero`
+  builtin relations, `seq/Int` bounds, `seq` field desugar) is now pinned in the
+  Rung-4 sections [§11](#11-integer-arithmetic-at-bitwidth-rung-4-mt-043)–[§14](#14-seq-semantics-rung-4-mt-043)
+  with the probe matrices [§10.7](#107-mt-043-integer-arithmetic--overflow-probes-jar-verified-2026-07-18)–[§10.10](#1010-mt-043-seq-probes-jar-verified-2026-07-18).
 - **Temporal solving** (`var`, `always`/`until`, trace scopes, the `[electrum]`
   Pardinus paths) is Rung 6; §1/§2 note where it diverges (temporal disjointness
   formulas, `maxtrace`/`mintrace`, `Prime`) but the bounded LTL→FOL expansion is
   out of scope here.
 - **CNF-level count parity at default symmetry (SB=20)** is deliberately *not*
   pinned — it needs bit-exact lex-leader replication and is a later dedicated net
-  (ADR-0002). Rung 3 gauges verdict + SB-0 count only.
+  (ADR-0002). Rung 3 gauges verdict + SB-0 count only. **UPDATE (mt-043):** the
+  SB=20 posture (what the "20" is, what it changes, why it never flips a verdict)
+  is pinned in [§16](#16-symmetry-breaking-posture-rung-4-mt-043) as the input to
+  ADR-0012's posture decision.
 
 Anything this document leaves ambiguous: **test against the jar first** (extend
 the §10 probe harness), record the answer here or in SEMANTICS_LEDGER.md, then
@@ -1114,3 +1136,441 @@ typed defer. First-order quantifiers are **never** skolemized (ADR-0011 unchange
 the SB-0 "skolemization count divergence" note (§10.4) therefore still applies only
 to first-order goals mettle chooses not to skolemize, and the pinned SB-0 goldens
 (no HO decls) are unchanged.
+
+### 10.7 mt-043 integer arithmetic & overflow probes (jar-verified 2026-07-18)
+
+Harness: `scratchpad/probe/ProbeR4.java` (drives `TranslateAlloyToKodkod.
+execute_command` via `A4Options`, dumps verdict + exhaustive SB-0 count + the
+first instance's relation dump). Oracle: `oracle/org.alloytools.alloy.dist.jar`
+(6.2.0), OpenJDK 21, `sat4j`, `symmetry=0`. Each row states `noOverflow`
+explicitly (LEDGER-001). All arithmetic uses the `fun/…` operator forms via
+`open util/integer`; `for 3 but 4 int` (range −8..7) unless noted.
+
+| # | Case | noOverflow | Verdict / value |
+|---|---|---|---|
+| I1 | `div[-5,2]` = ? | false | **−2** (SAT); `=−3` UNSAT → **division truncates toward zero** |
+| I2 | `div[5,-2]`, `div[-5,-2]` | false | **−2**, **2** → toward-zero both signs |
+| I3 | `rem[-5,2]`, `rem[5,-2]` | false | **−1**, **1** → **remainder takes the sign of the dividend** (Java `%`) |
+| I4 | `4 << 1`, `4 >> 1`, `(0-8) >> 1`, `(0-8) >>> 1` | false | **8**, **2**, **−4**, **4** → `<<`=logical-left, `>>`=**arithmetic** (sign-extend) right, `>>>`=**logical** (zero-fill) right |
+| I5 | `plus[7,7]`, `mul[3,3]` | false | **−2**, **−7** → two's-complement wrap (14→−2, 9→−7) |
+| I6 | `div[5,0]` = ? | false | **−1** (all-ones) — SAT only at −1; **jar-specific**, not 0 |
+| I7 | `rem[5,0]` = ? | false | **5** — remainder-by-zero returns the **dividend** |
+| I8 | `div[(0-8),(0-1)]` (MIN/−1) = ? | false | **1** — SAT only at 1; a division-algorithm artifact (the mathematically-correct 8 is out of range). Flagged: allow-mode value only; forbid excludes it |
+| I9 | `plus[7,7] < 0` | false / true | **SAT** (−2<0) / **UNSAT** — the LEDGER-001 decisive test |
+| I10 | `div[5,0]`, `div[(0-8),(0-1)]`, `rem[5,0]` reflexive `x=x` | true | **UNSAT** each (div-by-0, MIN/−1, rem-by-0 all set overflow); `div[5,2]=div[5,2]` **SAT** control |
+| I11 | `all n: Int | plus[n,7] >= n` | false / true | **UNSAT** (breaks at n=7: 7+7 wraps) / **SAT** — **universal-position overflow rescues the ∀** (see §11.3) |
+| I12 | `#A = 8` for exactly 8 A, 4 int | false / true | **SAT** (count 8 wraps to −8, `=8`≡`=−8`) / **UNSAT** — `#` cardinality participates in overflow exactly like arithmetic |
+| I13 | `#A > 0` for exactly 8 A | false / true | **UNSAT** (count wraps to −8, `−8>0` false) / **UNSAT** (count overflow excluded); `#A=7` for 7 A forbid **SAT** control |
+
+### 10.8 mt-043 integer builtin-relation probes (jar-verified 2026-07-18)
+
+| # | Case | Observation |
+|---|---|---|
+| I14 | `min = (0-8)`, `max = 7` | SAT — `util/integer` `min`/`max` are `min(bw)`/`max(bw)`. **Source:** `TranslateAlloyToKodkod.visit(ExprConstant)` maps `MIN`/`MAX` to `IntConstant.constant(min/max)`, i.e. **plain int constants**, not the `Int/min`/`Int/max` relations |
+| I15 | `3.next = 4`, `3.prev = 2`, `7.next = 7`, `(0-8).prev = (0-8)` | first two SAT, last two **UNSAT** — `next`/`prev` are the `Int/next` binary relation and its transpose; `7.next`/`(−8).prev` are empty (chain endpoints), so the equalities with a non-empty side fail |
+
+### 10.9 mt-043 String probes (jar-verified 2026-07-18)
+
+Harness dumps `A4Solution.toString()` (universe + `String` relation).
+
+| # | Case | Observation |
+|---|---|---|
+| S1 | `run { some s } for 3 but 3 String` (non-exact) | **ERROR** `Sig "String" must have an exact scope.` — a non-exact `String` scope is rejected pre-solve |
+| S2 | `... exactly 3 String`, one field `s: String`, no literals | universe tail `…, 7, "String1", "String0", "String2"`; `String={"String1","String0","String2"}` — **padding atoms are the strings `"String0"`, `"String1"`, `"String2"` (with their quote characters), NOT `unused%d`**; appended **after** ints; **HashSet order** (note `"String1"` precedes `"String0"` — nondeterministic in the jar) |
+| S3 | `exactly 3 String` + fact `p.s = "hello"` | `String={"String1","String0","hello"}` — one referenced literal + two padding atoms fill the scope |
+| S4 | 3 referenced literals `"x"/"y"/"z"`, `exactly 1 String` | `String={"z","y","x"}` — **an `exactly N String` scope is NOT truly exact: it expands to `max(N, #referenced-literals)`** (reporter: "Sig String expanded to contain all 3 String constant(s)"); no padding added since 3 ≥ 1 |
+| S5 | one literal `"only"`, **no** `String` scope | `String={"only"}` — `maxstring = −1` default: exactly the referenced literals, no padding |
+| S6 | literal only in a **top-level** fact `fact { Q.s = "topfact" }` | `String={"topfact"}` — top-level (module) facts **are** scanned for literals |
+| S7 | literal only in an **uncalled** pred body | `String={}` — literals in unreferenced pred/fun bodies are **not** collected (the walk is over the command formula + all facts + field decls, recursing only into *called* funcs) |
+
+### 10.10 mt-043 seq probes (jar-verified 2026-07-18)
+
+| # | Case | Observation |
+|---|---|---|
+| Q1 | `sig P { f: seq Int }` for `2 but 3 seq, 4 int` | `seq/Int={0,1,2}` (maxseq 3); `P<:f` tuples are arity 3 `P$0->0->-8`, `P$0->1->7` — a `seq X` field is `seq/Int -> lone X` |
+| Q2 | index 1 used, index 0 unused (`(1->E) in R.f and no ((0->E)&R.f)`) | **UNSAT** — the **contiguity fact** `dom(f) − dom(f).(Int/next) ⊆ Int/zero` forces the used indices to be a prefix from 0 |
+| Q3 | indices 0 and 1 both used | **SAT** control |
+| Q4 | `seq/Int` at `for 2`, `for 2 but 5 seq`, `for 6` | maxseq **2**, **5**, **6**; `seq/Int={0..maxseq−1}` — bare maxseq = `min(overall, max(bw))`; `for N seq` overrides it, **independent of overall** |
+
+### 10.11 mt-043 first-order skolemization probes (jar-verified 2026-07-18)
+
+| # | Case | Observation |
+|---|---|---|
+| K1 | `run foo { some x: A | x=x } for 3` | instance carries skolem `$foo_x = {A$0}` — a top-level `∃` skolemizes to `$<cmdLabel>_<var>` |
+| K2 | anonymous `run { some x: A | … }` (label `run$1`) | skolem `$x` — a label containing `$` drops the prefix (source `skolem()`); read-back adds one `$` and uniquifies (`un.make("$"+n)`) |
+| K3 | `run bar { all y: A | some x: A | x!=y }` | **no** `$` skolem in the instance — an `∃` nested under an `∀` is **not** skolemized at depth 0 |
+| K4 | SB-0 count of `run { some x: A | x=x } for 3` | jar **12** vs a no-FO-skolem count **7**: `12 = Σ over non-empty subsets |subset|` (the jar enumerates each skolem-constant witness); this is the `skip_fo_skolem` divergence mt-047 closes |
+
+### 10.12 mt-043 symmetry-breaking probes (jar-verified 2026-07-18)
+
+| # | Case | Observation |
+|---|---|---|
+| Y1 | `run { some A } for 3`, SB=20 vs SB=0 | count **3** vs **7**, verdict **SAT** both — SB changes the enumerated count, never the verdict; SB=0 is the raw count (matches probe T3) |
+
+---
+
+## Rung-4 semantics extensions (mt-043)
+
+> **Sections §11–§16 were added by mt-043 for Rung 4.** They pin the behavior the
+> Rung-4 implementation beads (mt-044 integers, mt-045 String, mt-046 seq, mt-047
+> FO skolemization, mt-048 symmetry) are written from, plus the posture inputs to
+> [ADR-0012](../adr/0012-rung4-integers-strings-counting.md). Provenance is the
+> same as the rest of this doc: Java read at commit `794226dd`, every rule carried
+> by a source citation **and** a decisive jar probe (§10.7–§10.12), the jar
+> winning any tie. Facts pinned here promote the SEMANTICS_LEDGER corners
+> (integer wraparound & bitwidth, cardinality `#`, `seq`, String).
+
+## 11. Integer arithmetic at bitwidth (Rung 4, mt-043)
+
+### 11.1 The op mapping (surface → Kodkod `IntExpression`)
+
+`+` and `-` on relations are **relational** union/difference (`ExprBinary` cases
+`PLUS`/`MINUS`); there is **no `int`↔`Int` coercion** in 6.2.0 (resolution §4.5),
+so integer arithmetic is reached **only** through the `fun/…` operator forms that
+`util/integer`'s functions expand to. The mapping (`TranslateAlloyToKodkod.
+visit(ExprBinary)`, jar-probed §10.7):
+
+| Surface (`util/integer` fun / operator) | `ExprBinary.Op` | Kodkod `IntExpression` |
+|---|---|---|
+| `plus`/`add` / `fun/add` | `IPLUS` | `a.plus(b)` |
+| `minus`/`sub` / `fun/sub` | `IMINUS` | `a.minus(b)` |
+| `mul` / `fun/mul` | `MUL` | `a.multiply(b)` |
+| `div` / `fun/div` | `DIV` | `a.divide(b)` |
+| `rem` / `fun/rem` | `REM` | `a.modulo(b)` |
+| `<<` | `SHL` | `a.shl(b)` — logical left |
+| `>>` | `SHA` | `a.sha(b)` — **arithmetic** (sign-extending) right |
+| `>>>` | `SHR` | `a.shr(b)` — **logical** (zero-fill) right |
+| unary `- e` (int negation) | `IMINUS` of `0,e` | via `0.minus(e)` (`util/integer/negate`) |
+| `#e` | — (`ExprUnary CARDINALITY`) | `cset(e).count()` |
+| `int[e]` / `sum e` (`CAST2INT`) | — | `sum(cset(e))`, with the `int[Int[x]]≡x` peephole |
+| `Int[ie]` (`CAST2SIGINT`) | — | `cint(ie).toExpression()` |
+| `sum x: S | ie` | `ExprQt.SUM` | `cint(ie).sum(decls)` |
+| integer `c => ie1 else ie2` | `ExprITE` | `cond.thenElse(ie1, ie2)` (a **formula** condition; relational/int branches use Kodkod `thenElse`, a formula-valued ITE desugars to `(c⟹l) ∧ (¬c⟹r)`) |
+
+The one peephole is on **`MINUS`** (not `IPLUS`, correcting §2.4's earlier note):
+`0 - (max+1)` folds to the constant `min`, letting the most-negative literal be
+written (`TranslateAlloyToKodkod`, `ExprBinary` `MINUS` case).
+
+**mettle:** these become `als_core::ir::IntExprKind::{Plus,Minus,Mul,Div,Rem,Shl,
+Shr,Sha,Sum,Card,…}` over the two's-complement encode layer mt-033 already built
+for `Const`/`Card`/`AtomToInt`; the **evaluator matched-pair rule (mt-034)
+extends over every new op** so the encoder↔evaluator differential keeps its teeth
+(ADR-0012).
+
+### 11.2 Two's-complement wraparound (allow mode) — exact per-op semantics
+
+`IntEncoding.TWOSCOMPLEMENT` at the command bitwidth `w` (default 4, range
+`−2^{w-1} .. 2^{w-1}−1` = −8..7). With `noOverflow=false` every op is pure
+`w`-bit two's-complement, **wrapping** (`Options.setNoOverflow(false)`;
+`TwosComplementInt`, jar-probed):
+
+- **`plus`/`minus`/`mul`** wrap (`plus[7,7]=−2`, `mul[3,3]=−7`; I5).
+- **`div` (`divide`) truncates toward zero** (Java `/`): `div[-5,2]=−2`,
+  `div[5,-2]=−2`, `div[-5,-2]=2` (I1/I2). It is a non-restoring signed division
+  (`nonRestoringDivision`, Parhami).
+- **`rem` (`modulo`) takes the sign of the dividend** (Java `%`): `rem[-5,2]=−1`,
+  `rem[5,-2]=1` (I3).
+- **Shifts:** `<<` logical-left, `>>` **arithmetic** (sign-extending) right, `>>>`
+  **logical** (zero-fill) right — `4<<1=8`, `(−8)>>1=−4`, `(−8)>>>1=4` (I4).
+  (Note the Kodkod method names `shr`/`sha` are the *opposite* convention to the
+  surface `>>`/`>>>`: surface `>>` → `sha`, surface `>>>` → `shr`.)
+- **Division/remainder by zero (allow mode) produce jar-specific values, not a
+  trap:** `rem[x,0]` uniformly yields **x** (the dividend — `rem[3,0]=3`,
+  `rem[-5,0]=-5`, `rem[0,0]=0`, `rem[-8,0]=-8`, I7). **`div[x,0]` is NOT uniform**:
+  it yields **−1** for a **positive** dividend (`div[3,0]`, `div[5,0]`, `div[7,0]`
+  = −1) but a **different, dividend-sign-dependent, algorithm-specific value** for
+  zero/negative dividends (`div[0,0]`, `div[-5,0]`, `div[-8,0]` are ≠ −1 — the
+  exact values are **not fully characterized**, a named residual). **`div(MIN,−1)`
+  yields `1`** in allow mode (I8), a division-algorithm artifact (the
+  mathematically-correct `−MIN=8` is out of range). All of these matter **only** in
+  allow mode; in forbid mode they are overflow (§11.3) and their instances are
+  excluded, so mettle need only reproduce them for `--allow-overflow` fidelity.
+  **Flagged as surprising / jar-version specific — reproduce from probes (a full
+  16×16 div/rem sweep), not from intuition.**
+
+`#e` cardinality is itself a two's-complement `IntExpression` (`count()`), so a
+count exceeding `2^{w-1}−1` **wraps** in allow mode (`#A=8` at bw 4 reads as −8,
+I12) and is an **overflow** in forbid mode (I12/I13) — the "cardinality overflow
+interplay" corner.
+
+### 11.3 Forbid mode — the Milicevic/Jackson polarity rule
+
+**This is the subtle corner. Forbid mode is NOT a flat `goal ∧ ¬overflow`.** Each
+`Int` carries an accumulated-overflow circuit; when an `Int` becomes a `Formula`
+(at a comparison `eq`/`lt`/`lte`/`gt` or an int `=`), Kodkod inserts an
+overflow-guard whose **direction depends on the formula's polarity and on whether
+the overflowing operand depends on a universally- or existentially-quantified
+variable**. Source: `DefCond.ensureDef` (`kodkod.engine.bool`) — pinned verbatim
+in behavior:
+
+```
+if (!noOverflow) return value;                       // allow mode: raw wrap
+for each int operand with accumulated overflow of:
+  classify it as "universally-quantified" (depends on a var bound by an
+  enclosing ∀ at the current polarity) or "existentially-quantified" (all else,
+  incl. constants and free vars).
+if NOT negated (positive polarity):
+  univ operands:  value := value  OR  of      // overflow makes the atom TRUE
+  exist operands: value := value AND ¬of       // overflow makes the atom FALSE
+else (negative polarity): the two are swapped.
+```
+
+**Behavioral reading (the rule to implement):** in forbid mode an overflowing
+arithmetic subterm forces its enclosing atomic formula to the truth value that
+**removes the overflowing instance from the answer set** — a witness that only
+satisfies a `run`/positive existential *by overflowing* is rejected (`AND ¬of`),
+while a `∀` is **not** falsified by an overflowing binding (`OR of`, the body
+holds vacuously there). Negative polarity (a `check`'s negated body, an `implies`
+antecedent, `not`) swaps the two. Decisive probes:
+
+- **Positive existential** (`plus[7,7] < 0`, I9): allow **SAT** (−2<0), forbid
+  **UNSAT** — the overflowing witness is excluded (`AND ¬of`).
+- **Universal position** (`all n: Int | plus[n,7] >= n`, I11): allow **UNSAT**
+  (fails at n=7, 7+7 wraps), forbid **SAT** — the overflowing binding is forced
+  true (`OR of`), so the ∀ holds. This is the case a naive `∧ ¬overflow` gets
+  wrong.
+- **Div-by-zero / MIN÷−1 / rem-by-zero** set the overflow circuit (`divide`:
+  `divByZero ∨ (this=MIN ∧ other=−1)`; `modulo`: accumulates `divByZero`), so
+  each is excluded in forbid mode at positive polarity (I10) — even the reflexive
+  `div[5,0]=div[5,0]`.
+- **Cardinality** `#e` feeds the same machinery (I12/I13).
+
+mettle already mirrors this in the mt-034 evaluator's overflow tracking and the
+mt-033 encoder for the Rung-3 slice (`Const`/`Card`/`AtomToInt`); mt-044 extends
+the **same** polarity-threaded guard over arithmetic/`sum`/int-ITE so encoder and
+evaluator stay the matched pair. The polarity `Pol` thread from mt-038's HO
+skolemization (§10.6) is the existing seam for "current polarity"; the
+univ-vs-exist classification keys on whether an overflowing operand's free
+variables include a variable bound by an enclosing `∀` at that polarity.
+
+### 11.4 LEDGER note
+
+This section is the evidence for **LEDGER-005 (integer wraparound & bitwidth)**
+and **LEDGER-006 (cardinality `#`)** below. The LEDGER-001 overflow *switch* is
+unchanged (canonical default = forbid); §11.3 pins what "forbid" *means* per op
+and polarity, which LEDGER-001 deferred to "the Rung-3 integer work".
+
+## 12. Integer builtin relations `Int/min|max|next|zero` (Rung 4, mt-043)
+
+The `A4Solution` constructor (jar source, verified) builds four constant relations
+over the integer atoms, **always** when the model uses integers (bitwidth ≥ 1 —
+and `shouldUseInts` is hard-coded `true` in `ScopeComputer`, so bitwidth defaults
+to 4 and these are effectively always allocated). At bitwidth `w`, `min = −2^{w-1}`,
+`max = 2^{w-1}−1`:
+
+| Relation | Arity | Exact bound (`boundExactly`) | at bw 4 |
+|---|---|---|---|
+| `Int/min` | 1 | `{ min }` | `{−8}` |
+| `Int/max` | 1 | `{ max }` | `{7}` |
+| `Int/zero` | 1 | `{ 0 }` | `{0}` |
+| `Int/next` | 2 | `{ i → i+1 : min ≤ i < max }` | `{−8→−7, …, 6→7}` |
+| `seq/Int` | 1 | `{ 0 … maxseq−1 }` | (see §14) |
+| `String` | 1 | the string atoms (§13) | — |
+
+All are `boundExactly` **constants** (no free tuples), so they are symmetry-inert.
+They are allocated in the bounds builder, not the lowerer.
+
+**How `util/integer` maps onto them (jar-probed, §10.8) — a simplifying surprise:**
+
+- `fun/min` / `fun/max` (and thus `util/integer`'s `min`/`max` no-arg funcs)
+  translate to the **integer constants** `IntConstant.constant(min/max)`, **not**
+  the `Int/min`/`Int/max` relations (`TranslateAlloyToKodkod.visit(ExprConstant)`
+  cases `MIN`/`MAX`). So the `Int/min`/`Int/max` relations, though bounded, are
+  effectively unreferenced by translation.
+- `fun/next` translates to the `Int/next` **relation** (`visit(ExprConstant)` case
+  `NEXT` → `KK_NEXT`); `util/integer`'s `next` = `Int/next`, `prev` = `~(Int/next)`,
+  `nexts`/`prevs` = `^next`/`^prev`. `7.next` and `(−8).prev` are empty (chain
+  endpoints, I15).
+- `Int/zero` is referenced only by the seq contiguity fact (§14) and
+  `util/integer/pos`/`neg`-style comparisons (via the constant 0).
+- `int2elem`/`elem2int` (mapping a rank to/from a `util/ordering`-style element)
+  are ordinary library funcs over `^(~next)` — no builtin needed.
+
+**mettle:** allocate `Int/next` and `Int/zero` in the bounds builder (needed by
+`next`/`prev`/`nexts`/`prevs` and by seq); `min`/`max` may lower as int constants
+(matching the jar) rather than as relation joins. This is what unlocks the 39
+`lower:lowering` "integer-ordering builtin" defers (mt-044): they are commands
+using `util/integer`'s `next`/`prev`/`min`/`max`/`nexts`/`prevs` and the
+arithmetic funcs, all of which reduce to §11's ops plus `Int/next`.
+
+This section is the evidence for the `util/ordering`-adjacent integer half of
+**LEDGER-005**; it replaces the §1.4′ B18 stub's forward reference.
+
+## 13. String semantics (Rung 4, mt-043)
+
+**String atoms are minted in scope/universe computation** (`ScopeComputer.compute`
+→ `A4Solution` ctor), never in the bounds builder or lowerer. The exact rule
+(jar source + probes §10.9):
+
+1. **Referenced-literal collection.** `Command.getAllStringConstants(sigs)` walks,
+   collecting every `ExprConstant.STRING`: the command's formula **and every
+   parent command's formula**, plus **every reachable sig's appended facts and
+   field-declaration expressions**, recursing into the bodies of **called**
+   funcs/preds (`ExprCall` visits `fun.getBody()`). Top-level module facts **are**
+   included (S6); a literal reachable only through an **uncalled** pred is **not**
+   (S7). The result is a `HashSet<String>` — its iteration order is
+   **nondeterministic in the jar** (S2 shows `"String1"` before `"String0"`); the
+   atom strings **include their surrounding quote characters** (the atom for the
+   literal `"hi"` is the 4-char string `"hi"`).
+2. **The `maxstring` scope.** Default `−1` ("unspecified" — collect referenced
+   literals only, no padding, S5). A `String` scope is set **only** by a `for …
+   but N String` clause, which **must be exact** — a non-exact `String` scope is a
+   pre-solve **error** (`Sig "String" must have an exact scope.`, S1); it may not
+   be set twice.
+3. **Padding fill.** After collection, while `set.size() < maxstring`, add
+   synthetic atoms named **`"String0"`, `"String1"`, `"String2"`, …** (the strings
+   `"String" + i`, quote characters included) — **NOT `unused%d`** (S2; see the
+   discrepancy note below). Padding stops at `maxstring`.
+4. **Expansion (an `exactly N String` scope is not truly exact).** If the number
+   of *referenced* literals exceeds `maxstring`, the scope is **expanded** to fit
+   all of them (reporter: "Sig String expanded to contain all N String
+   constant(s)") — the effective String population is **`max(N, #referenced)`**
+   (S4). No padding is added in that case.
+5. **Universe placement & bounds.** The string atoms are appended **last** in the
+   universe (after sig atoms and after the ascending int atoms — §1.3), and the
+   `String` relation is `boundExactly` to exactly them. Each literal also gets its
+   own private singleton relation (`s2k` map) so `= "lit"` resolves.
+
+There is **no richer String algebra in 6.2.0** — only equality/inequality/set
+membership over these atoms (confirmed: string atoms are ordinary uninterpreted
+atoms; `#`, `in`, `=`, `!=` are the operations, exactly as for any unary sig).
+
+> **⚠ Discrepancy flagged (mt-043).** LIMITATIONS.md, docs/STATE.md and the mt-043
+> bead brief describe the padding atoms as `unused%d`. That is **wrong for the
+> pinned jar** — the source mints `"String" + i` (`ScopeComputer.compute`, S2).
+> The `unused%d` naming is a **different** mechanism: at **instance read-back**,
+> `A4Solution.rename` labels any *universe atom no sig claims* as `"unused" +
+> unused` for display (`A4Solution.java`, the loop before skolem read-back). The
+> two were conflated. mettle must mint `"String" + i` padding (deterministically
+> ordered — the jar's HashSet order is not reproducible and need not be, since
+> string atoms are symmetric so verdict/SB-0-count are unaffected by their order).
+> The existing translation-ref §1.3 already correctly said `"String0"…`; only the
+> downstream docs drifted. This resolves the `scope` defer family (mt-045,
+> `fm2cfs.als`).
+
+This section is the evidence for **LEDGER-007 (String)** below.
+
+## 14. `seq` semantics (Rung 4, mt-043)
+
+**`seq/Int` bound.** The `seq/Int` builtin unary relation is `boundExactly` to the
+first `maxseq` non-negative integer atoms `{0 … maxseq−1}` (already exact in
+mettle, mt-030). `maxseq` (jar `ScopeComputer`): unspecified ⇒ `overall` if the
+command gave an overall scope, else `4`, then **clamped to `max(bw)` = `2^{w-1}−1`**
+(=7 at bw 4); a `for N seq` clause sets it directly to `N`, **independent of the
+overall scope** (Q4). Setting the bitwidth resets `maxseq` to 0, so the seq clause
+/ default is applied after.
+
+**`seq X` field desugar.** A field `f: seq X` desugars to **`f: seq/Int -> lone X`**
+— the stored relation is `owner -> Int_index -> X`, with a `lone` on the value
+column (Kodkod op `ISSEQ_ARROW_LONE`); the index column's upper bound is `seq/Int`
+(so at most `maxseq` entries) (Q1).
+
+**The contiguity fact (where sequence-ness is enforced).** Alongside the
+`lone`-value arrow constraint, `TranslateAlloyToKodkod` (the `ISSEQ_ARROW_LONE`
+branch) synthesizes exactly one extra fact per seq field: projecting the field to
+its index column `dom`,
+
+```
+dom(f) − dom(f).(Int/next)  ⊆  Int/zero
+```
+
+i.e. the only used index without a used predecessor is `0` ⇒ the used indices form
+a **contiguous prefix from 0**. A seq that uses index 1 without index 0 is
+therefore **UNSAT** (Q2); a proper prefix is SAT (Q3). This is the *only* implicit
+fact `seq` introduces (besides the `lone` value multiplicity); it is generated at
+**lowering** (field-fact assembly, §2.5), using the `Int/next` and `Int/zero`
+builtin relations from §12.
+
+**`util/sequniv` / `util/seqrel`.** These are ordinary library modules over the
+`seq/Int` index domain; their functions (`isSeq`, `elems`, `inds`, `lastIdx`,
+`add`, `setAt`, `subseq`, …) lower as normal funcs — the only builtin-special
+pieces are `seq/Int` (bound above) and the contiguity fact. The clean-room
+stdlib's `natural`/`sequence`/`seqrel` rank-arithmetic bodies (the mt-015 judgment
+calls) are verified differentially when mt-046 exercises them (the "clean-room
+stdlib body semantics" Ledger corner — not re-pinned here; verify at
+implementation).
+
+This section is the evidence for **LEDGER-008 (`seq`)** below.
+
+## 15. First-order skolemization (Rung 4, mt-043)
+
+ADR-0011 deliberately deferred FO skolemization; §2.3 pinned it structurally.
+This section pins it precisely enough that mt-047 can make the `skip_fo_skolem`
+counting family exact, and instances *show* skolem witnesses (drop-in display).
+
+**When it fires (depth-0 rule).** `A4Options.skolemDepth = 0` (default; Kodkod
+`Options.skolemDepth` also 0). Kodkod's `Skolemizer` NNF-threads a `negated`
+polarity and skolemizes a quantifier iff `skolemDepth ≥ 0 && (negated && quant=ALL
+|| !negated && quant=SOME)` **and** the number of enclosing universals being
+skolemized-under is ≤ `skolemDepth` (`if (skolemDepth ≥ nonSkolems.size()+…)`). At
+depth 0: **a top-level effective-existential** — a `some` at positive polarity, or
+an `all` under negation (a `check`'s negated body) — **not nested under any
+universal** — is skolemized to a **constant relation**; an existential nested under
+a universal is **not** (would need a skolem *function*, depth ≥ 1). Decls' own
+bound expressions are never skolemized (`visitDecl` sets depth −1). This is exactly
+the polarity rule mt-038 already implemented for the *higher-order* case (§10.6);
+FO extends the same `SkolemPolarity` thread to first-order decls (K3 confirms depth
+0 skips the nested existential).
+
+**Naming (exact scheme, `TranslateAlloyToKodkod.skolem` + `Skolemizer` +
+`A4Solution` read-back).** The Kodkod variable for a decl `x` is named:
+- inside no function: `<cmdLabel>_<var>` when `cmdLabel` is non-empty and contains
+  **no** `$`; otherwise the bare `<var>` (anonymous commands have labels like
+  `run$1`, which contain `$`);
+- inside a function body: `<funcName>_<var>` (function's tail label) when it has no
+  `$`, else bare `<var>`.
+
+The `Skolemizer` prefixes `$` (`Relation.skolem("$" + name, …)`); at read-back
+`A4Solution` strips leading `$`s and re-prefixes exactly one, uniquifying against
+all names (`un.make("$" + n)`). Net Alloy-visible skolem name: **`$<cmdLabel>_<var>`**
+(K1: `run foo { some x … }` → `$foo_x`), **`$<var>`** for an anonymous command
+(K2: `$x`), with a uniqueness suffix on collision. A skolem relation's arity =
+(number of enclosing universals skolemized-under) + the var's arity; at depth 0 for
+a top-level existential that is just the var's arity (a constant). Its bound is
+lower `{}`, upper = the decl bound's denotation (the same `abstract_upper` mettle
+already computes for HO skolems, §10.6).
+
+**SB-0 count effect (the reason mt-047 exists).** Because the jar enumerates the
+skolem constant's assignment as part of a distinct instance, a goal with a
+top-level FO existential has a **larger** SB-0 count than mettle's current
+no-FO-skolem count — e.g. `run { some x: A | x=x } for 3` is jar **12** vs mettle
+**7** (K4; `12 = Σ_{∅≠S⊆A} |S|`), and `oracle/test1.als`'s `check NoEmpty` is jar
+**561** vs mettle **464** (§10.4). **Verdicts are always identical**; only the
+count differs. Implementing FO skolemization per this section makes mettle mint the
+same `$cmd_var` free relation and enumerate its witnesses, so the `skip_fo_skolem`
+family (55 commands) becomes exact count matches.
+
+This section is the input to ADR-0012's FO-skolemization decision (extend mt-038's
+HO skolem machinery to top-level FO existentials).
+
+## 16. Symmetry-breaking posture (Rung 4, mt-043)
+
+Alloy sets Kodkod's `Options.symmetryBreaking` to an integer (default **20**) and
+lets Kodkod's `SymmetryBreaker` generate **lex-leader predicates** over the
+atom-permutation symmetries it detects from the bounds. **The "20" is a bound on
+the length of the generated lex-leader predicate** (`SymmetryBreaker`, jar source),
+a cost/completeness knob — higher breaks more symmetry (faster UNSAT, can slow
+SAT), `0` disables it entirely.
+
+**What it changes observably, and what it never changes:**
+- It changes the **enumerated (SB-quotiented) instance count** at default settings
+  (Y1: `some A` for 3 → 3 at SB=20, 7 at SB=0) and solve **performance**.
+- It **never changes the SAT/UNSAT verdict** — a lex-leader predicate is a
+  *symmetry-reducing* constraint that removes only isomorphic copies of satisfying
+  assignments; it cannot make a satisfiable problem unsatisfiable or vice versa
+  (argued from `SymmetryBreaker` generating predicates only over detected atom
+  symmetries of the bounds; confirmed by every corpus verdict agreeing at SB-0
+  where the jar ran SB=20). **`expect 1` silently forces SB=0** (§3, probe T3) —
+  the harness must keep honoring that.
+- Exact-bound relations (integers, `util/ordering` first/next when pinned) are
+  symmetry-inert — nothing left to permute (§3, §5).
+
+**Proposed posture (for ADR-0012 to decide).** ADR-0002's **SB=0 stays the
+canonical counting yardstick** (the only regime where a count is solver-independent
+and comparable, and the regime mettle's no-SB core already is). Add the Kodkod
+lex-leader predicate as a **performance + parity feature** behind a dedicated
+**default-symmetry (SB=20) verdict/count net** (mt-048): it needs bit-exact
+lex-leader replication to match the jar's SB=20 counts, is **not** on the verdict
+gate, and never touches the SB-0 counting net. This keeps the exit gate's counting
+argument unchanged while giving a dedicated SB=20 comparison where the jar's
+default-symmetry counts can be checked.
