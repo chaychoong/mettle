@@ -259,6 +259,17 @@ impl<'a> ScopeSolver<'a> {
                 span: self.command.span,
             });
         }
+        // A non-zero `String` scope needs actual string atoms (the reference
+        // fills it with the model's literals plus synthetic `unused%d` atoms —
+        // Rung 4). Minting none and solving anyway silently empties every
+        // String-typed field's bound and flips verdicts (fm2cfs.als, mt-037):
+        // defer typed instead. `exactly 0 String` is genuinely empty on both
+        // sides and stays solvable.
+        if self.command.maxstring.is_some_and(|n| n > 0) {
+            errors.push(TranslateError::StringUnsupported {
+                span: self.command.span,
+            });
+        }
         // `util/ordering` (mt-035) forces its sig exact via `additional_exact`.
         for &sig in &self.command.additional_exact {
             self.exact[sig.index()] = true;

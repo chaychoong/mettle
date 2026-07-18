@@ -286,6 +286,26 @@ fn non_exact_string_scope_rejected() {
 }
 
 #[test]
+fn nonzero_string_scope_defers_typed() {
+    // mt-037 (fm2cfs.als): the reference fills a non-zero `String` scope with
+    // literal + synthetic `unused%d` atoms; mettle mints none until Rung 4, and
+    // solving with a silently empty `String` flips verdicts (`one String`
+    // fields become unsatisfiable). Must defer typed, never solve.
+    let e = scope_err("sig A { name: one String }\nrun {} for 3 but exactly 4 String\n");
+    assert!(
+        matches!(e, TranslateError::StringUnsupported { .. }),
+        "{e:?}"
+    );
+}
+
+#[test]
+fn zero_string_scope_stays_solvable() {
+    // `exactly 0 String` is genuinely empty on both sides — no defer.
+    let names = atoms("sig A {}\nrun {} for 3 but exactly 0 String\n");
+    assert_eq!(names, with_ints(&["A$0", "A$1", "A$2"]));
+}
+
+#[test]
 fn per_sig_scope_without_overall_requires_all_top_level() {
     // Probe p9: `for 2 A` leaves B (top-level) with no scope ⇒ error naming B.
     let e = scope_err("sig A {}\nsig B {}\nrun {} for 2 A\n");
