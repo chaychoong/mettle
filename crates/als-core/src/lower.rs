@@ -63,7 +63,7 @@ use std::collections::BTreeMap;
 
 use als_syntax::ast::{Ast, BinOp, CmpOp, Const, Decl, ExprId, ExprKind, Mult, Quant, UnOp};
 use als_syntax::{ArenaId, Span};
-use als_types::choice::{BuiltinCall, ExprChoice, NameChoice, SpineChoice};
+use als_types::choice::{BuiltinCall, BuiltinValue, ExprChoice, NameChoice, SpineChoice};
 use als_types::{
     ChoiceTable, CmdTargetResolved, FieldId, ModuleGraph, ModuleId, ResolvedWorld, SigId,
 };
@@ -95,6 +95,12 @@ pub struct LoweredGoal {
     /// special-casing). Empty for a goal with no skolemizable HO decl. In `RelId`
     /// allocation order (source-walk order — deterministic, STYLE D1).
     pub skolem_bounds: Vec<(RelId, RelBound)>,
+    /// The `Int`/`seq/Int` builtin relation ids (copied from the bounds builder),
+    /// so the evaluator's forbid-mode overflow classifier can recognize a
+    /// bare-`Int` quantifier domain (translation-ref §10.7c) without re-deriving
+    /// them. `None` when the model uses no integers.
+    pub int_sig: Option<RelId>,
+    pub seq_int_sig: Option<RelId>,
 }
 
 /// One top-level conjunct of the goal, with where it came from.
@@ -140,10 +146,9 @@ pub fn lower_command(
     ir: &mut Ir,
     command_index: usize,
 ) -> Result<LoweredGoal, TranslateError> {
-    // `scoped` (the universe/bitwidth) is not needed for lowering itself — the
-    // bounds builder already consumed it into the denotation seam. It stays in
-    // the signature for mt-033 (CNF encoding needs the universe).
-    let _ = scoped;
+    // The bounds builder already consumed `scoped` into the denotation seam; the
+    // lowerer keeps only the bitwidth, for `fun/min`/`fun/max` (which the jar
+    // translates to the int constants `min`/`max` of the bitwidth — §12).
     let cmd_label = skolem_command_label(world, command_index);
     let mut lowerer = Lowerer {
         world,
@@ -157,6 +162,7 @@ pub fn lower_command(
         cmd_label,
         skolem_bounds: Vec::new(),
         var_bound: BTreeMap::new(),
+        bitwidth: scoped.bitwidth,
     };
     lowerer.lower(command_index)
 }
@@ -291,6 +297,9 @@ struct Lowerer<'a> {
     /// so every enclosing var referenced here is itself existential — the reorder
     /// `∃r∃t = ∃t∃r` that justifies the constant skolem holds).
     var_bound: BTreeMap<crate::ir::VarId, RelExprId>,
+    /// The command's bitwidth (signed range `−2^{bw-1}..2^{bw-1}−1`), for
+    /// `fun/min`/`fun/max` lowering (translation-ref §12).
+    bitwidth: u32,
 }
 
 impl<'a> Lowerer<'a> {
@@ -389,6 +398,8 @@ impl<'a> Lowerer<'a> {
             goal,
             conjuncts,
             skolem_bounds: std::mem::take(&mut self.skolem_bounds),
+            int_sig: self.bounds.int_sig,
+            seq_int_sig: self.bounds.seq_int_sig,
         })
     }
 
@@ -1676,6 +1687,28 @@ impl<'a> Lowerer<'a> {
                 }
                 let l = self.lower_rel_promote(ctx, lhs, l_int)?;
                 let r = self.lower_rel_promote(ctx, rhs, r_int)?;
+                // Both sides an `Int[·]` cast ⇒ an **integer** equality
+                // (translation-ref §2.2's "both sides IntToExprCast" rule) — e.g.
+                // `div[5,0] = div[5,0]`, where both operands are arithmetic
+                // results whose call type is `Int` (so `sort_of` is `Rel`, missing
+                // the first branch). Comparing the underlying ints keeps the
+                // forbid-mode overflow guard (§11.3); the value is identical since
+                // distinct int values map to distinct atoms.
+                if matches!(op, CmpOp::Eq) {
+                    if let (RelExprKind::IntToAtom(il), RelExprKind::IntToAtom(ir)) =
+                        (&self.ir.rel_exprs[l].kind, &self.ir.rel_exprs[r].kind)
+                    {
+                        let (il, ir) = (*il, *ir);
+                        return Ok(self.mk_formula(
+                            FormulaKind::IntCompare {
+                                op: IntCmpOp::Eq,
+                                lhs: il,
+                                rhs: ir,
+                            },
+                            span,
+                        ));
+                    }
+                }
                 let rop = if matches!(op, CmpOp::Eq) {
                     RelCmpOp::Equal
                 } else {
@@ -1874,12 +1907,55 @@ impl<'a> Lowerer<'a> {
                 }
             }
             NameChoice::Call0(func) => self.inline_fun(ctx, *func, &[], true, span),
-            NameChoice::Builtin(_) => Err(TranslateError::LoweringUnsupported {
-                what: "integer-ordering builtin (fun/min|max|next|prev) is Rung 4".to_owned(),
-                span,
-            }),
+            NameChoice::Builtin(bv) => self.lower_builtin_value(*bv, span),
             NameChoice::Macro(mc) => self.replay_macro_rel(mc, span),
             NameChoice::EmptyArity(k) => Ok(self.none_of_arity(*k, span)),
+        }
+    }
+
+    /// Lowers a `util/integer` builtin value spelled by name (translation-ref
+    /// §12): `fun/min`/`fun/max` become the int constants `min`/`max` of the
+    /// bitwidth cast to `Int` atoms (`Int[c]`, matching the jar's
+    /// `IntConstant.constant(min/max).toExpression()`); `fun/next` is the
+    /// `Int/next` relation; `fun/prev` its transpose.
+    fn lower_builtin_value(
+        &mut self,
+        bv: BuiltinValue,
+        span: Span,
+    ) -> Result<RelExprId, TranslateError> {
+        match bv {
+            BuiltinValue::IntMin | BuiltinValue::IntMax => {
+                let value = match bv {
+                    BuiltinValue::IntMin => int_min(self.bitwidth),
+                    _ => int_max(self.bitwidth),
+                };
+                let konst = self.mk_int(IntExprKind::Const(value), span);
+                Ok(self.mk_rel(RelExprKind::IntToAtom(konst), span))
+            }
+            BuiltinValue::IntNext => {
+                self.bounds
+                    .int_next
+                    .ok_or_else(|| TranslateError::LoweringUnsupported {
+                        what: "`fun/next` with no integer atoms (bitwidth 0)".to_owned(),
+                        span,
+                    })
+            }
+            BuiltinValue::IntPrev => {
+                let next =
+                    self.bounds
+                        .int_next
+                        .ok_or_else(|| TranslateError::LoweringUnsupported {
+                            what: "`fun/prev` with no integer atoms (bitwidth 0)".to_owned(),
+                            span,
+                        })?;
+                Ok(self.mk_rel(
+                    RelExprKind::Unary {
+                        op: RelUnOp::Transpose,
+                        expr: next,
+                    },
+                    span,
+                ))
+            }
         }
     }
 
@@ -2203,6 +2279,14 @@ impl<'a> Lowerer<'a> {
         // CAST2INT) — e.g. `sum a: A | a.n` or `plus[x, a.n]`.
         if self.sort_of(ctx, e) == Sort::Rel {
             let r = self.lower_rel(ctx, e)?;
+            // Peephole `int[Int[e]] ≡ e` (translation-ref §2.4): a `fun/…`
+            // arithmetic result is `Int`-sorted, so it lowers through `Int[·]`;
+            // unwrapping it here keeps the underlying `IntExpr`'s **accumulated
+            // overflow** — which `Int[·]` (int→relation) would otherwise drop —
+            // so the forbid-mode guard sees it at the comparison (§11.3).
+            if let RelExprKind::IntToAtom(ie) = self.ir.rel_exprs[r].kind {
+                return Ok(ie);
+            }
             return Ok(self.mk_int(IntExprKind::AtomToInt(r), span));
         }
         match node.kind {
@@ -3818,6 +3902,22 @@ fn mult_test_of(m: Option<Mult>) -> Option<MultTest> {
         Some(Mult::Some) => Some(MultTest::Some),
         Some(Mult::Set) | None => None,
     }
+}
+
+/// The most-negative signed value at bitwidth `bw` (`−2^{bw-1}`; `0` at bw 0).
+fn int_min(bw: u32) -> i32 {
+    if bw == 0 {
+        return 0;
+    }
+    -(1i32 << (bw - 1))
+}
+
+/// The most-positive signed value at bitwidth `bw` (`2^{bw-1}−1`; `0` at bw 0).
+fn int_max(bw: u32) -> i32 {
+    if bw == 0 {
+        return 0;
+    }
+    (1i32 << (bw - 1)) - 1
 }
 
 fn int_binop(op: BinOp) -> Option<IntBinOp> {

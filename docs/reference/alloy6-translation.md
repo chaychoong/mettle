@@ -1167,12 +1167,824 @@ explicitly (LEDGER-001). All arithmetic uses the `fun/…` operator forms via
 | I12 | `#A = 8` for exactly 8 A, 4 int | false / true | **SAT** (count 8 wraps to −8, `=8`≡`=−8`) / **UNSAT** — `#` cardinality participates in overflow exactly like arithmetic |
 | I13 | `#A > 0` for exactly 8 A | false / true | **UNSAT** (count wraps to −8, `−8>0` false) / **UNSAT** (count overflow excluded); `#A=7` for 7 A forbid **SAT** control |
 
-### 10.8 mt-043 integer builtin-relation probes (jar-verified 2026-07-18)
+### 10.7b mt-044 LEDGER-005 residual closure probes (jar-verified 2026-07-19)
 
-| # | Case | Observation |
-|---|---|---|
+Harness: `scratchpad/probe/ProbeR4.java` (rebuilt; the mt-043 original was gone). One
+JVM process, driving `TranslateAlloyToKodkod.execute_command` via `A4Options` in a
+loop over in-memory models (`CompUtil.parseEverything_fromString`), sat4j,
+symmetry 0, `for 3 but 4 int` throughout. Both named LEDGER-005 residuals closed
+in one session (all sanity anchors reproduced first — see below).
+
+**Critical harness finding, load-bearing for everything below:** negative integer
+literals **must** be spelled `negate[k]` (`util/integer`, genuine `IMINUS`
+arithmetic via `fun/sub`), **not** `(0-k)`. The raw hyphen `-` is *always*
+relational set-difference between two singleton-Int atoms (`(0-5)` evaluates to
+the plain atom **`0`**, not −5 — confirmed: `X.v=(0-5)` gives `v=0`). The **sole**
+exception is the one documented peephole at exactly `k = bw_max+1` (=8 at bw 4):
+`TranslateAlloyToKodkod`'s `ExprBinary MINUS` case specially folds `(0-8)` to the
+`MIN` constant, letting the otherwise-unwritable most-negative literal be spelled
+this one way. `(0-1)`, `(0-5)`, etc. are **not** covered by that peephole and
+silently mean something else entirely. `negate[k]` works uniformly for every `k`
+in `1..8` (confirmed: `negate[8]` also gives `-8`, agreeing with the `(0-8)`
+peephole on that one value). All probes below use `negate[k]`.
+
+**Sanity anchors — all reproduced** (OpenJDK 21, jar 6.2.0, sat4j, sym 0, allow
+mode unless noted): `div[negate[5],2]=-2`, `div[5,negate[2]]=-2`,
+`div[negate[5],negate[2]]=2`, `rem[negate[5],2]=-1`, `rem[5,negate[2]]=1`,
+`rem[x,0]=x` (checked at x=3,-5), `div[3,0]=div[5,0]=div[7,0]=-1`,
+`div[(0-8),(0-1)]=1` (reproduces **literally as spelled** — see the important
+caveat below), `plus[7,7]=-2`, `mul[3,3]=-7`. No contradiction with any pinned
+value — probing proceeded.
+
+#### Residual 1 — full 16×16 `div`/`rem` sweep (allow mode)
+
+Method: one solve per pair, `one sig X { d: one Int, r: one Int } fact { X.d =
+div[a,b] and X.r = rem[a,b] } run {} for 3 but 4 int`, value read from the
+`this/X<:d={X$0->N}` / `this/X<:r={X$0->N}` relation-dump lines of
+`A4Solution.toString()` (never the eval API). 512 pairs total (256 divs + 256
+rems packed 2-per-solve = 256 solves), ~35ms/solve.
+
+**`div[a,b]`** (allow mode, `for 3 but 4 int`; rows = dividend `a`, cols = divisor `b`):
+
+| a \ b | -8 | -7 | -6 | -5 | -4 | -3 | -2 | -1 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **-8** | 1 | 1 | 1 | 1 | 2 | 2 | 4 | -8 | 1 | -8 | -4 | -2 | -2 | -1 | -1 | -1 |
+| **-7** | 0 | 1 | 1 | 1 | 1 | 2 | 3 | 7 | 1 | -7 | -3 | -2 | -1 | -1 | -1 | -1 |
+| **-6** | 0 | 0 | 1 | 1 | 1 | 2 | 3 | 6 | 1 | -6 | -3 | -2 | -1 | -1 | -1 | 0 |
+| **-5** | 0 | 0 | 0 | 1 | 1 | 1 | 2 | 5 | 1 | -5 | -2 | -1 | -1 | -1 | 0 | 0 |
+| **-4** | 0 | 0 | 0 | 0 | 1 | 1 | 2 | 4 | 1 | -4 | -2 | -1 | -1 | 0 | 0 | 0 |
+| **-3** | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 3 | 1 | -3 | -1 | -1 | 0 | 0 | 0 | 0 |
+| **-2** | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 2 | 1 | -2 | -1 | 0 | 0 | 0 | 0 | 0 |
+| **-1** | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | -1 | 0 | 0 | 0 | 0 | 0 | 0 |
+| **0** | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| **1** | 0 | 0 | 0 | 0 | 0 | 0 | 0 | -1 | -1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
+| **2** | 0 | 0 | 0 | 0 | 0 | 0 | -1 | -2 | -1 | 2 | 1 | 0 | 0 | 0 | 0 | 0 |
+| **3** | 0 | 0 | 0 | 0 | 0 | -1 | -1 | -3 | -1 | 3 | 1 | 1 | 0 | 0 | 0 | 0 |
+| **4** | 0 | 0 | 0 | 0 | -1 | -1 | -2 | -4 | -1 | 4 | 2 | 1 | 1 | 0 | 0 | 0 |
+| **5** | 0 | 0 | 0 | -1 | -1 | -1 | -2 | -5 | -1 | 5 | 2 | 1 | 1 | 1 | 0 | 0 |
+| **6** | 0 | 0 | -1 | -1 | -1 | -2 | -3 | -6 | -1 | 6 | 3 | 2 | 1 | 1 | 1 | 0 |
+| **7** | 0 | -1 | -1 | -1 | -1 | -2 | -3 | -7 | -1 | 7 | 3 | 2 | 1 | 1 | 1 | 1 |
+
+**`rem[a,b]`** (allow mode, `for 3 but 4 int`):
+
+| a \ b | -8 | -7 | -6 | -5 | -4 | -3 | -2 | -1 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **-8** | 0 | -1 | -2 | -3 | 0 | -2 | 0 | 0 | -8 | 0 | 0 | -2 | 0 | -3 | -2 | -1 |
+| **-7** | -7 | 0 | -1 | -2 | -3 | -1 | -1 | 0 | -7 | 0 | -1 | -1 | -3 | -2 | -1 | 0 |
+| **-6** | -6 | -6 | 0 | -1 | -2 | 0 | 0 | 0 | -6 | 0 | 0 | 0 | -2 | -1 | 0 | -6 |
+| **-5** | -5 | -5 | -5 | 0 | -1 | -2 | -1 | 0 | -5 | 0 | -1 | -2 | -1 | 0 | -5 | -5 |
+| **-4** | -4 | -4 | -4 | -4 | 0 | -1 | 0 | 0 | -4 | 0 | 0 | -1 | 0 | -4 | -4 | -4 |
+| **-3** | -3 | -3 | -3 | -3 | -3 | 0 | -1 | 0 | -3 | 0 | -1 | 0 | -3 | -3 | -3 | -3 |
+| **-2** | -2 | -2 | -2 | -2 | -2 | -2 | 0 | 0 | -2 | 0 | 0 | -2 | -2 | -2 | -2 | -2 |
+| **-1** | -1 | -1 | -1 | -1 | -1 | -1 | -1 | 0 | -1 | 0 | -1 | -1 | -1 | -1 | -1 | -1 |
+| **0** | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| **1** | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 1 | 0 | 1 | 1 | 1 | 1 | 1 | 1 |
+| **2** | 2 | 2 | 2 | 2 | 2 | 2 | 0 | 0 | 2 | 0 | 0 | 2 | 2 | 2 | 2 | 2 |
+| **3** | 3 | 3 | 3 | 3 | 3 | 0 | 1 | 0 | 3 | 0 | 1 | 0 | 3 | 3 | 3 | 3 |
+| **4** | 4 | 4 | 4 | 4 | 0 | 1 | 0 | 0 | 4 | 0 | 0 | 1 | 0 | 4 | 4 | 4 |
+| **5** | 5 | 5 | 5 | 0 | 1 | 2 | 1 | 0 | 5 | 0 | 1 | 2 | 1 | 0 | 5 | 5 |
+| **6** | 6 | 6 | 0 | 1 | 2 | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 2 | 1 | 0 | 6 |
+| **7** | 7 | 0 | 1 | 2 | 3 | 1 | 1 | 0 | 7 | 0 | 1 | 1 | 3 | 2 | 1 | 0 |
+
+**Verified programmatically against every cell**: for every `(a,b)` with `b≠0`
+**except** `(a,b)=(-8,-1)` (the MIN/−1 case, below), `div[a,b]` equals Java `a/b`
+(truncating toward zero) and `rem[a,b]` equals Java `a%b` (sign of the dividend)
+**exactly — zero deviating cells**. This closes the "verify the rem table is
+exactly Java `%`... and div is exactly Java `/`... flag ANY cell that deviates"
+requirement with a clean result: no deviation anywhere except the one
+mathematically-undefined edge case.
+
+**`div[x,0]` closed form (the residual):** reading the `b=0` column,
+
+```
+div[x,0] = -sign(x) =  1   if x < 0   (uniform for ALL negative x, including MIN=-8)
+                        0   if x = 0
+                       -1   if x > 0   (already pinned pre-mt-044)
+```
+
+This holds **uniformly across the entire range, with no special case at MIN** —
+`div[-8,0]=1`, same as `div[-1,0]=1`. `rem[x,0]=x` (already pinned) holds
+unchanged for every x including 0 and MIN. Both are simple, closed, and now
+fully characterized — residual 1's open question is answered.
+
+**Correction to the existing I8 row (important — found while confirming
+`div[(0-8),(0-1)]`):** `(0-1)` is **not** a valid spelling of −1 (see the harness
+finding above — it's the *set-difference peephole only applies at exactly
+max+1=8*, not at 1). `div[(0-8),(0-1)]` therefore silently computes
+**`div[-8,0]`** (=1, matching `div[x,0]`'s x<0 branch above), **not**
+`div[MIN,-1]` as I8's label claims — the anchor "reproduces" (gives 1) only
+because it's testing a different, coincidentally-matching expression. The
+**correctly-spelled** `div[MIN,-1]` = `div[negate[8],negate[1]]` was probed
+directly and decisively: **`div[MIN,-1] = -8`**, confirmed uniquely via
+`run { div[negate[8],negate[1]] = negate[8] }` → **SAT** and
+`run { div[negate[8],negate[1]] = 1 }` → **UNSAT**. This is the standard
+two's-complement division-overflow wraparound (`wrap(-MIN) = wrap(8) = -8`,
+the same INT_MIN/−1 overflow behavior as Java/C/x86 `IDIV`), not the "1" I8
+currently states. §11.2 is updated below to carry the corrected value; I8's
+row text itself is left as-is per this session's edit scope (append-only to
+§10.7's table), but readers should treat I8's "1" as `div[MIN,0]`, and use
+`div[MIN,-1]=-8` from here on.
+
+**Confirmation probes** (decisive paired `run { EXPR = v } ` SAT / `run { EXPR =
+v' }` UNSAT, `v'≠v`), sample of 12 pairs covering div-by-zero at positive/zero/
+negative dividends, `div[MIN,-1]`, `rem[x,0]` rows, and ordinary pairs — **all
+12 decisive pairs matched (12/12)**:
+
+| Pair | `div[a,b]` | `rem[a,b]` | div decisive | rem decisive |
+|---|---|---|---|---|
+| div-by-zero, positive dividend (5,0) | -1 | 5 | SAT@-1 / UNSAT@0 | SAT@5 / UNSAT@6 |
+| div-by-zero, zero dividend (0,0) | 0 | 0 | SAT@0 / UNSAT@1 | SAT@0 / UNSAT@1 |
+| div-by-zero, negative dividend (-5,0) | 1 | -5 | SAT@1 / UNSAT@2 | SAT@-5 / UNSAT@-4 |
+| div-by-zero, MIN dividend (-8,0) | 1 | -8 | SAT@1 / UNSAT@2 | SAT@-8 / UNSAT@-7 |
+| `div[MIN,-1]` (-8,-1) | -8 | 0 | SAT@-8 / UNSAT@-7 | SAT@0 / UNSAT@1 |
+| rem-by-zero, positive (3,0) | -1 | 3 | — | SAT@3 / UNSAT@4 |
+| rem-by-zero, negative (-3,0) | 1 | -3 | — | SAT@-3 / UNSAT@-2 |
+| rem-by-zero, MIN (-8,0) | 1 | -8 | — | SAT@-8 / UNSAT@-7 |
+| ordinary (3,2) | 1 | 1 | SAT@1 / UNSAT@2 | SAT@1 / UNSAT@2 |
+| ordinary (-6,4) | -1 | -2 | SAT@-1 / UNSAT@0 | SAT@-2 / UNSAT@-1 |
+| ordinary (7,-3) | -2 | 1 | SAT@-2 / UNSAT@-1 | SAT@1 / UNSAT@2 |
+| ordinary (-7,-2) | 3 | -1 | SAT@3 / UNSAT@0 | SAT@-1 / UNSAT@0 |
+
+**Residual 1: closed.** Full sweep + closed form + 12/12 decisive confirmations,
+plus a corrected `div[MIN,-1]` value with jar-verified evidence.
+
+#### Residual 2 — deep mixed-polarity forbid-mode coverage
+
+15 probes designed to exercise ∀∃/∃∀ nesting (inner/outer/both operands
+overflowing), negation layers (`not`, `implies` antecedent, `check`), double
+negation, `sum`/int-ITE under a quantifier, and mixed-classification atoms (two
+operands of one comparison classifying differently) — see
+`scratchpad/probe/polarity_model.py` for the executable derivation model (encodes
+§11.3's rule literally, brute-enumerated over the bw4 domain) used to fix every
+prediction **before** running the jar. **12/15 matched prediction; 3 genuine
+mismatches, all sharing one root pattern** (below) — reported verbatim per the
+"mismatch is a finding" instruction.
+
+| # | Model sketch | Predicted forbid (derivation) | Allow | Forbid | Agree? |
+|---|---|---|---|---|---|
+| P1 | `plus[7,7] < 0` (control = I9) | UNSAT (exist/constant, positive polarity → `AND ¬of`) | SAT | UNSAT | ✅ |
+| P2 | `all n:Int\|plus[n,7]>=n` (control = I11) | SAT (univ, positive → `OR of` rescues) | UNSAT | SAT | ✅ |
+| P3 | `all n:{-8..-2}\|some m:{1..7}\|plus[m,7]=n` — (a) inner-var(exist) overflow, ∀∃ | UNSAT (m exist-classified, always overflows in domain → excluded for every n) | SAT | **SAT** | ❌ |
+| P4 | `all n:{1..7}\|some m:{0}\|plus[n,7]=m` — (a) outer-var(univ) overflow, ∀∃ | SAT (n univ-classified, always overflows → rescues every n) | UNSAT | **UNSAT** | ❌ |
+| P5 | `some n:{1..7}\|all m:{0}\|plus[n,7]=negate[5]` — (a) outer-var(exist, wraps a vacuous inner ∀), ∃∀ | UNSAT (n exist-classified regardless of nesting → excluded) | SAT | UNSAT | ✅ |
+| P6 | `some n:{0}\|all m:{1..7}\|plus[m,7]>=0` — (a) inner-var(univ) overflow, ∃∀ | SAT (m univ-classified, always overflows → rescues) | UNSAT | **UNSAT** | ❌ |
+| P7 | `not (all n:Int\|plus[n,7]>=n)` — (b) negation | UNSAT (surface `all` at negative polarity ≈ effective ∃, swapped rule) | SAT | UNSAT | ✅ |
+| P8 | `not not (all n:Int\|plus[n,7]>=n)` — (c) double negation | SAT (polarity restored) | UNSAT | SAT | ✅ |
+| P9 | `all n:{1..7}\|(plus[n,7]<0 implies (1=0))` — (b) implies antecedent | SAT (n univ but atom at flipped/negative local polarity → `AND ¬of`, antecedent forced false, implication vacuous) | UNSAT | SAT | ✅ |
+| P10 | `assert a{all n:Int\|plus[n,7]>=n} check a` — (b) check | UNSAT (translator's own negation, same as P7) | SAT | UNSAT | ✅ |
+| P11 | `some x:{1}\|(sum y:{6,7}\|plus[y,x])>negate[2]` — (d) sum under ∃ | UNSAT (x exist-classified, sum's inherited overflow excluded) | SAT | UNSAT | ✅ |
+| P12 | `all n:{1..7}\|(n>0=>plus[n,7] else 0)>=0` — (d) int ITE under ∀ | SAT (n univ, then-branch overflow rescues) | UNSAT | SAT | ✅ |
+| P13a | `all n:{1..7}\|some m:{±3,±5}\|plus[n,7]=mul[m,m]` — (e) mixed: univ LHS + exist RHS, both overflow | ambiguous by hand (two composition-order readings: SAT if univ-rescue dominates, UNSAT if guards fold sequentially) | UNSAT | **UNSAT** | N/A* |
+| P13b | same content, operands swapped (`mul[m,m]=plus[n,7]`) — order-symmetry check | same ambiguity | UNSAT | **UNSAT** | N/A* |
+| P14 | `not (some n:Int\|not (plus[n,7]>=n))` — De Morgan rewrite of I11 via `some`+`not` | SAT (surface `some` under negation ≈ effective ∀) | UNSAT | SAT | ✅ |
+
+\* P13a/b turned out to be instances of the *same* root pattern as P3/P4/P6 (below), not a resolution of the composition-order question — the guard didn't fire at all in either ordering (forbid = allow in both), so the intended order-dependence test never got to run.
+
+**The finding: forbid-mode's overflow guard reliably fires for single-quantifier
+formulas (with or without negation/`implies`/`check` wrapping, and for `sum`
+under a lone `∃`) and for *same-type* doubly-nested quantifiers (`∀∀`, `∃∃`),
+but was observed to silently not fire — forbid indistinguishable from allow —
+for `∀∃`/`∃∀` (mixed-type) doubly-nested quantifiers whenever the inner
+quantifier's bound variable is actually used in the guarded comparison.**
+Confirmed with 18 additional targeted diagnostic jar runs beyond the 15-probe
+batch (`scratchpad/probe/Diag1.java`–`Diag7.java`):
+
+- A **bare** existential exclusion works standalone: `some m:{1..7}|plus[m,7]=
+  negate[8]` → forbid UNSAT (matches prediction) — isolates that exist-exclusion
+  is fine *without* an enclosing quantifier.
+- Wrapping the *same* exclusion inside an outer `all n:{-8..-2}| ... = n` (P3)
+  flips it to SAT — guard silently inactive — **even though** the outer `n` is a
+  bare variable with no arithmetic of its own (its own `accumOverflow` is the
+  constant `FALSE`, so per `kodkod.engine.bool.DefCond.ensureDef` it should be a
+  no-op regardless of classification).
+- **Same-type nesting is robust**: `some n:{-8..-2}|some m:{1..7}|plus[m,7]=n`
+  → forbid UNSAT (exclusion fires correctly); `all n:{-8..-2}|all m:{1..7}|
+  plus[m,7]=n` → forbid SAT (rescue fires correctly). Both confirmed directly.
+- **Vacuous inner quantifiers behave inconsistently by wrapper type**: P5's
+  vacuous inner `all m:{0}` (body ignores m) still lets the outer exclusion
+  fire; the mirror case with a vacuous inner `some m:{0}` under an outer `all`
+  does **not** let the outer rescue fire (`all n:{1..7}|some m:{0}|plus[n,7]>=0`
+  → forbid UNSAT, not the predicted SAT) — so it is not simply "vacuous inner
+  quantifiers get optimized away."
+- Read against the actual `kodkod.engine.bool.DefCond` source (fetched
+  separately, not part of the shipped jar's `.java`): `isUnivQuant` walks the
+  **Kodkod-level environment chain** looking for the innermost Int-typed binding
+  whose `Decl`'s variable is in the operand's recorded `vars()`, and
+  `isInt(type)` tests literal string equality against `"ints"` — a check that
+  looks brittle against comprehension-restricted domains (`{x:Int|...}`, used
+  throughout these probes) rather than the bare `Int` sig. This is a plausible
+  *contributing* mechanism but does not by itself explain why same-type nesting
+  with the identical comprehension-domain style still classifies correctly
+  while mixed-type nesting does not — the precise trigger inside
+  `TranslateAlloyToKodkod`'s quantifier translation (`visit_qt`) is not fully
+  pinned by these probes and would need bytecode-level tracing to close
+  completely.
+
+**Residual 2: closed as "coverage" (15 probes across every requested corner,
+12/15 matched prediction) but with a real, jar-verified, previously-undocumented
+gap surfaced**: forbid-mode overflow guarding is unreliable specifically for
+mixed-type (`∀∃`/`∃∀`) doubly-nested quantifiers where the inner variable is
+non-vacuously used — a materially different (and narrower, more actionable)
+characterization than "coverage still open." This refines rather than merely
+extends §11.3's rule and should inform mt-044's implementation: mettle's own
+guard should not silently degrade in this configuration, so this is worth a
+dedicated differential test once mt-044 lands, not just a documentation note.
+
+
 | I14 | `min = (0-8)`, `max = 7` | SAT — `util/integer` `min`/`max` are `min(bw)`/`max(bw)`. **Source:** `TranslateAlloyToKodkod.visit(ExprConstant)` maps `MIN`/`MAX` to `IntConstant.constant(min/max)`, i.e. **plain int constants**, not the `Int/min`/`Int/max` relations |
 | I15 | `3.next = 4`, `3.prev = 2`, `7.next = 7`, `(0-8).prev = (0-8)` | first two SAT, last two **UNSAT** — `next`/`prev` are the `Int/next` binary relation and its transpose; `7.next`/`(−8).prev` are empty (chain endpoints), so the equalities with a non-empty side fail |
+
+### 10.7c mt-044 mixed-nesting forbid-mode trigger, pinned (jar-verified 2026-07-19)
+
+**Mission:** pin, at source level where possible and by decisive empirical
+matrix where not, the exact trigger of §10.7b's residual — forbid mode's
+overflow guard silently not firing (forbid ≡ allow) for some mixed-type
+doubly-nested quantifiers. Sources: `DefCond`, `Skolemizer`,
+`FOL2BoolTranslator`, `Environment`, `FOL2BoolCache`, `NestedSet`, `Int`/
+`TwosComplementInt` (all `kodkod.engine.bool`/`kodkod.engine.fol2sat`), and
+`TranslateAlloyToKodkod` — fetched from `github.com/AlloyTools/org.alloytools.alloy`
+at the pinned commit **`794226dd`** (the shipped jar's own `.class` files under
+`oracle/extracted_full/` are decompiled-signature-only; full `.java` sources
+for these classes live in the sibling `org.alloytools.pardinus.core` module,
+not `org.alloytools.alloy.core`, which is why they weren't on disk — fetched
+this session into `scratchpad/src794/`, gitignored). Harness: eight new probe
+files, `scratchpad/probe/ProbeSkolem{,2,3,4,5,6,7,8}.java` (gitignored,
+one JVM per file, `A4Options`/`TranslateAlloyToKodkod.execute_command`, sat4j,
+symmetry 0, `for 3 but 4 int`, both `noOverflow` settings per row).
+
+#### Primary hypothesis (skolemization) — tested and refuted
+
+The tech lead's primary hypothesis was: Kodkod skolemizes existentials up to
+`A4Options.skolemDepth`; an inner `∃` under an outer `∀` skolemizes into a
+skolem *function* of the outer variable once depth ≥ 1, and if the overflow
+classifier's univ/exist walk runs after skolemization, the skolemized-away
+existential's variable dependency could get silently reattributed to the
+*outer* variable via the skolem join, flipping the classification.
+
+Two source facts already complicate this before any run: **(a)**
+`A4Options.skolemDepth` defaults to **`0`**, not some larger value (confirmed:
+`new A4Options().skolemDepth == 0`, `edu.mit.csail.sdg.translator.A4Options`
+line 69). **(b)** `Skolemizer.visit(QuantifiedFormula)` only skolemizes a
+non-top-level quantifier when `skolemDepth >= nonSkolems.size() + newDecls.size()`
+holds for every *enclosing non-skolemizable* quantifier on the path to it; for
+`all n | some m | …` at the default depth 0, the outer `all` immediately fails
+`0 >= 0+1`, forcing `skolemDepth = -1` for everything under it — so **the inner
+`some m` is never skolemized in the default configuration**: it survives as a
+genuine, separate `QuantifiedFormula(SOME)` node, with its own environment
+frame, exactly like the outer `all`. The skolemization story literally cannot
+be the depth-0 mechanism because no skolemization of the inner existential
+happens at depth 0 in the first place.
+
+**Decisive experiment:** swept `A4Options.skolemDepth` ∈ {0,1,2,3,4,−1} (−1
+disables skolemization everywhere, even for top-level bare existentials) over
+the single-quantifier controls (I9, I11, bare-∃), the same-type nested
+controls (`∃∃`, `∀∀`), and P3/P4/P6 (the three mixed-nesting probes with
+observed anomalies). Every row was **byte-for-byte identical across all six
+depths**:
+
+| Probe | allow | forbid @ depth 0,1,2,3,4,−1 (all identical) |
+|---|---|---|
+| I9 `plus[7,7]<0` | SAT | UNSAT (every depth) |
+| I11 `all n:Int\|plus[n,7]>=n` | UNSAT | SAT (every depth) |
+| bare-∃ `some m:{1..7}\|plus[m,7]=−8` | SAT | UNSAT (every depth) |
+| `∃∃` same-type `plus[m,7]=n` | SAT | UNSAT (every depth) |
+| `∀∀` same-type `plus[m,7]=n` | UNSAT | SAT (every depth) |
+| **P3** `∀∃` inner-exist-drives | SAT | **SAT (every depth — anomaly present at −1 too)** |
+| **P4** `∀∃` outer-univ-drives | UNSAT | **UNSAT (every depth — anomaly present at −1 too)** |
+| **P6** `∃∀` inner-univ-drives | UNSAT | **UNSAT (every depth — anomaly present at −1 too)** |
+
+Depth **−1** (skolemization off *everywhere*, including top-level bare
+existentials which normally skolemize to constants regardless of depth) still
+reproduces every anomaly identically. **skolemDepth is conclusively ruled out
+as the trigger** — this refutes the primary hypothesis stated in the mission.
+(`scratchpad/probe/ProbeSkolem.java`.)
+
+> **Correction (round 3, 2026-07-19):** the P3/`∀∀`/`∃∃` *row values* in the
+> table above were later found to be confounded by the `negate[8]` domain
+> issue documented in full below — the qualitative conclusion of this
+> subsection ("skolemDepth doesn't change the behavior") is unaffected (the
+> confound is a translation-time overflow-guard artifact, wholly unrelated to
+> Kodkod's skolemization option, so it reproduces identically at every depth
+> too), but the specific SAT/UNSAT values shown for those three rows do not
+> reflect the jar's true behavior on a *correctly* restricted domain. See the
+> retraction below for the corrected values.
+
+#### What the trigger actually is: ONE defect, not two — "Defect B" retracted (round 3, 2026-07-19)
+
+With skolemization off the table, the actual mechanism was isolated
+empirically by systematically varying one structural axis at a time (domain
+expression style, nesting order, nesting depth, comparison operator,
+arithmetic operator) and jar-verifying every cell. Read against
+`kodkod.engine.bool.DefCond.ensureDef`/`isUnivQuant` (quoted in full at
+§11.3): the classifier walks the **live, post-skolemization
+`Environment<BooleanMatrix,Expression>` chain** (built by
+`FOL2BoolTranslator.all()`/`some()`, one frame per surviving quantifier, order
+innermost→outermost) looking for the *first* frame whose declared domain
+`isInt()`s (a **literal string-equality check against `"ints"`**,
+`DefCond.isInt`, flagged as suspicious in §10.7b) **and** whose bound variable
+is in the overflowing operand's recorded `vars()`; if it finds one, the
+classification is that frame's `Quantifier.ALL`/`SOME` tag; if a frame's
+domain fails `isInt()`, the frame is skipped **entirely** (its variable is
+never even checked) and the search continues outward; if the chain is
+exhausted, the default is **existential**.
+
+**Defect A — domain-comprehension breaks `isInt`, silently defaulting to
+existential.** `Expression.INTS` (Kodkod's literal `Int` builtin) is the only
+expression `isInt()` recognizes. **Any** restricted-domain expression — even
+the trivial singleton `{x:Int|x=0}` — is a genuine Kodkod `Comprehension`
+object whose `toString()` is not `"ints"`, so `isInt()` is false on that
+frame, and the search skips straight past the variable it was looking for.
+Since the fallback-when-nothing-matches is *existential*, this defect is
+**invisible whenever the affected variable is genuinely existential**
+(coincides with the fallback) but **wrongly excludes instead of rescuing
+whenever the affected variable is genuinely universal** — exactly P4 (outer
+`∀`, own domain a comprehension) and P6 (inner `∀`, own domain a
+comprehension). Decisive isolation (`scratchpad/probe/ProbeSkolem2.java`,
+holding the *other* variable's domain fixed and switching only the
+**overflow-driving** variable's own domain from comprehension to literal
+`Int` with the restricting guard moved into the body via `implies`/`and`):
+
+| Probe | overflow-driver's domain | other var's domain | forbid | verdict |
+|---|---|---|---|---|
+| P4-orig | comprehension | comprehension | UNSAT | broken (predicted SAT) |
+| P4, driver→bare `Int` | **bare Int** | comprehension | **SAT** | **fixed** |
+| P4, other→bare `Int` | comprehension | bare Int | UNSAT | still broken |
+| P6-orig | comprehension | comprehension | UNSAT | broken (predicted SAT) |
+| P6, driver→bare `Int` | **bare Int** | comprehension | **SAT** | **fixed** |
+| P6, other→bare `Int` | comprehension | bare Int | UNSAT | still broken |
+
+Only the **overflow-driving variable's own** domain style matters; the other
+variable's domain style is irrelevant. This is a clean, fully-deconfounded
+result (4 cells × 2 probes, both directions), and — critically, established
+by the round-3 audit below — **none of these six probes used `negate[8]`
+anywhere**, so Defect A stands exactly as first characterized, unaffected by
+the retraction that follows.
+
+**"Defect B" (retracted): there is no nesting-position defect.** The first
+pass of this investigation additionally reported a second, independent
+defect — an existential nested inside a "range"-guarded (`x>=A and x<=B`)
+enclosing universal supposedly disabled the guard outright, regardless of the
+inner variable's own domain style, fixed by rephrasing the outer restriction
+as a disjunction of equalities instead. **A round-3 tech-lead-requested audit
+(triggered by an unrelated shift-semantics investigation surfacing that
+`negate[8]` itself carries a permanent overflow flag — see the negate[8] note
+in §10.7d below) found every one of "Defect B"'s decisive probes used
+`negate[8]` as the enclosing universal's own lower domain bound
+(`x>=negate[8] and x<=negate[2]`), and that this is fatal**: `negate[8]`
+(`=minus[0,8]`, itself an overflowing computation) carries `accumOverflow=TRUE`
+unconditionally; as a bare constant its `vars()` is empty, so it always
+classifies existential (per §11.3's own text — constants are existential by
+definition) and at positive polarity gets `AND ¬of`, which — because its own
+`of` is `TRUE` — **forces the comparison `x>=negate[8]` to `FALSE` for every
+candidate `x`, unconditionally, regardless of `x`'s real value.** A
+conjunction domain `{x:Int|x>=negate[8] and x<=negate[2]}` therefore has
+**zero members** in forbid mode (confirmed directly: `#{x:Int|x>=negate[8]
+and x<=negate[2]}=0` is forbid-**SAT**, i.e. the domain's own cardinality *is*
+0), making every `all n:{that domain}|BODY` **vacuously SAT** and every
+`some n:{that domain}|BODY` **vacuously UNSAT** — independent of whatever
+`BODY`'s own overflow guard does. A disjunction domain
+(`x=negate[8] or x=negate[7] or …`) only loses the *one* poisoned disjunct
+(still 6 of 7 members survive, confirmed: `#{...}=7` is forbid-**UNSAT** with
+`negate[8]`, `#{...}=7` is forbid-**SAT** once cleaned — meaning the
+`negate[8]`-spelled OR-domain was quietly missing an atom too, just not
+*all* of them), so it stays non-vacuous and its "correct" behavior was never
+actually about disjunction-vs-conjunction — it was **always** about the
+inner existential correctly falling back to existential under Defect A
+(genuinely existential ⇒ fallback is invisible), same as the AND cell would
+show once cleaned.
+
+**Decisive re-audit, clean spelling `(0-8)` (the peephole-folded MIN literal,
+confirmed overflow-free below) substituted for every `negate[8]` domain
+bound** (`scratchpad/probe/ProbeReaudit.java`, `ProbeReaudit2.java`):
+
+| Cell | Original (`negate[8]`) forbid | Clean (`(0-8)`) forbid | Conclusion |
+|---|---|---|---|
+| P3 (`∀`-range, `∃`-range) | **SAT** ("Defect B present") | **UNSAT** | **flips — no anomaly, Defect A alone (m falls back to exist, correctly) explains it** |
+| `n`=range,`m`=enum | SAT | **UNSAT** | flips |
+| `n`=enum,`m`=range | UNSAT | UNSAT | unchanged (was never vacuous — only 1 of 7 disjuncts poisoned) |
+| `n`=enum,`m`=enum | UNSAT | UNSAT | unchanged |
+| All 6 comparison operators (=,≠,<,≤,>,≥) on the range/range cell | SAT (5 of 6) | **UNSAT** (all 6) | flips |
+| NP3 (3-level, vacuous extra `∀`) | SAT | **UNSAT** | flips |
+| NP4 (NP3 + inner bare `Int`) | SAT | **UNSAT** | flips |
+| GAP1c (bare-Int outer, range via `implies`) | SAT | **UNSAT** | flips |
+| all-all (same-type `∀∀`) | SAT | **UNSAT** | flips (see rule-2 correction below) |
+| some-some (same-type `∃∃`) | UNSAT | UNSAT | unchanged |
+| GAP2d (sig-`∀` outer, properly forced nonempty this round) | SAT | UNSAT (**both** spellings, once `P` is properly forced nonempty rather than left free to default empty) | flips/retracted — see §10.7d |
+
+**Every single "Defect B" cell that showed the anomaly flips to the
+naive-rule-matching UNSAT once `negate[8]` is replaced with a clean MIN
+spelling.** There is no nesting-position defect. **"Defect B" is retracted
+in full.** The uniform, corrected explanation for every one of these cells is
+Defect A alone: whichever quantifier in the shape has a comprehension (or
+sig) domain gets its classification defaulted to existential — invisible
+when that variable is genuinely existential (P3's `m`, the same-type
+`∃∃`'s both variables), wrong when it's genuinely universal (the same-type
+`∀∀` case's `m`, which the original, confounded "all-all is robust" claim
+never actually tested cleanly — see the rule-2 correction below).
+
+**This also means "Defect A" was never actually confined to mixed-type
+nesting.** It is a **per-variable** classification rule with **no dependence
+on nesting shape at all**: any quantified variable whose own domain isn't
+literally bare `Int`/`seq/Int` gets defaulted to existential, full stop,
+whether it sits alone, doubly-nested same-type, or doubly-nested mixed-type,
+and whether the enclosing/sibling quantifier(s) are bare-`Int`, comprehension,
+or `sig`-typed. Confirmed with both quantifiers forced to genuinely bare
+`Int` (no comprehension, no `negate[8]`, restriction via `implies`/`and` in
+the body): `all n:Int|(range)implies(all m:Int|(range)implies plus[m,7]=n)`
+→ forbid **SAT** (correct rescue, `m` classifies directly as universal since
+its own domain is now literally `Int`) and the `∃∃` mirror → forbid **UNSAT**
+(correct exclusion) — i.e. same-type nesting genuinely *is* robust, but only
+once every level's domain is actually bare `Int`; the original §10.7b claim
+tested it with comprehension domains and (before this audit) attributed the
+coincidentally-matching UNSAT of the `∃∃` cell to "robustness" while never
+noticing the `∀∀` cell's SAT was equally coincidental (propped up by the
+`negate[8]` vacuous-domain artifact, not genuine rescue).
+
+#### Open, not closed by this investigation: ITE/`implies` interaction with Defect A
+
+Defect A's "own domain must be bare `Int`" precondition, tested on a **single**
+universally-quantified variable with **no second quantifier at all**, gives
+inconsistent results depending on what wraps the comparison:
+
+| Shape (single `∀`, comprehension domain `{x:Int|x>=1 and x<=7}`, `n` is the sole/overflow-driving var) | forbid | Defect A fires? |
+|---|---|---|
+| Direct: `plus[n,7] >= 0` | UNSAT (predicted SAT) | **yes** |
+| Under `implies` antecedent: `plus[n,7]<0 implies (1=0)` (= P9) | SAT (matches predicted) | **no** |
+| Under an int-ITE: `(n>0 => plus[n,7] else 0) >= 0` (= P12) | SAT (matches predicted) | **no** |
+
+`scratchpad/probe/ProbeSkolem8.java`. Attempts to explain this from source
+(does `implies` genuinely flip `Environment.negate()`? does an ITE's
+condition-formula "pre-visit" `n` in a way that changes a later lookup?)
+produced multiple self-contradictory derivations — confirmed by source read
+that `FOL2BoolTranslator.visit(BinaryFormula)` never calls `env.negate()` for
+`IMPLIES` (only `visit(NotFormula)` does), which by itself predicts P9 should
+misbehave the same way the direct-comparison row does, yet it doesn't. This
+is **not closed**: whether an ITE or an `implies`-antecedent around the *same*
+Defect-A-triggering shape reliably avoids the defect, sometimes avoids it, or
+was coincidental in these two instances, is unknown. **Recommendation:**
+mettle should treat this sub-corner conservatively (typed-defer, below), not
+assume the ITE/`implies` escape generalizes.
+
+#### Retrodiction over §10.7b's P1–P14 (100% match, corrected for the Defect-B retraction)
+
+| # | Shape | Defect(s) applicable | Predicted (this rule) | Observed (clean re-verification) | Match |
+|---|---|---|---|---|---|
+| P1 | ground constants, no quantifier | none | UNSAT | UNSAT | ✅ |
+| P2 | single `∀`, bare `Int` | none (bare Int, direct match) | SAT | SAT | ✅ |
+| P3 | `∀`(range)`∃`(range), inner drives | **A only** (`m` falls back to existential, which is correct — `m` genuinely is `∃`) | UNSAT (guard correctly excludes) | **UNSAT once the domain's `negate[8]` bound is replaced with clean `(0-8)`** — the original `negate[8]`-spelled probe showed SAT, which was a vacuous-domain artifact, not the jar's real answer | ✅ (corrected) |
+| P4 | `∀`(comprehension, drives)`∃`(trivial) | **A** | UNSAT (misclassified exist) | UNSAT | ✅ (no `negate[8]` in this probe; unaffected by the retraction) |
+| P5 | `∃`(comprehension, drives, outermost)`∀`(vacuous) | A's fallback coincides (var genuinely exist) | UNSAT | UNSAT | ✅ (uses `negate[5]`, not `negate[8]`; unaffected) |
+| P6 | `∃`(trivial)`∀`(comprehension, drives, inner) | **A** | UNSAT (misclassified exist) | UNSAT | ✅ (no `negate[8]`; unaffected) |
+| P7 | `not(∀,\ bare\ Int)` | none (bare Int) | UNSAT | UNSAT | ✅ |
+| P8 | double negation, bare `Int` | none | SAT | SAT | ✅ |
+| P9 | single `∀`(comprehension) under `implies` antecedent | A's precondition met but **not observed to fire** — Open note | SAT (matches naive; mechanism open) | SAT | ✅ (retrodicted; not explained — uses range `1..7`, no `negate[8]`, unaffected by the retraction) |
+| P10 | `check` (own negation), bare `Int` | none | UNSAT | UNSAT | ✅ |
+| P11 | `sum` under a single `∃` | none (x genuinely exist; fallback coincides) | UNSAT | UNSAT | ✅ |
+| P12 | int-ITE under single `∀`(comprehension) | A's precondition met but **not observed to fire** — Open note | SAT (matches naive; mechanism open) | SAT | ✅ (retrodicted; not explained — no `negate[8]`, unaffected) |
+| P13a/b | one comparison, both operands overflow, mixed classification | out of scope (independent "composition order" question, untouched by this session) | ambiguous (as originally reported) | UNSAT (both) | N/A, unchanged |
+| P14 | De Morgan rewrite of I11 via `some`+`not` | none (bare Int) | SAT | SAT | ✅ |
+
+**12/12 in-scope probes retrodict cleanly under the single-defect (Defect A
+only) rule** (P13a/b explicitly out of scope, carried over unchanged from
+§10.7b). P3 is the one entry whose *documented* verdict changed in this
+round — from an apparent anomaly to a clean retrodiction — once its
+domain's `negate[8]` confound was removed; P4/P5/P6/P9/P11/P12 were already
+clean (no `negate[8]` in any of their spellings) and are unaffected.
+
+#### New decisive probes: what survives the Defect-B retraction
+
+Of the six "new decisive probes" from the first pass of this section, two
+(NP1, NP2 — the Defect-A depth-extension probes) used **no `negate[8]`** and
+stand exactly as reported: both showed the naive rule wrong and this rule
+(Defect A applying regardless of nesting depth) right. The other four
+(NP3, NP4, and the two probes drawn from the AND/OR domain-shape matrix) all
+depended on a `negate[8]`-spelled domain bound and their reported "Defect B"
+verdicts do **not** survive — see the retraction above; re-verified, all four
+now retrodict as clean Defect-A cases (correct exclusion, matching naive),
+not counterexamples to naive at all.
+
+| # | Shape | Naive predicts | This rule (Defect A only) predicts | Observed | Winner |
+|---|---|---|---|---|---|
+| NP1 | `∀`(range, drives)`∃`(trivial)`∃`(trivial) — Defect A through 2 extra vacuous layers | SAT | UNSAT | **UNSAT** | this rule (stands, no `negate[8]`) |
+| NP2 | `∃`(trivial)`∃`(trivial)`∀`(range, drives) — Defect A, mirrored | SAT | UNSAT | **UNSAT** | this rule (stands, no `negate[8]`) |
+| NP3 (corrected) | `∀`(range)`∀`(vacuous)`∃`(range, drives), clean `(0-8)` domain bound | UNSAT | UNSAT | **UNSAT** | naive (originally reported SAT via the `negate[8]` artifact — retracted) |
+| NP4 (corrected) | NP3 + inner `∃`'s own domain switched to bare `Int`, clean bound | UNSAT | UNSAT | **UNSAT** | naive (originally reported SAT — retracted) |
+
+Two fresh, genuinely decisive Defect-A probes replace the retracted
+domain-shape-matrix pair (P4-m-bareInt-only, isolating that only the
+overflow-driver's own domain matters, was already reported correctly in the
+first pass and needs no correction):
+
+| # | Shape | Naive predicts | This rule predicts | Observed | Winner |
+|---|---|---|---|---|---|
+| NP5 | P4 shape, only the **trivial** (non-driving) variable switched to bare `Int`, driving variable left as comprehension | SAT | UNSAT | **UNSAT** | this rule |
+| NP6 | Sig-domained single-quantifier Defect A (see GAP2a below) — `all p:P\|plus[#p.f,7]>=0`, forced non-vacuous | SAT | UNSAT | **UNSAT** | this rule |
+
+(`scratchpad/probe/ProbeSkolem2.java`, `ProbeSkolem3.java`,
+`ProbeReaudit2.java`, `ProbeGap.java`.)
+
+#### Gap-closing round (tech-lead review, jar-verified 2026-07-19, corrected for the Defect-B retraction)
+
+Tech-lead review of the first pass flagged two coverage gaps that had to be
+probed shut before the rule could be treated as implementable. Both use the
+same harness/methodology (predictions recorded before running; sat4j,
+symmetry 0, `for 3 but 4 int`, both `noOverflow` settings; decisive
+allow/forbid divergence per probe) — `scratchpad/probe/ProbeGap.java`. GAP 1's
+findings are **corrected** below for the Defect-B retraction; GAP 2's core
+finding (sig-domain misclassification) is **unaffected** — none of GAP 2's
+decisive cells (2a/2b) used `negate[8]`, and 2c/2d are addressed below.
+
+**GAP 1 — mixed-type nesting with BOTH domains literal bare `Int`.**
+
+| # | Shape | Predicted (naive) | allow | forbid | Result |
+|---|---|---|---|---|---|
+| GAP1a | `all n:Int\|some m:Int\|plus[m,7]=n` — **no restriction anywhere**, either domain or body | UNSAT | SAT | **UNSAT** | naive confirmed — guard fires correctly (no `negate[8]`, unaffected by the retraction) |
+| GAP1b | `some n:{0}\|all m:Int\|plus[m,7]>=m` — univ driver (`m`) bare `Int`, `∃∀` shape (rule check) | SAT (rescue) | UNSAT | **SAT** | rule confirmed (no `negate[8]`, unaffected) |
+| GAP1c (corrected) | same shape, clean `(0-8)` bound instead of `negate[8]` | UNSAT | SAT | **UNSAT** | naive confirmed — the originally-reported SAT was the vacuous-implication artifact (the antecedent `n>=negate[8]` was forced false for every `n`, making the whole `implies` vacuously true; retracted) |
+
+GAP1a and GAP1b were always clean (no `negate[8]` anywhere in either) and
+stand exactly as first reported: a fully unrestricted, or a bare-`Int`
+`∃∀`-shaped, quantifier pair behaves per the naive rule, because every
+variable's own domain is literally `Int` and classifies directly and
+correctly. GAP1c's original "Defect B persists" verdict does **not**
+survive — corrected above.
+
+**GAP 2 — overflow-driving variable bound over a SIG domain.** `DefCond.isInt`
+recognizes only the literal `Expression.INTS` builtin; a `sig` domain is
+exactly as unrecognized as a comprehension. This is Defect A's general form,
+**not** a new "Defect B extends to sig" finding (that framing is retracted
+along with Defect B) — Defect A alone explains every GAP 2 cell.
+
+| # | Shape | allow (established by hand) | Predicted: naive rule | Predicted: Defect A | forbid | Result |
+|---|---|---|---|---|---|---|
+| GAP2a | `sig P{f:set P}`; force `some p.f`; require `all p:P\|plus[#p.f,7]>=0` | UNSAT (unconditional — whichever `p` has nonempty `f` fails the raw wrapped comparison) | SAT (rescue) | UNSAT (exclude) | **UNSAT** | **Defect A confirmed for sig domains** (no `negate[8]`; unaffected by the retraction) |
+| GAP2b | control: same arithmetic shape (range 1..3, `plus[X,7]>=0`), driver a bare-`Int` `∀` instead of a sig cardinality | UNSAT | SAT | — | **SAT** | control fires correctly, isolates the sig domain as the cause (no `negate[8]`; unaffected) |
+| GAP2c | control: `some p:P\|#p.f=1 and plus[#p.f,7]=negate[8]` — existential over a sig; both readings agree "exclude" | SAT | UNSAT | UNSAT | **UNSAT** | confirms shared baseline, non-distinguishing; **uses `negate[8]` as a target value (not a domain bound)**, which independently forces exclusion too — the conclusion was already non-distinguishing and is unaffected, but is even more overdetermined than first stated |
+| GAP2d (corrected) | nesting variant: `all p:P\|some m:{x:Int\|x∈[1,7]}\|plus[m,7]=p.f`, `fact{all p:P\|p.f∈[−8,−2]}` — **redone properly forced** (`some p:P\|p.f=(0-8)` added as an explicit conjunct so the solver cannot escape via `P` defaulting empty; the original version, with or without `negate[8]`, was vacuous both ways — see the audit below) | SAT | UNSAT (`m` correctly falls back to existential) | UNSAT | **UNSAT (both spellings, once forced)** | **retracted — no anomaly; Defect A alone, correctly falling back, explains it** |
+
+GAP2a/2b are the load-bearing, unaffected findings: **Defect A is confirmed
+for sig domains**, and it manifests with a **single, unnested** quantifier
+(`GAP2a` has no second quantifier at all in the arithmetic-bearing conjunct)
+— so Defect A was never confined to mixed-type doubly-nested quantifiers as
+the mission originally scoped it. `all p: SomeSig | <overflow-capable
+comparison over p>`, at any nesting depth including zero, silently excludes
+instead of rescuing. GAP2d's original claim ("Defect B extends to a
+sig-typed enclosing universal") does **not** survive a proper audit: the
+original probe never forced `P` to be non-empty, so — exactly like the
+`negate[8]`-driven domain-emptiness bug elsewhere — the solver could (and,
+it turns out, effectively did) satisfy `all p:P|…` vacuously by leaving `P`
+empty, regardless of the fact's own overflow issues. Once forced
+non-vacuous (`some p:P|p.f=(0-8)` added), **both** the clean and the
+`negate[8]`-spelled fact give forbid UNSAT — i.e. correct behavior, no
+anomaly, fully explained by Defect A alone (the inner `m` falls back to
+existential, which is correct since `m` genuinely is `∃`).
+(`scratchpad/probe/ProbeReaudit3.java`.)
+
+#### The pinned rule, stated operationally for mettle (grounds, never skolemizes; corrected after the round-3 "Defect B" retraction)
+
+Since mettle grounds quantifiers directly (no skolemization step exists to
+even ask "at what depth"), and since this round's audit collapsed the
+two-defect model down to a **single, uniform, per-variable rule with no
+dependence on nesting shape at all**, the operational statement is now much
+simpler than the first two passes of this section:
+
+0. **Every quantified variable's own univ/exist classification depends
+   *only* on whether ITS OWN quantifier's domain is literally the bare
+   `Int`/`seq/Int` builtin** — never on the domain style of any enclosing,
+   sibling, or nested quantifier, never on nesting depth (0, 1, 2, or more
+   levels), never on nesting type (same-type `∀∀`/`∃∃` or mixed-type
+   `∀∃`/`∃∀`), never on the comparison operator, and never on the arithmetic
+   operator (`plus` and `mul` both checked). If the variable's own domain is
+   the literal `Int`/`seq/Int` builtin, classification is exact (`∀`→univ,
+   `∃`→exist). If it is **anything else** — a comprehension
+   (`{x:Int|G(x)}`, however simple or complex, however it's guarded), a
+   `sig`, or presumably any other non-`Int` type — `DefCond.isUnivQuant`'s
+   `isInt()` check fails on that variable's own environment frame, the
+   search skips past it, and the classification **defaults to
+   existential**, unconditionally.
+1. **This default is invisible whenever the variable is genuinely meant to
+   classify existential** (bound by `∃`, at positive polarity, in any
+   nesting shape) — the fallback coincides with the correct answer, so
+   §11.3's rule applies with no deviation. (P1, P3, P5, P11, every bare-`∃`
+   control, the `∃∃` same-type cell, GAP2c.)
+2. **This default is WRONG whenever the variable is genuinely meant to
+   classify universal** (bound by `∀`) **and its own domain isn't literally
+   bare `Int`** — the guard should rescue (`∨ of`) but instead excludes
+   (`∧ ¬of`), in ANY nesting shape: a lone unnested `∀` (P4, P6,
+   `variant-subsetDomain-*`), a `∀` nested inside another `∀` (the same-type
+   `∀∀` cell, corrected this round), a `∀` enclosing or enclosed by an `∃`
+   (P4, P6), or a `∀` over a `sig` at any depth including zero (GAP2a,
+   GAP2d corrected). This is the sole defect (formerly called "Defect A";
+   "Defect B" — a supposed second, nesting-position-keyed defect — is
+   **retracted**: every one of its decisive probes turned out to depend on
+   `negate[8]` as a domain lower bound, and `negate[8]` itself carries a
+   permanent overflow flag that silently empties conjunction-shaped domains
+   in forbid mode, producing vacuous-truth SAT/UNSAT verdicts that mimicked
+   a nesting-position effect. Once re-probed with a clean `(0-8)` bound,
+   every "Defect B" cell — P3, the same-type `∀∀` control, the AND/OR
+   domain-shape matrix, NP3/NP4, GAP1c, GAP2d — retrodicts as a plain,
+   uniform Defect-A case with no separate mechanism needed.)
+3. **Single, bare-`Int`-only quantifier of either kind, any polarity** →
+   guard behaves exactly per §11.3's ideal statement (P2, P7, P8, P9, P10,
+   P12, P14, GAP1a, GAP1b, GAP2b — this is rule 0's "domain is literally
+   `Int`" branch restated for the common single-quantifier case).
+4. **Comparison sits behind an int-ITE or an `implies` antecedent, and rule
+   0/2's precondition (driver's own domain is not bare `Int`) would
+   otherwise apply** → **open** (see the Open note above; P9 and P12 show
+   the defect NOT firing in this configuration, for reasons not traced to
+   source, and this was not re-examined this round); do not guess.
+5. **A single comparison whose two operands overflow with different
+   classifications** (P13a/b) → **out of scope**, unchanged from §10.7b
+   ("ambiguous by hand," ordering question never resolved).
+
+**Conservative typed-defer predicate**, corrected: mettle should implement
+rules 0–3 above as bug-compatible verdicts — this is now the entire pinned
+rule, verdict-for-verdict, no separate nesting-position case to special-case
+— and **typed-defer** (never guess) exactly rule 4's corner: a forbid-mode
+overflow-capable comparison reachable only through an int-ITE or an
+`implies` antecedent, where the overflow-driving variable's own quantifier
+domain is not bare `Int` (comprehension or `sig`). This is **simpler** than
+either of the first two passes' predicates: there is one classification
+rule (rule 0), applied uniformly regardless of structure, with one open
+sub-corner (rule 4). **The practically significant case is unchanged by
+this round's retraction**: `all p: SomeSig | <cardinality-overflow
+comparison over p>`, at any nesting depth including zero, still silently
+excludes instead of rescuing, and mettle must classify a sig-bound (or any
+non-`Int`-domain) universally-quantified overflow-driver as existential
+unconditionally to stay jar-bug-compatible.
+
+### 10.7d mt-044 round 3: shift semantics pinned, `negate[8]` forbid-confound audit (jar-verified 2026-07-19)
+
+Tech-lead round 3 combined two independent asks: pin the shift operators'
+exact mask width and per-op overflow condition (coordinator hand-probes in
+`/tmp/.../scratchpad/verify/shifts*.als`, folded in and extended here), and
+audit every forbid-mode probe in §10.7b/§10.7c that used `negate[8]` for a
+confound the coordinator's own hand-probes had already surfaced. The audit
+turned out to invalidate "Defect B" entirely — see §10.7c above, which is
+where that correction lives; this section covers the shift semantics and the
+audit's mechanics.
+
+Source: `kodkod.engine.bool.TwosComplementInt.shl`/`shr`/`sha` (private `shr`
+helper shared by both), read **before** any probe was run, at commit
+`794226dd`. Harness: `scratchpad/probe/ProbeShift.java`,
+`ProbeDomainAudit.java`, `ProbeReaudit.java`–`ProbeReaudit3.java`
+(gitignored), sat4j, symmetry 0, `for 3 but N int`, both `noOverflow`
+settings per row.
+
+#### FACT 1 — shift-amount mask width, confirmed from source
+
+`shl` and `shr`/`sha` both compute
+`int max = 32 - Integer.numberOfLeadingZeros(width - 1);` where `width =
+factory.bitwidth` (the command's `int` scope). This is exactly the
+**bit-length of `width-1`**, which is the standard identity for
+`⌈log2(width)⌉` at every `width ≥ 1` (no discrepancy at any tested value —
+this is a closed-form arithmetic identity, not a coincidence that could
+diverge at some untested width). Only the low `max` bits of the shift-amount
+operand are ever read (`other.bit(i)` for `i < max` gates every actual
+bit-shift step); any higher bit of the amount is **structurally never
+consulted for the VALUE computation** — exactly equivalent to masking the
+shift amount to its low `⌈log2 w⌉` bits before shifting by the (possibly
+still `≥ w`, "everything shifted out") result. Confirmed at bw3/4/5
+(coordinator's own probes) and, this round, at **bw6** (untested by the
+coordinator, mask should be 3 bits since `⌈log2 6⌉=3`):
+
+| Probe | bw | allow | forbid | Meaning |
+|---|---|---|---|---|
+| `1<<8=1` | 6 | SAT | UNSAT* | `8 mod 8 = 0` → unshifted, value matches (*forbid diverges — see FACT 2's junk-bit finding, not a mask-formula issue) |
+| `1<<8=0` | 6 | UNSAT | UNSAT | value doesn't match either way |
+| `1<<6=0` | 6 | SAT | UNSAT | `6` unmasked (within the 3-bit window) shifts `1` fully out of a 6-bit register — genuine overflow, correctly excluded |
+
+Mask formula **confirmed**: `⌈log2 w⌉` bits, exactly as the coordinator's
+bw3/4/5 probes indicated, with no discrepancy at bw6.
+
+#### FACT 2 — per-op overflow conditions, exact circuits
+
+**`shl` (own overflow bit):** built as a barrel shifter over the shift
+amount's bits from LSB (`i=0`) to MSB (`i=width-1`, note: **not** just up to
+the mask width `max` — the outer loop runs the full `width` iterations even
+though the VALUE-shifting step is gated `if (i<max)`). At each `i`, if
+`other.bit(i)` is set, the circuit ORs in, for every one of the `2^i` bits
+about to be (or, for `i≥max`, that *would have been*, had this stage's shift
+actually applied) pushed out: **does that bit differ from the bit
+immediately adjacent to it, evaluated against the accumulated shifted-so-far
+state** (the classic "would restoring the shifted bits change the value"
+overflow check, applied incrementally per power-of-two shift stage). For
+`i<max` (a real, value-affecting stage) this correctly detects genuine
+value-changing overflow — confirmed decisive: `4<<1<0` (bw4, `4<<1=8` wraps
+to `-8`) is forbid-**UNSAT** (excluded, correct: `<<` sets overflow when the
+shift genuinely wraps).
+
+**Newly-discovered defect: a "junk" (masked-away, `i≥max`) bit of the shift
+amount can spuriously set the overflow flag, with ZERO effect on the actual
+shifted value.** Because the overflow-check loop runs for every `i` up to
+`width`, not just up to `max`, a set bit at position `≥max` still triggers an
+`xor(b1,b2)` check against the **already-fully-computed, frozen** masked-shift
+state — and if that state happens to have a bit transition at the position
+this "should-be-irrelevant" stage inspects, the flag fires anyway. Decisive,
+fully deconfounded (no `negate[8]` involved) bw4 matrix, mask=2 bits, junk
+bit = bit index 2 (value 4):
+
+| Probe | allow | forbid | Explanation |
+|---|---|---|---|
+| `5<<0=5` | SAT | SAT | genuinely no shift, no overflow |
+| `5<<4=5` | SAT | **UNSAT** | same masked value (`4 mod 4=0`, unshifted) as above, but the junk bit (bit 2 of the amount `4`) is SET, and `5`'s own bit pattern (`0101`) has a transition at the position this junk-bit's check inspects — **spurious overflow** |
+| `3<<0=3` | SAT | SAT | control, second shiftee |
+| `3<<4=3` | SAT | **UNSAT** | same spurious pattern with a different shiftee — not a fluke |
+| `0<<0=0` | SAT | SAT | control |
+| `0<<4=0` | SAT | SAT | junk bit set, but shiftee `0`'s uniform bit pattern gives no transition at the inspected position → no spurious trigger, confirming the mechanism is keyed on the *shiftee's* bit pattern at that specific position, not merely "any junk bit set" |
+| `1<<4=1` | SAT | **UNSAT** | reproduces with shiftee `1` |
+| `1<<8=1` | SAT | **UNSAT** | reproduces at a second junk bit position (bit 3, since literal `8` truncates to bit-pattern `1000`=`-8` at bw4 — see the literal-truncation note below) |
+
+**Rule for `<<`'s overflow flag, exact**: `OR` over **every** bit index `i`
+from `0` to `width-1` of the shift-amount operand (not just `0..⌈log2 w⌉-1`)
+of: `(that bit is set) AND (the shift-by-`2^i`-stage, applied to the
+already-masked-and-shifted intermediate result, would push out a bit
+differing from its neighbor)`. mettle must replicate this **exact,
+stage-incremental, junk-bit-inclusive** circuit to be bug-compatible — a
+"did the true (masked) shifted value change" check alone is **not**
+sufficient and will silently disagree with the jar whenever the shift
+amount's un-masked high bits happen to be set and the shiftee's own bits
+have a transition at the position those junk stages inspect.
+
+**`shr`/`sha` (own overflow bit): always `FALSE`, unconditionally — confirmed
+from source** (`shr(Int other, BooleanValue sign)`: `shifted.defCond()
+.setOverflows(FALSE, mergeOverflows(other, FALSE))` — the op's own
+contribution to both `overflow` and the merge is hardcoded `FALSE`; only
+pre-existing overflow already present in either operand propagates through
+`mergeOverflows`). `>>` and `>>>` (`sha` and `shr`) **can never self-overflow
+on clean operands**, confirmed with several probes free of `negate[8]`:
+
+| Probe | allow | forbid |
+|---|---|---|
+| `1 >>> 1 = 0` | SAT | SAT |
+| `1 >> 1 = 0` | SAT | SAT |
+| `(0-1) >> 1 = (0-1)` | SAT | SAT (sign-fill keeps `-1`, no overflow) |
+| `3 >>> 3 = 0` | SAT | SAT |
+
+A masked-to-large (`≥w`) shift amount does **not** change this — `>>`/`>>>`
+still never self-overflow regardless of amount magnitude, since their own
+overflow bit is unconditionally `FALSE` independent of the amount's bits at
+all (unlike `shl`'s junk-bit defect, which is specific to `shl`'s own
+value-change-detection circuit).
+
+**Confound found and corrected mid-round**: two of the coordinator's own
+hand-probes (`negate[8]>>1=negate[4]`, `negate[8]>>5=negate[4]`) showed
+forbid-**UNSAT**, which — taken at face value — would have suggested `>>`
+*can* self-overflow. Both are confounded by `negate[8]`'s own permanent
+poison (FACT 3 below): re-run with the clean `(0-8)` spelling, **both flip
+to forbid-SAT** — `>>` never overflows here; the UNSAT was entirely
+`negate[8]`'s own flag, unrelated to the shift. This is a direct instance of
+exactly the audit risk the coordinator flagged, caught and corrected within
+this same round.
+
+#### FACT 3 — `negate[8]` carries a permanent forbid-mode overflow flag; audit of every prior use
+
+`negate[8]` desugars to `minus[0,8]` (`Int.negate()` = `zero.minus(this)`),
+and representing the literal `8` itself already requires wraparound at bw4
+(max positive representable is 7) — so the subtraction that produces `-8`
+genuinely overflows internally, and `negate[8]`'s own `DefCond.accumOverflow`
+is `TRUE` **everywhere it appears**, permanently, regardless of context.
+Decisive:
+
+| Probe | allow | forbid |
+|---|---|---|
+| `negate[8] = negate[8]` | SAT | **UNSAT** (self-equality fails — the term is intrinsically poisoned) |
+| `negate[7] = negate[7]` | SAT | SAT (clean control) |
+| `(0-8) = (0-8)` | SAT | **SAT** (the peephole-folded MIN literal is a clean `IntConstant`, no arithmetic, no overflow flag) |
+| `(0-7) = (0-7)` | SAT | SAT (ordinary relational set-difference, unrelated mechanism, always clean) |
+
+**`(0-8)` is confirmed as the clean, overflow-free spelling of MIN for every
+future forbid-mode probe.** `negate[8]`, as a bare constant, has empty
+`vars()` (no bound variable), so it always classifies existential (per
+§11.3's own text: constants are existential) and its `TRUE` overflow forces
+`AND ¬of` unconditionally at positive polarity — meaning **any comparison
+containing `negate[8]` is forced false**, and — far more perniciously — a
+domain comprehension guard containing `negate[8]` (`x>=negate[8]`) is
+**forced false for every candidate `x`, emptying the domain entirely**,
+independent of `x`. Confirmed directly:
+
+| Probe | allow | forbid |
+|---|---|---|
+| `#{x:Int\|x>=negate[8] and x<=negate[2]} = 7` | SAT | **UNSAT** (does NOT have 7 members) |
+| `#{x:Int\|x>=negate[8] and x<=negate[2]} = 0` | UNSAT | **SAT** (the domain IS empty) |
+| `#{x:Int\|x>=(0-8) and x<=negate[2]} = 7` | SAT | **SAT** (clean bound: genuinely 7 members) |
+| `#{x:Int\|x>=(0-8) and x<=negate[2]} = 0` | UNSAT | **UNSAT** (clean bound: genuinely non-empty) |
+
+**Audit outcome — every forbid-mode probe in §10.7b/§10.7c that used
+`negate[8]`, and whether its conclusion survives:**
+
+| Probe / location | Used `negate[8]` as | Conclusion survives? |
+|---|---|---|
+| §10.7b "negate[k] works uniformly for every k in 1..8" | allow-mode value check only | **survives** — that claim was explicitly about allow-mode *values*, never forbid-mode overflow behavior |
+| §10.7b `div[MIN,-1]` probes (`div[negate[8],negate[1]]`) | allow-mode value check only | **survives** — allow mode, no overflow guard consulted |
+| §10.7b/§10.7c bare-∃ control (`some m:{1..7}\|plus[m,7]=negate[8]`) | target value (not a domain bound) | **survives, but was overdetermined** — the reported UNSAT is forced by *both* the (correct) exist-classified exclusion of the overflowing `m` *and* `negate[8]`'s own independent poison; re-run with clean `(0-8)` target gives the same UNSAT, confirming the qualitative conclusion but showing the original evidence conflated two mechanisms |
+| GAP2c (`plus[#p.f,7]=negate[8]`) | target value (not a domain bound) | **survives, already flagged non-distinguishing** — both readings agreed "exclude" before this audit; now doubly overdetermined, still non-distinguishing, no change to any rule |
+| **P3 and every domain spelled `{x:Int\|x>=negate[8] and x<=negate[2]}`** (P3 itself, the same-type `∀∀` control, the AND/OR domain-shape matrix, NP3, NP4, GAP1c, GAP2d) | **domain lower bound** | **does NOT survive** — every one of these flips from an apparent anomaly (or, for the `∀∀` control, an apparent "correct rescue") to a clean Defect-A-only retrodiction once re-probed with `(0-8)`; full correction in §10.7c above |
+
+**Rule-0/GAP2's core sig-domain finding (GAP2a/GAP2b) used no `negate[8]`
+anywhere and is unaffected** — it stands exactly as reported: a
+genuinely-universal sig-bound variable is misclassified as existential,
+unconditionally, at any nesting depth including zero.
 
 ### 10.9 mt-043 String probes (jar-verified 2026-07-18)
 
@@ -1278,20 +2090,44 @@ extends over every new op** so the encoder↔evaluator differential keeps its te
 - **Shifts:** `<<` logical-left, `>>` **arithmetic** (sign-extending) right, `>>>`
   **logical** (zero-fill) right — `4<<1=8`, `(−8)>>1=−4`, `(−8)>>>1=4` (I4).
   (Note the Kodkod method names `shr`/`sha` are the *opposite* convention to the
-  surface `>>`/`>>>`: surface `>>` → `sha`, surface `>>>` → `shr`.)
+  surface `>>`/`>>>`: surface `>>` → `sha`, surface `>>>` → `shr`.) **The shift
+  AMOUNT is masked** (mt-044 round 3, §10.7d, jar-verified at bw3/4/5/6, source
+  `TwosComplementInt.shl`/`shr`): only the low `⌈log2 w⌉` bits of the amount
+  operand are ever consulted (`32 - Integer.numberOfLeadingZeros(w-1)` in the
+  source, the standard bit-length identity, no discrepancy at any width) —
+  equivalent to masking the amount to `amount mod 2^⌈log2 w⌉` before shifting
+  by the (possibly still `≥ w`, i.e. "everything shifted out") result. At bw4
+  (mask 2 bits): `1<<4=1` (`4 mod 4=0`, unchanged), `1<<5=2` (`5 mod 4=1`). At
+  bw5 (mask 3 bits): `1<<8=1` (`8 mod 8=0`), `1<<5=0` (`5<8` unmasked, shifts
+  fully out of a 5-bit register). Forbid-mode overflow for shifts is pinned in
+  full, per op, in §10.7d — in short: `<<` sets a genuine overflow flag when
+  the shift truly changes the represented value (confirmed: `4<<1<0` is
+  forbid-UNSAT, `4<<1=8` wraps), but also has a **jar-specific defect**: a
+  masked-away ("junk") high bit of the shift amount can spuriously set the
+  overflow flag with zero effect on the actual shifted value, depending on the
+  shiftee's own bit pattern — mettle must replicate the jar's exact
+  stage-incremental circuit (§10.7d FACT 2), not just "did the masked value
+  change." `>>`/`>>>` **never self-overflow** on any operand (own overflow bit
+  is unconditionally `FALSE` in the source; only pre-existing overflow already
+  present in either operand propagates through).
 - **Division/remainder by zero (allow mode) produce jar-specific values, not a
   trap:** `rem[x,0]` uniformly yields **x** (the dividend — `rem[3,0]=3`,
-  `rem[-5,0]=-5`, `rem[0,0]=0`, `rem[-8,0]=-8`, I7). **`div[x,0]` is NOT uniform**:
-  it yields **−1** for a **positive** dividend (`div[3,0]`, `div[5,0]`, `div[7,0]`
-  = −1) but a **different, dividend-sign-dependent, algorithm-specific value** for
-  zero/negative dividends (`div[0,0]`, `div[-5,0]`, `div[-8,0]` are ≠ −1 — the
-  exact values are **not fully characterized**, a named residual). **`div(MIN,−1)`
-  yields `1`** in allow mode (I8), a division-algorithm artifact (the
-  mathematically-correct `−MIN=8` is out of range). All of these matter **only** in
+  `rem[-5,0]=-5`, `rem[0,0]=0`, `rem[-8,0]=-8`, I7). **`div[x,0]` is now fully
+  characterized (mt-044, §10.7b — a jar-verified closed form, no longer a
+  residual): `div[x,0] = -sign(x)`** — uniformly **1** for **every** negative
+  dividend including MIN (`div[-8,0]=1`, same rule as `div[-1,0]=1`, no special
+  case at MIN), **0** at `x=0`, and **−1** for every positive dividend
+  (`div[3,0]`, `div[5,0]`, `div[7,0] = −1`, already pinned pre-mt-044). The full
+  16×16 sweep (§10.7b) also confirms `div`/`rem` match Java `/` (truncating) and
+  `%` (sign-of-dividend) exactly for **every** `(a,b)` with `b≠0` except one:
+  **`div(MIN,−1) = -8`** (not the previously-stated `1` — that "1" was an
+  artifact of a probe-spelling bug, `(0-1)` silently meaning `div[MIN,0]` rather
+  than `div[MIN,-1]`; see §10.7b for the full correction and decisive
+  re-verification). `-8` is the ordinary two's-complement division-overflow
+  wraparound (`wrap(-MIN)=wrap(8)=-8`, the same INT_MIN/−1 behavior as Java/C/x86
+  `IDIV`), not an exotic algorithm artifact. All of these matter **only** in
   allow mode; in forbid mode they are overflow (§11.3) and their instances are
   excluded, so mettle need only reproduce them for `--allow-overflow` fidelity.
-  **Flagged as surprising / jar-version specific — reproduce from probes (a full
-  16×16 div/rem sweep), not from intuition.**
 
 `#e` cardinality is itself a two's-complement `IntExpression` (`count()`), so a
 count exceeding `2^{w-1}−1` **wraps** in allow mode (`#A=8` at bw 4 reads as −8,
@@ -1299,6 +2135,17 @@ I12) and is an **overflow** in forbid mode (I12/I13) — the "cardinality overfl
 interplay" corner.
 
 ### 11.3 Forbid mode — the Milicevic/Jackson polarity rule
+
+**This section states the *ideal* Milicevic/Jackson rule as background — it is
+the rule the jar's authors intended and the rule that holds for every
+single-quantifier formula and every same-type nested quantifier (`∀∀`, `∃∃`).
+It is subordinate to the ACTUAL jar rule, which additionally has two
+jar-specific defects for mixed-type doubly-nested quantifiers (`∀∃`/`∃∀`),
+pinned in full — trigger conditions, retrodiction table, ≥6 new decisive
+probes, and the conservative typed-defer boundary — in
+[§10.7c](#107c-mt-044-mixed-nesting-forbid-mode-trigger-pinned-jar-verified-2026-07-19).
+Read this section for the mental model, then §10.7c for what mettle must
+actually implement to be bug-compatible.**
 
 **This is the subtle corner. Forbid mode is NOT a flat `goal ∧ ¬overflow`.** Each
 `Int` carries an accumulated-overflow circuit; when an `Int` becomes a `Formula`
@@ -1347,6 +2194,45 @@ evaluator stay the matched pair. The polarity `Pol` thread from mt-038's HO
 skolemization (§10.6) is the existing seam for "current polarity"; the
 univ-vs-exist classification keys on whether an overflowing operand's free
 variables include a variable bound by an enclosing `∀` at that polarity.
+
+**The actual jar rule (corrected, round 3, 2026-07-19 — a "second defect" was
+reported and then retracted; see below):** the ideal statement above is
+exactly what the jar does *except* for **one** defect, not two, rooted in a
+single mechanism: `DefCond.isUnivQuant`'s `isInt()` check recognizes only the
+literal bare `Int`/`seq/Int` builtin as "an Int domain," full stop. Any
+quantified variable whose **own** domain is anything else — a comprehension
+(`{x:Int|G(x)}`, however it's guarded), or a `sig` — silently has its
+classification default to **existential**, unconditionally, at **any**
+nesting depth (0, 1, 2, or more) and **any** nesting shape (a lone `∀`, a
+same-type `∀∀`/`∃∃` nesting, or a mixed-type `∀∃`/`∃∀` nesting) — the
+defect is a **per-variable** rule with no dependence on surrounding
+structure at all. This is invisible whenever the affected variable is
+genuinely meant to classify existential (the fallback already matches) and
+**wrongly excludes instead of rescuing** whenever it is genuinely meant to
+classify universal. `skolemDepth` was swept 0 through 4 and off and is
+conclusively **not** the trigger of anything here (refutes the tech lead's
+original hypothesis). A first pass of this investigation additionally
+reported a second, independent "nesting-position" defect (existential nested
+inside a range-guarded universal disables the guard, fixed by rephrasing the
+guard as a disjunction) — **this is retracted**: every one of its decisive
+probes turned out to use `negate[8]` (`=minus[0,8]`, itself an overflowing
+computation) as a domain lower bound, and `negate[8]` carries a permanent
+forbid-mode overflow flag that silently empties conjunction-shaped domains,
+producing vacuous-truth verdicts that mimicked a nesting-position effect;
+re-probed with the clean `(0-8)` MIN spelling, every one of those cells
+retrodicts as a plain instance of the single defect above, with no separate
+mechanism needed (full audit: §10.7d). **The practically significant case is
+unaffected by the retraction**: `all p: SomeSig | <cardinality-overflow
+comparison over p>` — the most common corpus shape this rule touches —
+silently gets the wrong verdict (excludes rather than rescues), at any
+nesting depth including zero. Full mechanism, source citations, the
+skolemDepth matrix, a 100% retrodiction over the P1–P14 probe set, ≥6 new
+decisive probes, and the round-3 retraction/audit are in
+[§10.7c](#107c-mt-044-mixed-nesting-forbid-mode-trigger-pinned-jar-verified-2026-07-19)
+and [§10.7d](#107d-mt-044-round-3-shift-semantics-pinned-negate8-forbid-confound-audit-jar-verified-2026-07-19).
+Shift-specific overflow semantics (mask width, per-op overflow conditions,
+including a jar-specific "junk shift-amount bit spuriously flags overflow"
+defect in `<<`) are pinned in §10.7d and summarized in §11.2's shift bullet.
 
 ### 11.4 LEDGER note
 

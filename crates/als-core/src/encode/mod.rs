@@ -26,7 +26,6 @@
 //! panic.
 
 mod circuit;
-mod freevars;
 mod int;
 mod matrix;
 
@@ -41,8 +40,8 @@ use crate::ir::{
     RelCmpOp, RelConst, RelExprId, RelExprKind, RelId, RelUnOp, VarId,
 };
 
+use crate::freevars::FreeVars;
 use circuit::Circuit;
-use freevars::FreeVars;
 use int::{IntBuilder, IntVal};
 use matrix::Matrix;
 
@@ -106,20 +105,40 @@ pub(crate) struct Encoder<'a> {
     ops: u64,
     /// Active grounding bindings: quantifier/comprehension var → its atom tuple.
     env: BTreeMap<VarId, Tuple>,
-    /// Overflow flags gathered from integer ops; `¬flag` is conjoined into the
-    /// goal when overflow is forbidden (translation-ref §2.4).
-    overflow_flags: Vec<Bool>,
+    /// Current formula polarity (translation-ref §11.3): `true` = positive (an
+    /// even number of enclosing negations). Flipped by `Not` and an `Implies`
+    /// antecedent; drives the forbid-mode overflow-guard direction.
+    pol_positive: bool,
+    /// The enclosing-quantifier stack (innermost last), driving the §10.7c
+    /// overflow classification. Each frame records the binder's effective kind
+    /// and whether its domain is bare `Int`/`seq/Int`.
+    quant_frames: Vec<crate::overflow_guard::QuantFrame>,
+    /// Whether the current node is under an `Implies` antecedent — the rule-6
+    /// defer precondition (translation-ref §10.7c).
+    behind_implies: bool,
+    /// The `Int`/`seq/Int` builtin relation ids (from the bounds builder), for
+    /// recognizing a bare-`Int` quantifier domain.
+    int_sig: Option<RelId>,
+    seq_int_sig: Option<RelId>,
     // Env-cached grounding memo (mt-049): keyed by `(node id, free-var bindings)`.
     // `BTreeMap` (STYLE D2): keys are ordered, iteration never escapes.
     matrix_cache: BTreeMap<(RelExprId, EnvKey), Matrix>,
     formula_cache: BTreeMap<(FormulaId, EnvKey), Bool>,
-    int_cache: BTreeMap<(IntExprId, EnvKey), IntVal>,
+    /// Integer values carry their accumulated overflow flag (translation-ref
+    /// §11.3): consumed at comparisons by the polarity guard, dropped at `Int[·]`.
+    int_cache: BTreeMap<(IntExprId, EnvKey), (IntVal, Bool)>,
 }
 
 impl<'a> Encoder<'a> {
     /// Creates an encoder over a freshly-minted (primary-variables-installed)
     /// CNF pool. `opts` carries the LEDGER-001 overflow switch and the encode
     /// budget; the solver-side knobs it also holds are not read here.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the encoder threads the whole translation context (bounds, primaries, \
+                  bitwidth, universe seam, overflow builtins) — a bundle struct would only \
+                  move the arguments, not reduce them"
+    )]
     pub(crate) fn new(
         ir: &'a Ir,
         bounds: &'a Bounds,
@@ -128,6 +147,8 @@ impl<'a> Encoder<'a> {
         bitwidth: u32,
         int_start: usize,
         opts: crate::solve::SolveOptions,
+        int_sig: Option<RelId>,
+        seq_int_sig: Option<RelId>,
     ) -> Self {
         let universe_len = bounds.universe.len();
         let freevars = FreeVars::build(ir);
@@ -144,31 +165,28 @@ impl<'a> Encoder<'a> {
             encode_budget: opts.encode_budget,
             ops: 0,
             env: BTreeMap::new(),
-            overflow_flags: Vec::new(),
+            pol_positive: true,
+            quant_frames: Vec::new(),
+            behind_implies: false,
+            int_sig,
+            seq_int_sig,
             matrix_cache: BTreeMap::new(),
             formula_cache: BTreeMap::new(),
             int_cache: BTreeMap::new(),
         }
     }
 
-    /// Encodes the goal formula, conjoins the overflow-forbid constraints (when
-    /// overflow is forbidden), and returns the resulting top-level [`Bool`] plus
-    /// the finished CNF. The driver asserts the `Bool` true.
+    /// Encodes the goal formula and returns the top-level [`Bool`] plus the
+    /// finished CNF. The driver asserts the `Bool` true.
+    ///
+    /// Forbid-mode overflow is **not** a flat top-level `∧ ¬overflow`: each `Int`
+    /// carries its accumulated overflow, guarded at the comparison where it
+    /// becomes a formula by the Milicevic/Jackson polarity rule (translation-ref
+    /// §11.3, [`Encoder::int_compare`]). So the goal formula already embeds every
+    /// guard; nothing is conjoined here.
     pub(crate) fn finish_goal(mut self, goal: FormulaId) -> Result<(Bool, Cnf), TranslateError> {
         let g = self.formula(goal)?;
-        let final_bool = if self.allow_overflow || self.overflow_flags.is_empty() {
-            g
-        } else {
-            let flags = std::mem::take(&mut self.overflow_flags);
-            let mut parts = Vec::with_capacity(flags.len() + 1);
-            parts.push(g);
-            for f in flags {
-                let nf = self.circ().not(f);
-                parts.push(nf);
-            }
-            self.circ().and_many(parts)
-        };
-        Ok((final_bool, self.cnf))
+        Ok((g, self.cnf))
     }
 
     // ------------------------------------------------------------------ gates
@@ -271,7 +289,10 @@ impl<'a> Encoder<'a> {
                 self.comprehension(&decls, body)
             }
             RelExprKind::IntToAtom(ie) => {
-                let v = self.int(*ie)?;
+                // `Int[·]` is Int→relation, not Int→formula, so the operand's
+                // accumulated overflow is dropped (Kodkod guards only at
+                // comparisons — translation-ref §11.3).
+                let (v, _of) = self.int(*ie)?;
                 Ok(self.int_to_atom(&v))
             }
             RelExprKind::Prime(_) => Err(TranslateError::LoweringUnsupported {
@@ -543,8 +564,11 @@ impl<'a> Encoder<'a> {
         match &node.kind {
             FormulaKind::Const(b) => Ok(Bool::Const(*b)),
             FormulaKind::Not(f) => {
-                let a = self.formula(*f)?;
-                Ok(self.circ().not(a))
+                let f = *f;
+                self.pol_positive = !self.pol_positive;
+                let a = self.formula(f);
+                self.pol_positive = !self.pol_positive;
+                Ok(self.circ().not(a?))
             }
             FormulaKind::And(parts) => {
                 let parts = parts.clone();
@@ -566,8 +590,17 @@ impl<'a> Encoder<'a> {
                 antecedent,
                 consequent,
             } => {
-                let a = self.formula(*antecedent)?;
-                let c = self.formula(*consequent)?;
+                let (antecedent, consequent) = (*antecedent, *consequent);
+                // `a ⟹ c` = `¬a ∨ c`: the antecedent sits at flipped polarity and
+                // is a rule-6 conditional context (translation-ref §10.7c).
+                self.pol_positive = !self.pol_positive;
+                let saved_bi = self.behind_implies;
+                self.behind_implies = true;
+                let a = self.formula(antecedent);
+                self.behind_implies = saved_bi;
+                self.pol_positive = !self.pol_positive;
+                let a = a?;
+                let c = self.formula(consequent)?;
                 Ok(self.circ().implies(a, c))
             }
             FormulaKind::Iff(l, r) => {
@@ -576,14 +609,31 @@ impl<'a> Encoder<'a> {
                 Ok(self.circ().iff(a, b))
             }
             FormulaKind::RelCompare { op, lhs, rhs } => {
-                let a = self.rel(*lhs)?;
-                let b = self.rel(*rhs)?;
-                Ok(self.rel_compare(*op, &a, &b))
+                let (op, lhs, rhs) = (*op, *lhs, *rhs);
+                // Forbid-mode integer-equality typing defer (translation-ref
+                // §10.7c GAP1a): an arithmetic `Int[·]` compared to a plain
+                // `Int`-typed operand is int-compared in the jar (guard fires) but
+                // would lower relationally here — defer rather than answer
+                // allow-style.
+                if crate::overflow_guard::eq_typing_defer(self.ir, lhs, rhs, self.allow_overflow) {
+                    return Err(TranslateError::LoweringUnsupported {
+                        what: "forbid-mode overflow guard for a relational (=/in) comparison \
+                               between an arithmetic result and a plain Int-typed operand is \
+                               not pinned (translation-ref §10.7c GAP1a: integer-equality \
+                               typing rule)"
+                            .to_owned(),
+                        span: self.ir.rel_exprs[lhs].span,
+                    });
+                }
+                let a = self.rel(lhs)?;
+                let b = self.rel(rhs)?;
+                Ok(self.rel_compare(op, &a, &b))
             }
             FormulaKind::IntCompare { op, lhs, rhs } => {
-                let a = self.int(*lhs)?;
-                let b = self.int(*rhs)?;
-                Ok(self.int_compare(*op, &a, &b))
+                let (op, lhs, rhs) = (*op, *lhs, *rhs);
+                let (a, oa) = self.int(lhs)?;
+                let (b, ob) = self.int(rhs)?;
+                self.int_compare(op, &a, &b, oa, ob, lhs, rhs)
             }
             FormulaKind::MultTest { test, expr } => {
                 let m = self.rel(*expr)?;
@@ -683,22 +733,53 @@ impl<'a> Encoder<'a> {
     ) -> Result<Bool, TranslateError> {
         let bm = self.rel(bound)?;
         let candidates: Vec<(Tuple, Bool)> = bm.iter().map(|(t, b)| (t.clone(), b)).collect();
+        // The var's **effective** quantifier kind for the overflow rule
+        // (translation-ref §11.3): an IR `All` at positive polarity (or `Some` at
+        // negative) is effective-∀. Its domain is "bare `Int`" only when the bound
+        // is literally the `Int`/`seq/Int` builtin relation (§10.7c rule 0).
+        let effective_forall = matches!(kind, QuantKind::All) == self.pol_positive;
+        let bare_int = self.is_bare_int_bound(bound);
+        self.quant_frames.push(crate::overflow_guard::QuantFrame {
+            var,
+            bare_int,
+            effective_forall,
+        });
         let mut parts = Vec::with_capacity(candidates.len());
+        let mut result = Ok(());
         for (t, member) in candidates {
             self.env.insert(var, t);
             let body_b = self.formula(body);
             self.env.remove(&var);
-            let body_b = body_b?;
-            let part = match kind {
-                QuantKind::All => self.circ().implies(member, body_b),
-                QuantKind::Some => self.circ().and(member, body_b),
-            };
-            parts.push(part);
+            match body_b {
+                Ok(body_b) => {
+                    let part = match kind {
+                        QuantKind::All => self.circ().implies(member, body_b),
+                        QuantKind::Some => self.circ().and(member, body_b),
+                    };
+                    parts.push(part);
+                }
+                Err(e) => {
+                    result = Err(e);
+                    break;
+                }
+            }
         }
+        self.quant_frames.pop();
+        result?;
         Ok(match kind {
             QuantKind::All => self.circ().and_many(parts),
             QuantKind::Some => self.circ().or_many(parts),
         })
+    }
+
+    /// Whether a quantifier bound is literally the bare `Int`/`seq/Int` builtin
+    /// relation (translation-ref §10.7c) — the only domain the jar's overflow
+    /// classifier recognizes as universal.
+    fn is_bare_int_bound(&self, bound: RelExprId) -> bool {
+        match &self.ir.rel_exprs[bound].kind {
+            RelExprKind::Relation(r) => Some(*r) == self.int_sig || Some(*r) == self.seq_int_sig,
+            _ => false,
+        }
     }
 
     /// Grounds a set comprehension (translation-ref §2.1): a result tuple is the
@@ -751,10 +832,13 @@ impl<'a> Encoder<'a> {
 
     // ------------------------------------------------------------- integers
 
-    /// Encodes an integer expression to a two's-complement value (the Rung-3
-    /// slice: `Const`, `#` cardinality, `int[·]`). Arithmetic/`sum`/int-`ITE`
-    /// are typed defers (translation-ref §2.4; mt-033 measurement).
-    fn int(&mut self, id: IntExprId) -> Result<IntVal, TranslateError> {
+    /// Encodes an integer expression to a two's-complement value **plus its
+    /// accumulated overflow flag** (translation-ref §11.1–§11.3). The overflow is
+    /// consumed by the polarity guard at the comparison where the `Int` becomes a
+    /// formula ([`Encoder::int_compare`]) and dropped where it becomes an atom
+    /// (`Int[·]`) — matching Kodkod's `DefCond.ensureDef` firing only at
+    /// comparisons.
+    fn int(&mut self, id: IntExprId) -> Result<(IntVal, Bool), TranslateError> {
         let key = self.env_key(self.freevars.int(id)).map(|e| (id, e));
         if let Some(k) = &key {
             if let Some(v) = self.int_cache.get(k) {
@@ -769,35 +853,139 @@ impl<'a> Encoder<'a> {
         Ok(v)
     }
 
-    fn int_uncached(&mut self, id: IntExprId) -> Result<IntVal, TranslateError> {
-        let node = &self.ir.int_exprs[id];
+    fn int_uncached(&mut self, id: IntExprId) -> Result<(IntVal, Bool), TranslateError> {
+        let node = self.ir.int_exprs[id].clone();
         let width = self.bitwidth as usize;
-        match &node.kind {
-            IntExprKind::Const(v) => Ok(IntVal::constant(i64::from(*v), width)),
+        match node.kind {
+            IntExprKind::Const(v) => Ok((IntVal::constant(i64::from(v), width), Bool::FALSE)),
             IntExprKind::Card(rel) => {
-                let m = self.rel(*rel)?;
+                let m = self.rel(rel)?;
                 Ok(self.int_card(&m))
             }
             IntExprKind::AtomToInt(rel) => {
-                let m = self.rel(*rel)?;
+                let m = self.rel(rel)?;
                 Ok(self.int_atom_to_int(&m))
             }
-            IntExprKind::Neg(_)
-            | IntExprKind::Binary { .. }
-            | IntExprKind::Sum { .. }
-            | IntExprKind::IfThenElse { .. } => Err(TranslateError::LoweringUnsupported {
-                what: "integer arithmetic / `sum` / integer if-then-else (Rung 4; the \
-                       Rung-3 corpus needs only cardinality, constants, and `int[·]`)"
-                    .to_owned(),
-                span: node.span,
-            }),
+            IntExprKind::Neg(ie) => {
+                let (v, of) = self.int(ie)?;
+                let (nv, neg_of) = {
+                    let mut circ = self.circ();
+                    let mut ib = IntBuilder::new(&mut circ, width);
+                    ib.negate(&v)
+                };
+                let overflow = self.circ().or(of, neg_of);
+                Ok((nv, overflow))
+            }
+            IntExprKind::Binary { op, lhs, rhs } => self.int_binary(op, lhs, rhs),
+            IntExprKind::Sum { var, bound, body } => self.int_sum(var, bound, body),
+            IntExprKind::IfThenElse {
+                cond,
+                then_branch,
+                else_branch,
+            } => self.int_ite(cond, then_branch, else_branch),
         }
+    }
+
+    /// Binary integer arithmetic (translation-ref §11.1/§11.2): each op wraps at
+    /// the bitwidth; overflow is the `or` of the operands' inherited overflow and
+    /// the op's own flag (`div`/`rem` per the pinned edge rule, shifts flagless).
+    fn int_binary(
+        &mut self,
+        op: crate::ir::IntBinOp,
+        lhs: IntExprId,
+        rhs: IntExprId,
+    ) -> Result<(IntVal, Bool), TranslateError> {
+        use crate::ir::IntBinOp;
+        let width = self.bitwidth as usize;
+        let (a, oa) = self.int(lhs)?;
+        let (b, ob) = self.int(rhs)?;
+        let (val, op_of) = {
+            let mut circ = self.circ();
+            let mut ib = IntBuilder::new(&mut circ, width);
+            match op {
+                IntBinOp::Add => ib.add_signed(&a, &b),
+                IntBinOp::Sub => ib.sub_signed(&a, &b),
+                IntBinOp::Mul => ib.multiply(&a, &b),
+                IntBinOp::Div => {
+                    let dr = ib.div_rem(&a, &b);
+                    (dr.quotient, dr.div_overflow)
+                }
+                IntBinOp::Rem => {
+                    let dr = ib.div_rem(&a, &b);
+                    (dr.remainder, dr.rem_overflow)
+                }
+                IntBinOp::Shl => ib.shl(&a, &b),
+                IntBinOp::Sha => (ib.sha(&a, &b), Bool::FALSE),
+                IntBinOp::Shr => (ib.shr(&a, &b), Bool::FALSE),
+            }
+        };
+        let inherited = self.circ().or(oa, ob);
+        let overflow = self.circ().or(inherited, op_of);
+        Ok((val, overflow))
+    }
+
+    /// `sum x: B | ie` (translation-ref §11.1): a plus-tree over the bound's
+    /// grounded tuples, each summand gated by its membership cell. Overflow
+    /// accumulates the per-binding body overflow (gated) and every add's flag.
+    fn int_sum(
+        &mut self,
+        var: VarId,
+        bound: RelExprId,
+        body: IntExprId,
+    ) -> Result<(IntVal, Bool), TranslateError> {
+        let width = self.bitwidth as usize;
+        let bm = self.rel(bound)?;
+        let candidates: Vec<(Tuple, Bool)> = bm.iter().map(|(t, b)| (t.clone(), b)).collect();
+        let mut acc = IntVal::constant(0, width);
+        let mut overflow = Bool::FALSE;
+        for (t, member) in candidates {
+            self.env.insert(var, t);
+            let body_v = self.int(body);
+            self.env.remove(&var);
+            let (bv, bof) = body_v?;
+            // Contribute the body value iff the tuple is present; its overflow
+            // likewise only counts when present.
+            let (next, add_of, present_of) = {
+                let mut circ = self.circ();
+                let mut ib = IntBuilder::new(&mut circ, width);
+                let zero = IntVal::constant(0, width);
+                let gated = ib.mux(member, &bv, &zero);
+                let (s, add_of) = ib.add_signed(&acc, &gated);
+                let present_of = circ.and(member, bof);
+                (s, add_of, present_of)
+            };
+            acc = next;
+            let step = self.circ().or(add_of, present_of);
+            overflow = self.circ().or(overflow, step);
+        }
+        Ok((acc, overflow))
+    }
+
+    /// Integer `cond ? then : else` (translation-ref §11.1): a bitwise mux;
+    /// overflow flows from the **taken** branch (`cond ? then_of : else_of`).
+    fn int_ite(
+        &mut self,
+        cond: FormulaId,
+        then_branch: IntExprId,
+        else_branch: IntExprId,
+    ) -> Result<(IntVal, Bool), TranslateError> {
+        let width = self.bitwidth as usize;
+        let c = self.formula(cond)?;
+        let (t, t_of) = self.int(then_branch)?;
+        let (e, e_of) = self.int(else_branch)?;
+        let val = {
+            let mut circ = self.circ();
+            let mut ib = IntBuilder::new(&mut circ, width);
+            ib.mux(c, &t, &e)
+        };
+        let overflow = self.circ().ite(c, t_of, e_of);
+        Ok((val, overflow))
     }
 
     /// Cardinality `#e`: a sequential ripple-carry count of the matrix cells,
     /// normalised to a signed value at the bitwidth with an overflow flag
     /// (translation-ref §2.4).
-    fn int_card(&mut self, m: &Matrix) -> IntVal {
+    fn int_card(&mut self, m: &Matrix) -> (IntVal, Bool) {
         let width = self.bitwidth as usize;
         let cells: Vec<Bool> = m.iter().map(|(_, b)| b).collect();
         let mut acc: Vec<Bool> = vec![Bool::FALSE];
@@ -808,21 +996,18 @@ impl<'a> Encoder<'a> {
                 acc = ib.add_bit(&acc, c);
             }
         }
-        let (val, overflow) = {
-            let mut circ = self.circ();
-            let mut ib = IntBuilder::new(&mut circ, width);
-            ib.unsigned_to_signed(&acc)
-        };
-        self.push_overflow(overflow);
-        val
+        let mut circ = self.circ();
+        let mut ib = IntBuilder::new(&mut circ, width);
+        ib.unsigned_to_signed(&acc)
     }
 
     /// `int[e]`: the signed sum of the integer values of the `Int` atoms in `e`
     /// (translation-ref §2.4), each value gated by its cell and added in
-    /// two's-complement with overflow tracking.
-    fn int_atom_to_int(&mut self, m: &Matrix) -> IntVal {
+    /// two's-complement with overflow tracking (the `or` of every add's flag).
+    fn int_atom_to_int(&mut self, m: &Matrix) -> (IntVal, Bool) {
         let width = self.bitwidth as usize;
         let mut acc = IntVal::constant(0, width);
+        let mut overflow = Bool::FALSE;
         // Gather (cell, value) for the int atoms present, in tuple order.
         let mut terms: Vec<(Bool, i64)> = Vec::new();
         for (t, cell) in m.iter() {
@@ -834,7 +1019,7 @@ impl<'a> Encoder<'a> {
             }
         }
         for (cell, value) in terms {
-            let (next, overflow) = {
+            let (next, add_of) = {
                 let mut circ = self.circ();
                 let mut ib = IntBuilder::new(&mut circ, width);
                 // Gate the constant's bits by the cell (value contributes iff present).
@@ -843,9 +1028,9 @@ impl<'a> Encoder<'a> {
                 ib.add_signed(&acc, &gated)
             };
             acc = next;
-            self.push_overflow(overflow);
+            overflow = self.circ().or(overflow, add_of);
         }
-        acc
+        (acc, overflow)
     }
 
     /// `Int[ie]`: the unary matrix `{ atom | value(atom) = ie }` over the Int
@@ -884,22 +1069,88 @@ impl<'a> Encoder<'a> {
         Some(low + offset)
     }
 
-    fn int_compare(&mut self, op: IntCmpOp, a: &IntVal, b: &IntVal) -> Bool {
+    /// An integer comparison, applying the forbid-mode overflow polarity guard
+    /// (translation-ref §11.3). In allow mode the raw wrapped comparison is
+    /// returned. In forbid mode each operand's accumulated overflow guards the
+    /// atom per its polarity/quantifier-dependence; a comparison over an
+    /// **overflow-capable** operand lying under mixed-type (`∀∃`/`∃∀`) enclosing
+    /// quantifiers is a **typed defer** — the jar's guard behaviour there is not
+    /// yet pinned (§10.7b residual 2), and a defer is never a wrong verdict.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one comparison needs both operands, both overflow flags, and both \
+                  operand ids (for the polarity classification) — a struct would only obscure it"
+    )]
+    fn int_compare(
+        &mut self,
+        op: IntCmpOp,
+        a: &IntVal,
+        b: &IntVal,
+        oa: Bool,
+        ob: Bool,
+        lhs: IntExprId,
+        rhs: IntExprId,
+    ) -> Result<Bool, TranslateError> {
         let width = self.bitwidth as usize;
-        let mut circ = self.circ();
-        let mut ib = IntBuilder::new(&mut circ, width);
-        match op {
-            IntCmpOp::Eq => ib.eq(a, b),
-            IntCmpOp::Lt => ib.signed_lt(a, b),
-            IntCmpOp::Gt => ib.signed_gt(a, b),
-            IntCmpOp::Le => ib.signed_le(a, b),
-            IntCmpOp::Ge => ib.signed_ge(a, b),
+        let atom = {
+            let mut circ = self.circ();
+            let mut ib = IntBuilder::new(&mut circ, width);
+            match op {
+                IntCmpOp::Eq => ib.eq(a, b),
+                IntCmpOp::Lt => ib.signed_lt(a, b),
+                IntCmpOp::Gt => ib.signed_gt(a, b),
+                IntCmpOp::Le => ib.signed_le(a, b),
+                IntCmpOp::Ge => ib.signed_ge(a, b),
+            }
+        };
+        if self.allow_overflow {
+            return Ok(atom);
         }
+        let guarded = self.apply_overflow_guard(atom, oa, lhs)?;
+        self.apply_overflow_guard(guarded, ob, rhs)
     }
 
-    fn push_overflow(&mut self, flag: Bool) {
-        if !matches!(flag, Bool::Const(false)) {
-            self.overflow_flags.push(flag);
+    /// Applies one operand's overflow guard to a comparison atom (translation-ref
+    /// §10.7c). The shared classifier decides the direction from the enclosing
+    /// quantifier stack and the operand's dependence; a jar-unpinned corner
+    /// (Defect B / the ITE-`implies` sliver) yields a typed defer. A rescue
+    /// (`forall_dep`) forces the atom true at positive polarity (`∨ of`), an
+    /// exclusion false (`∧ ¬of`); negative polarity swaps them. A constant-false
+    /// overflow makes the guard inert.
+    fn apply_overflow_guard(
+        &mut self,
+        atom: Bool,
+        of: Bool,
+        operand: IntExprId,
+    ) -> Result<Bool, TranslateError> {
+        use crate::overflow_guard::{classify, contains_int_ite, overflow_capable, GuardDecision};
+        let capable = overflow_capable(self.ir, operand);
+        let behind_conditional = self.behind_implies || contains_int_ite(self.ir, operand);
+        match classify(
+            &self.quant_frames,
+            self.freevars.int(operand),
+            capable,
+            behind_conditional,
+        ) {
+            GuardDecision::Defer => Err(TranslateError::LoweringUnsupported {
+                what: "forbid-mode overflow guard for this arithmetic comparison is not \
+                       yet pinned in the jar (translation-ref §10.7c: Defect B nesting \
+                       or the int-ITE/`implies` sliver)"
+                    .to_owned(),
+                span: self.ir.int_exprs[operand].span,
+            }),
+            GuardDecision::Guard { forall_dep } => {
+                if matches!(of, Bool::Const(false)) {
+                    return Ok(atom);
+                }
+                // `∨ of` iff polarity and dependence agree; else `∧ ¬of`.
+                Ok(if self.pol_positive == forall_dep {
+                    self.circ().or(atom, of)
+                } else {
+                    let nof = self.circ().not(of);
+                    self.circ().and(atom, nof)
+                })
+            }
         }
     }
 }

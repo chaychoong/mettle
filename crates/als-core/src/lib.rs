@@ -12,8 +12,10 @@ pub mod bounds_builder;
 mod encode;
 pub mod error;
 pub mod eval;
+mod freevars;
 pub mod ir;
 pub mod lower;
+mod overflow_guard;
 pub mod scope;
 pub mod solve;
 

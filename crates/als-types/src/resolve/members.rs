@@ -637,11 +637,18 @@ impl Resolver<'_> {
             }
             vec![(landing, segs[consumed].clone())]
         } else {
+            // LEDGER-009: own-module-first — the command's own module shadows any
+            // opened-module assertion of the same name. Search `module` first,
+            // then the remaining reachable modules in order.
             let bare = &segs[segs.len() - 1];
-            self.reachable[module.index()]
-                .iter()
-                .map(|&rm| (rm, bare.clone()))
-                .collect()
+            let mut order: Vec<(ModuleId, String)> = vec![(module, bare.clone())];
+            order.extend(
+                self.reachable[module.index()]
+                    .iter()
+                    .filter(|&&rm| rm != module)
+                    .map(|&rm| (rm, bare.clone())),
+            );
+            order
         };
         for (rm, name) in landing_and_name {
             if !self.mods[rm.index()].asserts.contains_key(&name) {
@@ -703,6 +710,18 @@ impl Resolver<'_> {
             return out;
         }
         let bare = &segs[segs.len() - 1];
+        // LEDGER-009: own-module-first. The jar searches the command's own
+        // module (`getRawQS`) before the reachable-opened scan (`getRawNQS`), so
+        // an own-module pred/fun **shadows** any opened-module candidate,
+        // including the auto-opened `util/integer` `add`/`sub`. If the own module
+        // declares the name it is used unconditionally (never an ambiguity
+        // against opened candidates).
+        if let Some(v) = self.mods[module.index()].funcs.get(bare) {
+            out.extend_from_slice(v);
+            return out;
+        }
+        // No own candidate → NQS fallback over the reachable opened modules
+        // (≥2 candidates here is the ambiguous-target defer the lowerer raises).
         for &rm in &self.reachable[module.index()] {
             if let Some(v) = self.mods[rm.index()].funcs.get(bare) {
                 out.extend_from_slice(v);

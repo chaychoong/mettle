@@ -81,6 +81,21 @@ pub struct BoundsResult {
     /// The sig-hierarchy / subset / size / multiplicity constraint formulas, in
     /// deterministic emission order. mt-031 conjoins these into the goal (§2.5).
     pub constraints: Vec<FormulaId>,
+    /// Denotation of the `Int/next` builtin binary relation (`{i → i+1}`,
+    /// translation-ref §12) — the seam `util/integer`'s `next`/`prev`/`nexts`/
+    /// `prevs` and the seq contiguity fact reference. `None` when the model uses
+    /// no integers (bitwidth 0).
+    pub int_next: Option<RelExprId>,
+    /// Denotation of the `Int/zero` builtin unary relation (`{0}`,
+    /// translation-ref §12). `None` at bitwidth 0.
+    pub int_zero: Option<RelExprId>,
+    /// The `Int` and `seq/Int` builtin sig relations. The forbid-mode overflow
+    /// classifier (translation-ref §10.7c) recognizes a quantifier binder as
+    /// universal **only** when its domain is literally one of these — the jar's
+    /// `DefCond.isInt` matches only the bare `Int`/`seq/Int` builtin, so a
+    /// sig/comprehension domain misclassifies (rule 0).
+    pub int_sig: Option<RelId>,
+    pub seq_int_sig: Option<RelId>,
 }
 
 /// Computes the relation bounds, denotation seam, and constraint formulas for
@@ -126,6 +141,10 @@ struct BoundsBuilder<'a> {
     sig_denote: BTreeMap<SigId, RelExprId>,
     field_denote: BTreeMap<FieldId, RelExprId>,
     constraints: Vec<FormulaId>,
+    int_next: Option<RelExprId>,
+    int_zero: Option<RelExprId>,
+    int_sig: Option<RelId>,
+    seq_int_sig: Option<RelId>,
 }
 
 impl<'a> BoundsBuilder<'a> {
@@ -153,6 +172,10 @@ impl<'a> BoundsBuilder<'a> {
             sig_denote: BTreeMap::new(),
             field_denote: BTreeMap::new(),
             constraints: Vec::new(),
+            int_next: None,
+            int_zero: None,
+            int_sig: None,
+            seq_int_sig: None,
         }
     }
 
@@ -162,6 +185,10 @@ impl<'a> BoundsBuilder<'a> {
             sig_denote: self.sig_denote,
             field_denote: self.field_denote,
             constraints: self.constraints,
+            int_next: self.int_next,
+            int_zero: self.int_zero,
+            int_sig: self.int_sig,
+            seq_int_sig: self.seq_int_sig,
         }
     }
 
@@ -248,16 +275,60 @@ impl<'a> BoundsBuilder<'a> {
         self.sig_denote.insert(b.none, none);
 
         let int_atoms = self.int_atoms();
-        self.bind_builtin(b.int, "Int", &int_atoms);
+        let int_rel = self.bind_builtin(b.int, "Int", &int_atoms);
+        self.int_sig = Some(int_rel);
         let seq_atoms = self.seq_atoms();
-        self.bind_builtin(b.seq_int, "seq/Int", &seq_atoms);
+        let seq_rel = self.bind_builtin(b.seq_int, "seq/Int", &seq_atoms);
+        self.seq_int_sig = Some(seq_rel);
         // String: no string atoms yet (Rung 4) — bound exactly empty.
-        self.bind_builtin(b.string, "String", &BTreeSet::new());
+        let _ = self.bind_builtin(b.string, "String", &BTreeSet::new());
+        // `Int/next`/`Int/zero` integer-ordering relations (translation-ref §12):
+        // exact constants over the int atoms, referenced by `util/integer`'s
+        // `next`/`prev`/`nexts`/`prevs` and the seq contiguity fact. `Int/min`/
+        // `Int/max` are NOT allocated — the jar translates `min`/`max` to int
+        // constants, so relations would be dead weight (ADR-0012 decision 2).
+        self.alloc_int_ordering();
     }
 
-    /// Allocates a builtin relation, binds it exactly to `atoms`, and records
-    /// its `Relation` denotation.
-    fn bind_builtin(&mut self, sig: SigId, name: &str, atoms: &BTreeSet<AtomId>) {
+    /// Allocates the exact-constant `Int/next` (binary `{i → i+1}`) and
+    /// `Int/zero` (unary `{0}`) relations and records their denotations
+    /// (translation-ref §12). No-op when the model uses no integers (bitwidth 0
+    /// ⇒ no int atoms).
+    fn alloc_int_ordering(&mut self) {
+        let range = self.scoped.int_atom_range();
+        if range.start >= range.end {
+            return; // no int atoms (bitwidth 0)
+        }
+        let b = self.world.builtins;
+        let span = self.sig_span(b.int);
+
+        // Int/next: consecutive int-atom pairs (ascending universe index ==
+        // ascending value, translation-ref §1.3), so `{ idx → idx+1 }`.
+        let mut next_pairs = TupleSet::empty(2);
+        for idx in range.start..(range.end - 1) {
+            next_pairs.insert(Tuple::new(vec![
+                AtomId::from_index(idx),
+                AtomId::from_index(idx + 1),
+            ]));
+        }
+        let next_rel = self.alloc_named("Int/next", 2, span);
+        self.bounds.bind(next_rel, RelBound::exact(next_pairs));
+        self.int_next = Some(self.mk_rel_expr(RelExprKind::Relation(next_rel), span));
+
+        // Int/zero: the atom for value 0 (index int_start + 2^(bw-1)).
+        let bw = self.scoped.bitwidth;
+        let half = if bw >= 1 { 1usize << (bw - 1) } else { 0 };
+        let zero_index = range.start + half;
+        let mut zero_set = TupleSet::empty(1);
+        zero_set.insert(Tuple::new(vec![AtomId::from_index(zero_index)]));
+        let zero_rel = self.alloc_named("Int/zero", 1, span);
+        self.bounds.bind(zero_rel, RelBound::exact(zero_set));
+        self.int_zero = Some(self.mk_rel_expr(RelExprKind::Relation(zero_rel), span));
+    }
+
+    /// Allocates a builtin relation, binds it exactly to `atoms`, records its
+    /// `Relation` denotation, and returns the allocated [`RelId`].
+    fn bind_builtin(&mut self, sig: SigId, name: &str, atoms: &BTreeSet<AtomId>) -> RelId {
         let span = self.sig_span(sig);
         let rel = self.ir.relations.alloc(Relation {
             name: name.to_owned(),
@@ -268,6 +339,7 @@ impl<'a> BoundsBuilder<'a> {
             .bind(rel, RelBound::exact(unary_tupleset(atoms)));
         let denote = self.mk_rel_expr(RelExprKind::Relation(rel), span);
         self.sig_denote.insert(sig, denote);
+        rel
     }
 
     /// Allocates and binds the prim-sig relations in `SigId` order

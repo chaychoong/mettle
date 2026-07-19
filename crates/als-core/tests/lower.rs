@@ -900,10 +900,11 @@ fn let_bound_int_value_promotes_in_relation_position() {
     // A `let` binding's value is always lowered via `lower_rel` (unchanged);
     // with the guard, an int-sorted value (`#A`) promotes to `Int[#A]` instead
     // of erroring. `t`'s own later int-position use round-trips through
-    // `AtomToInt(IntToAtom(#A))` — the reference's documented `int[Int[x]] ==
-    // x` shortcut (translation-ref §2.4), semantically inert.
+    // `AtomToInt(IntToAtom(#A))`, which mt-044's `int[Int[x]] == x` peephole
+    // (translation-ref §2.4) folds back to `#A` — keeping the accumulated
+    // overflow the `Int[·]` boundary would otherwise drop (§11.3).
     let (ir, cj) = build("sig A {}\npred p { let t = #A | t > 0 }\nrun p for 3\n");
-    assert_eq!(command_str(&ir, &cj), "int[Int[#A]] > 0");
+    assert_eq!(command_str(&ir, &cj), "#A > 0");
 }
 
 #[test]
@@ -966,7 +967,6 @@ fn explicit_receiver_binds_this_from_the_join() {
 // a solve-visible candidate choice reserved for owner approval; this test is
 // ready to flip when LEDGER-009 is approved and the rule lands.
 #[test]
-#[ignore = "awaiting LEDGER-009 approval"]
 fn run_target_own_module_first() {
     // Own-module `pred add` shadows the auto-opened `util/integer/add`; the
     // command must lower (to the user pred), not defer as overloaded.

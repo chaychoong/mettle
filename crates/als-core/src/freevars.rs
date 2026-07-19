@@ -3,14 +3,14 @@
 //! For each [`crate::ir`] node this precomputes the set of quantifier /
 //! comprehension / `sum` variables that occur **free** in it — i.e. are bound
 //! somewhere *outside* the node rather than within it. The grounding memoisation
-//! in [`super::Encoder`] keys a node's cache on `(node id, the values of exactly
+//! in [`crate::encode`] keys a node's cache on `(node id, the values of exactly
 //! its free variables)`: a sub-expression that does not mention the innermost
 //! bound variable then shares one encoded result across every binding of that
 //! variable, instead of being re-encoded per binding.
 //!
 //! The result is a pure function of the IR (no environment, no hashing — the
 //! per-node sets are ordered [`BTreeSet`]s), so it is deterministic (STYLE D1)
-//! and computed once at [`super::Encoder`] construction.
+//! and computed once at [`crate::encode`] construction.
 
 use std::collections::BTreeSet;
 

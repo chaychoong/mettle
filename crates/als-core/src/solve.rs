@@ -219,6 +219,8 @@ fn translate(
         scoped.bitwidth,
         scoped.sig_atom_count,
         opts,
+        bounds.int_sig,
+        bounds.seq_int_sig,
     );
     let (goal_bool, mut cnf) = encoder.finish_goal(goal.goal)?;
 
