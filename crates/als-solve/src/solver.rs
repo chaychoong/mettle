@@ -28,15 +28,21 @@
 //!   **lowest variable index** (STYLE D2: a total, deterministic order), and the
 //!   scan is a linear pass over the dense pool, which is ample for Rung-3 scope
 //!   3–5 models and obviously order-stable.
-//! - **Clause database**: **keep-all** learned clauses. ADR-0011 sizes this
-//!   against the SB-0 counting net (1129 incremental re-solves of one model):
-//!   each re-solve is a small scope-3 problem contributing a handful of learned
-//!   clauses, so the arena stays in the low thousands — sane, and keep-all keeps
-//!   every `ClauseRef` stable (no relocating garbage collector), which removes a
-//!   whole class of bugs. A deterministic activity-based `reduce_db` is the
-//!   documented next step *if* a larger workload ever appears; it is not needed
-//!   at Rung-3 scope and is deliberately omitted (correctness-first, STYLE §7 of
-//!   the operating guide).
+//! - **Clause database**: learned clauses are kept by default and periodically
+//!   thinned by a deterministic [`CdclSolver::reduce_db`] (mt-049). The reduction
+//!   is a pure function of the input CNF: its schedule is keyed only to a
+//!   cumulative conflict count (no wall-clock, no DB-address hashing), it ranks
+//!   deletable clauses by an **integer LBD** (glue) metric with a lowest-index
+//!   tie-break, and it deletes the least-useful half. **Only solver-learned
+//!   clauses are ever deleted** — original clauses and every clause added through
+//!   the public [`CdclSolver::add_clause`] / [`block`] enumeration seam are
+//!   permanent (deleting a blocking clause would corrupt enumeration; deleting a
+//!   learned resolvent is sound). A learned clause currently **locked** (the
+//!   reason for an assigned variable) is never deleted. Deletion is by
+//!   **tombstone**: the clause slot stays in the arena so every `ClauseRef`
+//!   (held by `reason`/`watches`/the enumeration seam) stays stable — the
+//!   clause's literals are freed and it is unwatched, so it stops costing
+//!   propagation time and memory without any relocating garbage collector.
 //!
 //! # Soundness of retained learned clauses across incremental solves
 //! Every learned clause is a **resolvent of the original clauses only** — it is
@@ -85,15 +91,26 @@ use crate::{Assignment, Cnf, Lit, Outcome, Solver, Var};
 /// valid without relocation (STYLE A1 — index-based arena).
 type ClauseRef = usize;
 
-/// A clause in the arena: just its literals.
+/// A clause in the arena: its literals plus reduction bookkeeping.
 ///
 /// The first two literals are the watched pair (for size ≥ 2). For a learned
-/// clause, `lits[0]` is always the asserting (UIP) literal. Problem and learned
-/// clauses are stored identically — keep-all makes no distinction (both are kept
-/// forever; learned clauses are sound resolvents of the problem clauses).
+/// clause, `lits[0]` is always the asserting (UIP) literal.
+///
+/// `learnt` distinguishes a solver-learned resolvent (deletable by
+/// [`CdclSolver::reduce_db`]) from a **permanent** clause — an original problem
+/// clause or a blocking clause added through the public [`CdclSolver::add_clause`]
+/// enumeration seam, neither of which may ever be deleted (soundness /
+/// enumeration correctness). `lbd` is the learned clause's integer glue metric
+/// (distinct decision levels at learning time; lower = more useful), the
+/// reduction ranking key. A `deleted` clause is a **tombstone**: its slot stays
+/// so every `ClauseRef` remains valid, but its `lits` are freed and it is
+/// unwatched, so it no longer costs propagation or memory.
 #[derive(Debug)]
 struct Clause {
     lits: Vec<Lit>,
+    learnt: bool,
+    lbd: u32,
+    deleted: bool,
 }
 
 /// Base restart interval in conflicts, multiplied by the Luby term. Fixed by
@@ -107,6 +124,15 @@ const VAR_INC_GROWTH_SHIFT: u32 = 4;
 const VAR_ACT_RESCALE_CAP: u64 = 1 << 40;
 /// Right-shift applied to every activity (and the increment) on a rescale.
 const VAR_ACT_RESCALE_SHIFT: u32 = 20;
+
+/// First learned-clause reduction fires after this many cumulative conflicts.
+/// High enough that everyday small problems (a handful of conflicts) never
+/// reduce and stay byte-identical to the keep-all behaviour; the reductions
+/// matter only on the long/hard runs the mt-049 budgets exist to bound.
+const REDUCE_FIRST_DEFAULT: u64 = 2_000;
+/// Each reduction widens the gap to the next by this many conflicts, so
+/// reductions thin out as the run goes on (a fixed, wall-clock-free schedule).
+const REDUCE_INC_DEFAULT: u64 = 300;
 
 /// The deterministic CDCL solver, with an incremental clause interface.
 ///
@@ -148,6 +174,18 @@ pub struct CdclSolver {
     // -- analysis scratch (reused; invariant: all `false`/empty between calls) --
     seen: Vec<bool>,
 
+    // -- learned-clause reduction schedule (mt-049) --
+    /// Cumulative conflicts over the solver's whole life (across incremental
+    /// re-solves), so a long enumeration reduces periodically. Distinct from the
+    /// per-call conflict budget in [`CdclSolver::solve_within`].
+    conflicts_total: u64,
+    /// Conflict count at which the next [`CdclSolver::reduce_db`] fires.
+    next_reduce: u64,
+    /// Current gap between reductions (grows by [`CdclSolver::reduce_inc`]).
+    reduce_interval: u64,
+    /// How much [`CdclSolver::reduce_interval`] grows per reduction.
+    reduce_inc: u64,
+
     /// Set once a level-0 conflict or an empty clause is seen: the formula is
     /// permanently UNSAT and every future `solve` short-circuits.
     unsat: bool,
@@ -175,12 +213,32 @@ impl CdclSolver {
             activity: vec![0; num_vars],
             var_inc: 1,
             seen: vec![false; num_vars],
+            conflicts_total: 0,
+            next_reduce: REDUCE_FIRST_DEFAULT,
+            reduce_interval: REDUCE_FIRST_DEFAULT,
+            reduce_inc: REDUCE_INC_DEFAULT,
             unsat: false,
         };
         for clause in cnf.clauses() {
             solver.add_clause(clause.clone());
         }
         solver
+    }
+
+    /// Overrides the learned-clause reduction schedule (mt-049): the first
+    /// reduction fires after `first` cumulative conflicts, and each reduction
+    /// widens the gap to the next by `inc`. Call before solving.
+    ///
+    /// [`CdclSolver::new`] installs sane defaults ([`REDUCE_FIRST_DEFAULT`] /
+    /// [`REDUCE_INC_DEFAULT`]); this exists for budget tuning and for the mt-032
+    /// correctness fuzz, which forces a tiny `first` so reduction runs on nearly
+    /// every conflict — deletion is exercised hard while the brute-force verdict
+    /// and model-count parity checks still hold (reduction only ever deletes
+    /// sound resolvents, so it changes neither).
+    pub fn set_reduce_schedule(&mut self, first: u64, inc: u64) {
+        self.reduce_interval = first;
+        self.reduce_inc = inc;
+        self.next_reduce = self.conflicts_total.saturating_add(first);
     }
 
     /// Adds a clause to the live solver, retaining all learned clauses.
@@ -244,7 +302,15 @@ impl CdclSolver {
         self.watches[lits[0].code()].push(cref);
         self.watches[lits[1].code()].push(cref);
         let unit = lits[0];
-        self.clauses.push(Clause { lits });
+        // Permanent: `install_clause` is only reached from the public
+        // `add_clause` (original CNF or an enumeration blocking clause), never
+        // for a learned resolvent. `reduce_db` never deletes a permanent clause.
+        self.clauses.push(Clause {
+            lits,
+            learnt: false,
+            lbd: 0,
+            deleted: false,
+        });
         if second.is_none() && self.value_lit(unit).is_none() {
             // Unit: force its only non-false literal true at level 0.
             let ok = self.enqueue(unit, Some(cref));
@@ -345,11 +411,24 @@ impl CdclSolver {
                 }
                 total_conflicts += 1;
                 conflicts_since_restart += 1;
-                let (learnt, bt_level) = self.analyze(confl);
+                self.conflicts_total += 1;
+                let (learnt, bt_level, lbd) = self.analyze(confl);
                 self.cancel_until(bt_level);
-                self.learn_and_assert(learnt);
+                self.learn_and_assert(learnt, lbd);
                 self.decay_var_inc();
             } else {
+                // Learned-clause reduction (mt-049): a pure function of the
+                // cumulative conflict count, so it fires at the same points on
+                // every machine and every run. Done at level 0 (like a restart),
+                // where locked clauses are exactly the reasons of level-0 facts.
+                if self.conflicts_total >= self.next_reduce {
+                    self.cancel_until(0);
+                    self.reduce_db();
+                    self.reduce_interval = self.reduce_interval.saturating_add(self.reduce_inc);
+                    self.next_reduce = self.conflicts_total.saturating_add(self.reduce_interval);
+                    conflicts_since_restart = 0;
+                    continue;
+                }
                 if conflicts_since_restart >= restart_limit {
                     self.cancel_until(0);
                     conflicts_since_restart = 0;
@@ -448,9 +527,11 @@ impl CdclSolver {
     /// 1-UIP conflict analysis with self-subsuming minimization.
     ///
     /// Returns the learned clause (its asserting literal at index 0, its second
-    /// watch — the highest-level remaining literal — at index 1) and the
-    /// backjump level. Bumps the activity of every variable resolved through.
-    fn analyze(&mut self, conflict: ClauseRef) -> (Vec<Lit>, usize) {
+    /// watch — the highest-level remaining literal — at index 1), the backjump
+    /// level, and the clause's **LBD** (distinct decision levels among its
+    /// literals — the reduction usefulness metric, mt-049). Bumps the activity of
+    /// every variable resolved through.
+    fn analyze(&mut self, conflict: ClauseRef) -> (Vec<Lit>, usize, u32) {
         let cur_level = self.decision_level();
         let mut learnt: Vec<Lit> = vec![Lit::positive(Var::from_index(0))]; // slot 0
         let mut to_clear: Vec<Var> = Vec::new();
@@ -518,7 +599,23 @@ impl CdclSolver {
             learnt.iter().all(|&l| self.value_lit(l) == Some(false)),
             "every literal of a freshly learned clause must be false under the trail"
         );
-        (learnt, bt_level)
+        // LBD (glue): distinct decision levels among the literals, valid here
+        // because every literal is false with a live `level` (asserted above).
+        let lbd = self.literal_block_distance(&learnt);
+        (learnt, bt_level, lbd)
+    }
+
+    /// The **literal block distance** of a clause: the count of distinct decision
+    /// levels among its literals (mt-049 reduction metric). All integer, a pure
+    /// function of the current levels — deterministic (STYLE D1). Callers pass a
+    /// clause all of whose literals are assigned (levels valid).
+    fn literal_block_distance(&self, lits: &[Lit]) -> u32 {
+        let mut levels: Vec<usize> = lits.iter().map(|l| self.level[l.var().index()]).collect();
+        levels.sort_unstable();
+        levels.dedup();
+        // Clause sizes are tiny; `usize → u32` cannot overflow a realistic level
+        // count, and the cap keeps it total.
+        u32::try_from(levels.len()).unwrap_or(u32::MAX)
     }
 
     /// Drops literals of `learnt[1..]` that are redundant by self-subsuming
@@ -607,9 +704,10 @@ impl CdclSolver {
     /// Installs a freshly learned clause and asserts its UIP literal.
     ///
     /// A learned unit is enqueued at level 0 with no reason; a larger clause is
-    /// appended (keep-all), watched on its first two literals, and its UIP
-    /// literal (index 0) enqueued with the clause as reason.
-    fn learn_and_assert(&mut self, learnt: Vec<Lit>) {
+    /// appended (marked `learnt`, so [`CdclSolver::reduce_db`] may later delete
+    /// it), watched on its first two literals, and its UIP literal (index 0)
+    /// enqueued with the clause as reason.
+    fn learn_and_assert(&mut self, learnt: Vec<Lit>, lbd: u32) {
         if learnt.len() == 1 {
             let ok = self.enqueue(learnt[0], None);
             debug_assert!(ok, "a learned unit asserts a fresh literal at level 0");
@@ -619,9 +717,66 @@ impl CdclSolver {
         self.watches[learnt[0].code()].push(cref);
         self.watches[learnt[1].code()].push(cref);
         let asserting = learnt[0];
-        self.clauses.push(Clause { lits: learnt });
+        self.clauses.push(Clause {
+            lits: learnt,
+            learnt: true,
+            lbd,
+            deleted: false,
+        });
         let ok = self.enqueue(asserting, Some(cref));
         debug_assert!(ok, "the asserting literal is unassigned after backjump");
+    }
+
+    /// Deterministically thins the learned-clause database (mt-049): deletes the
+    /// least-useful half of the deletable learned clauses, ranked by integer LBD
+    /// (lower = keep) with a lowest-`ClauseRef` tie-break.
+    ///
+    /// **Soundness.** Only `learnt` clauses are candidates — original and
+    /// blocking clauses are permanent, so verdicts and the enumeration model set
+    /// are untouched (a learned clause is a resolvent of the permanents; deleting
+    /// it removes no models). A **locked** clause (the reason of a currently
+    /// -assigned variable) is never deleted, so conflict analysis never chases a
+    /// dangling reason. Runs at decision level 0, where the only assigned
+    /// variables are level-0 facts, so "locked" is precisely "reason of a level-0
+    /// literal".
+    ///
+    /// **Stability.** Deletion is a tombstone: the arena slot stays, keeping every
+    /// `ClauseRef` (in `reason`, in `watches`, held across the enumeration seam)
+    /// valid. The deleted clause's literals are freed and it is dropped from every
+    /// watch list, so it stops costing propagation time and memory.
+    fn reduce_db(&mut self) {
+        debug_assert_eq!(self.decision_level(), 0, "reduce_db must run at level 0");
+        let mut candidates: Vec<ClauseRef> = Vec::new();
+        for cref in 0..self.clauses.len() {
+            let c = &self.clauses[cref];
+            if !c.learnt || c.deleted {
+                continue; // permanent or already a tombstone
+            }
+            // Locked: the reason of an assigned variable (MiniSat `locked`).
+            let uip = c.lits[0];
+            let locked =
+                self.value_lit(uip) == Some(true) && self.reason[uip.var().index()] == Some(cref);
+            if !locked {
+                candidates.push(cref);
+            }
+        }
+        // Keep the most useful half: lowest LBD first, lowest ClauseRef to break
+        // ties — a total, deterministic order (STYLE D2). The worst half is
+        // deleted.
+        candidates.sort_by_key(|&c| (self.clauses[c].lbd, c));
+        let keep = candidates.len() / 2;
+        for &cref in &candidates[keep..] {
+            let c = &mut self.clauses[cref];
+            c.deleted = true;
+            c.lits = Vec::new(); // reclaim the bulk of the memory
+        }
+        // One pass over the watch lists drops every tombstoned clause, order
+        // preserved (STYLE D2). Taken out to sidestep the borrow checker.
+        let mut watches = std::mem::take(&mut self.watches);
+        for list in &mut watches {
+            list.retain(|&cref| !self.clauses[cref].deleted);
+        }
+        self.watches = watches;
     }
 
     /// Assigns `lit` true with the given reason, pushing it on the trail.
@@ -936,6 +1091,75 @@ mod tests {
             Some(Outcome::Sat(a)) => assert!(a.value(x)),
             other => panic!("expected SAT within zero conflicts, got {other:?}"),
         }
+    }
+
+    /// Pigeonhole PHP(pigeons, holes): UNSAT when pigeons > holes, and hard
+    /// enough (many conflicts) to drive several reductions.
+    fn pigeonhole(cnf: &mut Cnf, pigeons: usize, holes: usize) {
+        let p: Vec<Vec<Var>> = (0..pigeons)
+            .map(|_| (0..holes).map(|_| cnf.fresh_var()).collect())
+            .collect();
+        for row in &p {
+            cnf.add_clause(row.iter().map(|&v| Lit::positive(v)).collect());
+        }
+        for i in 0..pigeons {
+            for j in (i + 1)..pigeons {
+                for (&pih, &pjh) in p[i].iter().zip(&p[j]) {
+                    cnf.add_clause(vec![Lit::negative(pih), Lit::negative(pjh)]);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn reduce_db_deletes_only_learned_and_stays_correct() {
+        // PHP(7,6): UNSAT, learning-heavy. Forcing reduction on nearly every
+        // conflict must (a) keep the correct verdict and (b) actually tombstone
+        // learned clauses — proving reduce_db is exercised, not merely enabled —
+        // while (c) never deleting a permanent (problem/blocking) clause.
+        let mut cnf = Cnf::new();
+        pigeonhole(&mut cnf, 7, 6);
+        let mut s = CdclSolver::new(&cnf);
+        s.set_reduce_schedule(1, 1);
+        assert_eq!(s.solve(), Outcome::Unsat, "PHP(7,6) is UNSAT");
+        assert!(
+            s.clauses.iter().any(|c| c.deleted),
+            "reduce_db must have tombstoned at least one learned clause"
+        );
+        assert!(
+            s.clauses.iter().all(|c| !c.deleted || c.learnt),
+            "only learned clauses may ever be tombstoned"
+        );
+    }
+
+    #[test]
+    fn reduce_db_preserves_enumeration_count() {
+        // A small SAT problem with several models: forcing frequent reduction
+        // must not change the raw (SB-0) model count — reduction deletes only
+        // sound resolvents, which removes no models.
+        let mut cnf = Cnf::new();
+        let vars: Vec<Var> = (0..4).map(|_| cnf.fresh_var()).collect();
+        // (x0 ∨ x1) ∧ (x2 ∨ x3): 3×3 = 9 satisfying assignments over 4 vars.
+        cnf.add_clause(vec![Lit::positive(vars[0]), Lit::positive(vars[1])]);
+        cnf.add_clause(vec![Lit::positive(vars[2]), Lit::positive(vars[3])]);
+        let count = |reduce: Option<(u64, u64)>| {
+            let mut s = CdclSolver::new(&cnf);
+            if let Some((f, i)) = reduce {
+                s.set_reduce_schedule(f, i);
+            }
+            let mut n = 0u64;
+            while let Outcome::Sat(m) = s.solve() {
+                n += 1;
+                s.add_clause(block(&m, &vars));
+            }
+            n
+        };
+        assert_eq!(count(None), 9, "baseline count");
+        assert_eq!(
+            count(Some((1, 1))),
+            9,
+            "count invariant under forced reduction"
+        );
     }
 
     #[test]

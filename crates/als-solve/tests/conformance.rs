@@ -186,6 +186,35 @@ fn solve_once(cnf: &Cnf) -> Outcome {
     als_solve::CdclSolver::new(cnf).solve()
 }
 
+/// An aggressive reduce schedule (mt-049): the first learned-clause reduction
+/// fires after 3 conflicts and the gap grows by 1, so `reduce_db` runs on nearly
+/// every conflict of any non-trivial instance — deletion is exercised hard.
+const FORCE_REDUCE: (u64, u64) = (3, 1);
+
+/// One-shot verdict with reduction forced on (mt-049).
+fn solve_once_reducing(cnf: &Cnf) -> Outcome {
+    let mut solver = als_solve::CdclSolver::new(cnf);
+    solver.set_reduce_schedule(FORCE_REDUCE.0, FORCE_REDUCE.1);
+    solver.solve()
+}
+
+/// Enumeration with reduction forced on (mt-049) — same contract as
+/// [`enumerate`], blocking each model over `block_vars`.
+fn enumerate_reducing(cnf: &Cnf, all_vars: &[Var], block_vars: &[Var]) -> Vec<Vec<bool>> {
+    let mut solver = als_solve::CdclSolver::new(cnf);
+    solver.set_reduce_schedule(FORCE_REDUCE.0, FORCE_REDUCE.1);
+    let mut models = Vec::new();
+    while let Outcome::Sat(assignment) = solver.solve() {
+        models.push(model_values(&assignment, all_vars));
+        let clause = block(&assignment, block_vars);
+        if clause.is_empty() {
+            break;
+        }
+        solver.add_clause(clause);
+    }
+    models
+}
+
 // ---------------------------------------------------------------------------
 // Random CNF generation across regimes.
 // ---------------------------------------------------------------------------
@@ -385,6 +414,89 @@ fn fuzz_against_brute_force() {
                 proj_models,
                 enumerate(&cnf, &vars, &subset),
                 "non-deterministic subset enumeration on iter {iter}"
+            );
+        }
+    }
+}
+
+/// The mt-032 fuzz harness re-run with **learned-clause reduction forced on**
+/// (mt-049): over the same deterministic instances, an aggressive `reduce_db`
+/// schedule must leave every observable answer unchanged — verdict parity with
+/// brute force, all-var enumeration count = brute-force model count (the SB-0
+/// invariant), distinct-projection count over a random subset, and bit-for-bit
+/// determinism. Reduction deletes only sound learned resolvents, so it can move
+/// the search path but never a verdict or a model count.
+#[test]
+fn fuzz_with_forced_reduction() {
+    let iters = fuzz_iters();
+    for iter in 0..iters {
+        let mut rng = SplitMix64::new(seed_for(iter));
+        let regime = regime_for(&mut rng);
+        let (cnf, vars) = random_cnf(&mut rng, regime);
+        let n = vars.len();
+
+        let bf = brute_force(&cnf);
+
+        // (a) verdict agreement under reduction.
+        let outcome = solve_once_reducing(&cnf);
+        let solver_sat = matches!(outcome, Outcome::Sat(_));
+        assert_eq!(
+            solver_sat, bf.sat,
+            "verdict mismatch (reducing) on iter {iter} ({regime:?}, n={n})"
+        );
+
+        // (b) every SAT model satisfies every clause.
+        if let Outcome::Sat(ref model) = outcome {
+            assert!(
+                satisfies(&cnf, &model_values(model, &vars)),
+                "non-satisfying model (reducing) on iter {iter} ({regime:?})"
+            );
+        }
+
+        // (d0) determinism under reduction.
+        assert_eq!(
+            outcome,
+            solve_once_reducing(&cnf),
+            "non-deterministic verdict/model (reducing) on iter {iter} ({regime:?})"
+        );
+
+        if n > ENUM_MAX_VARS {
+            continue;
+        }
+
+        // (c) all-var enumeration count is the brute-force model count.
+        let all_models = enumerate_reducing(&cnf, &vars, &vars);
+        assert_eq!(
+            all_models.len() as u64,
+            bf.count,
+            "all-var enumeration count mismatch (reducing) on iter {iter} ({regime:?}, n={n})"
+        );
+        let mut seen: BTreeSet<Vec<bool>> = BTreeSet::new();
+        for m in &all_models {
+            assert!(
+                satisfies(&cnf, m),
+                "enumerated a non-model (reducing) on iter {iter}"
+            );
+            assert!(
+                seen.insert(m.clone()),
+                "duplicate model (reducing) on iter {iter}"
+            );
+        }
+        assert_eq!(
+            all_models,
+            enumerate_reducing(&cnf, &vars, &vars),
+            "non-deterministic enumeration sequence (reducing) on iter {iter}"
+        );
+
+        // (d) subset enumeration = distinct-projection count.
+        if n >= 1 {
+            let subset = random_subset(&mut rng, &vars);
+            let proj_models = enumerate_reducing(&cnf, &vars, &subset);
+            let expected = brute_force_projection_count(&cnf, &vars, &subset);
+            assert_eq!(
+                proj_models.len() as u64,
+                expected,
+                "subset enumeration count mismatch (reducing) on iter {iter} ({regime:?})"
             );
         }
     }

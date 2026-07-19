@@ -26,6 +26,7 @@
 //! panic.
 
 mod circuit;
+mod freevars;
 mod int;
 mod matrix;
 
@@ -41,12 +42,20 @@ use crate::ir::{
 };
 
 use circuit::Circuit;
+use freevars::FreeVars;
 use int::{IntBuilder, IntVal};
 use matrix::Matrix;
 
 pub(crate) use circuit::Bool;
 
 use als_syntax::ArenaId;
+
+/// The grounding-memo cache key's environment part (mt-049): the bindings of
+/// exactly the memoised node's **free variables**, in `VarId` order. Two
+/// different full environments that agree on a node's free variables share its
+/// cache entry — the node's encoded value depends on nothing else. Ordered
+/// (`Vec` in `VarId` order) so it is a deterministic `BTreeMap` key (STYLE D2).
+type EnvKey = Vec<(VarId, Tuple)>;
 
 /// The primary-variable map: `(relation, floating tuple) → SAT variable`.
 ///
@@ -58,13 +67,22 @@ pub(crate) type PrimaryMap = BTreeMap<(RelId, Tuple), Var>;
 /// The relational-to-SAT encoder for one command.
 ///
 /// Borrows the lowered [`Ir`], the [`Bounds`], and the primary-variable map; owns
-/// the growing [`Cnf`] and the grounding environment. Produced matrices/bools are
-/// memoised **only at the top level** (empty environment): under a quantifier the
-/// same sub-expression denotes different values per binding, so it is recomputed.
+/// the growing [`Cnf`] and the grounding environment.
+///
+/// Produced matrices/bools/int-values are memoised by `(node id, the bindings of
+/// exactly that node's free variables)` (mt-049 env-cached grounding): a
+/// sub-expression that does not mention the innermost bound variable is encoded
+/// once and shared across every binding of it, instead of being re-grounded per
+/// binding — the shared gates are identical, so the SB-0 model set over primary
+/// variables is unchanged. A node whose free variables are the *whole* active
+/// environment is not cached (its key would be distinct per binding — no reuse,
+/// only overhead); [`FreeVars`] drives the decision.
 pub(crate) struct Encoder<'a> {
     ir: &'a Ir,
     bounds: &'a Bounds,
     prim: &'a PrimaryMap,
+    /// Precomputed per-node free-variable sets (mt-049), driving the memo keys.
+    freevars: FreeVars,
     cnf: Cnf,
     /// Bitwidth for the integer slice (Int atoms `-2^(bw-1) … 2^(bw-1)-1`).
     bitwidth: u32,
@@ -91,10 +109,11 @@ pub(crate) struct Encoder<'a> {
     /// Overflow flags gathered from integer ops; `¬flag` is conjoined into the
     /// goal when overflow is forbidden (translation-ref §2.4).
     overflow_flags: Vec<Bool>,
-    // Top-level (env-empty) memo caches (STYLE D3: lookup only, never iterated).
-    matrix_cache: BTreeMap<RelExprId, Matrix>,
-    formula_cache: BTreeMap<FormulaId, Bool>,
-    int_cache: BTreeMap<IntExprId, IntVal>,
+    // Env-cached grounding memo (mt-049): keyed by `(node id, free-var bindings)`.
+    // `BTreeMap` (STYLE D2): keys are ordered, iteration never escapes.
+    matrix_cache: BTreeMap<(RelExprId, EnvKey), Matrix>,
+    formula_cache: BTreeMap<(FormulaId, EnvKey), Bool>,
+    int_cache: BTreeMap<(IntExprId, EnvKey), IntVal>,
 }
 
 impl<'a> Encoder<'a> {
@@ -111,10 +130,12 @@ impl<'a> Encoder<'a> {
         opts: crate::solve::SolveOptions,
     ) -> Self {
         let universe_len = bounds.universe.len();
+        let freevars = FreeVars::build(ir);
         Self {
             ir,
             bounds,
             prim,
+            freevars,
             cnf,
             bitwidth,
             int_start,
@@ -173,17 +194,48 @@ impl<'a> Encoder<'a> {
 
     // ------------------------------------------------------------- relations
 
+    /// The memo key for a node given its free-variable set, or `None` when the
+    /// node should not be cached (mt-049).
+    ///
+    /// A node is cacheable when its free variables are a **strict subset** of the
+    /// active environment (so the same encoded value is reused across the bindings
+    /// it does not depend on), or when the environment is empty (top level). When
+    /// its free variables *are* the whole environment, every binding yields a
+    /// distinct key — caching would only cost memory — so we skip it. `free` is
+    /// always a subset of the active bindings (all free vars are in scope at
+    /// encode time), so the strict-subset test reduces to a length comparison.
+    fn env_key(&self, free: &std::collections::BTreeSet<VarId>) -> Option<EnvKey> {
+        if self.env.is_empty() {
+            return Some(Vec::new());
+        }
+        if free.len() >= self.env.len() {
+            return None;
+        }
+        Some(
+            free.iter()
+                .map(|v| {
+                    let t = self.env.get(v).cloned().unwrap_or_else(|| {
+                        debug_assert!(false, "free var {v:?} unbound during encode");
+                        Tuple::new(Vec::new())
+                    });
+                    (*v, t)
+                })
+                .collect(),
+        )
+    }
+
     /// Encodes a relation expression to its boolean matrix.
     fn rel(&mut self, id: RelExprId) -> Result<Matrix, TranslateError> {
-        if self.env.is_empty() {
-            if let Some(m) = self.matrix_cache.get(&id) {
+        let key = self.env_key(self.freevars.rel(id)).map(|e| (id, e));
+        if let Some(k) = &key {
+            if let Some(m) = self.matrix_cache.get(k) {
                 return Ok(m.clone());
             }
         }
         self.check_capacity(self.ir.rel_exprs[id].span)?;
         let m = self.rel_uncached(id)?;
-        if self.env.is_empty() {
-            self.matrix_cache.insert(id, m.clone());
+        if let Some(k) = key {
+            self.matrix_cache.insert(k, m.clone());
         }
         Ok(m)
     }
@@ -472,15 +524,16 @@ impl<'a> Encoder<'a> {
 
     /// Encodes a formula to a single boolean value.
     fn formula(&mut self, id: FormulaId) -> Result<Bool, TranslateError> {
-        if self.env.is_empty() {
-            if let Some(&b) = self.formula_cache.get(&id) {
+        let key = self.env_key(self.freevars.formula(id)).map(|e| (id, e));
+        if let Some(k) = &key {
+            if let Some(&b) = self.formula_cache.get(k) {
                 return Ok(b);
             }
         }
         self.check_capacity(self.ir.formulas[id].span)?;
         let b = self.formula_uncached(id)?;
-        if self.env.is_empty() {
-            self.formula_cache.insert(id, b);
+        if let Some(k) = key {
+            self.formula_cache.insert(k, b);
         }
         Ok(b)
     }
@@ -702,15 +755,16 @@ impl<'a> Encoder<'a> {
     /// slice: `Const`, `#` cardinality, `int[·]`). Arithmetic/`sum`/int-`ITE`
     /// are typed defers (translation-ref §2.4; mt-033 measurement).
     fn int(&mut self, id: IntExprId) -> Result<IntVal, TranslateError> {
-        if self.env.is_empty() {
-            if let Some(v) = self.int_cache.get(&id) {
+        let key = self.env_key(self.freevars.int(id)).map(|e| (id, e));
+        if let Some(k) = &key {
+            if let Some(v) = self.int_cache.get(k) {
                 return Ok(v.clone());
             }
         }
         self.check_capacity(self.ir.int_exprs[id].span)?;
         let v = self.int_uncached(id)?;
-        if self.env.is_empty() {
-            self.int_cache.insert(id, v.clone());
+        if let Some(k) = key {
+            self.int_cache.insert(k, v.clone());
         }
         Ok(v)
     }

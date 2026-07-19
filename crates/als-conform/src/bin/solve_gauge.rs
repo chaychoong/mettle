@@ -44,7 +44,7 @@ fn print_usage() {
          \n\
          Options:\n\
          \x20\x20--count                enable stage 2 (needs the reference jar)\n\
-         \x20\x20--conflicts N          per-command SAT conflict budget (default 5000)\n\
+         \x20\x20--conflicts N          per-command SAT conflict budget (default 10000)\n\
          \x20\x20--encode-budget N      per-command encode-effort budget (default 4000000)\n\
          \x20\x20--primary-var-cap N    skip a command past this many primary vars (default 20000)\n\
          \x20\x20--count-cap N          enumerate at most N instances per command (default 10000)\n\
@@ -69,12 +69,16 @@ fn parse_args() -> Option<(GaugeConfig, Option<PathBuf>)> {
         roots: Vec::new(),
         workspace_root: root.clone(),
         baselines_dir: root.join("baselines"),
-        // Measured (mt-037): 200k conflicts / 50M encode units let single huge
-        // corpus commands grind for hours each (>10h CPU without finishing the
-        // sweep). These defaults complete the two-corpus sweep in minutes while
-        // still converting most of the smoke test's over-budget bucket into
-        // verdicts; scale up per-run via the flags for a deeper (slower) gauge.
-        conflict_budget: 5_000,
+        // Measured budgets that keep the two-corpus sweep tractable (mt-037,
+        // re-tuned mt-049). mt-049's solver `reduce_db` + env-cached grounding
+        // memoisation made each conflict and each encode cheaper, so the conflict
+        // budget was raised 5k → 10k (sweep ~16 min, converting more over_budget
+        // commands into verdicts) while the **encode budget stays 4M**: raising it
+        // is intractable for the default sweep — 8M timed out past 40 min and
+        // 24M+ grinds for CPU-hours on single huge commands (the mt-037 grind
+        // mode). The 20k primary-var cap is likewise unchanged. Scale any of them
+        // up per-run via the flags for a deeper (slower) gauge.
+        conflict_budget: 10_000,
         encode_budget: 4_000_000,
         primary_var_cap: 20_000,
         allow_overflow: false,
