@@ -76,6 +76,12 @@ pub struct GaugeConfig {
     /// Enumerate at most this many mettle instances before skipping a command as
     /// `skip_mettle_cap` (and the jar side is capped at `count_cap + 1`).
     pub count_cap: u64,
+    /// Cumulative SAT-conflict budget across one command's whole SB-0
+    /// enumeration (all instance solves summed), independent of `count_cap`: a
+    /// model can pass the primary-var cap and still grind for hours because each
+    /// individual instance solve is expensive. Exhausting it ends enumeration in
+    /// a typed `skip_enum_budget`, never a silently truncated count.
+    pub enum_budget: u64,
     /// Reference jar (stage 2 only).
     pub jar_path: PathBuf,
     /// `OracleShim.java` source (stage 2 only).
@@ -366,6 +372,7 @@ fn classify_command(
         allow_overflow: cfg.allow_overflow,
         conflict_budget: Some(cfg.conflict_budget),
         encode_budget: Some(cfg.encode_budget),
+        ..SolveOptions::default()
     };
     let (sat, self_check_fail) = match solve_goal(&ir, scoped, &goal, &bounds, &opts) {
         Ok(SolveVerdict::Sat(inst)) => {
@@ -391,13 +398,21 @@ fn classify_command(
     // does not cover — a no_baseline SAT command (e.g. `oracle/test1.als`) still
     // gets its jar count live in stage 2.
     let count = if cfg.count && sat && matches!(baseline_v, None | Some(JarVerdict::Sat)) {
+        // Thread the enumeration's cumulative conflict budget onto the options
+        // used for stage 2 only (mirrors how `count_cap` reaches `classify_count`
+        // as a value derived from `cfg`): `opts` itself stays the stage-1
+        // (verdict/self-check) options, unaffected by this per-enumeration knob.
+        let enum_opts = SolveOptions {
+            enum_conflict_budget: Some(cfg.enum_budget),
+            ..opts
+        };
         Some(classify_count(
             &ir,
             scoped,
             &goal,
             &bounds,
             world,
-            &opts,
+            &enum_opts,
             cfg.count_cap,
         ))
     } else {
@@ -474,7 +489,11 @@ fn classify_count(
         return CountOutcome::Skip("skip_ordered_abstract");
     }
 
-    // Enumerate mettle's exact SB-0 count, stopping one past the cap.
+    // Enumerate mettle's exact SB-0 count, stopping one past the cap. `opts`
+    // carries the cumulative conflict budget bounding the whole enumeration's
+    // effort (independent of the instance-count cap above): some corpus models
+    // pass the primary-var cap yet grind for hours because each individual
+    // instance solve is expensive.
     let Ok(mut it) = enumerate(ir, scoped, goal, bounds, opts) else {
         return CountOutcome::Skip("skip_mettle_cap");
     };
@@ -485,7 +504,11 @@ fn classify_count(
             break;
         }
     }
-    if n > count_cap {
+    // Check exhaustion first: an enumeration that ran out of budget mid-count
+    // is a lower bound, never a trustworthy exact or capped count.
+    if it.exhausted() {
+        CountOutcome::Skip("skip_enum_budget")
+    } else if n > count_cap {
         CountOutcome::Skip("skip_mettle_cap")
     } else {
         CountOutcome::JarTodo(n)

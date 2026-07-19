@@ -58,6 +58,19 @@ pub struct SolveOptions {
     /// grounded walk that folds every gate away and would never trip a plain
     /// clause cap. Deterministic — a pure count of the traversal (STYLE D1).
     pub encode_budget: Option<u64>,
+    /// Cumulative SAT-conflict budget across an **entire enumeration** (every
+    /// instance solve [`enumerate`] performs, summed); `None` (default) =
+    /// unbudgeted. Deterministic like [`Self::conflict_budget`] (conflict-counted,
+    /// never wall-clock), but a different knob: `conflict_budget` bounds one
+    /// *verdict* solve, while this bounds the *total* effort of a whole
+    /// enumeration. Enumeration is exact by contract (see
+    /// [`InstanceEnumerator`] docs) — a budget-truncated count would be a
+    /// silently wrong answer, so this never truncates the count. Instead, when
+    /// the budget runs out mid-enumeration, the enumerator stops and reports
+    /// itself [`InstanceEnumerator::exhausted`], so a caller (the SB-0 counting
+    /// net) can skip the command typed rather than either hang or fabricate a
+    /// count.
+    pub enum_conflict_budget: Option<u64>,
 }
 
 /// A solving verdict for one command.
@@ -307,10 +320,17 @@ pub fn solve_goal(
 /// makes the count the **raw / SB-0** model count (ADR-0002 counting net).
 ///
 /// Enumeration is **exact by contract** and ignores
-/// [`SolveOptions::conflict_budget`]: a budget-truncated enumeration would be a
-/// silently wrong count, the one thing the counting net exists to prevent. The
-/// [`SolveOptions::encode_budget`] guard *does* apply (it fails [`enumerate`]
-/// loudly at translate time, corrupting nothing).
+/// [`SolveOptions::conflict_budget`] (the per-solve verdict budget): a
+/// budget-truncated enumeration would be a silently wrong count, the one thing
+/// the counting net exists to prevent. The [`SolveOptions::encode_budget`]
+/// guard *does* apply (it fails [`enumerate`] loudly at translate time,
+/// corrupting nothing).
+///
+/// The separate [`SolveOptions::enum_conflict_budget`] bounds the TOTAL effort
+/// of the whole enumeration (summed across every instance solve), not any one
+/// verdict. It never truncates the count silently: running out ends
+/// enumeration in loud exhaustion ([`InstanceEnumerator::exhausted`]) instead
+/// of a wrong number.
 #[derive(Debug)]
 pub struct InstanceEnumerator<'a> {
     solver: CdclSolver,
@@ -324,6 +344,23 @@ pub struct InstanceEnumerator<'a> {
     scoped: &'a ScopedUniverse,
     goal: &'a LoweredGoal,
     opts: SolveOptions,
+    /// Remaining cumulative conflicts before [`SolveOptions::enum_conflict_budget`]
+    /// is exhausted; `None` = unbudgeted (charge nothing, never exhaust).
+    budget_remaining: Option<u64>,
+    /// Set once `budget_remaining` hits zero mid-enumeration: the sequence
+    /// stopped short of `Unsat`, so its count is a **lower bound**, not exact.
+    exhausted: bool,
+}
+
+impl InstanceEnumerator<'_> {
+    /// Whether the enumeration stopped because
+    /// [`SolveOptions::enum_conflict_budget`] ran out (rather than reaching a
+    /// true `Unsat` and finishing exactly). Callers must check this before
+    /// trusting a count from this enumerator.
+    #[must_use]
+    pub fn exhausted(&self) -> bool {
+        self.exhausted
+    }
 }
 
 impl Iterator for InstanceEnumerator<'_> {
@@ -334,7 +371,21 @@ impl Iterator for InstanceEnumerator<'_> {
         if self.done {
             return None;
         }
-        match self.solver.solve() {
+        let outcome = if let Some(remaining) = self.budget_remaining {
+            let before = self.solver.total_conflicts();
+            let Some(outcome) = self.solver.solve_within(remaining) else {
+                // Budget exhausted mid-enumeration: stop short, loudly.
+                self.exhausted = true;
+                self.done = true;
+                return None;
+            };
+            let spent = self.solver.total_conflicts().saturating_sub(before);
+            self.budget_remaining = Some(remaining.saturating_sub(spent));
+            outcome
+        } else {
+            self.solver.solve()
+        };
+        match outcome {
             Outcome::Unsat => {
                 self.done = true;
                 None
@@ -386,5 +437,7 @@ pub fn enumerate<'a>(
         scoped,
         goal,
         opts: *opts,
+        budget_remaining: opts.enum_conflict_budget,
+        exhausted: false,
     })
 }

@@ -35,6 +35,7 @@ fn test1_config() -> GaugeConfig {
         allow_overflow: false,
         count: true,
         count_cap: 10_000,
+        enum_budget: 2_000_000,
         jar_path: jar_path(),
         shim_source: PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/shim/OracleShim.java")),
         jar_timeout: Duration::from_mins(5),

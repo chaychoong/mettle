@@ -241,6 +241,16 @@ impl CdclSolver {
         self.next_reduce = self.conflicts_total.saturating_add(first);
     }
 
+    /// Cumulative conflicts analyzed over the solver's whole life (across every
+    /// incremental `solve`/`solve_within` call so far). Backs the enumeration's
+    /// own cumulative budget (`SolveOptions::enum_conflict_budget` in
+    /// `als-core`): callers snapshot this before and after a `solve_within` to
+    /// charge exactly the conflicts that call spent against a total-effort cap.
+    #[must_use]
+    pub fn total_conflicts(&self) -> u64 {
+        self.conflicts_total
+    }
+
     /// Adds a clause to the live solver, retaining all learned clauses.
     ///
     /// Cancels to level 0 first so the clause integrates against a clean trail

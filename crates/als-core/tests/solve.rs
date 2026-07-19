@@ -650,3 +650,74 @@ fn higher_order_macro_callable_by_name_lowers() {
          let assertIt[axiom] { axiom[none] }\nrun { assertIt[nonEmpty] } for 3\n",
     );
 }
+
+// ======================= enumeration conflict budget =======================
+// mt-046 unlocked corpus models (e.g. `correctChord.als`) that pass the
+// primary-var cap but whose per-instance solves are individually expensive, so
+// a full SB-0 count can grind for hours. `SolveOptions::enum_conflict_budget`
+// bounds the *cumulative* conflict spend of a whole enumeration and ends in a
+// typed `exhausted()` rather than either hanging or silently truncating the
+// count (see the `InstanceEnumerator` docs).
+
+/// `sig A {}; run { some A } for 3` has exactly 7 raw instances (see
+/// `count_some_a_is_seven`). A zero cumulative-conflict budget must still yield
+/// at least the models found before the first real conflict (this goal's
+/// non-conflicting instances), stop short of the full 7, and report
+/// `exhausted()` — never a fabricated full count.
+#[test]
+fn enum_conflict_budget_zero_exhausts_short_of_full_count() {
+    let src = "sig A {}\nrun { some A } for 3\n";
+    let (ir, scoped, goal, bounds) = enum_pipeline(src, 0);
+    let opts = SolveOptions {
+        enum_conflict_budget: Some(0),
+        ..SolveOptions::default()
+    };
+    let mut it = enumerate(&ir, &scoped, &goal, &bounds, &opts).expect("enumerate");
+    let n = it.by_ref().count();
+    assert!(
+        n < 7,
+        "a zero conflict budget must not reach the full 7-instance count, got {n}"
+    );
+    assert!(
+        it.exhausted(),
+        "a zero conflict budget must report exhaustion, not a quiet stop"
+    );
+}
+
+/// The same goal, unbudgeted (`enum_conflict_budget: None`, the default): the
+/// full exact count is reached and `exhausted()` is false — confirming the
+/// budget change leaves the unbudgeted path (every existing caller) untouched.
+#[test]
+fn enum_conflict_budget_none_reaches_full_count_not_exhausted() {
+    let src = "sig A {}\nrun { some A } for 3\n";
+    let (ir, scoped, goal, bounds) = enum_pipeline(src, 0);
+    let opts = SolveOptions::default();
+    assert_eq!(opts.enum_conflict_budget, None);
+    let mut it = enumerate(&ir, &scoped, &goal, &bounds, &opts).expect("enumerate");
+    let n = it.by_ref().count();
+    assert_eq!(
+        n, 7,
+        "unbudgeted enumeration must still reach the exact count"
+    );
+    assert!(
+        !it.exhausted(),
+        "an unbudgeted enumeration that finished must not report exhaustion"
+    );
+}
+
+/// Shared pipeline setup for the budget tests (mirrors [`count`]/[`run`] but
+/// returns the pieces `enumerate` needs directly, since these tests build
+/// `SolveOptions` themselves rather than taking the default).
+fn enum_pipeline(
+    src: &str,
+    idx: usize,
+) -> (Ir, ScopedUniverse, als_core::LoweredGoal, BoundsResult) {
+    let loader = MapLoader::new().with("root.als", src);
+    let graph = ModuleGraph::load("root.als", &loader).expect("load");
+    let world = resolve(&graph).expect("resolve").world;
+    let scoped = compute_universe(&world, &graph, &world.commands[idx]).expect("universe");
+    let mut ir = Ir::default();
+    let bounds = compute_bounds(&world, &scoped, &mut ir);
+    let goal = lower_command(&world, &graph, &scoped, &bounds, &mut ir, idx).expect("lower");
+    (ir, scoped, goal, bounds)
+}

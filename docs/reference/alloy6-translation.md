@@ -2009,6 +2009,25 @@ Harness dumps `A4Solution.toString()` (universe + `String` relation).
 | Q3 | indices 0 and 1 both used | **SAT** control |
 | Q4 | `seq/Int` at `for 2`, `for 2 but 5 seq`, `for 6` | maxseq **2**, **5**, **6**; `seq/Int={0..maxseq−1}` — bare maxseq = `min(overall, max(bw))`; `for N seq` overrides it, **independent of overall** |
 
+#### 10.10a mt-046 seq implementation probes (jar-verified 2026-07-19)
+
+Follow-up probes taken while implementing mt-046 (`OracleShim`, sat4j, sym 0,
+noOverflow true), closing the §14 per-owner-vs-global ambiguity and
+differentially verifying the clean-room `util/sequniv`/`seqrel`/`sequence`
+bodies. All jar-pinned; the mismatches were mettle clean-room bugs, fixed
+black-box.
+
+| # | Case | Observation |
+|---|---|---|
+| mt046-contig | two owners: `p1.f` uses indices {0,1}, `p2.f` uses {1} without {0} | **UNSAT** → the contiguity fact is **PER-OWNER**, not global (a global projection over the union {0,1} would be SAT). Control (`p2.f` uses {0} only) → SAT. So contiguity is emitted inside `all this: owner |`, over `this.f`'s index column. |
+| mt046-maxseq-clamp | `for 6 but 3 int` | maxseq **3** (clamped to `max(bw 3)=2^2−1=3`); `for 6 but 4 int` → 6 (no clamp). |
+| mt046-idxOf | `e` at indices {0,2}: `idxOf`/`lastIdxOf` | jar `idxOf = 0` (first/min), `lastIdxOf = 2` (last/max). mettle's clean-room `util/sequniv`/`seqrel`/`sequence` had the two closures **swapped** (`idxOf` used `^prev`→max, `lastIdxOf` used `^next`→min) — **fixed**: `idxOf = indsOf − indsOf.^next`, `lastIdxOf = indsOf − indsOf.^prev`. |
+| mt046-afterLast | `afterLastIdx[empty]`, `add[empty, e]` | jar `afterLastIdx[empty] = 0` (seq/Int) / `ord/first` (ordered SeqIdx), so `add[empty, e] = {0 -> e}` (length 1). mettle's `afterLastIdx = lastIdx.next` gave `none` for empty (`none.next`), leaving `add`/`append` a no-op — **fixed** (see mt046-noncontig for the final body). |
+| mt046-noncontig | `sequniv/afterLastIdx[{1->e}]` (gapped, non-contiguous) | jar `= 0` (SAT), `= 2` UNSAT; `add[{1->e}, e] = {1->e}+{0->e}` SAT, `…+{2->e}` UNSAT — **`afterLastIdx` is the smallest UNUSED index, NOT `lastIdx.next`** (they differ off the contiguous-prefix domain, reachable because sequniv funs accept arbitrary `Int->univ`). Tech-lead review probe; the first fix (`lastIdx.next + empty-case`) was wrong here. Final body: `(seq/Int − inds[s]) − (seq/Int − inds[s]).^next` (min of the unused set), all three modules. |
+| mt046-full | `sequniv/afterLastIdx[{0,1,2}->e]` (every `seq/Int` index used, maxseq 3) | jar `no afterLastIdx[s]` SAT, `= 3` UNSAT — full sequence has **no** after-index (min of an empty unused set), confirming the min-unused reading over `lastIdx.next` (which would give 3). |
+| mt046-seqrel-gap | `seqrel/afterLastIdx[{mid->e}]`, exactly 3 `SeqIdx` | jar `= firstIdx` SAT, `= finalIdx` UNSAT — same min-unused semantics in the ordered bare-relation module (`(SeqIdx − inds) − (SeqIdx − inds).^(ord/next)`). `util/sequence` is domain-constrained contiguous by its `Seq` sig fact, so both forms agree there; min-unused adopted uniformly. |
+| mt046-natural | `natural/add`/`sub`/`lt` on small ranks | jar and mettle agree (1+1=2, 2−1=1, 0<1) — the `util/natural` rank arithmetic body is correct as-is (no fix). |
+
 ### 10.11 mt-043 first-order skolemization probes (jar-verified 2026-07-18)
 
 | # | Case | Observation |

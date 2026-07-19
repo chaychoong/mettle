@@ -48,6 +48,7 @@ fn print_usage() {
          \x20\x20--encode-budget N      per-command encode-effort budget (default 4000000)\n\
          \x20\x20--primary-var-cap N    skip a command past this many primary vars (default 20000)\n\
          \x20\x20--count-cap N          enumerate at most N instances per command (default 10000)\n\
+         \x20\x20--enum-budget N        total SAT conflicts across one command's SB-0 enumeration before a typed skip (default 2000000)\n\
          \x20\x20--allow-overflow       set noOverflow=false on both sides (default: forbid)\n\
          \x20\x20--jar PATH             reference jar (default oracle/org.alloytools.alloy.dist.jar)\n\
          \x20\x20--shim PATH            OracleShim.java source (default: the crate copy)\n\
@@ -84,6 +85,7 @@ fn parse_args() -> Option<(GaugeConfig, Option<PathBuf>)> {
         allow_overflow: false,
         count: false,
         count_cap: 10_000,
+        enum_budget: 2_000_000,
         jar_path: root.join("oracle/org.alloytools.alloy.dist.jar"),
         shim_source: default_shim(),
         jar_timeout: Duration::from_mins(5),
@@ -99,6 +101,7 @@ fn parse_args() -> Option<(GaugeConfig, Option<PathBuf>)> {
             "--encode-budget" => cfg.encode_budget = it.next()?.parse().ok()?,
             "--primary-var-cap" => cfg.primary_var_cap = it.next()?.parse().ok()?,
             "--count-cap" => cfg.count_cap = it.next()?.parse().ok()?,
+            "--enum-budget" => cfg.enum_budget = it.next()?.parse().ok()?,
             "--jar" => cfg.jar_path = PathBuf::from(it.next()?),
             "--shim" => cfg.shim_source = PathBuf::from(it.next()?),
             "--jar-timeout" => cfg.jar_timeout = Duration::from_secs(it.next()?.parse().ok()?),

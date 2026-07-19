@@ -672,6 +672,21 @@ impl<'a> Lowerer<'a> {
             let mult = self.field_mult_constraint(ctx, this_f, field.bound, span);
             self.binders.pop();
             body_parts.extend(mult?);
+            // A `seq X` field adds the per-owner contiguity fact (§14): the used
+            // indices form a prefix from 0. Emitted inside the `all this: owner`
+            // wrapper via `body_parts`, so it is genuinely per-owner (probe
+            // mt046-contig: two owners with indices {0,1} and {1} → UNSAT).
+            if matches!(
+                self.ast(module).exprs[field.bound].kind,
+                ExprKind::Unary {
+                    op: UnOp::SeqOf,
+                    ..
+                }
+            ) {
+                if let Some(contig) = self.seq_contiguity(this_f, span)? {
+                    body_parts.push(contig);
+                }
+            }
         }
 
         // `all this: owner | <body>` (only when there is a body).
@@ -954,6 +969,17 @@ impl<'a> Lowerer<'a> {
                 }
                 Ok(out)
             }
+            // A `seq X` bound desugars to `seq/Int -> lone X` (translation-ref
+            // §14, LEDGER-008): membership over `seq/Int -> X` plus the
+            // per-index `lone` value column. Equivalent to
+            // `arrow_value_constraint` for the fixed `set seq/Int -> lone X`
+            // shape, spelled directly because `seq/Int` has no AST `ExprId` to
+            // feed that helper. The contiguity fact is added separately at the
+            // `lower_field_facts` level (it is field-decl-only).
+            ExprKind::Unary {
+                op: UnOp::SeqOf,
+                expr,
+            } => self.seq_arrow_constraints(ctx, this_f, *expr, span),
             // An arrow product (flat or nested) with (optional) per-level
             // column multiplicities.
             ExprKind::Arrow {
@@ -1072,6 +1098,136 @@ impl<'a> Lowerer<'a> {
             col,
         )?);
         Ok(out)
+    }
+
+    /// The `seq/Int -> lone X` constraints on a value `value` of a `seq X`
+    /// bound (translation-ref §14, LEDGER-008): membership `value in seq/Int ->
+    /// X` plus the per-index `lone` value column `all i: seq/Int | lone
+    /// i.value`. This is exactly what [`Self::arrow_value_constraint`] emits for
+    /// `set seq/Int -> lone X` (the left column is empty — `seq/Int` carries no
+    /// mark and `X` is not an arrow), spelled directly because `seq/Int` is a
+    /// builtin with no source `ExprId` to pass through that helper. Does **not**
+    /// emit the contiguity fact — that is field-decl-only (the jar's
+    /// `ISSEQ_ARROW_LONE` branch is field translation) and is added by the
+    /// caller for field decls only.
+    fn seq_arrow_constraints(
+        &mut self,
+        ctx: Ctx,
+        value: RelExprId,
+        inner: ExprId,
+        span: Span,
+    ) -> Result<Vec<FormulaId>, TranslateError> {
+        let x_rel = self.lower_rel(ctx, inner)?;
+        let seq_int = self.sig_denote(self.world.builtins.seq_int, span)?;
+        // membership: `value in seq/Int -> X` — meaningful (not just the bound):
+        // it pins the value column to the *actual* `X`, which may be a strict
+        // subset of `X`'s atoms.
+        let product = self.mk_rel(
+            RelExprKind::Binary {
+                op: RelBinOp::Product,
+                lhs: seq_int,
+                rhs: x_rel,
+            },
+            span,
+        );
+        let membership = self.mk_formula(
+            FormulaKind::RelCompare {
+                op: RelCmpOp::Subset,
+                lhs: value,
+                rhs: product,
+            },
+            span,
+        );
+        // lone value column: `all i: seq/Int | lone i.value`.
+        let idx_var = self.fresh_col_var(1, span, &mut 0);
+        let idx_e = self.mk_rel(RelExprKind::Var(idx_var), span);
+        let joined = self.mk_rel(
+            RelExprKind::Binary {
+                op: RelBinOp::Join,
+                lhs: idx_e,
+                rhs: value,
+            },
+            span,
+        );
+        let lone = self.mk_formula(
+            FormulaKind::MultTest {
+                test: MultTest::Lone,
+                expr: joined,
+            },
+            span,
+        );
+        let quant = self.mk_formula(
+            FormulaKind::Quant {
+                kind: QuantKind::All,
+                var: idx_var,
+                bound: seq_int,
+                body: lone,
+            },
+            span,
+        );
+        Ok(vec![membership, quant])
+    }
+
+    /// The per-owner **contiguity** fact for a `seq X` field (translation-ref
+    /// §14, LEDGER-008; jar-verified PER-OWNER, probe mt046-contig): the used
+    /// indices of `this.f` form a prefix from `0`. Projecting `this.f` to its
+    /// index column `dom`,
+    /// `dom − dom.(Int/next) ⊆ Int/zero` — the only used index without a used
+    /// predecessor is `0`. Wrapped in the enclosing `all this: owner |` by the
+    /// caller (so it is genuinely per-owner). `None` when there are no int atoms
+    /// (bitwidth 0 ⇒ `seq/Int` empty ⇒ the field is bound-empty and contiguity
+    /// is vacuous).
+    fn seq_contiguity(
+        &mut self,
+        this_f: RelExprId,
+        span: Span,
+    ) -> Result<Option<FormulaId>, TranslateError> {
+        let (Some(next), Some(zero)) = (self.bounds.int_next, self.bounds.int_zero) else {
+            return Ok(None);
+        };
+        let arity = self
+            .ir_arity(this_f)
+            .ok_or(TranslateError::HigherOrder { span })?;
+        // dom = project `this.f` to its first (index) column: drop each value
+        // column by joining `univ` on the right (same idiom as the field-domain
+        // constraint).
+        let mut dom = this_f;
+        let univ = self.mk_rel(RelExprKind::Const(RelConst::Univ), span);
+        for _ in 0..(arity - 1) {
+            dom = self.mk_rel(
+                RelExprKind::Binary {
+                    op: RelBinOp::Join,
+                    lhs: dom,
+                    rhs: univ,
+                },
+                span,
+            );
+        }
+        // dom.(Int/next) = { i+1 : i ∈ dom } — the successors of used indices.
+        let dom_next = self.mk_rel(
+            RelExprKind::Binary {
+                op: RelBinOp::Join,
+                lhs: dom,
+                rhs: next,
+            },
+            span,
+        );
+        let diff = self.mk_rel(
+            RelExprKind::Binary {
+                op: RelBinOp::Diff,
+                lhs: dom,
+                rhs: dom_next,
+            },
+            span,
+        );
+        Ok(Some(self.mk_formula(
+            FormulaKind::RelCompare {
+                op: RelCmpOp::Subset,
+                lhs: diff,
+                rhs: zero,
+            },
+            span,
+        )))
     }
 
     /// One column of [`Self::arrow_value_constraint`]: quantify over `iter`'s
@@ -2240,8 +2396,13 @@ impl<'a> Lowerer<'a> {
             UnOp::SetOf | UnOp::ExactlyOf | UnOp::SomeOf | UnOp::LoneOf | UnOp::OneOf => {
                 self.lower_rel(ctx, expr)
             }
+            // `seq X` in a plain expression position (an `=` side, a join
+            // operand): same posture as a multiplicity-marked arrow there —
+            // defer typed rather than silently strip the `lone`/contiguity
+            // meaning. Field decls and constraint RHS go through
+            // `seq_arrow_constraints` instead (mt-046).
             UnOp::SeqOf => Err(TranslateError::LoweringUnsupported {
-                what: "`seq` bound (Rung 4)".to_owned(),
+                what: "`seq` marker in a plain expression position".to_owned(),
                 span,
             }),
             UnOp::Prime => {

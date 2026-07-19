@@ -27,8 +27,18 @@ fun inds [s: Int -> univ]: set Int { s.univ }
 fun elems [s: Int -> univ]: set (Int.s) { Int.s }
 
 fun first [s: Int -> univ]: lone (Int.s) { 0.s }
+// The last used index is the one in `inds` that no larger used index precedes:
+// removing every index reachable by repeatedly stepping *down* (`^prev`) from a
+// used index leaves the maximum (jar-verified: `lastIdx` of a 3-seq is 2).
 fun lastIdx [s: Int -> univ]: lone Int { inds[s] - inds[s].^(ui/prev) }
-fun afterLastIdx [s: Int -> univ]: lone Int { (lastIdx[s]).(ui/next) }
+// The smallest UNUSED index — not `lastIdx.next` (jar-verified, probes
+// mt046-afterLast/-noncontig/-full): `0` for the empty sequence, one past the
+// last for a contiguous prefix, the first gap for a non-contiguous relation
+// (`afterLastIdx[{1->e}] = 0`), and `none` when every `seq/Int` index is used.
+// Same min-extraction idiom as `idxOf`, over the unused set.
+fun afterLastIdx [s: Int -> univ]: lone Int {
+    (seq/Int - inds[s]) - (seq/Int - inds[s]).^(ui/next)
+}
 fun last [s: Int -> univ]: lone (Int.s) { (lastIdx[s]).s }
 
 // Declared results below are dependent bounds on the caller's own `s`
@@ -43,8 +53,12 @@ fun butlast [s: Int -> univ]: s {
 }
 
 fun indsOf [s: Int -> univ, e: univ]: set Int { s.e }
-fun idxOf [s: Int -> univ, e: univ]: lone Int { indsOf[s, e] - indsOf[s, e].^(ui/prev) }
-fun lastIdxOf [s: Int -> univ, e: univ]: lone Int { indsOf[s, e] - indsOf[s, e].^(ui/next) }
+// `idxOf` = the *first* (smallest) index of `e`: remove every index reachable by
+// stepping *up* (`^next`) from an occurrence, leaving the minimum. `lastIdxOf` =
+// the *last* (largest): remove the `^prev`-reachable ones, leaving the maximum.
+// (jar-verified: for `e` at indices {0,2}, `idxOf = 0`, `lastIdxOf = 2`.)
+fun idxOf [s: Int -> univ, e: univ]: lone Int { indsOf[s, e] - indsOf[s, e].^(ui/next) }
+fun lastIdxOf [s: Int -> univ, e: univ]: lone Int { indsOf[s, e] - indsOf[s, e].^(ui/prev) }
 
 fun add [s: Int -> univ, e: univ]: s + (seq/Int -> e) { s + (afterLastIdx[s] -> e) }
 

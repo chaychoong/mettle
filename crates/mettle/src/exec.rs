@@ -121,6 +121,7 @@ fn parse_args(args: &[String]) -> Result<ParsedArgs<'_>, ExitCode> {
             allow_overflow,
             conflict_budget: conflicts,
             encode_budget,
+            ..SolveOptions::default()
         },
     })
 }

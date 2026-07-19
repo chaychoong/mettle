@@ -28,14 +28,26 @@ fun elems [s: SeqIdx -> elem]: set elem { SeqIdx.s }
 fun at [s: SeqIdx -> elem, i: SeqIdx]: lone elem { i.s }
 
 fun lastIdx [s: SeqIdx -> elem]: lone SeqIdx { inds[s] - inds[s].^(ord/prev) }
-fun afterLastIdx [s: SeqIdx -> elem]: lone SeqIdx { (lastIdx[s]).(ord/next) }
+// The smallest UNUSED index — not `lastIdx.next` (jar-verified, probe
+// mt046-seqrel-gap: `afterLastIdx[{mid->e}] = firstIdx`): `firstIdx` for the
+// empty sequence, one past the last for a contiguous prefix, the first gap
+// otherwise, `none` when every `SeqIdx` is used. Same min-extraction idiom as
+// `idxOf`, over the unused set.
+fun afterLastIdx [s: SeqIdx -> elem]: lone SeqIdx {
+    (SeqIdx - inds[s]) - (SeqIdx - inds[s]).^(ord/next)
+}
 
 fun first [s: SeqIdx -> elem]: lone elem { at[s, firstIdx] }
 fun last [s: SeqIdx -> elem]: lone elem { at[s, lastIdx[s]] }
 
 fun indsOf [s: SeqIdx -> elem, e: elem]: set SeqIdx { s.e }
-fun idxOf [s: SeqIdx -> elem, e: elem]: lone SeqIdx { indsOf[s, e] - indsOf[s, e].^(ord/prev) }
-fun lastIdxOf [s: SeqIdx -> elem, e: elem]: lone SeqIdx { indsOf[s, e] - indsOf[s, e].^(ord/next) }
+// `idxOf` = the *first* (order-least) index of `e`: remove the `^next`-reachable
+// occurrences, leaving the minimum. `lastIdxOf` = the *last* (order-greatest):
+// remove the `^prev`-reachable ones, leaving the maximum. (jar-verified against
+// util/seqrel: for `e` at both ends of a 3-seq, `idxOf = firstIdx`, `lastIdxOf =
+// finalIdx`.)
+fun idxOf [s: SeqIdx -> elem, e: elem]: lone SeqIdx { indsOf[s, e] - indsOf[s, e].^(ord/next) }
+fun lastIdxOf [s: SeqIdx -> elem, e: elem]: lone SeqIdx { indsOf[s, e] - indsOf[s, e].^(ord/prev) }
 
 pred isEmpty [s: SeqIdx -> elem] { no s }
 pred hasDups [s: SeqIdx -> elem] { some e: elems[s] | not lone indsOf[s, e] }
