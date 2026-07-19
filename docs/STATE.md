@@ -70,3 +70,4 @@
 3. **Symmetry-breaking posture** (mt-048): proposed as perf + a dedicated SB-20 verdict/count net, with SB-0 staying the counting yardstick (ADR-0002 unchanged). Written up as [ADR-0012](adr/0012-rung4-integers-strings-counting.md) decision 6; silence = it stands.
 
 _Resolved 2026-07-18:_ Ledger approvals — the owner delegated **no-fork entry approval to the tech lead ("Option B", now a Ledger process rule)**; LEDGER-006/007/008/009 approved under it same day. Genuine forks (jar ambiguity, deliberate divergence, resource tradeoffs) still come to the owner framed as decisions.
+_Resolved 2026-07-19:_ Hardware/scale plan (owner-acked): stay on the current VM through mt-044/045/046; gauge-sweep parallelization folded into mt-050's scope; a bigger machine (8–16 cores, 32–64GB) targeted for the verification-heavy exit phase; mt-042(b–d) jumps the queue before any migration. Details in the mt-050 bead.
