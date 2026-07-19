@@ -25,14 +25,18 @@
 //!
 //! Builtin bounds (translation-ref §1.4, `A4Solution` ctor): `Int` is bound
 //! **exactly** to the integer atoms, `seq/Int` exactly to the first `maxseq`
-//! non-negative integer atoms. `univ`/`none`/`iden` are IR **constants**
-//! ([`RelConst`]), not relations — they are given constant denotations, never
-//! allocated.
+//! non-negative integer atoms, `String` **exactly** to the string atoms
+//! scope/universe minted (referenced literals + padding, mt-045). `univ`/`none`/
+//! `iden` are IR **constants** ([`RelConst`]), not relations — they are given
+//! constant denotations, never allocated.
+//!
+//! **String literals** (mt-045, translation-ref §13): each *referenced* literal
+//! additionally gets its own exact singleton relation (the jar's `s2k` map),
+//! recorded in [`BoundsResult::string_denote`] so the lowerer turns an
+//! `ExprKind::Str` into a relational value; a `String`-typed field column ranges
+//! over the string atoms.
 //!
 //! **Deferred (documented, never a wrong verdict):**
-//! - **String** is Rung 4 (ADR-0011): the `String` relation is bound **exactly
-//!   empty** (mettle mints no string atoms yet, mt-029), and `String`
-//!   references denote that empty relation, consistent with what mt-031 needs.
 //! - The `Int/min`/`Int/max`/`Int/next`/`Int/zero` integer-ordering relations
 //!   the jar's `A4Solution` also builds are **not** allocated here — they belong
 //!   to Rung-4 integer fidelity (translation-ref §9); Rung-3 models do not need
@@ -96,6 +100,12 @@ pub struct BoundsResult {
     /// sig/comprehension domain misclassifies (rule 0).
     pub int_sig: Option<RelId>,
     pub seq_int_sig: Option<RelId>,
+    /// The singleton denotation of each **referenced** string literal (mt-045,
+    /// translation-ref §13, the jar's `s2k` map): its content mapped to a fresh
+    /// relation bound exactly to that literal's atom, so the lowerer turns an
+    /// `ExprKind::Str` into a relational value. Keyed on the bare content (no
+    /// surrounding quotes), matching [`ScopedUniverse::string_literals`].
+    pub string_denote: BTreeMap<String, RelExprId>,
 }
 
 /// Computes the relation bounds, denotation seam, and constraint formulas for
@@ -145,6 +155,7 @@ struct BoundsBuilder<'a> {
     int_zero: Option<RelExprId>,
     int_sig: Option<RelId>,
     seq_int_sig: Option<RelId>,
+    string_denote: BTreeMap<String, RelExprId>,
 }
 
 impl<'a> BoundsBuilder<'a> {
@@ -176,6 +187,7 @@ impl<'a> BoundsBuilder<'a> {
             int_zero: None,
             int_sig: None,
             seq_int_sig: None,
+            string_denote: BTreeMap::new(),
         }
     }
 
@@ -189,6 +201,7 @@ impl<'a> BoundsBuilder<'a> {
             int_zero: self.int_zero,
             int_sig: self.int_sig,
             seq_int_sig: self.seq_int_sig,
+            string_denote: self.string_denote,
         }
     }
 
@@ -280,8 +293,13 @@ impl<'a> BoundsBuilder<'a> {
         let seq_atoms = self.seq_atoms();
         let seq_rel = self.bind_builtin(b.seq_int, "seq/Int", &seq_atoms);
         self.seq_int_sig = Some(seq_rel);
-        // String: no string atoms yet (Rung 4) — bound exactly empty.
-        let _ = self.bind_builtin(b.string, "String", &BTreeSet::new());
+        // String (mt-045, translation-ref §13): bound **exactly** to the string
+        // atoms scope/universe minted (referenced literals + padding), and each
+        // referenced literal gets its own exact singleton relation — the jar's
+        // `s2k` map — so `x = "lit"` lowers to a relational equality.
+        let string_atoms = self.string_atoms();
+        let _ = self.bind_builtin(b.string, "String", &string_atoms);
+        self.alloc_string_literals();
         // `Int/next`/`Int/zero` integer-ordering relations (translation-ref §12):
         // exact constants over the int atoms, referenced by `util/integer`'s
         // `next`/`prev`/`nexts`/`prevs` and the seq contiguity fact. `Int/min`/
@@ -942,7 +960,12 @@ impl<'a> BoundsBuilder<'a> {
         if sig == b.univ {
             return (0..self.universe().len()).map(AtomId::from_index).collect();
         }
-        if sig == b.string || sig == b.none {
+        if sig == b.string {
+            // A `String`-typed field column ranges over the string atoms
+            // (mt-045, translation-ref §13); empty when the model has none.
+            return self.string_atoms();
+        }
+        if sig == b.none {
             return BTreeSet::new();
         }
         self.upper.get(&sig).cloned().unwrap_or_default()
@@ -970,6 +993,36 @@ impl<'a> BoundsBuilder<'a> {
             .map(|v| AtomId::from_index(zero_index + v))
             .filter(|a| a.index() < range.end)
             .collect()
+    }
+
+    /// The string atoms (the whole `string_atom_range` — referenced literals
+    /// plus padding, translation-ref §13). `String` is bound exactly to these,
+    /// and they are a `String`-typed field column's upper.
+    fn string_atoms(&self) -> BTreeSet<AtomId> {
+        self.scoped
+            .string_atom_range()
+            .map(AtomId::from_index)
+            .collect()
+    }
+
+    /// Allocates one exact singleton relation per referenced string literal (the
+    /// jar's `s2k` map, translation-ref §13) and records its denotation. Iterated
+    /// in the sorted map order, so relation numbering stays deterministic
+    /// (STYLE D2).
+    fn alloc_string_literals(&mut self) {
+        let span = self.sig_span(self.world.builtins.string);
+        for (content, &atom) in &self.scoped.string_literals {
+            let rel = self.ir.relations.alloc(Relation {
+                name: format!("\"{content}\""),
+                arity: 1,
+                span,
+            });
+            let mut singleton = TupleSet::empty(1);
+            singleton.insert(Tuple::new(vec![atom]));
+            self.bounds.bind(rel, RelBound::exact(singleton));
+            let denote = self.mk_rel_expr(RelExprKind::Relation(rel), span);
+            self.string_denote.insert(content.clone(), denote);
+        }
     }
 
     fn universe(&self) -> &Universe {

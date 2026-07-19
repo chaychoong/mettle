@@ -12,7 +12,7 @@
 use std::path::{Path, PathBuf};
 
 use als_core::ir::Ir;
-use als_core::{compute_bounds, compute_universe, TranslateError};
+use als_core::{compute_bounds, compute_universe};
 use als_types::{resolve, FilesystemLoader, ModuleGraph};
 
 fn workspace_root() -> PathBuf {
@@ -82,19 +82,12 @@ fn corpus_bounds_compute() {
             .filter(|(_, c)| c.span.file == root_file)
         {
             commands += 1;
-            let scoped = match compute_universe(&world, cmd) {
-                Ok(scoped) => scoped,
-                // The typed String defer (non-zero `String` scope, Rung 4 —
-                // mt-037) is the corpus's one legitimate scope-phase exit;
-                // scope_corpus.rs gauges it. No bounds to compute.
-                Err(TranslateError::StringUnsupported { .. }) => continue,
-                Err(_) => {
-                    // Any other scope reject is scope_corpus.rs's gauge; the
-                    // corpus is clean there, so this should not fire.
-                    model_clean = false;
-                    failures.push((path.clone(), i, "scope reject".to_owned()));
-                    continue;
-                }
+            let Ok(scoped) = compute_universe(&world, &graph, cmd) else {
+                // A scope reject is scope_corpus.rs's gauge; the corpus is clean
+                // there, so this should not fire.
+                model_clean = false;
+                failures.push((path.clone(), i, "scope reject".to_owned()));
+                continue;
             };
             // compute_bounds self-asserts the RelBound invariants (arity, lower
             // ⊆ upper) and Bounds::bind (no double-bind) on construction.

@@ -22,7 +22,7 @@ fn run(src: &str, idx: usize) -> (SolveVerdict, Ir, ScopedUniverse, BoundsResult
     let loader = MapLoader::new().with("root.als", src);
     let graph = ModuleGraph::load("root.als", &loader).expect("load");
     let world = resolve(&graph).expect("resolve").world;
-    let scoped = compute_universe(&world, &world.commands[idx]).expect("universe");
+    let scoped = compute_universe(&world, &graph, &world.commands[idx]).expect("universe");
     let mut ir = Ir::default();
     let bounds = compute_bounds(&world, &scoped, &mut ir);
     let goal = lower_command(&world, &graph, &scoped, &bounds, &mut ir, idx).expect("lower");
@@ -72,7 +72,7 @@ fn count(src: &str, idx: usize) -> usize {
     let loader = MapLoader::new().with("root.als", src);
     let graph = ModuleGraph::load("root.als", &loader).expect("load");
     let world = resolve(&graph).expect("resolve").world;
-    let scoped = compute_universe(&world, &world.commands[idx]).expect("universe");
+    let scoped = compute_universe(&world, &graph, &world.commands[idx]).expect("universe");
     let mut ir = Ir::default();
     let bounds = compute_bounds(&world, &scoped, &mut ir);
     let goal = lower_command(&world, &graph, &scoped, &bounds, &mut ir, idx).expect("lower");
@@ -407,7 +407,7 @@ fn lower_defers(src: &str) -> bool {
     let loader = MapLoader::new().with("root.als", src);
     let graph = ModuleGraph::load("root.als", &loader).expect("load");
     let world = resolve(&graph).expect("resolve").world;
-    let scoped = compute_universe(&world, &world.commands[0]).expect("universe");
+    let scoped = compute_universe(&world, &graph, &world.commands[0]).expect("universe");
     let mut ir = Ir::default();
     let bounds = compute_bounds(&world, &scoped, &mut ir);
     lower_command(&world, &graph, &scoped, &bounds, &mut ir, 0).is_err()

@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use als_core::{compute_universe, TranslateError};
+use als_core::compute_universe;
 use als_types::{resolve, FilesystemLoader, ModuleGraph};
 
 fn workspace_root() -> PathBuf {
@@ -49,7 +49,6 @@ fn corpus_universes_compute() {
     let loader = FilesystemLoader::new();
     let mut clean_files = 0usize;
     let mut commands = 0usize;
-    let mut string_defers = 0usize;
     // (file, command index, rendered error) for any scope-phase reject.
     let mut failures: Vec<(PathBuf, usize, String)> = Vec::new();
 
@@ -78,24 +77,11 @@ fn corpus_universes_compute() {
             .filter(|(_, c)| c.span.file == root_file)
         {
             commands += 1;
-            match compute_universe(&world, cmd) {
+            match compute_universe(&world, &graph, cmd) {
                 Ok(su) => {
                     // Determinism: a second run is byte-identical.
-                    let again = compute_universe(&world, cmd).expect("second run");
+                    let again = compute_universe(&world, &graph, cmd).expect("second run");
                     assert_eq!(su.universe, again.universe, "non-deterministic universe");
-                }
-                // The one typed scope-phase defer the corpus legitimately hits:
-                // a non-zero `String` scope (Rung 4 — mt-037's fm2cfs.als
-                // wrong-verdict fix). Deterministic like any other outcome.
-                Err(TranslateError::StringUnsupported { .. }) => {
-                    string_defers += 1;
-                    assert!(
-                        matches!(
-                            compute_universe(&world, cmd),
-                            Err(TranslateError::StringUnsupported { .. })
-                        ),
-                        "non-deterministic scope defer"
-                    );
                 }
                 Err(e) => {
                     model_clean = false;
@@ -109,15 +95,14 @@ fn corpus_universes_compute() {
     }
 
     eprintln!(
-        "scope_corpus: {} files ({clean_files} clean), {commands} commands, {string_defers} String defers, {} scope rejects",
+        "scope_corpus: {} files ({clean_files} clean), {commands} commands, {} scope rejects",
         files.len(),
         failures.len()
     );
     for (path, i, err) in &failures {
         eprintln!("  REJECT {}[cmd {i}]: {err}", path.display());
     }
-    // The corpus is valid Alloy: apart from the typed String defer above, no
-    // command should be rejected by the scope phase. If this ever fires, the
+    // The corpus is valid Alloy: no command should be rejected by the scope phase. If this ever fires, the
     // listed set is the exact out-of-Rung-3 surface to triage.
     assert!(
         failures.is_empty(),

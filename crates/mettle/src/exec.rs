@@ -245,7 +245,7 @@ fn run_one_command(
 ) -> bool {
     let _ = writeln!(out, "{}", command_header(world, graph, pos, cmd));
 
-    let scoped = match compute_universe(world, cmd) {
+    let scoped = match compute_universe(world, graph, cmd) {
         Ok(s) => s,
         Err(e) => {
             let _ = writeln!(out, "CANNOT EXECUTE: {e}\n");

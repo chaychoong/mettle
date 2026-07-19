@@ -274,7 +274,7 @@ fn run_file(
         .filter(|(_, c)| c.span.file == root_file)
     {
         report.commands += 1;
-        let Ok(scoped) = compute_universe(&world, &world.commands[idx]) else {
+        let Ok(scoped) = compute_universe(&world, &graph, &world.commands[idx]) else {
             *report
                 .verdict_buckets
                 .entry("mettle_defer:scope".to_owned())

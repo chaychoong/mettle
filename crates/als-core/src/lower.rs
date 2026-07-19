@@ -33,7 +33,10 @@
 //! - **Temporal** operators (`always`/`until`/`'`/`var`) lower faithfully into
 //!   the IR temporal kinds but the command then reports
 //!   [`TranslateError::TemporalUnsupported`] (bounded LTL→FOL is Rung 6).
-//! - **String literals** → [`TranslateError::StringUnsupported`] (Rung 4).
+//! - **String literals** → their singleton relation (the jar's `s2k` map,
+//!   translation-ref §13, mt-045): `ExprKind::Str` looks up
+//!   [`BoundsResult::string_denote`], the exact one-atom relation the bounds
+//!   phase bound for that referenced literal.
 //! - Exotic field multiplicity shapes, higher-order (lean) macros, and
 //!   unhandled command-target shapes → [`TranslateError::LoweringUnsupported`].
 //! - **Higher-order quantification that cannot be skolemized** (a HO decl at
@@ -1780,7 +1783,24 @@ impl<'a> Lowerer<'a> {
                 let ie = self.lower_int(ctx, e)?;
                 Ok(self.mk_rel(RelExprKind::IntToAtom(ie), span))
             }
-            ExprKind::Str(_) => Err(TranslateError::StringUnsupported { span }),
+            ExprKind::Str(s) => {
+                // A string literal lowers to its singleton relation (the jar's
+                // `s2k` map, translation-ref §13). Every literal reachable from
+                // the goal was collected into the universe by
+                // `strings::collect_referenced_literals` and given a denotation
+                // in the bounds phase; a miss is an internal invariant
+                // violation, never a silent empty relation (negative space).
+                debug_assert!(
+                    self.bounds.string_denote.contains_key(&s),
+                    "string literal {s:?} in the goal was not collected into the universe"
+                );
+                self.bounds.string_denote.get(&s).copied().ok_or_else(|| {
+                    TranslateError::LoweringUnsupported {
+                        what: format!("string literal {s:?} has no denotation"),
+                        span,
+                    }
+                })
+            }
             ExprKind::Binary { op, lhs, rhs } => self.lower_binary_rel(ctx, e, op, lhs, rhs, span),
             ExprKind::BoxJoin { .. } => self.lower_spine_rel(ctx, e, span),
             ExprKind::Arrow { lhs, rhs, .. } => {

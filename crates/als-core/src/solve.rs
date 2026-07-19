@@ -27,6 +27,7 @@ use crate::bounds::{Bounds, Tuple, TupleSet, Universe};
 use crate::bounds_builder::BoundsResult;
 use crate::encode::{Bool, Encoder, PrimaryMap};
 use crate::error::TranslateError;
+#[cfg(debug_assertions)]
 use crate::eval::self_check;
 use crate::ir::{Ir, RelId};
 use crate::lower::LoweredGoal;

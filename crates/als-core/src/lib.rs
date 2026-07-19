@@ -18,6 +18,7 @@ pub mod lower;
 mod overflow_guard;
 pub mod scope;
 pub mod solve;
+mod strings;
 
 pub use bounds_builder::{compute_bounds, BoundsResult};
 pub use error::TranslateError;

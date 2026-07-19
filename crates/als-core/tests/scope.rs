@@ -20,7 +20,7 @@ fn scoped(files: &[(&str, &str)], cmd: usize) -> Result<ScopedUniverse, Translat
     let graph = ModuleGraph::load("root.als", &loader).expect("load");
     let resolved = resolve(&graph).expect("resolve");
     let world: ResolvedWorld = resolved.world;
-    compute_universe(&world, &world.commands[cmd])
+    compute_universe(&world, &graph, &world.commands[cmd])
 }
 
 /// The universe atom names of the single-command model `src`.
@@ -286,14 +286,26 @@ fn non_exact_string_scope_rejected() {
 }
 
 #[test]
-fn nonzero_string_scope_defers_typed() {
-    // mt-037 (fm2cfs.als): the reference fills a non-zero `String` scope with
-    // literal + synthetic `unused%d` atoms; mettle mints none until Rung 4, and
-    // solving with a silently empty `String` flips verdicts (`one String`
-    // fields become unsatisfiable). Must defer typed, never solve.
-    let e = scope_err("sig A { name: one String }\nrun {} for 3 but exactly 4 String\n");
+fn string_scope_pads_after_ints() {
+    // mt-045 (translation-ref §13, probe S2): a non-zero exact `String` scope
+    // with no referenced literals fills the universe tail — after the int atoms
+    // — with synthetic `"String0"`, `"String1"`, … padding atoms (quotes
+    // included), never `unused%d`.
+    let a = atoms("sig A { name: one String }\nrun {} for 3 but exactly 3 String\n");
+    let tail = &a[a.len() - 3..];
+    assert_eq!(
+        tail,
+        &["\"String0\"", "\"String1\"", "\"String2\""],
+        "{a:?}"
+    );
+}
+
+#[test]
+fn nonexact_string_scope_rejects() {
+    // probe S1: a non-exact `String` scope is a pre-solve error.
+    let e = scope_err("sig A {}\nrun { some s: String | s = s } for 3 but 3 String\n");
     assert!(
-        matches!(e, TranslateError::StringUnsupported { .. }),
+        matches!(e, TranslateError::StringScopeNotExact { .. }),
         "{e:?}"
     );
 }

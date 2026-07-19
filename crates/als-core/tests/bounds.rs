@@ -32,7 +32,7 @@ fn build(src: &str) -> Built {
     let loader = MapLoader::new().with("root.als", src);
     let graph = ModuleGraph::load("root.als", &loader).expect("load");
     let world = resolve(&graph).expect("resolve").world;
-    let scoped = compute_universe(&world, &world.commands[0]).expect("compute_universe");
+    let scoped = compute_universe(&world, &graph, &world.commands[0]).expect("compute_universe");
     let mut ir = Ir::default();
     let result = compute_bounds(&world, &scoped, &mut ir);
     Built { world, ir, result }

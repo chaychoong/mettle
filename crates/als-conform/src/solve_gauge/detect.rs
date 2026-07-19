@@ -157,7 +157,6 @@ fn is_prim_descendant(world: &ResolvedWorld, sig: SigId, ancestor: SigId) -> boo
 pub fn lower_defer_class(err: &TranslateError) -> &'static str {
     match err {
         TranslateError::TemporalUnsupported { .. } => "temporal",
-        TranslateError::StringUnsupported { .. } => "string",
         TranslateError::LoweringUnsupported { .. } => "lowering",
         TranslateError::HigherOrder { .. } => "higher_order",
         TranslateError::CapacityExceeded { .. } => "capacity",
@@ -280,7 +279,7 @@ mod tests {
         let resolved =
             als_types::resolve(&graph).unwrap_or_else(|e| panic!("resolve failed: {e:?}"));
         let world = resolved.world;
-        let scoped = compute_universe(&world, &world.commands[0])
+        let scoped = compute_universe(&world, &graph, &world.commands[0])
             .unwrap_or_else(|e| panic!("compute_universe failed: {e:?}"));
         (world, scoped)
     }

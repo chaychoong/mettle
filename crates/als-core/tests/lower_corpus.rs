@@ -39,7 +39,6 @@ fn collect_als_files(dir: &Path, out: &mut Vec<PathBuf>) {
 fn defer_bucket(e: &TranslateError) -> &'static str {
     match e {
         TranslateError::TemporalUnsupported { .. } => "temporal",
-        TranslateError::StringUnsupported { .. } => "string",
         TranslateError::LoweringUnsupported { .. } => "not-yet-lowerable",
         TranslateError::HigherOrder { .. } => "higher-order",
         // Scope-phase errors cannot reach the lowerer (the universe already
@@ -117,7 +116,7 @@ fn corpus_lower() {
             .filter(|(_, c)| c.span.file == root_file)
         {
             commands += 1;
-            let Ok(scoped) = compute_universe(&world, cmd) else {
+            let Ok(scoped) = compute_universe(&world, &graph, cmd) else {
                 continue; // scope rejects are scope_corpus.rs's gauge
             };
             let mut ir = Ir::default();

@@ -87,7 +87,12 @@ pub(crate) struct Encoder<'a> {
     bitwidth: u32,
     /// Universe index of the first integer atom (sig atoms precede them).
     int_start: usize,
-    /// Total universe size (to bound closure iteration and map int atoms).
+    /// Universe index just past the last integer atom (`int_start + 2^bw`).
+    /// String atoms (mt-045) trail the integer atoms, so the int-atom span ends
+    /// here, **not** at `universe_len` — an atom in `[int_end, universe_len)` is
+    /// a string atom, never an integer.
+    int_end: usize,
+    /// Total universe size (to bound closure iteration and index atoms).
     universe_len: usize,
     /// LEDGER-001 overflow switch: `false` (default) forbids, `true` wraps.
     allow_overflow: bool,
@@ -151,6 +156,7 @@ impl<'a> Encoder<'a> {
         seq_int_sig: Option<RelId>,
     ) -> Self {
         let universe_len = bounds.universe.len();
+        let int_end = int_start + if bitwidth >= 1 { 1usize << bitwidth } else { 0 };
         let freevars = FreeVars::build(ir);
         Self {
             ir,
@@ -160,6 +166,7 @@ impl<'a> Encoder<'a> {
             cnf,
             bitwidth,
             int_start,
+            int_end,
             universe_len,
             allow_overflow: opts.allow_overflow,
             encode_budget: opts.encode_budget,
@@ -1039,7 +1046,7 @@ impl<'a> Encoder<'a> {
     fn int_to_atom(&mut self, v: &IntVal) -> Matrix {
         let width = self.bitwidth as usize;
         let mut m = Matrix::empty(1);
-        for i in self.int_start..self.universe_len {
+        for i in self.int_start..self.int_end {
             let atom = AtomId::from_index(i);
             let value = self.atom_int_value(atom).unwrap_or(0);
             let cell = {
@@ -1057,7 +1064,7 @@ impl<'a> Encoder<'a> {
     /// int atoms are `-2^(bw-1) … 2^(bw-1)-1`, ascending, after the sig atoms).
     fn atom_int_value(&self, atom: AtomId) -> Option<i64> {
         let idx = atom.index();
-        if idx < self.int_start || idx >= self.universe_len {
+        if idx < self.int_start || idx >= self.int_end {
             return None;
         }
         let bw = self.bitwidth;

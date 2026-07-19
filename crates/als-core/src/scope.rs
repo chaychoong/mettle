@@ -15,21 +15,31 @@
 //!   sig minted) — the seam [`crate::bounds`]'s builder (mt-030) consumes;
 //! - the resolved `bitwidth` / `maxseq`.
 //!
-//! What it defers (ADR-0011): **String atoms** are not minted here — full
-//! String support (referenced-literal collection, `maxstring` synthetic fill)
-//! is Rung 4; a `String` scope is still validated (`must be exact`). `steps` /
-//! range / increment growth scopes are captured on the command but not expanded
-//! (temporal, Rung 6). `util/ordering` exact forcing is mt-035 — the seam is
+//! **String atoms** (mt-045, translation-ref §13, LEDGER-007) are minted here,
+//! last in the universe (after the int atoms): the referenced literals
+//! (collected by [`crate::strings`] from the goal + facts + sig appended facts +
+//! field bounds, recursing into called funcs only) become the quoted atoms
+//! `"<content>"`, padded to an exact `for … but N String` scope with synthetic
+//! `"String0"`, `"String1"`, … atoms (and expanded past `N` when the referenced
+//! literals already exceed it). Their order among each other is the
+//! deterministic lexicographic order of their contents — the jar's is a
+//! nondeterministic `HashSet`, but string atoms are symmetric so verdict/SB-0
+//! count are order-independent (LEDGER-007).
+//!
+//! What it defers (ADR-0011): `steps` / range / increment growth scopes are
+//! captured on the command but not expanded (temporal, Rung 6). `util/ordering`
+//! exact forcing is mt-035 — the seam is
 //! [`als_types::ResolvedCommand::additional_exact`], already honored here.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use als_syntax::ast::SigMult;
 use als_syntax::ArenaId;
-use als_types::{ResolvedCommand, ResolvedWorld, SigId, SigKind};
+use als_types::{ModuleGraph, ResolvedCommand, ResolvedWorld, SigId, SigKind};
 
 use crate::bounds::{AtomId, Universe};
 use crate::error::TranslateError;
+use crate::strings::collect_referenced_literals;
 
 /// The default overall scope when a command gives no overall and no per-sig
 /// scope (translation-ref §1.1).
@@ -111,10 +121,20 @@ pub struct ScopedUniverse {
     pub bitwidth: u32,
     /// The maximum sequence length / `seq/Int` domain size.
     pub maxseq: u32,
-    /// How many leading universe atoms are sig atoms (the rest are the integer
-    /// atoms). Lets the bounds builder (mt-030) find the integer-atom run
-    /// without re-deriving it.
+    /// How many leading universe atoms are sig atoms (the sig atoms come first,
+    /// then the integer atoms, then the string atoms). Lets the bounds builder
+    /// (mt-030) find the integer-atom run without re-deriving it.
     pub sig_atom_count: usize,
+    /// How many universe atoms are integer atoms (the run immediately after the
+    /// sig atoms). The string atoms are whatever trails them (translation-ref
+    /// §1.3: sigs, then ascending ints, then strings).
+    pub int_atom_count: usize,
+    /// Every **referenced** string literal (its content, no surrounding quotes)
+    /// mapped to its universe atom (mt-045, translation-ref §13). The atom's
+    /// *name* carries the quote characters (`"hi"` for content `hi`); this map
+    /// keys on the bare content so the lowerer can resolve an `ExprKind::Str`.
+    /// Padding atoms are not here — they are never referenced.
+    pub string_literals: BTreeMap<String, AtomId>,
 }
 
 impl ScopedUniverse {
@@ -122,7 +142,15 @@ impl ScopedUniverse {
     /// (ascending, immediately after the sig atoms).
     #[must_use]
     pub fn int_atom_range(&self) -> std::ops::Range<usize> {
-        self.sig_atom_count..self.universe.len()
+        self.sig_atom_count..self.sig_atom_count + self.int_atom_count
+    }
+
+    /// The half-open range of universe indices holding the string atoms
+    /// (appended last — after sig atoms and integer atoms, translation-ref
+    /// §1.3).
+    #[must_use]
+    pub fn string_atom_range(&self) -> std::ops::Range<usize> {
+        self.sig_atom_count + self.int_atom_count..self.universe.len()
     }
 }
 
@@ -138,9 +166,10 @@ impl ScopedUniverse {
 /// conflict, an unresolvable per-sig scope, or a bitwidth over 30).
 pub fn compute_universe(
     world: &ResolvedWorld,
+    graph: &ModuleGraph,
     command: &ResolvedCommand,
 ) -> Result<ScopedUniverse, TranslateError> {
-    let mut solver = ScopeSolver::new(world, command);
+    let mut solver = ScopeSolver::new(world, graph, command);
     solver.seed_explicit()?;
     solver.force_multiplicities();
     solver.run_fixpoint()?;
@@ -152,6 +181,7 @@ pub fn compute_universe(
 /// once, in declaration order).
 struct ScopeSolver<'a> {
     world: &'a ResolvedWorld,
+    graph: &'a ModuleGraph,
     command: &'a ResolvedCommand,
     scope: Vec<Option<u32>>,
     exact: Vec<bool>,
@@ -163,7 +193,7 @@ struct ScopeSolver<'a> {
 }
 
 impl<'a> ScopeSolver<'a> {
-    fn new(world: &'a ResolvedWorld, command: &'a ResolvedCommand) -> Self {
+    fn new(world: &'a ResolvedWorld, graph: &'a ModuleGraph, command: &'a ResolvedCommand) -> Self {
         let n = world.sigs.len();
         let mut children = vec![Vec::new(); n];
         for (id, sig) in world.sigs.iter() {
@@ -178,6 +208,7 @@ impl<'a> ScopeSolver<'a> {
         };
         Self {
             world,
+            graph,
             command,
             scope: vec![None; n],
             exact: vec![false; n],
@@ -252,21 +283,12 @@ impl<'a> ScopeSolver<'a> {
                 self.exact[sig.index()] = true;
             }
         }
-        // A `String` scope must be exact (translation-ref §1.2). The value is a
-        // scalar on the command, not a sig scope.
+        // A `String` scope must be exact (translation-ref §1.2, §13, probe S1).
+        // The value is a scalar on the command, not a sig scope. Padding/
+        // expansion is applied in `finish` once the referenced literals are
+        // collected (mt-045).
         if self.command.maxstring.is_some() && !self.command.string_exact {
             errors.push(TranslateError::StringScopeNotExact {
-                span: self.command.span,
-            });
-        }
-        // A non-zero `String` scope needs actual string atoms (the reference
-        // fills it with the model's literals plus synthetic `unused%d` atoms —
-        // Rung 4). Minting none and solving anyway silently empties every
-        // String-typed field's bound and flips verdicts (fm2cfs.als, mt-037):
-        // defer typed instead. `exactly 0 String` is genuinely empty on both
-        // sides and stays solvable.
-        if self.command.maxstring.is_some_and(|n| n > 0) {
-            errors.push(TranslateError::StringUnsupported {
                 span: self.command.span,
             });
         }
@@ -467,8 +489,11 @@ impl<'a> ScopeSolver<'a> {
                 atoms.push(v.to_string());
             }
         }
+        let int_atom_count = atoms.len() - sig_atom_count;
 
-        // String atoms are Rung 4 (see module docs): not minted here.
+        // --- string atoms: referenced literals then synthetic padding, appended
+        // last (translation-ref §13, LEDGER-007).
+        let string_literals = self.mint_string_atoms(&mut atoms);
 
         let maxseq = self.compute_maxseq(bitwidth);
         let scopes = self.build_scope_table(&minted);
@@ -478,7 +503,61 @@ impl<'a> ScopeSolver<'a> {
             bitwidth,
             maxseq,
             sig_atom_count,
+            int_atom_count,
+            string_literals,
         })
+    }
+
+    /// Mints the `String` sig's atoms onto the end of `atoms` (translation-ref
+    /// §13, LEDGER-007) and returns the referenced-literal → atom map:
+    ///
+    /// 1. collect the **referenced** literals (the goal + all facts + sig
+    ///    appended facts + field bounds, recursing into called funcs — probe
+    ///    S6/S7), each becoming the quoted atom `"<content>"`;
+    /// 2. with an exact `for … but N String` scope, **pad** with synthetic
+    ///    `"String0"`, `"String1"`, … atoms until the population reaches `N`,
+    ///    **skipping** any name a referenced literal already claims (a
+    ///    `HashSet`-grow no-op in the jar, §13.3);
+    /// 3. if the referenced literals already **exceed** `N`, the scope
+    ///    **expands** to hold them all — no padding (probe S4).
+    ///
+    /// The atom names carry the surrounding quotes; the returned map keys on the
+    /// bare content so the lowerer resolves an `ExprKind::Str` (its s2k map).
+    fn mint_string_atoms(&self, atoms: &mut Vec<String>) -> BTreeMap<String, AtomId> {
+        let mut string_literals = BTreeMap::new();
+        // Names already used as string atoms, so padding can skip a collision
+        // (membership-only, never iterated for output — STYLE D3).
+        let mut used_names: BTreeSet<String> = BTreeSet::new();
+
+        let referenced = collect_referenced_literals(self.world, self.graph, self.command);
+        for content in &referenced {
+            let name = quote_atom(content);
+            let id = AtomId::from_index(atoms.len());
+            atoms.push(name.clone());
+            used_names.insert(name);
+            string_literals.insert(content.clone(), id);
+        }
+
+        // Padding: fill to an exact `maxstring`; the expansion case
+        // (`#referenced > maxstring`) adds nothing since the loop condition is
+        // already met (translation-ref §13.4).
+        if let Some(target) = self.command.maxstring {
+            let target = target as usize;
+            let mut string_count = referenced.len();
+            let mut idx = 0u32;
+            while string_count < target {
+                let name = format!("\"String{idx}\"");
+                idx += 1;
+                if used_names.contains(&name) {
+                    continue; // a referenced literal already claims this name
+                }
+                atoms.push(name.clone());
+                used_names.insert(name);
+                string_count += 1;
+            }
+        }
+
+        string_literals
     }
 
     /// The maximum sequence length: the explicit `seq` scope, else the explicit
@@ -583,6 +662,15 @@ fn unique_label(used: &mut BTreeSet<String>, label: &str) -> String {
         }
     }
     unreachable!("suffix search is unbounded")
+}
+
+/// The universe-atom name for a string literal of `content` (translation-ref
+/// §13.1): the content with its surrounding quote characters re-added (the atom
+/// for literal `"hi"` is the 4-char string `"hi"`). The lexer stores the
+/// unescaped content; escapes in the rare quoted form are left as-is, matching
+/// the jar's `"\"" + value + "\""` atom label.
+fn quote_atom(content: &str) -> String {
+    format!("\"{content}\"")
 }
 
 /// The multiplicity/scope conflict error for an explicit scope, if any

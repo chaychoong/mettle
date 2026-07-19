@@ -29,7 +29,7 @@ fn build(src: &str) -> (Ir, Vec<GoalConjunct>) {
     let loader = MapLoader::new().with("root.als", src);
     let graph = ModuleGraph::load("root.als", &loader).expect("load");
     let world = resolve(&graph).expect("resolve").world;
-    let scoped = compute_universe(&world, &world.commands[0]).expect("universe");
+    let scoped = compute_universe(&world, &graph, &world.commands[0]).expect("universe");
     let mut ir = Ir::default();
     let bounds = compute_bounds(&world, &scoped, &mut ir);
     let goal = lower_command(&world, &graph, &scoped, &bounds, &mut ir, 0).expect("lower");
@@ -41,7 +41,7 @@ fn try_build(src: &str) -> Result<(), TranslateError> {
     let loader = MapLoader::new().with("root.als", src);
     let graph = ModuleGraph::load("root.als", &loader).expect("load");
     let world = resolve(&graph).expect("resolve").world;
-    let scoped = compute_universe(&world, &world.commands[0]).expect("universe");
+    let scoped = compute_universe(&world, &graph, &world.commands[0]).expect("universe");
     let mut ir = Ir::default();
     let bounds = compute_bounds(&world, &scoped, &mut ir);
     lower_command(&world, &graph, &scoped, &bounds, &mut ir, 0).map(|_| ())
@@ -611,16 +611,10 @@ fn prime_operator_defers() {
 }
 
 #[test]
-fn string_literal_defers() {
-    let e = try_build("sig A { s: one String }\npred p { all a: A | a.s = \"x\" }\nrun p for 3\n")
-        .unwrap_err();
-    assert!(
-        matches!(
-            e,
-            TranslateError::StringUnsupported { .. } | TranslateError::LoweringUnsupported { .. }
-        ),
-        "{e:?}"
-    );
+fn string_literal_lowers() {
+    // mt-045: a string literal now lowers to its singleton relation (no defer).
+    try_build("sig A { s: one String }\npred p { all a: A | a.s = \"x\" }\nrun p for 3\n")
+        .expect("string literal should lower");
 }
 
 #[test]

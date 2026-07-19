@@ -244,7 +244,7 @@ fn corpus_solve() {
             if std::env::var_os("METTLE_TRACE").is_some() {
                 eprintln!("TRACE {rel}[{idx}]");
             }
-            let Ok(scoped) = compute_universe(&world, &world.commands[idx]) else {
+            let Ok(scoped) = compute_universe(&world, &graph, &world.commands[idx]) else {
                 *buckets.entry("scope_defer").or_default() += 1;
                 continue;
             };

@@ -115,18 +115,6 @@ pub enum TranslateError {
         span: Span,
     },
 
-    /// The command's goal references a String literal, or its scope asks for a
-    /// non-empty `String` sig (the reference mints literal + synthetic
-    /// `unused%d` atoms to fill that scope; mettle mints none yet, and solving
-    /// with a silently empty `String` flips verdicts — fm2cfs.als, mt-037).
-    /// String support is Rung 4 (ADR-0011); a typed defer, never a wrong
-    /// verdict.
-    #[error("String atoms are not yet solvable (Rung 4)")]
-    StringUnsupported {
-        /// Span of the literal or of the command carrying the String scope.
-        span: Span,
-    },
-
     /// A construct mettle cannot yet lower to a sound constraint (an exotic field
     /// multiplicity shape, a higher-order macro whose body cannot be replayed, a
     /// `run`/`check` target shape not yet handled). Deferred with a precise
@@ -184,7 +172,6 @@ impl TranslateError {
             | TranslateError::MustSpecifyScope { span, .. }
             | TranslateError::BitwidthTooLarge { span, .. }
             | TranslateError::TemporalUnsupported { span, .. }
-            | TranslateError::StringUnsupported { span }
             | TranslateError::LoweringUnsupported { span, .. }
             | TranslateError::HigherOrder { span }
             | TranslateError::CapacityExceeded { span, .. } => *span,

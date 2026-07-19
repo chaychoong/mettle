@@ -72,6 +72,10 @@ pub struct Evaluator<'a> {
     /// of the first Int atom (sig atoms precede them).
     bitwidth: u32,
     int_start: usize,
+    /// Universe index just past the last integer atom (`int_start + 2^bw`).
+    /// String atoms (mt-045) trail the integer atoms, so an atom in
+    /// `[int_end, universe_len)` is a string atom, never an integer.
+    int_end: usize,
     universe_len: usize,
     allow_overflow: bool,
     env: BTreeMap<VarId, Tuple>,
@@ -109,6 +113,7 @@ impl<'a> Evaluator<'a> {
             instance,
             bitwidth: scoped.bitwidth,
             int_start: scoped.sig_atom_count,
+            int_end: scoped.sig_atom_count + scoped.int_atom_count,
             universe_len: instance.universe.len(),
             allow_overflow: opts.allow_overflow,
             env: BTreeMap::new(),
@@ -856,7 +861,7 @@ impl<'a> Evaluator<'a> {
     /// one, since Int-atom values are distinct (translation-ref §2.1).
     fn int_to_atom(&self, value: i64) -> TupleSet {
         let mut m = TupleSet::empty(1);
-        for i in self.int_start..self.universe_len {
+        for i in self.int_start..self.int_end {
             let atom = AtomId::from_index(i);
             if self.atom_int_value(atom) == Some(value) {
                 m.insert(Tuple::new(vec![atom]));
@@ -869,7 +874,7 @@ impl<'a> Evaluator<'a> {
     /// §1.3: Int atoms are `-2^(bw-1) … 2^(bw-1)-1`, ascending, after sig atoms).
     fn atom_int_value(&self, atom: AtomId) -> Option<i64> {
         let idx = atom.index();
-        if idx < self.int_start || idx >= self.universe_len || self.bitwidth == 0 {
+        if idx < self.int_start || idx >= self.int_end || self.bitwidth == 0 {
             return None;
         }
         let low = self.signed_min();
