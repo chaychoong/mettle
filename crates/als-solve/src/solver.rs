@@ -179,6 +179,17 @@ pub struct CdclSolver {
     /// re-solves), so a long enumeration reduces periodically. Distinct from the
     /// per-call conflict budget in [`CdclSolver::solve_within`].
     conflicts_total: u64,
+    /// Cumulative branching decisions over the solver's whole life. An
+    /// enumeration over a big-but-easy CNF is **propagation-bound** — thousands
+    /// of near-conflict-free solves — so a conflict count alone cannot budget
+    /// it; decisions tick on every solve and track that work deterministically.
+    decisions_total: u64,
+    /// Cumulative watched-clause visits in [`CdclSolver::propagate`] — the
+    /// dominant unit of real solver work. Decisions and conflicts both
+    /// under-count a big CNF whose watch lists (and enumeration blocking
+    /// clauses) make every single step expensive; propagation visits track that
+    /// cost deterministically, within a small constant of wall time.
+    props_total: u64,
     /// Conflict count at which the next [`CdclSolver::reduce_db`] fires.
     next_reduce: u64,
     /// Current gap between reductions (grows by [`CdclSolver::reduce_inc`]).
@@ -214,6 +225,8 @@ impl CdclSolver {
             var_inc: 1,
             seen: vec![false; num_vars],
             conflicts_total: 0,
+            decisions_total: 0,
+            props_total: 0,
             next_reduce: REDUCE_FIRST_DEFAULT,
             reduce_interval: REDUCE_FIRST_DEFAULT,
             reduce_inc: REDUCE_INC_DEFAULT,
@@ -243,12 +256,31 @@ impl CdclSolver {
 
     /// Cumulative conflicts analyzed over the solver's whole life (across every
     /// incremental `solve`/`solve_within` call so far). Backs the enumeration's
-    /// own cumulative budget (`SolveOptions::enum_conflict_budget` in
+    /// own cumulative budget (`SolveOptions::enum_effort_budget` in
     /// `als-core`): callers snapshot this before and after a `solve_within` to
     /// charge exactly the conflicts that call spent against a total-effort cap.
     #[must_use]
     pub fn total_conflicts(&self) -> u64 {
         self.conflicts_total
+    }
+
+    /// Cumulative branching decisions over the solver's whole life — the
+    /// propagation-tracking half of an enumeration effort budget (see
+    /// [`Self::total_conflicts`]): a big-but-easy CNF enumerates through
+    /// thousands of near-conflict-free solves whose cost a conflict count
+    /// never sees, while every solve makes decisions.
+    #[must_use]
+    pub fn total_decisions(&self) -> u64 {
+        self.decisions_total
+    }
+
+    /// Cumulative watched-clause propagation visits over the solver's whole
+    /// life — the third (and dominant) component of an enumeration effort
+    /// budget: it is the unit actual solver time scales with, so a budget
+    /// including it binds wall time within a small constant, deterministically.
+    #[must_use]
+    pub fn total_props(&self) -> u64 {
+        self.props_total
     }
 
     /// Adds a clause to the live solver, retaining all learned clauses.
@@ -448,6 +480,7 @@ impl CdclSolver {
                 match self.pick_branch() {
                     None => return Some(Outcome::Sat(self.extract_model())),
                     Some(lit) => {
+                        self.decisions_total += 1;
                         self.trail_lim.push(self.trail.len());
                         let ok = self.enqueue(lit, None);
                         debug_assert!(ok, "branching on an unassigned var cannot conflict");
@@ -477,6 +510,7 @@ impl CdclSolver {
             let mut i = 0; // read cursor
             let mut j = 0; // write cursor (compaction of retained watchers)
             while i < ws.len() {
+                self.props_total += 1;
                 let cref = ws[i];
                 // Ensure the now-false literal sits at index 1, the other at 0.
                 if self.clauses[cref].lits[0] == false_lit {

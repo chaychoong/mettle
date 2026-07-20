@@ -7,8 +7,8 @@
 //!   ordered-abstract partition, so it reaches the net and its SB-0 count
 //!   matches the jar exactly (1129 = 1129) → `count_match`;
 //! - `check NoEmpty` (`all b: B | some b.r`, negated) is a first-order top-level
-//!   existential the jar skolemizes at depth 0, so mettle's raw count diverges
-//!   and the command is a typed `skip_fo_skolem`.
+//!   existential that mettle now skolemizes at depth 0 (mt-047), so its SB-0 count
+//!   matches the jar too (561 = 561) → `count_match` (was `skip_fo_skolem`).
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -43,7 +43,7 @@ fn test1_config() -> GaugeConfig {
 }
 
 #[test]
-fn test1_count_smoke_matches_jar_and_skips_fo_skolem() {
+fn test1_count_smoke_matches_jar() {
     if !jar_path().is_file() {
         eprintln!(
             "SKIP {}: reference jar not found at {} (expected for CI)",
@@ -57,18 +57,19 @@ fn test1_count_smoke_matches_jar_and_skips_fo_skolem() {
         run_gauge(&test1_config(), &mut |_| {}).unwrap_or_else(|e| panic!("run_gauge failed: {e}"));
 
     assert_eq!(report.commands, 2, "test1.als has two commands");
-    // `run show` reaches the net and matches the jar's SB-0 count (1129).
+    // Both commands reach the net and match the jar's SB-0 count exactly:
+    // `run show` at 1129, and `check NoEmpty` at 561 now that mt-047 skolemizes
+    // its top-level first-order existential (was the `skip_fo_skolem` divergence).
     assert_eq!(
         report.count_buckets.get("count_match"),
-        Some(&1),
-        "run show must land count_match (1129=1129); buckets={:?}",
+        Some(&2),
+        "both commands must land count_match (1129=1129, 561=561); buckets={:?}",
         report.count_buckets
     );
-    // `check NoEmpty` is a skolemizable first-order existential.
     assert_eq!(
         report.count_buckets.get("skip_fo_skolem"),
-        Some(&1),
-        "check NoEmpty must land skip_fo_skolem; buckets={:?}",
+        None,
+        "skip_fo_skolem is retired (mt-047); buckets={:?}",
         report.count_buckets
     );
     assert!(

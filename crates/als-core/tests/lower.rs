@@ -138,11 +138,20 @@ fn golden_int_equality_promotes_literal() {
 #[test]
 fn golden_check_negates_assertion() {
     // assert noSelf { all a: A | a not in a.f }  check noSelf
-    // jar: the negated assertion body (SAT = counterexample).
+    // jar: the negated assertion body (SAT = counterexample). The `all a: A` sits
+    // at negative polarity (under the check's `!`), so it is an effective
+    // existential and first-order-skolemizes to `$noSelf_a` (mt-047, §15; the
+    // skolem label is the checked assertion's name): the quantifier is dropped and
+    // the decl becomes `($noSelf_a in A and one $noSelf_a) => body`, the whole
+    // thing negated back to the counterexample form = a single `a` in `A` with
+    // `a in a.f`.
     let (ir, cj) = build(
         "sig A { f: set A }\nassert noSelf { all a: A | a not in a.f }\ncheck noSelf for 3\n",
     );
-    assert_eq!(command_str(&ir, &cj), "!((all a: A | !(a in (a . A.f))))");
+    assert_eq!(
+        command_str(&ir, &cj),
+        "!((($noSelf_a in A and one $noSelf_a) => !($noSelf_a in ($noSelf_a . A.f))))"
+    );
 }
 
 #[test]
@@ -509,9 +518,14 @@ fn golden_subset_sig_bound_constraint() {
 
 #[test]
 fn run_pred_existentially_quantifies_params() {
-    // run p where p[x: A] — the param is existentially quantified over A.
+    // run p where p[x: A] — the param is a top-level first-order existential,
+    // skolemized to the constant relation `$p_x` (mt-047, §15): membership +
+    // `one` + the body, all conjoined (the quantifier is dropped).
     let (ir, cj) = build("sig A { f: set A }\npred p[x: A] { some x.f }\nrun p for 3\n");
-    assert_eq!(command_str(&ir, &cj), "(some x: A | some (x . A.f))");
+    assert_eq!(
+        command_str(&ir, &cj),
+        "($p_x in A and one $p_x and some ($p_x . A.f))"
+    );
 }
 
 #[test]
@@ -822,12 +836,14 @@ fn golden_skolem_check_negated_universal() {
     //   (all v0:A | (v0.Inj_f) in B) and (all v1:B | lone(Inj_f.v1) and
     //   (Inj_f.v1) in A)) implies some Inj_f)
     // The check's `!` makes the universal `f` an effective existential →
-    // skolemizable; the decl-constraint becomes the antecedent (probe T9c).
+    // skolemizable; the decl-constraint becomes the antecedent (probe T9c). The
+    // skolem label is the checked assertion's name `Inj` (mt-047 wired the
+    // assert-name label for both HO and FO check skolems) → `$Inj_f`.
     let (ir, cj) =
         build("sig A {}\nsig B {}\nassert Inj { all f: A lone -> B | some f }\ncheck Inj for 3\n");
     assert_eq!(
         command_str(&ir, &cj),
-        "!((($f in (A -> B) and (all _c0: B | lone ($f . _c0))) => some $f))"
+        "!((($Inj_f in (A -> B) and (all _c0: B | lone ($Inj_f . _c0))) => some $Inj_f))"
     );
 }
 
@@ -936,14 +952,17 @@ fn explicit_receiver_binds_this_from_the_join() {
     // jar dump (DumpK2, scratchpad/probe/recv/r2.als): `a.foo[b]` inlines to
     // `some (a . A.f)` — `this` bound to the join's LHS `a`, not any ambient
     // `this` (there is none here: the call sits inside a `run` block, not
-    // another receiver-pred/appended-fact body).
+    // another receiver-pred/appended-fact body). The top-level `some a: A, b: B`
+    // are first-order existentials, so each skolemizes to a constant relation
+    // (mt-047, §15; anonymous `run` ⇒ bare `$a`/`$b` names): membership + `one`
+    // per var, conjoined with the inlined body.
     let (ir, cj) = build(
         "sig A { f: set A }\nsig B {}\npred A.foo[x: B] { some this.f }\n\
          run { some a: A, b: B | a.foo[b] } for 3\n",
     );
     assert_eq!(
         command_str(&ir, &cj),
-        "(some a: A | (some b: B | some (a . A.f)))"
+        "($a in A and one $a and $b in B and one $b and some ($a . A.f))"
     );
 }
 

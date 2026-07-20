@@ -58,19 +58,26 @@ pub struct SolveOptions {
     /// grounded walk that folds every gate away and would never trip a plain
     /// clause cap. Deterministic — a pure count of the traversal (STYLE D1).
     pub encode_budget: Option<u64>,
-    /// Cumulative SAT-conflict budget across an **entire enumeration** (every
-    /// instance solve [`enumerate`] performs, summed); `None` (default) =
-    /// unbudgeted. Deterministic like [`Self::conflict_budget`] (conflict-counted,
-    /// never wall-clock), but a different knob: `conflict_budget` bounds one
-    /// *verdict* solve, while this bounds the *total* effort of a whole
-    /// enumeration. Enumeration is exact by contract (see
+    /// Cumulative **effort** budget across an **entire enumeration** (every
+    /// instance solve [`enumerate`] performs, summed), where effort = SAT
+    /// **conflicts + branching decisions + propagation clause-visits**;
+    /// `None` (default) = unbudgeted. Propagation visits are the term that
+    /// makes the budget bind wall time: enumeration over a big-but-easy CNF is
+    /// *propagation-bound* — thousands of near-conflict-free solves whose cost
+    /// neither a conflict count nor a decision count sees, because each single
+    /// step drags huge watch lists and accumulated blocking clauses (the two
+    /// mt-047 counting-net grinds). Deterministic like
+    /// [`Self::conflict_budget`] (effort-counted, never wall-clock), but a
+    /// different knob: `conflict_budget` bounds one *verdict* solve, while this
+    /// bounds the *total* effort of a whole enumeration. Enumeration is exact
+    /// by contract (see
     /// [`InstanceEnumerator`] docs) — a budget-truncated count would be a
     /// silently wrong answer, so this never truncates the count. Instead, when
     /// the budget runs out mid-enumeration, the enumerator stops and reports
     /// itself [`InstanceEnumerator::exhausted`], so a caller (the SB-0 counting
     /// net) can skip the command typed rather than either hang or fabricate a
     /// count.
-    pub enum_conflict_budget: Option<u64>,
+    pub enum_effort_budget: Option<u64>,
 }
 
 /// A solving verdict for one command.
@@ -326,7 +333,7 @@ pub fn solve_goal(
 /// guard *does* apply (it fails [`enumerate`] loudly at translate time,
 /// corrupting nothing).
 ///
-/// The separate [`SolveOptions::enum_conflict_budget`] bounds the TOTAL effort
+/// The separate [`SolveOptions::enum_effort_budget`] bounds the TOTAL effort
 /// of the whole enumeration (summed across every instance solve), not any one
 /// verdict. It never truncates the count silently: running out ends
 /// enumeration in loud exhaustion ([`InstanceEnumerator::exhausted`]) instead
@@ -344,8 +351,9 @@ pub struct InstanceEnumerator<'a> {
     scoped: &'a ScopedUniverse,
     goal: &'a LoweredGoal,
     opts: SolveOptions,
-    /// Remaining cumulative conflicts before [`SolveOptions::enum_conflict_budget`]
-    /// is exhausted; `None` = unbudgeted (charge nothing, never exhaust).
+    /// Remaining cumulative effort (conflicts + decisions) before
+    /// [`SolveOptions::enum_effort_budget`] is exhausted; `None` = unbudgeted
+    /// (charge nothing, never exhaust).
     budget_remaining: Option<u64>,
     /// Set once `budget_remaining` hits zero mid-enumeration: the sequence
     /// stopped short of `Unsat`, so its count is a **lower bound**, not exact.
@@ -354,7 +362,7 @@ pub struct InstanceEnumerator<'a> {
 
 impl InstanceEnumerator<'_> {
     /// Whether the enumeration stopped because
-    /// [`SolveOptions::enum_conflict_budget`] ran out (rather than reaching a
+    /// [`SolveOptions::enum_effort_budget`] ran out (rather than reaching a
     /// true `Unsat` and finishing exactly). Callers must check this before
     /// trusting a count from this enumerator.
     #[must_use]
@@ -372,14 +380,31 @@ impl Iterator for InstanceEnumerator<'_> {
             return None;
         }
         let outcome = if let Some(remaining) = self.budget_remaining {
-            let before = self.solver.total_conflicts();
+            // Effort = conflicts + decisions + propagation clause-visits. The
+            // last is the term that actually tracks solver wall time: a
+            // big-but-easy CNF enumerates through thousands of
+            // near-conflict-free solves where each *step* is expensive (huge
+            // watch lists, accumulated blocking clauses) — conflict and
+            // decision counts both under-bill that mode (the two mt-047
+            // counting-net grinds). A solve is only *interrupted* on the
+            // conflict half (`solve_within`); the decision/propagation charge
+            // lands between instance solves, which suffices — each individual
+            // solve terminates in exactly the modes the other terms miss.
+            if remaining == 0 {
+                self.exhausted = true;
+                self.done = true;
+                return None;
+            }
+            let effort =
+                |s: &CdclSolver| s.total_conflicts() + s.total_decisions() + s.total_props();
+            let before = effort(&self.solver);
             let Some(outcome) = self.solver.solve_within(remaining) else {
                 // Budget exhausted mid-enumeration: stop short, loudly.
                 self.exhausted = true;
                 self.done = true;
                 return None;
             };
-            let spent = self.solver.total_conflicts().saturating_sub(before);
+            let spent = effort(&self.solver).saturating_sub(before);
             self.budget_remaining = Some(remaining.saturating_sub(spent));
             outcome
         } else {
@@ -437,7 +462,7 @@ pub fn enumerate<'a>(
         scoped,
         goal,
         opts: *opts,
-        budget_remaining: opts.enum_conflict_budget,
+        budget_remaining: opts.enum_effort_budget,
         exhausted: false,
     })
 }

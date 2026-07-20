@@ -62,7 +62,7 @@
     clippy::unused_self
 )]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use als_syntax::ast::{Ast, BinOp, CmpOp, Const, Decl, ExprId, ExprKind, Mult, Quant, UnOp};
 use als_syntax::{ArenaId, Span};
@@ -97,7 +97,17 @@ pub struct LoweredGoal {
     /// skolem exactly like any other bounded relation (zero downstream
     /// special-casing). Empty for a goal with no skolemizable HO decl. In `RelId`
     /// allocation order (source-walk order — deterministic, STYLE D1).
+    ///
+    /// **First-order** skolems (mt-047, translation-ref §15) land here too — a
+    /// top-level effective-existential FO decl (`some x: A | …`, or the `all` of a
+    /// `check`'s negated body) becomes a skolem *constant* relation exactly like a
+    /// HO one. [`Self::has_higher_order_skolem`] tells the two apart.
     pub skolem_bounds: Vec<(RelId, RelBound)>,
+    /// Whether any skolem in [`Self::skolem_bounds`] came from a genuinely
+    /// **higher-order** decl (ranging over sub-relations, mt-038). A goal whose
+    /// skolems are all *first-order* (mt-047) counts exactly, so it is not subject
+    /// to the gauge's conservative HO-count skip.
+    pub has_higher_order_skolem: bool,
     /// The `Int`/`seq/Int` builtin relation ids (copied from the bounds builder),
     /// so the evaluator's forbid-mode overflow classifier can recognize a
     /// bare-`Int` quantifier domain (translation-ref §10.7c) without re-deriving
@@ -152,7 +162,7 @@ pub fn lower_command(
     // The bounds builder already consumed `scoped` into the denotation seam; the
     // lowerer keeps only the bitwidth, for `fun/min`/`fun/max` (which the jar
     // translates to the int constants `min`/`max` of the bitwidth — §12).
-    let cmd_label = skolem_command_label(world, command_index);
+    let cmd_label = skolem_command_label(world, graph, command_index);
     let mut lowerer = Lowerer {
         world,
         graph,
@@ -164,17 +174,27 @@ pub fn lower_command(
         pol: Pol::asserted(),
         cmd_label,
         skolem_bounds: Vec::new(),
+        has_higher_order_skolem: false,
+        skolem_names: BTreeSet::new(),
         var_bound: BTreeMap::new(),
         bitwidth: scoped.bitwidth,
     };
     lowerer.lower(command_index)
 }
 
-/// The skolem-name label for a command (translation-ref §2.3/§10.6, probe T9):
-/// its explicit `label:` prefix; else, for `run p`/`check a`, the target
-/// name; else empty (skolems fall back to `$<var>`). A `$` in the label makes
-/// the reference drop the prefix, so mettle does too.
-fn skolem_command_label(world: &ResolvedWorld, command_index: usize) -> String {
+/// The skolem-name label for a command (translation-ref §2.3/§10.6/§15, probes
+/// T9/K1–K3): its explicit `label:` prefix; else the target name — the run
+/// pred/fun's name (`run p` → `$p_…`), or the checked assertion's declared name
+/// (`check NoEmpty` → `$NoEmpty_…`); else empty (an anonymous `run`/`check {…}`,
+/// skolems fall back to `$<var>`). A `$` in the label makes the reference drop
+/// the prefix, so mettle does too. The assert name is not stored on the resolved
+/// command (a resolution-doc scope choice), so it is recovered from the AST the
+/// same way [`crate::exec`]-style callers do.
+fn skolem_command_label(
+    world: &ResolvedWorld,
+    graph: &ModuleGraph,
+    command_index: usize,
+) -> String {
     let Some(cmd) = world.commands.get(command_index) else {
         return String::new();
     };
@@ -186,10 +206,38 @@ fn skolem_command_label(world: &ResolvedWorld, command_index: usize) -> String {
                 .first()
                 .map(|&f| world.funcs[f].name.clone())
                 .unwrap_or_default(),
+            CmdTargetResolved::Assert { body, module } => {
+                assert_decl_name(graph, *module, *body).unwrap_or_default()
+            }
             _ => String::new(),
         },
     };
+    if label.contains('$') {
+        return String::new();
+    }
     label
+}
+
+/// Recovers a checked assertion's declared name by walking its module's AST back
+/// to the `assert` whose body matches (the reverse of `als_types`'s `find_assert`).
+/// `ResolvedCommand` never stores the name, so this is where the skolem label
+/// recovers it from the [`ModuleGraph`].
+fn assert_decl_name(graph: &ModuleGraph, module: ModuleId, body: ExprId) -> Option<String> {
+    use als_syntax::ast::{Para, ParaName};
+    let file = graph.modules[module].file;
+    let ast = graph.files.file(file).ast_ref();
+    for &pid in &ast.paragraphs {
+        if let Para::Assert(a) = &ast.paras[pid] {
+            if a.body == body {
+                return match &a.name {
+                    Some(ParaName::Ident(id)) => Some(id.text.clone()),
+                    Some(ParaName::Str { value, .. }) => Some(value.clone()),
+                    None => None,
+                };
+            }
+        }
+    }
+    None
 }
 
 /// A lexical binding active during lowering: mirrors the checker's env so a
@@ -290,6 +338,17 @@ struct Lowerer<'a> {
     /// Skolem relations minted this command, with their bounds (see
     /// [`LoweredGoal::skolem_bounds`]). In allocation (source-walk) order.
     skolem_bounds: Vec<(RelId, RelBound)>,
+    /// Set once a genuinely **higher-order** decl is skolemized (mt-038); stays
+    /// false for a goal whose skolems are all first-order (mt-047). See
+    /// [`LoweredGoal::has_higher_order_skolem`].
+    has_higher_order_skolem: bool,
+    /// Skolem relation names already allocated this command, so a name collision
+    /// (two decls `some x: A | …` and `some x: A | …` under one command) mints
+    /// **distinct** relations with **distinct** names — the jar's `un.make("$"+n)`
+    /// uniquification (translation-ref §15). The suffix scheme (`_2`, `_3`, …) is
+    /// mettle-chosen and display-only; the verdict/count depend only on the
+    /// relations being distinct, which they always are (distinct [`RelId`]s).
+    skolem_names: BTreeSet<String>,
     /// Each bound variable's declared bound expression, for [`Self::abstract_upper`]
     /// (translation-ref §10.6): a skolem whose bound depends on an enclosing
     /// existential variable `t` (`some r: f[t] one -> one g[t] | …`) is still a
@@ -401,6 +460,7 @@ impl<'a> Lowerer<'a> {
             goal,
             conjuncts,
             skolem_bounds: std::mem::take(&mut self.skolem_bounds),
+            has_higher_order_skolem: self.has_higher_order_skolem,
             int_sig: self.bounds.int_sig,
             seq_int_sig: self.bounds.seq_int_sig,
         })
@@ -474,8 +534,10 @@ impl<'a> Lowerer<'a> {
     }
 
     /// `run p`: `some x1: B1, …, xn: Bn | body` — the pred's params existentially
-    /// quantified over their declaration bounds (translation-ref §2.5(3)). A
-    /// receiver param (`pred A.p`) is quantified over its sig `A`.
+    /// quantified over their declaration bounds (translation-ref §2.5(3)); each
+    /// top-level existential (receiver + params) skolemizes at depth 0 (§15). A
+    /// receiver param (`pred A.p`) ranges over its sig `A`.
+    #[allow(clippy::too_many_lines)]
     fn run_pred(&mut self, func: FuncIdx, span: Span) -> Result<FormulaId, TranslateError> {
         let module = self.world.funcs[func].module;
         let body = self.world.funcs[func].body;
@@ -494,7 +556,14 @@ impl<'a> Lowerer<'a> {
         };
         let mut var_bounds: Vec<(crate::ir::VarId, RelExprId)> = Vec::new();
         let mut pushed = 0usize;
-        // Receiver `this` over its sig.
+        // A run-pred param (and the receiver `this`) is a **top-level existential**
+        // (positive polarity, nothing blocked) — skolemizable at depth 0
+        // (translation-ref §10.6/§15). `skolem_constraints` collects every skolem's
+        // membership/multiplicity conjunct; each param binds to its skolem relation.
+        self.pol = Pol::asserted();
+        let mut skolem_constraints: Vec<FormulaId> = Vec::new();
+        // Receiver `this` over its sig — a first-order existential (`one this: S`),
+        // skolemized like any other (mt-047).
         if let Some(recv) = receiver {
             let sig = self.world.funcs[func]
                 .params
@@ -512,25 +581,26 @@ impl<'a> Lowerer<'a> {
                 });
             };
             let bound = self.sig_denote(sig, span)?;
-            let vid = self.ir.vars.alloc(Var {
-                name: "this".to_owned(),
-                arity: 1,
-                span,
-            });
-            var_bounds.push((vid, bound));
-            self.var_bound.insert(vid, bound);
-            self.binders.push(("this".to_owned(), Binding::Var(vid)));
+            if let Some(upper) = self.abstract_upper(bound) {
+                let x = self.fo_skolemize("this", bound, 1, upper, span, &mut skolem_constraints);
+                self.binders.push(("this".to_owned(), Binding::Expr(x)));
+            } else {
+                let vid = self.ir.vars.alloc(Var {
+                    name: "this".to_owned(),
+                    arity: 1,
+                    span,
+                });
+                var_bounds.push((vid, bound));
+                self.var_bound.insert(vid, bound);
+                self.binders.push(("this".to_owned(), Binding::Var(vid)));
+            }
             pushed += 1;
         }
-        // A run-pred param is a **top-level existential** (positive polarity,
-        // nothing blocked) — always skolemizable (translation-ref §10.6, probe
-        // T9f). A param that is set-valued (an explicit `set`/`some`/`lone` marker)
-        // or higher-arity (default `set`, the jar's free skolem relation) is
-        // minted as a free relation with its membership/multiplicity constraint;
-        // a plain unary param (default `one`) stays a first-order existential over
-        // its atoms.
-        self.pol = Pol::asserted();
-        let mut skolem_constraints: Vec<FormulaId> = Vec::new();
+        // A param that is set-valued (an explicit `set`/`some`/`lone` marker) or
+        // higher-arity (default `set`, the jar's free skolem relation) is minted as
+        // a free relation with its membership/multiplicity constraint (mt-038,
+        // probe T9f); a plain unary param (default `one`) is a first-order
+        // existential, skolemized to a constant singleton relation (mt-047).
         for &d in &param_decls {
             let decl = ast.decls[d].clone();
             if decl.is_bound_disj {
@@ -545,13 +615,35 @@ impl<'a> Lowerer<'a> {
                     })?;
             let bound_span = ast.exprs[decl.bound].span;
             let is_higher_order = arity >= 2 || self.decl_is_higher_order(ctx, decl.bound);
+            if is_higher_order {
+                self.has_higher_order_skolem = true;
+            }
+            // A first-order param skolemizes when its bound has a sound abstract
+            // upper (nearly always — a param bound is a plain relation); otherwise
+            // it stays an ordinary existential (pre-mt-047 count, correct verdict).
+            let fo_upper = if is_higher_order {
+                None
+            } else {
+                self.abstract_upper(set_expr)
+            };
             for name in &decl.names {
                 if is_higher_order {
                     let x = self.mint_skolem(ctx, &name.text, &decl, name.span)?;
                     skolem_constraints
                         .extend(self.skolem_decl_constraints(ctx, x, &decl, bound_span)?);
                     self.binders.push((name.text.clone(), Binding::Expr(x)));
+                } else if let Some(upper) = fo_upper.clone() {
+                    let x = self.fo_skolemize(
+                        &name.text,
+                        set_expr,
+                        arity,
+                        upper,
+                        name.span,
+                        &mut skolem_constraints,
+                    );
+                    self.binders.push((name.text.clone(), Binding::Expr(x)));
                 } else {
+                    // Un-boundable bound: an ordinary first-order existential.
                     let vid = self.ir.vars.alloc(Var {
                         name: name.text.clone(),
                         arity: 1,
@@ -2782,6 +2874,7 @@ impl<'a> Lowerer<'a> {
                 if !matches!(regime, SkolemRegime::Allowed) {
                     return Err(TranslateError::HigherOrder { span: bound_span });
                 }
+                self.has_higher_order_skolem = true;
                 // Skolemize each name of the group; collect them for a `disj`.
                 let mut group: Vec<RelExprId> = Vec::new();
                 for name in &decl.names {
@@ -2808,6 +2901,34 @@ impl<'a> Lowerer<'a> {
                         what: "quantifier over a bound of unknown arity".to_owned(),
                         span,
                     })?;
+            // First-order skolemization (mt-047, translation-ref §15): a top-level
+            // effective-existential FO decl (regime `Allowed`) becomes a skolem
+            // constant relation — one per name, membership + `one`, plus `disj`
+            // conjuncts — dropping the quantifier so SB-0 enumeration counts each
+            // witness (K4). Every name in the group shares `bound`, so a single
+            // abstract-upper probe decides the whole group; a bound with no sound
+            // upper falls through to ordinary quantifier vars (correct verdict,
+            // pre-mt-047 count).
+            if let (SkolemRegime::Allowed, Some(upper)) = (regime, self.abstract_upper(bound)) {
+                let mut group: Vec<RelExprId> = Vec::new();
+                for name in &decl.names {
+                    let x = self.fo_skolemize(
+                        &name.text,
+                        bound,
+                        arity,
+                        upper.clone(),
+                        name.span,
+                        &mut out.skolem_constraints,
+                    );
+                    self.binders.push((name.text.clone(), Binding::Expr(x)));
+                    out.pushed += 1;
+                    group.push(x);
+                }
+                if decl.is_disj && group.len() >= 2 {
+                    self.push_pairwise_disjoint(&group, span, &mut out.skolem_constraints);
+                }
+                continue;
+            }
             let mut group: Vec<RelExprId> = Vec::new();
             for name in &decl.names {
                 let vid = self.ir.vars.alloc(Var {
@@ -2865,15 +2986,93 @@ impl<'a> Lowerer<'a> {
             .abstract_upper(set_expr)
             .ok_or(TranslateError::HigherOrder { span })?;
         debug_assert_eq!(upper.arity(), arity, "skolem abstract-upper arity mismatch");
-        let name = if self.cmd_label.is_empty() {
+        Ok(self.alloc_skolem(var, arity, upper, span))
+    }
+
+    /// Allocates a fresh skolem relation `$<cmdLabel>_<var>` (empty label ⇒
+    /// `$<var>`, translation-ref §15) of the given arity, bounded `[{}, upper]`,
+    /// records it in [`Self::skolem_bounds`], and returns the relation expression
+    /// the var binds to. The shared allocation core for both the higher-order
+    /// skolem path ([`Self::mint_skolem`], mt-038) and the first-order one
+    /// ([`Self::fo_skolemize`], mt-047).
+    fn alloc_skolem(&mut self, var: &str, arity: usize, upper: TupleSet, span: Span) -> RelExprId {
+        // §15 naming: inside an inlined func/pred body the prefix is the
+        // *innermost function's* tail label, not the command's (`run foo { q }`
+        // with `some x` in `q` → `$q_x`); a `$` in the label drops the prefix,
+        // same as for command labels.
+        let label = match self.inline_stack.last() {
+            Some(&f) => {
+                let n = &self.world.funcs[f].name;
+                if n.contains('$') {
+                    ""
+                } else {
+                    n.as_str()
+                }
+            }
+            None => self.cmd_label.as_str(),
+        };
+        let base = if label.is_empty() {
             format!("${var}")
         } else {
-            format!("${}_{}", self.cmd_label, var)
+            format!("${label}_{var}")
         };
+        // Uniquify against every skolem name already minted this command (the
+        // jar's `un.make`, translation-ref §15) — display-only; distinct `RelId`s
+        // already keep the relations apart for the verdict/count.
+        let mut name = base.clone();
+        let mut k = 2u32;
+        while !self.skolem_names.insert(name.clone()) {
+            name = format!("{base}_{k}");
+            k += 1;
+        }
         let rel = self.ir.relations.alloc(Relation { name, arity, span });
         let lower = TupleSet::empty(arity);
         self.skolem_bounds.push((rel, RelBound::new(lower, upper)));
-        Ok(self.mk_rel(RelExprKind::Relation(rel), span))
+        self.mk_rel(RelExprKind::Relation(rel), span)
+    }
+
+    /// First-order skolemization (mt-047, translation-ref §15): mints a skolem
+    /// **constant** relation for a top-level effective-existential first-order
+    /// decl `var: bound` (a plain sig quantifier, a `one`-marked decl, or a plain
+    /// unmarked product) whose lowered bound is `bound` with sound abstract
+    /// `upper`. Pushes the decl's constraints onto `out` — membership `$var in
+    /// bound` plus `one $var` (a first-order quant var ranges over a single tuple
+    /// of its bound, the jar's scalar reading) — and returns the skolem's relation
+    /// expression. The caller decides eligibility: it skolemizes only when
+    /// [`Self::abstract_upper`] gave an upper (a comprehension / `Int[·]` / ITE /
+    /// prime bound has none, and there the caller keeps an ordinary first-order
+    /// quantifier — correct verdict, pre-mt-047 count).
+    fn fo_skolemize(
+        &mut self,
+        var: &str,
+        bound: RelExprId,
+        arity: usize,
+        upper: TupleSet,
+        span: Span,
+        out: &mut Vec<FormulaId>,
+    ) -> RelExprId {
+        debug_assert_eq!(
+            upper.arity(),
+            arity,
+            "fo-skolem abstract-upper arity mismatch"
+        );
+        let x = self.alloc_skolem(var, arity, upper, span);
+        out.push(self.mk_formula(
+            FormulaKind::RelCompare {
+                op: RelCmpOp::Subset,
+                lhs: x,
+                rhs: bound,
+            },
+            span,
+        ));
+        out.push(self.mk_formula(
+            FormulaKind::MultTest {
+                test: MultTest::One,
+                expr: x,
+            },
+            span,
+        ));
+        x
     }
 
     /// The membership + multiplicity constraint conjuncts on a skolem relation
@@ -2942,7 +3141,21 @@ impl<'a> Lowerer<'a> {
     /// defers. Deterministic: every set is `BTreeSet`-backed.
     fn abstract_upper(&self, r: RelExprId) -> Option<TupleSet> {
         match &self.ir.rel_exprs[r].kind {
-            RelExprKind::Relation(rel) => Some(self.bounds.bounds.get(*rel)?.upper().clone()),
+            // A relation's upper comes from the bounds builder — or, for a
+            // skolem minted earlier in THIS lowering, from `skolem_bounds` (the
+            // builder never saw it). Without the skolem arm, a decl bounded by
+            // an earlier skolem (`some b: Book, n: b.names | …` after `b`
+            // skolemizes) silently loses its upper: an FO decl then falls back
+            // to a quantifier (jar-divergent SB-0 count — addressBook2e[3]) and
+            // a HO decl falls back to a typed HigherOrder defer.
+            RelExprKind::Relation(rel) => match self.bounds.bounds.get(*rel) {
+                Some(b) => Some(b.upper().clone()),
+                None => self
+                    .skolem_bounds
+                    .iter()
+                    .find(|(sr, _)| sr == rel)
+                    .map(|(_, b)| b.upper().clone()),
+            },
             RelExprKind::Const(RelConst::None) => Some(TupleSet::empty(1)),
             RelExprKind::Const(RelConst::Univ) => Some(self.univ_upper()),
             RelExprKind::Const(RelConst::Iden) => Some(self.iden_upper()),

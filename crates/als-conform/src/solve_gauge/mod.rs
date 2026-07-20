@@ -44,7 +44,7 @@ use crate::model::{FileOutcome, Outcome};
 use crate::shim::{ensure_shim_compiled, run_oracle_on_file};
 
 use baseline::{load_baselines, JarVerdict};
-use detect::{has_skolemizable_fo_existential, lower_defer_class, ordered_abstract_partition};
+use detect::{lower_defer_class, ordered_abstract_partition};
 
 /// Default corpus roots (mirrors [`crate::DEFAULT_CORPUS_ROOTS`] but relative to
 /// the workspace root the gauge is handed).
@@ -76,11 +76,14 @@ pub struct GaugeConfig {
     /// Enumerate at most this many mettle instances before skipping a command as
     /// `skip_mettle_cap` (and the jar side is capped at `count_cap + 1`).
     pub count_cap: u64,
-    /// Cumulative SAT-conflict budget across one command's whole SB-0
-    /// enumeration (all instance solves summed), independent of `count_cap`: a
-    /// model can pass the primary-var cap and still grind for hours because each
-    /// individual instance solve is expensive. Exhausting it ends enumeration in
-    /// a typed `skip_enum_budget`, never a silently truncated count.
+    /// Cumulative **effort** budget (conflicts + decisions + propagation clause-visits)
+    /// across one command's whole SB-0 enumeration (all instance solves
+    /// summed), independent of `count_cap`: a model can pass the primary-var
+    /// cap and still grind for hours — either through expensive individual
+    /// solves (conflict-bound) or through thousands of near-conflict-free
+    /// propagation-bound solves, which is why propagation visits are in the
+    /// denomination. Exhausting it ends enumeration in a typed
+    /// `skip_enum_budget`, never a silently truncated count.
     pub enum_budget: u64,
     /// Reference jar (stage 2 only).
     pub jar_path: PathBuf,
@@ -225,8 +228,29 @@ pub fn run_gauge(
 
     progress(&format!("stage 1: mettle sweep over {} files", files.len()));
     let loader = FilesystemLoader::new();
-    for path in &files {
-        run_file(path, cfg, &loader, &baseline, &mut report, &mut jar_todo);
+    let mut timings: Vec<(f64, String)> = Vec::new();
+    for (fi, path) in files.iter().enumerate() {
+        progress(&format!("[{}/{}] {}", fi + 1, files.len(), path.display()));
+        run_file(
+            path,
+            cfg,
+            &loader,
+            &baseline,
+            &mut report,
+            &mut jar_todo,
+            progress,
+            &mut timings,
+        );
+    }
+    // Slowest-commands table (stderr): each run tells us where the next grind
+    // will bite before it does. Wall-clock — observability only, never in the
+    // deterministic stdout report.
+    timings.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    if !timings.is_empty() {
+        progress("slowest commands (wall):");
+        for (secs, name) in timings.iter().take(10) {
+            progress(&format!("  {secs:8.1}s  {name}"));
+        }
     }
 
     panic::set_hook(prev_hook);
@@ -247,6 +271,13 @@ pub fn run_gauge(
 }
 
 /// Loads and sweeps one `.als` file, updating `report` and `jar_todo`.
+///
+/// **Liveness/observability (owner-directed, mt-047):** every command emits a
+/// start heartbeat and, when slow, an elapsed line through `progress` (stderr —
+/// the stdout report stays deterministic; wall-clock lives only here), and its
+/// wall time lands in `timings` for the end-of-run slowest table. A stuck run
+/// is diagnosed by its last heartbeat line, not by archaeology.
+#[allow(clippy::too_many_arguments)]
 fn run_file(
     path: &Path,
     cfg: &GaugeConfig,
@@ -254,6 +285,8 @@ fn run_file(
     baseline: &baseline::Baseline,
     report: &mut SolveGaugeReport,
     jar_todo: &mut BTreeMap<PathBuf, Vec<(String, usize, u64)>>,
+    progress: &mut dyn FnMut(&str),
+    timings: &mut Vec<(f64, String)>,
 ) {
     let Ok(canon) = std::fs::canonicalize(path) else {
         return;
@@ -288,9 +321,16 @@ fn run_file(
             continue;
         };
 
+        progress(&format!("  {rel}[{idx}] …"));
+        let started = std::time::Instant::now();
         let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
             classify_command(&world, &graph, &scoped, baseline, cfg, &rel, idx)
         }));
+        let secs = started.elapsed().as_secs_f64();
+        if secs > 5.0 {
+            progress(&format!("  {rel}[{idx}] took {secs:.1}s"));
+        }
+        timings.push((secs, format!("{rel}[{idx}]")));
 
         match outcome {
             Ok(result) => apply_result(result, &rel, idx, &canon, report, jar_todo),
@@ -403,7 +443,7 @@ fn classify_command(
         // as a value derived from `cfg`): `opts` itself stays the stage-1
         // (verdict/self-check) options, unaffected by this per-enumeration knob.
         let enum_opts = SolveOptions {
-            enum_conflict_budget: Some(cfg.enum_budget),
+            enum_effort_budget: Some(cfg.enum_budget),
             ..opts
         };
         Some(classify_count(
@@ -476,13 +516,11 @@ fn classify_count(
     // Higher-order-skolemized goals: LIMITATIONS says these now count exactly
     // (mt-038), but the claim is unverified on a large model like `ringlead`, so
     // the gauge skips them typed rather than risk a fabricated mismatch.
-    if !goal.skolem_bounds.is_empty() {
+    // First-order skolems (mt-047) are enumerated exactly — their SB-0 count now
+    // matches the jar (K4 / `check NoEmpty` = 561), so only a *higher-order*
+    // skolem disqualifies a goal from the counting net.
+    if goal.has_higher_order_skolem {
         return CountOutcome::Skip("skip_ho_skolem");
-    }
-    // A first-order top-level existential the jar skolemizes as a depth-0 skolem
-    // constant (translation-ref §10.4): the jar counts its assignments too.
-    if has_skolemizable_fo_existential(ir, goal.goal) {
-        return CountOutcome::Skip("skip_fo_skolem");
     }
     // The T14a/T14d ordered-partition family (translation-ref §10.1).
     if ordered_abstract_partition(world, scoped) {

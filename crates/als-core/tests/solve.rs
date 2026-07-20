@@ -248,25 +248,23 @@ fn count_test1_show_is_1129() {
 }
 
 /// `oracle/test1.als`'s `check NoEmpty` (`all b: B | some b.r`, negated to
-/// `some b: B | no b.r`) is **SAT** — a counterexample exists. The jar's SB-0
-/// count is **561**, but mettle's is **464**: this is the documented
-/// **skolemization divergence** (translation-ref §2.3, ADR-0011 — mettle does
-/// not skolemize). The jar's `skolemDepth 0` turns the top-level existential
-/// into a skolem constant relation `$NoEmpty_b`, whose assignments are counted
-/// too, multiplying the raw count by the number of witnesses per instance. This
-/// never changes the verdict, only the count — so SB-0 count parity holds only
-/// for goals without a skolemizable top-level existential (e.g. `some r` above,
-/// which matches at 1129). We assert the verdict and pin mettle's own count.
+/// `some b: B | no b.r`) is **SAT** — a counterexample exists. Its SB-0 count is
+/// **561** in *both* mettle and the jar since mt-047: the negated `all` sits at
+/// negative polarity (an effective existential) and first-order-skolemizes to
+/// the constant relation `$NoEmpty_b`, whose assignments the SB-0 enumeration now
+/// counts too — exactly as the jar's `skolemDepth 0` does (translation-ref
+/// §10.4/§15; before mt-047, mettle's un-skolemized count was 464). This never
+/// changes the verdict, only the count.
 #[test]
-fn check_test1_sat_skolem_count_divergence() {
+fn check_test1_sat_skolem_count_matches_jar() {
     let src = "sig A {}\nsig B {\n\tr: set A\n}\nassert NoEmpty {\n\tall b: B | some b.r\n}\ncheck NoEmpty for 3\n";
     let (verdict, ..) = run(src, 0);
     assert!(
         matches!(verdict, SolveVerdict::Sat(_)),
         "counterexample exists"
     );
-    // mettle's own (un-skolemized) SB-0 count is stable at 464; the jar's is 561.
-    assert_eq!(count(src, 0), 464);
+    // FO-skolemized SB-0 count is 561, matching the jar (§10.4/§15, K4-style).
+    assert_eq!(count(src, 0), 561);
 }
 
 // ================= util/ordering exact bounds (LEDGER-004) =================
@@ -654,7 +652,7 @@ fn higher_order_macro_callable_by_name_lowers() {
 // ======================= enumeration conflict budget =======================
 // mt-046 unlocked corpus models (e.g. `correctChord.als`) that pass the
 // primary-var cap but whose per-instance solves are individually expensive, so
-// a full SB-0 count can grind for hours. `SolveOptions::enum_conflict_budget`
+// a full SB-0 count can grind for hours. `SolveOptions::enum_effort_budget`
 // bounds the *cumulative* conflict spend of a whole enumeration and ends in a
 // typed `exhausted()` rather than either hanging or silently truncating the
 // count (see the `InstanceEnumerator` docs).
@@ -665,11 +663,11 @@ fn higher_order_macro_callable_by_name_lowers() {
 /// non-conflicting instances), stop short of the full 7, and report
 /// `exhausted()` — never a fabricated full count.
 #[test]
-fn enum_conflict_budget_zero_exhausts_short_of_full_count() {
+fn enum_effort_budget_zero_exhausts_short_of_full_count() {
     let src = "sig A {}\nrun { some A } for 3\n";
     let (ir, scoped, goal, bounds) = enum_pipeline(src, 0);
     let opts = SolveOptions {
-        enum_conflict_budget: Some(0),
+        enum_effort_budget: Some(0),
         ..SolveOptions::default()
     };
     let mut it = enumerate(&ir, &scoped, &goal, &bounds, &opts).expect("enumerate");
@@ -684,15 +682,15 @@ fn enum_conflict_budget_zero_exhausts_short_of_full_count() {
     );
 }
 
-/// The same goal, unbudgeted (`enum_conflict_budget: None`, the default): the
+/// The same goal, unbudgeted (`enum_effort_budget: None`, the default): the
 /// full exact count is reached and `exhausted()` is false — confirming the
 /// budget change leaves the unbudgeted path (every existing caller) untouched.
 #[test]
-fn enum_conflict_budget_none_reaches_full_count_not_exhausted() {
+fn enum_effort_budget_none_reaches_full_count_not_exhausted() {
     let src = "sig A {}\nrun { some A } for 3\n";
     let (ir, scoped, goal, bounds) = enum_pipeline(src, 0);
     let opts = SolveOptions::default();
-    assert_eq!(opts.enum_conflict_budget, None);
+    assert_eq!(opts.enum_effort_budget, None);
     let mut it = enumerate(&ir, &scoped, &goal, &bounds, &opts).expect("enumerate");
     let n = it.by_ref().count();
     assert_eq!(

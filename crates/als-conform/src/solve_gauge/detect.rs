@@ -1,88 +1,17 @@
-//! The two SB-0 count-divergence classifiers and the mettle defer-reason
-//! classifier for the solve gauge (mt-037).
+//! The SB-0 count-divergence classifier (ordered-abstract partition) and the
+//! mettle defer-reason classifier for the solve gauge (mt-037).
 //!
-//! Both classifiers exist to keep the counting net **honest**: they carve out
-//! exactly the goal families where mettle's raw SB-0 count legitimately differs
-//! from the jar's (documented in LIMITATIONS, translation-ref §10.4/§10.6), so
-//! the net never fabricates a `COUNT_MISMATCH`. Following the gauge's contract
-//! (a wrong skip only loses coverage; a wrong inclusion fabricates a
-//! disagreement) both are written to **over-skip** when in doubt.
+//! The count classifier exists to keep the counting net **honest**: it carves
+//! out the goal family where mettle's raw SB-0 count legitimately differs from
+//! the jar's (documented in LIMITATIONS, translation-ref §10.1), so the net
+//! never fabricates a `COUNT_MISMATCH`. Following the gauge's contract (a wrong
+//! skip only loses coverage; a wrong inclusion fabricates a disagreement) it is
+//! written to **over-skip** when in doubt. (First-order skolemization now counts
+//! exactly, mt-047, so its former `skip_fo_skolem` family is gone.)
 
-use als_core::ir::{FormulaId, FormulaKind, Ir, QuantKind};
-use als_core::{ScopedUniverse, TranslateError};
+use als_core::ScopedUniverse;
+use als_core::TranslateError;
 use als_types::{ResolvedWorld, SigId, SigKind};
-
-/// Whether the goal contains a **first-order** quantifier the jar would
-/// skolemize as a depth-0 skolem constant (translation-ref §2.3/§10.6): an
-/// effective-existential quantifier reachable from the goal root through only
-/// monotone Boolean context (∧/∨/parity-tracked ¬/⇒) and **not** in the scope
-/// of an effective-universal quantifier or a non-monotone connective.
-///
-/// mettle does not skolemize first-order decls (ADR-0011), so such a quantifier
-/// survives in the lowered IR as [`FormulaKind::Quant`]; the jar counts the
-/// skolem relation's assignments too, so the SB-0 counts diverge while the
-/// verdict is identical. Higher-order existentials are already gone from the
-/// formula (minted into `skolem_bounds`), so every `Quant` seen here is
-/// first-order.
-///
-/// The pinned example: `oracle/test1.als`'s `check NoEmpty` lowers to
-/// `Not(all b: B | some b.r)` — the enclosing `Not` (a `check`'s negation) puts
-/// the `all` at negative polarity, making it effective-existential, so this
-/// returns `true` (the jar's 561 vs mettle's 464).
-#[must_use]
-pub fn has_skolemizable_fo_existential(ir: &Ir, goal: FormulaId) -> bool {
-    walk_polarity(ir, goal, true, false)
-}
-
-/// Recursive polarity/blocked walk. `positive` is the node's parity below the
-/// goal root (flipped by `not` and an `implies` antecedent); `blocked` is set
-/// once the walk passes an effective-universal quantifier body or a
-/// non-monotone connective (`iff`), where a nested existential is **not**
-/// skolemized at depth 0.
-fn walk_polarity(ir: &Ir, id: FormulaId, positive: bool, blocked: bool) -> bool {
-    match &ir.formulas[id].kind {
-        FormulaKind::Const(_)
-        | FormulaKind::RelCompare { .. }
-        | FormulaKind::IntCompare { .. }
-        | FormulaKind::MultTest { .. } => false,
-        FormulaKind::Not(f) => walk_polarity(ir, *f, !positive, blocked),
-        FormulaKind::And(fs) | FormulaKind::Or(fs) => {
-            fs.iter().any(|f| walk_polarity(ir, *f, positive, blocked))
-        }
-        FormulaKind::Implies {
-            antecedent,
-            consequent,
-        } => {
-            walk_polarity(ir, *antecedent, !positive, blocked)
-                || walk_polarity(ir, *consequent, positive, blocked)
-        }
-        // Bi-implication is non-monotone: neither operand has a settled parity,
-        // so any quantifier under it is treated as blocked (conservative).
-        FormulaKind::Iff(a, b) => {
-            walk_polarity(ir, *a, positive, true) || walk_polarity(ir, *b, positive, true)
-        }
-        FormulaKind::Quant { kind, body, .. } => {
-            let existential = matches!(
-                (kind, positive),
-                (QuantKind::Some, true) | (QuantKind::All, false)
-            );
-            if existential && !blocked {
-                return true;
-            }
-            // An effective-universal blocks nested existentials (depth-0 rule);
-            // an effective-existential does not (a chain of top-level `some`s
-            // all skolemize). The body keeps the ambient parity.
-            let universal = !existential;
-            walk_polarity(ir, *body, positive, blocked || universal)
-        }
-        // Temporal goals defer before solving (never reached here); a temporal
-        // connective is a non-monotone context, so treat its bodies as blocked.
-        FormulaKind::TemporalUnary { body, .. } => walk_polarity(ir, *body, positive, true),
-        FormulaKind::TemporalBinary { lhs, rhs, .. } => {
-            walk_polarity(ir, *lhs, positive, true) || walk_polarity(ir, *rhs, positive, true)
-        }
-    }
-}
 
 /// Whether this command opens `util/ordering` over a sig whose population is a
 /// **free partition** — an ordered sig with at least one non-exact prim
@@ -174,99 +103,8 @@ pub fn lower_defer_class(err: &TranslateError) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use als_core::ir::{Formula, FormulaKind, QuantKind, RelConst, RelExpr, RelExprKind, Var};
     use als_core::{compute_universe, ScopedUniverse};
-    use als_syntax::{ArenaId, FileId, Span};
     use als_types::{MapLoader, ModuleGraph, ResolvedWorld};
-
-    fn dummy_span() -> Span {
-        Span::new(FileId::from_index(0), 0, 1)
-    }
-
-    /// Builds `Quant{kind, x: univ | inner}` in `ir` and returns its id.
-    fn quant(ir: &mut Ir, kind: QuantKind, inner: FormulaId) -> FormulaId {
-        let var = ir.vars.alloc(Var {
-            name: "x".to_owned(),
-            arity: 1,
-            span: dummy_span(),
-        });
-        let bound = ir.rel_exprs.alloc(RelExpr {
-            kind: RelExprKind::Const(RelConst::Univ),
-            span: dummy_span(),
-        });
-        ir.formulas.alloc(Formula {
-            kind: FormulaKind::Quant {
-                kind,
-                var,
-                bound,
-                body: inner,
-            },
-            span: dummy_span(),
-        })
-    }
-
-    fn constf(ir: &mut Ir, b: bool) -> FormulaId {
-        ir.formulas.alloc(Formula {
-            kind: FormulaKind::Const(b),
-            span: dummy_span(),
-        })
-    }
-
-    fn not(ir: &mut Ir, f: FormulaId) -> FormulaId {
-        ir.formulas.alloc(Formula {
-            kind: FormulaKind::Not(f),
-            span: dummy_span(),
-        })
-    }
-
-    #[test]
-    fn fo_top_level_some_is_skolemizable() {
-        let mut ir = Ir::default();
-        let t = constf(&mut ir, true);
-        let g = quant(&mut ir, QuantKind::Some, t);
-        assert!(has_skolemizable_fo_existential(&ir, g));
-    }
-
-    #[test]
-    fn fo_top_level_all_is_not() {
-        let mut ir = Ir::default();
-        let t = constf(&mut ir, true);
-        let g = quant(&mut ir, QuantKind::All, t);
-        assert!(!has_skolemizable_fo_existential(&ir, g));
-    }
-
-    #[test]
-    fn fo_negated_all_is_effective_existential() {
-        // `check`-style: Not(all x | φ) — the `all` is at negative polarity.
-        let mut ir = Ir::default();
-        let t = constf(&mut ir, true);
-        let all = quant(&mut ir, QuantKind::All, t);
-        let g = not(&mut ir, all);
-        assert!(has_skolemizable_fo_existential(&ir, g));
-    }
-
-    #[test]
-    fn fo_some_under_all_is_blocked() {
-        // `all x | some y | φ` — the inner `some` is under a universal, not
-        // skolemized at depth 0.
-        let mut ir = Ir::default();
-        let t = constf(&mut ir, true);
-        let inner_some = quant(&mut ir, QuantKind::Some, t);
-        let g = quant(&mut ir, QuantKind::All, inner_some);
-        assert!(!has_skolemizable_fo_existential(&ir, g));
-    }
-
-    #[test]
-    fn fo_double_negated_all_stays_universal() {
-        // Not(Not(all x | φ)) — parity returns to positive, so the `all` is
-        // effective-universal again: not skolemizable.
-        let mut ir = Ir::default();
-        let t = constf(&mut ir, true);
-        let all = quant(&mut ir, QuantKind::All, t);
-        let n1 = not(&mut ir, all);
-        let g = not(&mut ir, n1);
-        assert!(!has_skolemizable_fo_existential(&ir, g));
-    }
 
     // --- ordered-abstract detector, via the real pipeline -----------------
 

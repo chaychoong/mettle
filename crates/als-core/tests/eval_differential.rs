@@ -38,9 +38,23 @@ fn build(src: &str, idx: usize) -> (Ir, ScopedUniverse, LoweredGoal, BoundsResul
     let bounds = compute_bounds(&world, &scoped, &mut ir);
     let goal = lower_command(&world, &graph, &scoped, &bounds, &mut ir, idx).expect("lower");
 
+    // The evaluator sees every relation the goal references, including the
+    // skolem constants minted for higher-order (mt-038) and first-order (mt-047)
+    // existentials — so the brute force must enumerate their floating tuples too,
+    // exactly as the solver binds `skolem_bounds` into its own bounds. Chaining
+    // them here keeps the differential a true matched pair.
     let mut rels = Vec::new();
     let mut total_floating = 0usize;
-    for (rel, bound) in bounds.bounds.iter() {
+    let all_bounds = bounds
+        .bounds
+        .iter()
+        .map(|(rel, bound)| (rel, bound.clone()))
+        .chain(
+            goal.skolem_bounds
+                .iter()
+                .map(|(rel, bound)| (*rel, bound.clone())),
+        );
+    for (rel, bound) in all_bounds {
         let mut floating = Vec::new();
         for t in bound.upper().iter() {
             if !bound.lower().contains(t) {
