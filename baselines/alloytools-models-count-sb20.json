@@ -1,0 +1,633 @@
+{
+  "config": {
+    "count_symmetry": 20,
+    "count_cap": 10000,
+    "jar_timeout_secs": 300,
+    "no_overflow": true,
+    "solver": "sat4j"
+  },
+  "entries": {
+    "corpus/alloytools-models/models/book/appendixA/addressBook1.als": {
+      "0": {
+        "count": 10001
+      }
+    },
+    "corpus/alloytools-models/models/book/appendixA/addressBook2.als": {
+      "0": {
+        "count": 10001
+      }
+    },
+    "corpus/alloytools-models/models/book/appendixA/barbers.als": {
+      "0": "unsat"
+    },
+    "corpus/alloytools-models/models/book/appendixA/closure.als": "timeout",
+    "corpus/alloytools-models/models/book/appendixA/distribution.als": {
+      "0": "unsat"
+    },
+    "corpus/alloytools-models/models/book/appendixA/phones.als": {
+      "0": {
+        "count": 8649
+      }
+    },
+    "corpus/alloytools-models/models/book/appendixA/prison.als": {
+      "0": {
+        "count": 761
+      }
+    },
+    "corpus/alloytools-models/models/book/appendixA/properties.als": {
+      "0": "unsat",
+      "1": "unsat"
+    },
+    "corpus/alloytools-models/models/book/appendixA/ring.als": {
+      "0": {
+        "count": 6192
+      }
+    },
+    "corpus/alloytools-models/models/book/appendixA/spanning.als": {
+      "0": {
+        "count": 10001
+      }
+    },
+    "corpus/alloytools-models/models/book/appendixA/tree.als": {
+      "0": {
+        "count": 10001
+      }
+    },
+    "corpus/alloytools-models/models/book/appendixA/tube.als": {
+      "0": {
+        "count": 10001
+      }
+    },
+    "corpus/alloytools-models/models/book/appendixA/undirected.als": {
+      "0": {
+        "count": 138
+      }
+    },
+    "corpus/alloytools-models/models/book/appendixE/p300-hotel.als": {
+      "0": {
+        "count": 30
+      }
+    },
+    "corpus/alloytools-models/models/book/appendixE/p303-hotel.als": {
+      "0": "unsat",
+      "1": {
+        "count": 17
+      }
+    },
+    "corpus/alloytools-models/models/book/appendixE/p306-hotel.als": {
+      "0": "unsat",
+      "1": "unsat",
+      "2": "unsat"
+    },
+    "corpus/alloytools-models/models/book/chapter2/addressBook1a.als": {
+      "0": {
+        "count": 59
+      }
+    },
+    "corpus/alloytools-models/models/book/chapter2/addressBook1b.als": {
+      "0": {
+        "count": 18
+      }
+    },
+    "corpus/alloytools-models/models/book/chapter2/addressBook1c.als": {
+      "0": "unsat"
+    },
+    "corpus/alloytools-models/models/book/chapter2/addressBook1d.als": {
+      "0": {
+        "count": 9
+      }
+    },
+    "corpus/alloytools-models/models/book/chapter2/addressBook1e.als": {
+      "0": {
+        "count": 631
+      }
+    },
+    "corpus/alloytools-models/models/book/chapter2/addressBook1f.als": {
+      "0": {
+        "count": 350
+      }
+    },
+    "corpus/alloytools-models/models/book/chapter2/addressBook1g.als": {
+      "0": {
+        "count": 604
+      }
+    },
+    "corpus/alloytools-models/models/book/chapter2/addressBook1h.als": {
+      "0": {
+        "count": 9
+      },
+      "1": {
+        "count": 350
+      },
+      "2": "unsat",
+      "3": "unsat",
+      "4": "unsat",
+      "5": "unsat"
+    },
+    "corpus/alloytools-models/models/book/chapter2/addressBook2a.als": {
+      "0": {
+        "count": 1002
+      }
+    },
+    "corpus/alloytools-models/models/book/chapter2/addressBook2b.als": {
+      "0": {
+        "count": 75
+      }
+    },
+    "corpus/alloytools-models/models/book/chapter2/addressBook2c.als": {
+      "0": {
+        "count": 45
+      }
+    },
+    "corpus/alloytools-models/models/book/chapter2/addressBook2d.als": {
+      "0": {
+        "count": 32
+      }
+    },
+    "corpus/alloytools-models/models/book/chapter2/addressBook2e.als": {
+      "0": "unsat",
+      "1": "unsat",
+      "2": {
+        "count": 4
+      },
+      "3": {
+        "count": 649
+      }
+    },
+    "corpus/alloytools-models/models/book/chapter2/addressBook3a.als": {
+      "0": {
+        "count": 2647
+      }
+    },
+    "corpus/alloytools-models/models/book/chapter2/addressBook3b.als": {
+      "0": "unsat",
+      "1": "unsat",
+      "2": "unsat",
+      "3": {
+        "count": 1004
+      }
+    },
+    "corpus/alloytools-models/models/book/chapter2/addressBook3c.als": {
+      "0": "unsat",
+      "1": "unsat",
+      "2": "unsat",
+      "3": {
+        "count": 4
+      }
+    },
+    "corpus/alloytools-models/models/book/chapter2/addressBook3d.als": {
+      "0": "unsat",
+      "1": "unsat",
+      "2": "unsat",
+      "3": "unsat",
+      "4": "unsat"
+    },
+    "corpus/alloytools-models/models/book/chapter4/filesystem.als": {
+      "0": "unsat",
+      "1": {
+        "count": 231
+      },
+      "2": "unsat"
+    },
+    "corpus/alloytools-models/models/book/chapter4/grandpa1.als": {
+      "0": "unsat",
+      "1": "unsat",
+      "2": "unsat"
+    },
+    "corpus/alloytools-models/models/book/chapter4/grandpa2.als": {
+      "0": "unsat",
+      "1": {
+        "count": 422
+      }
+    },
+    "corpus/alloytools-models/models/book/chapter4/grandpa3.als": {
+      "0": "unsat",
+      "1": {
+        "count": 2
+      },
+      "2": "unsat"
+    },
+    "corpus/alloytools-models/models/book/chapter4/lights.als": {
+      "0": "unsat"
+    },
+    "corpus/alloytools-models/models/book/chapter5/addressBook.als": {
+      "0": {
+        "count": 399
+      },
+      "1": {
+        "count": 1
+      }
+    },
+    "corpus/alloytools-models/models/book/chapter5/lists.als": {
+      "0": "unsat"
+    },
+    "corpus/alloytools-models/models/book/chapter5/sets1.als": {
+      "0": {
+        "count": 32
+      }
+    },
+    "corpus/alloytools-models/models/book/chapter5/sets2.als": {
+      "0": "unsat"
+    },
+    "corpus/alloytools-models/models/book/chapter6/hotel1.als": {
+      "0": {
+        "count": 1
+      }
+    },
+    "corpus/alloytools-models/models/book/chapter6/hotel2.als": {
+      "0": "unsat",
+      "1": "unsat",
+      "2": "unsat"
+    },
+    "corpus/alloytools-models/models/book/chapter6/hotel3.als": {
+      "0": {
+        "count": 166
+      }
+    },
+    "corpus/alloytools-models/models/book/chapter6/hotel4.als": {
+      "0": "unsat"
+    },
+    "corpus/alloytools-models/models/book/chapter6/mediaAssets.als": {
+      "0": "unsat",
+      "1": {
+        "count": 10001
+      },
+      "2": {
+        "count": 10001
+      },
+      "3": "unsat"
+    },
+    "corpus/alloytools-models/models/book/chapter6/memory/abstractMemory.als": {
+      "0": "unsat",
+      "1": "unsat"
+    },
+    "corpus/alloytools-models/models/book/chapter6/memory/cacheMemory.als": {
+      "0": "unsat"
+    },
+    "corpus/alloytools-models/models/book/chapter6/memory/checkCache.als": {
+      "0": "unsat",
+      "1": "unsat",
+      "2": "unsat",
+      "3": "unsat"
+    },
+    "corpus/alloytools-models/models/book/chapter6/memory/checkFixedSize.als": {
+      "0": "unsat",
+      "1": "unsat",
+      "2": "unsat"
+    },
+    "corpus/alloytools-models/models/book/chapter6/memory/fixedSizeMemory.als": {
+      "0": {
+        "count": 769
+      }
+    },
+    "corpus/alloytools-models/models/book/chapter6/memory/fixedSizeMemory_H.als": {
+      "0": {
+        "count": 10001
+      }
+    },
+    "corpus/alloytools-models/models/book/chapter6/ringElection1.als": {
+      "0": {
+        "count": 2
+      },
+      "1": "unsat",
+      "2": {
+        "count": 1673
+      }
+    },
+    "corpus/alloytools-models/models/book/chapter6/ringElection2.als": {
+      "0": {
+        "count": 2
+      },
+      "1": "unsat",
+      "2": "unsat",
+      "3": {
+        "count": 3
+      },
+      "4": "unsat"
+    },
+    "corpus/alloytools-models/models/examples/algorithms/dijkstra.als": {
+      "0": {
+        "count": 10001
+      },
+      "1": "unsat",
+      "2": "unsat"
+    },
+    "corpus/alloytools-models/models/examples/algorithms/messaging.als": {
+      "0": {
+        "count": 10001
+      },
+      "1": {
+        "count": 10001
+      }
+    },
+    "corpus/alloytools-models/models/examples/algorithms/opt_spantree.als": {
+      "0": {
+        "count": 10001
+      },
+      "1": "unsat",
+      "2": "unsat"
+    },
+    "corpus/alloytools-models/models/examples/algorithms/peterson.als": {
+      "0": "unsat",
+      "1": "unsat",
+      "2": "unsat",
+      "3": "unsat"
+    },
+    "corpus/alloytools-models/models/examples/algorithms/ringlead.als": {
+      "0": {
+        "count": 224
+      },
+      "1": "unsat",
+      "2": "unsat",
+      "3": {
+        "count": 10001
+      },
+      "4": "unsat"
+    },
+    "corpus/alloytools-models/models/examples/algorithms/s_ringlead.als": {
+      "0": "error",
+      "1": "error",
+      "2": "error",
+      "3": "error"
+    },
+    "corpus/alloytools-models/models/examples/algorithms/stable_mutex_ring.als": {
+      "0": {
+        "count": 3132
+      },
+      "1": {
+        "count": 10001
+      },
+      "2": "unsat"
+    },
+    "corpus/alloytools-models/models/examples/algorithms/stable_orient_ring.als": {
+      "0": {
+        "count": 10001
+      },
+      "1": {
+        "count": 10001
+      }
+    },
+    "corpus/alloytools-models/models/examples/algorithms/stable_ringlead.als": {
+      "0": {
+        "count": 1134
+      },
+      "1": {
+        "count": 36
+      },
+      "2": {
+        "count": 6
+      },
+      "3": "unsat",
+      "4": {
+        "count": 576
+      },
+      "5": "unsat"
+    },
+    "corpus/alloytools-models/models/examples/case_studies/chord.als": {
+      "0": "unsat",
+      "1": "unsat",
+      "10": "unsat",
+      "11": "unsat",
+      "12": {
+        "count": 52
+      },
+      "13": {
+        "count": 10001
+      },
+      "14": {
+        "count": 10001
+      },
+      "15": "unsat",
+      "16": {
+        "count": 10001
+      },
+      "2": "unsat",
+      "3": {
+        "count": 10001
+      },
+      "4": "unsat",
+      "5": "unsat",
+      "6": "unsat",
+      "7": {
+        "count": 10001
+      },
+      "8": {
+        "count": 10001
+      },
+      "9": {
+        "count": 10001
+      }
+    },
+    "corpus/alloytools-models/models/examples/case_studies/chord2.als": {
+      "0": "unsat"
+    },
+    "corpus/alloytools-models/models/examples/case_studies/chordbugmodel.als": {
+      "0": {
+        "count": 52
+      },
+      "1": {
+        "count": 10001
+      },
+      "2": {
+        "count": 10001
+      },
+      "3": {
+        "count": 10001
+      },
+      "4": "unsat",
+      "5": {
+        "count": 10001
+      }
+    },
+    "corpus/alloytools-models/models/examples/case_studies/com.als": {
+      "0": "unsat",
+      "1": "unsat",
+      "2": "unsat",
+      "3": "unsat",
+      "4": "unsat"
+    },
+    "corpus/alloytools-models/models/examples/case_studies/firewire.als": {
+      "0": {
+        "count": 10001
+      },
+      "1": {
+        "count": 10001
+      },
+      "2": "unsat",
+      "3": "unsat",
+      "4": "unsat",
+      "5": "unsat",
+      "6": {
+        "count": 10001
+      }
+    },
+    "corpus/alloytools-models/models/examples/case_studies/ins.als": {
+      "0": "error"
+    },
+    "corpus/alloytools-models/models/examples/puzzles/handshake.als": "timeout",
+    "corpus/alloytools-models/models/examples/systems/file_system.als": {
+      "0": {
+        "count": 10001
+      },
+      "1": "unsat"
+    },
+    "corpus/alloytools-models/models/examples/systems/javatypes_soundness.als": {
+      "0": "unsat",
+      "1": "unsat"
+    },
+    "corpus/alloytools-models/models/examples/systems/lists.als": {
+      "0": "unsat",
+      "1": "unsat",
+      "2": "unsat",
+      "3": {
+        "count": 10001
+      }
+    },
+    "corpus/alloytools-models/models/examples/systems/marksweepgc.als": {
+      "0": "unsat",
+      "1": "unsat",
+      "2": "unsat"
+    },
+    "corpus/alloytools-models/models/examples/systems/views.als": "timeout",
+    "corpus/alloytools-models/models/examples/temporal/buffer.als": {
+      "0": {
+        "count": 4431
+      },
+      "1": "unsat",
+      "2": "unsat",
+      "3": {
+        "count": 4175
+      },
+      "4": "unsat"
+    },
+    "corpus/alloytools-models/models/examples/temporal/leader.als": {
+      "0": {
+        "count": 10001
+      },
+      "1": {
+        "count": 1
+      },
+      "2": "unsat",
+      "3": {
+        "count": 10001
+      }
+    },
+    "corpus/alloytools-models/models/examples/temporal/leader_events.als": {
+      "0": {
+        "count": 10001
+      },
+      "1": {
+        "count": 1
+      },
+      "2": "unsat",
+      "3": "unsat"
+    },
+    "corpus/alloytools-models/models/examples/temporal/trash.als": {
+      "0": {
+        "count": 10001
+      },
+      "1": "unsat",
+      "2": "error",
+      "3": "unsat",
+      "4": "unsat",
+      "5": "unsat",
+      "6": "unsat",
+      "7": "unsat",
+      "8": "error"
+    },
+    "corpus/alloytools-models/models/examples/toys/ceilingsAndFloors.als": {
+      "0": {
+        "count": 4
+      },
+      "1": "unsat",
+      "2": {
+        "count": 36
+      },
+      "3": "unsat",
+      "4": "unsat"
+    },
+    "corpus/alloytools-models/models/examples/toys/numbering.als": {
+      "0": "unsat",
+      "1": {
+        "count": 10001
+      }
+    },
+    "corpus/alloytools-models/models/examples/tutorial/farmer.als": {
+      "0": {
+        "count": 2
+      },
+      "1": "unsat"
+    },
+    "corpus/alloytools-models/models/util/boolean.als": {
+      "0": {
+        "count": 1
+      }
+    },
+    "corpus/alloytools-models/models/util/graph.als": {
+      "0": {
+        "count": 4
+      }
+    },
+    "corpus/alloytools-models/models/util/integer.als": {
+      "0": {
+        "count": 1
+      }
+    },
+    "corpus/alloytools-models/models/util/natural.als": {
+      "0": {
+        "count": 1
+      }
+    },
+    "corpus/alloytools-models/models/util/ordering.als": {
+      "0": "unsat",
+      "1": {
+        "count": 1
+      },
+      "10": "unsat",
+      "2": {
+        "count": 1
+      },
+      "3": {
+        "count": 1
+      },
+      "4": {
+        "count": 1
+      },
+      "5": "unsat",
+      "6": "unsat",
+      "7": "unsat",
+      "8": "unsat",
+      "9": "unsat"
+    },
+    "corpus/alloytools-models/models/util/relation.als": {
+      "0": {
+        "count": 1
+      }
+    },
+    "corpus/alloytools-models/models/util/seqrel.als": {
+      "0": {
+        "count": 4
+      }
+    },
+    "corpus/alloytools-models/models/util/sequence.als": {
+      "0": {
+        "count": 4754
+      }
+    },
+    "corpus/alloytools-models/models/util/sequniv.als": {
+      "0": {
+        "count": 1
+      }
+    },
+    "corpus/alloytools-models/models/util/ternary.als": {
+      "0": {
+        "count": 1
+      }
+    },
+    "corpus/alloytools-models/models/util/time.als": {
+      "0": {
+        "count": 1
+      }
+    }
+  }
+}

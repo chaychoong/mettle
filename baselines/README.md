@@ -39,3 +39,31 @@ Triage (2026-07-17, tech lead):
   lc-lenses, ertms_1A, elevator_spl_events, HotelVar, correctChord, and the two
   TransForm `util/` minimality scripts): genuinely large problems; no verdict
   cached, so the solve gauge reports their commands as `no_baseline`.
+
+## Count baselines: `*-count-sb<N>.json` (2026-07-21, mt-054)
+
+Cached reference-jar **model counts** at a pinned config, so `solve-gauge
+--count` no longer pays a live JVM per file per sweep (the counts are immutable
+facts; ADR-0002's SB-0 remains the counting yardstick, SB-20 the mt-048 net).
+Each file carries a `config` header (`count_symmetry`, `count_cap`,
+`jar_timeout_secs`, `no_overflow`, `solver`); the gauge hard-errors on a
+meaning-bearing mismatch and warns on a `jar_timeout` difference. A command
+missing from every loaded baseline is a typed `skip_no_count_baseline`;
+`--live-jar` restores the live JVM path.
+
+Captured 2026-07-21 via `solve-gauge --refresh-counts` at the gauge defaults
+(cap 10000, forbid overflow, sat4j, 300s/file): `alloytools-models-count-sb0/
+sb20.json` (94 files each) + `portus-63-count-sb0/sb20.json` (73 files each).
+The `*-slow-count-sb0.json` supplements re-capture the four 300s-boundary files
+at 900s (chordbugmodel ×2 converted to counts; ceilingsAndFloors + life still
+time out — the SB-0 net's 3 standing `skip_jar_timeout` commands). Loaded files
+merge in sorted name order, later file wins per relpath — which is why the
+`-slow-` supplements override.
+
+Verified 2026-07-21: the cached SB-0 net reproduces the live-era mt-048 results
+exactly (count_match 49, COUNT_MISMATCH 3 = the mt-041 family, all skips
+identical); the SB-20 net likewise (71 / 6 = mt-041 ×3 + mt-055). Refresh
+commands, one per corpus/config, ~2h40m total on the 2-core VM:
+
+    solve-gauge --refresh-counts baselines/<corpus>-count-sb<N>.json \
+      --count-symmetry <N> --resume <corpus-root>

@@ -1,0 +1,30 @@
+{
+  "config": {
+    "count_symmetry": 0,
+    "count_cap": 10000,
+    "jar_timeout_secs": 900,
+    "no_overflow": true,
+    "solver": "sat4j"
+  },
+  "entries": {
+    "corpus/alloytools-models/models/examples/case_studies/chordbugmodel.als": {
+      "0": {
+        "count": 52
+      },
+      "1": {
+        "count": 10001
+      },
+      "2": {
+        "count": 10001
+      },
+      "3": {
+        "count": 10001
+      },
+      "4": "unsat",
+      "5": {
+        "count": 10001
+      }
+    },
+    "corpus/alloytools-models/models/examples/toys/ceilingsAndFloors.als": "timeout"
+  }
+}
