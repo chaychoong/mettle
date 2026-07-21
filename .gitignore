@@ -15,6 +15,11 @@
 # via scripts/fetch-corpora.sh.
 /corpus/
 
+# Owner-facing run status monitors (mt-054): the solve-gauge / refresh-counts
+# StatusFile writes a live plain-text progress file here for `watch`/`tail`.
+# Pure observability, regenerated every run — never committed.
+/status/
+
 # OS cruft
 .DS_Store
 

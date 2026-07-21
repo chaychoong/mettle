@@ -50,4 +50,18 @@ pub enum ConformError {
     /// output on stdout.
     #[error("java {class_name} failed: {message}")]
     JvmFailed { class_name: String, message: String },
+    /// A loaded count baseline's `config` header disagrees with the run's
+    /// pinned config on a field that would make its counts incomparable
+    /// (`count_cap`, overflow, `count_symmetry`, or `solver`). A hard tool
+    /// error, never a silent skip (mt-054 (b)): comparing against counts
+    /// produced at a different config is a fabricated verdict.
+    #[error(
+        "count baseline {file}: config field `{field}` mismatch (baseline={found}, run={expected})"
+    )]
+    CountBaselineConfigMismatch {
+        file: String,
+        field: &'static str,
+        expected: String,
+        found: String,
+    },
 }

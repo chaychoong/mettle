@@ -32,6 +32,7 @@ mod parse;
 pub mod scorecard;
 pub mod shim;
 pub mod solve_gauge;
+pub mod status;
 
 pub use bench::{run_bench, BenchConfig, BenchReport, DEFAULT_CORPUS_ROOTS};
 pub use config::{EnumerationCap, OracleConfig};
@@ -39,4 +40,6 @@ pub use error::ConformError;
 pub use model::{CommandResult, FileOutcome, FileResult, Outcome, ShimErrorKind};
 pub use scorecard::{Scorecard, Totals};
 pub use shim::{ensure_shim_compiled, run_oracle_on_file, run_oracle_on_files};
-pub use solve_gauge::{run_gauge, GaugeConfig, SolveGaugeReport};
+pub use solve_gauge::refresh::refresh_counts;
+pub use solve_gauge::{run_gauge, GaugeConfig, PerCommand, SolveGaugeReport};
+pub use status::StatusFile;

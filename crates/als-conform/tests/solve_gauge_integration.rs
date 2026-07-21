@@ -13,7 +13,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use als_conform::{run_gauge, GaugeConfig};
+use als_conform::{refresh_counts, run_gauge, GaugeConfig};
 
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -41,6 +41,14 @@ fn test1_config() -> GaugeConfig {
         jar_path: jar_path(),
         shim_source: PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/shim/OracleShim.java")),
         jar_timeout: Duration::from_mins(5),
+        jobs: 1,
+        // The smoke pins the golden against the *live* jar counts (1129/561), so
+        // stage 2 must run the live JVM path rather than a cached baseline.
+        live_jar: true,
+        fail_fast: false,
+        only: Vec::new(),
+        from_report: None,
+        from_buckets: Vec::new(),
     }
 }
 
@@ -81,4 +89,50 @@ fn test1_count_smoke_matches_jar() {
     );
     assert!(report.self_check_failures.is_empty());
     assert!(report.panics.is_empty());
+}
+
+/// mt-054 (b): `--refresh-counts` writes a valid count baseline for a single
+/// small file, and `--resume` on the already-complete output re-runs nothing.
+#[test]
+fn refresh_counts_resume_smoke() {
+    if !jar_path().is_file() {
+        eprintln!(
+            "SKIP {}: reference jar not found at {} (expected for CI)",
+            module_path!(),
+            jar_path().display()
+        );
+        return;
+    }
+
+    let out = std::env::temp_dir().join(format!(
+        "als-refresh-resume-{}-count-sb0.json",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&out);
+
+    // A fast, single-file corpus: oracle/test1.als.
+    let cfg = test1_config();
+
+    // First pass populates the baseline.
+    refresh_counts(&cfg, &out, false, &mut |_| {}).unwrap_or_else(|e| panic!("refresh: {e}"));
+    let first = std::fs::read_to_string(&out).expect("baseline written");
+    let value: serde_json::Value = serde_json::from_str(&first).expect("valid json");
+    assert_eq!(
+        value["config"]["count_cap"], 10_000,
+        "config header pins count_cap"
+    );
+    assert!(
+        value["entries"]
+            .as_object()
+            .is_some_and(|m| m.contains_key("oracle/test1.als")),
+        "test1.als recorded: {value}"
+    );
+
+    // Second pass with --resume: the file is already present, so nothing re-runs
+    // and the output is byte-identical.
+    refresh_counts(&cfg, &out, true, &mut |_| {}).unwrap_or_else(|e| panic!("resume: {e}"));
+    let second = std::fs::read_to_string(&out).expect("baseline still there");
+    assert_eq!(first, second, "resume must not change a complete baseline");
+
+    std::fs::remove_file(&out).ok();
 }
