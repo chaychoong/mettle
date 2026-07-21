@@ -44,6 +44,8 @@ fn print_usage() {
          \n\
          Options:\n\
          \x20\x20--count                enable stage 2 (needs the reference jar)\n\
+         \x20\x20--symmetry N           stage-1 (verdict net) symmetry cap (default 20; 0 = no SBP)\n\
+         \x20\x20--count-symmetry N     stage-2 (count net) symmetry on BOTH sides (default 0 = SB-0 yardstick)\n\
          \x20\x20--conflicts N          per-command SAT conflict budget (default 10000)\n\
          \x20\x20--encode-budget N      per-command encode-effort budget (default 4000000)\n\
          \x20\x20--primary-var-cap N    skip a command past this many primary vars (default 20000)\n\
@@ -83,6 +85,10 @@ fn parse_args() -> Option<(GaugeConfig, Option<PathBuf>)> {
         encode_budget: 4_000_000,
         primary_var_cap: 20_000,
         allow_overflow: false,
+        // SB-20 is the default-config verdict net (translation-ref §16.4); SB-0
+        // stays the counting yardstick (ADR-0002), byte-identical to pre-mt-048.
+        symmetry: 20,
+        count_symmetry: 0,
         count: false,
         count_cap: 10_000,
         enum_budget: 250_000_000,
@@ -96,6 +102,8 @@ fn parse_args() -> Option<(GaugeConfig, Option<PathBuf>)> {
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--count" => cfg.count = true,
+            "--symmetry" => cfg.symmetry = it.next()?.parse().ok()?,
+            "--count-symmetry" => cfg.count_symmetry = it.next()?.parse().ok()?,
             "--allow-overflow" => cfg.allow_overflow = true,
             "--conflicts" => cfg.conflict_budget = it.next()?.parse().ok()?,
             "--encode-budget" => cfg.encode_budget = it.next()?.parse().ok()?,

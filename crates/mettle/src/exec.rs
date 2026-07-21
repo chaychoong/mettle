@@ -232,6 +232,21 @@ fn load_and_resolve(path: &str) -> Result<(ModuleGraph, Resolved), ExitCode> {
     Ok((graph, resolved))
 }
 
+/// Applies the `expect 1 ⇒ symmetry 0` override (translation-ref §3/§16.4) for a
+/// command: an `expect 1` annotation forces symmetry breaking off (matching the
+/// jar's `A4Solution`), so the enumerated count is the raw SB-0 count. Every other
+/// `expect` (or none) leaves `opts` unchanged.
+fn effective_opts(opts: &SolveOptions, cmd: &ResolvedCommand) -> SolveOptions {
+    if matches!(cmd.expect, Some(Expect::Sat)) {
+        SolveOptions {
+            symmetry: 0,
+            ..*opts
+        }
+    } else {
+        *opts
+    }
+}
+
 /// Runs one command's full pipeline, appending its rendered block to `out`.
 /// Returns whether this command counts as a failure for the process exit
 /// code (a `CANNOT EXECUTE`, an `UNKNOWN`, or an `expect` mismatch).
@@ -263,6 +278,13 @@ fn run_one_command(
             return true;
         }
     };
+
+    // `expect 1` forces symmetry breaking off (translation-ref §3/§16.4): the
+    // jar's `A4Solution` does `sym = expected==1 ? 0 : opt.symmetry`, so a command
+    // annotated `expect 1` is solved with no SBP (changing the enumerated count).
+    // mettle mirrors that at the command boundary, where the resolved `expect` is
+    // available, leaving the shared `opts` untouched.
+    let opts = &effective_opts(opts, cmd);
 
     let verdict = match solve_goal(&ir, &scoped, &goal, &bounds, opts) {
         Ok(v) => v,

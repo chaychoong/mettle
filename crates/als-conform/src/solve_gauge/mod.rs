@@ -71,6 +71,19 @@ pub struct GaugeConfig {
     pub primary_var_cap: usize,
     /// LEDGER-001 overflow switch: forbid (default) or allow (wrap).
     pub allow_overflow: bool,
+    /// Symmetry-breaking predicate cap for **stage 1** (the verdict net,
+    /// translation-ref §16.4). Default **20** — SB-20 is the default-config verdict
+    /// net. Symmetry breaking is verdict-neutral, so this never flips a stage-1
+    /// verdict; it exercises the SBP machinery under the full corpus. `0` = the old
+    /// no-SB behavior. `expect 1` commands are forced to 0 (jar parity).
+    pub symmetry: u32,
+    /// Symmetry-breaking predicate cap for **stage 2** (the counting net) on BOTH
+    /// sides — mettle enumerates at this symmetry and the jar shim is invoked with
+    /// the same value. Default **0**: the ADR-0002 SB-0 counting yardstick,
+    /// byte-identical to the pre-mt-048 behavior. `--count-symmetry 20` is the new
+    /// SB-20 count net. `expect 1` commands are forced to 0 on the mettle side (the
+    /// jar does it internally).
+    pub count_symmetry: u32,
     /// Whether to run stage 2 (the SB-0 counting net; needs the jar).
     pub count: bool,
     /// Enumerate at most this many mettle instances before skipping a command as
@@ -112,6 +125,11 @@ pub struct SolveGaugeReport {
     pub self_check_failures: Vec<String>,
     /// Every command whose mettle pipeline panicked (a mettle bug).
     pub panics: Vec<String>,
+    /// Stage-1 symmetry-breaking cap the verdict net ran at (translation-ref
+    /// §16.4), so the report is self-describing.
+    pub symmetry: u32,
+    /// Stage-2 symmetry-breaking cap the counting net ran at on both sides.
+    pub count_symmetry: u32,
     /// Whether stage 2 ran.
     pub count_enabled: bool,
     /// Counting-net buckets (`count_match` / `COUNT_MISMATCH` / `skip_*`).
@@ -213,6 +231,8 @@ pub fn run_gauge(
         disagreements: Vec::new(),
         self_check_failures: Vec::new(),
         panics: Vec::new(),
+        symmetry: cfg.symmetry,
+        count_symmetry: cfg.count_symmetry,
         count_enabled: cfg.count,
         count_buckets: BTreeMap::new(),
         count_mismatches: Vec::new(),
@@ -408,10 +428,22 @@ fn classify_command(
         return CmdResult::defer("mettle_defer:primary_var_cap".to_owned());
     }
 
+    // `expect 1` forces symmetry off on both stages (translation-ref §3/§16.4):
+    // the jar's `A4Solution` does `sym = expected==1 ? 0 : opt.symmetry`, so a
+    // command annotated `expect 1` is solved with no SBP. mettle mirrors it here,
+    // at the command boundary where the resolved `expect` is known.
+    let expect_one = matches!(
+        world.commands[idx].expect,
+        Some(als_syntax::ast::Expect::Sat)
+    );
+    let stage1_sym = if expect_one { 0 } else { cfg.symmetry };
+    let stage2_sym = if expect_one { 0 } else { cfg.count_symmetry };
+
     let opts = SolveOptions {
         allow_overflow: cfg.allow_overflow,
         conflict_budget: Some(cfg.conflict_budget),
         encode_budget: Some(cfg.encode_budget),
+        symmetry: stage1_sym,
         ..SolveOptions::default()
     };
     let (sat, self_check_fail) = match solve_goal(&ir, scoped, &goal, &bounds, &opts) {
@@ -444,6 +476,7 @@ fn classify_command(
         // (verdict/self-check) options, unaffected by this per-enumeration knob.
         let enum_opts = SolveOptions {
             enum_effort_budget: Some(cfg.enum_budget),
+            symmetry: stage2_sym,
             ..opts
         };
         Some(classify_count(
@@ -563,11 +596,12 @@ fn run_jar_stage(
     report: &mut SolveGaugeReport,
     progress: &mut dyn FnMut(&str),
 ) -> Result<(), ConformError> {
-    // Symmetry is set to 0 explicitly here, so the jar's own `expect 1 →
-    // symmetry = 0` internal override (which would matter at default symmetry)
-    // is moot — the SB-0 count is what we compare (ADR-0002).
+    // The jar side runs at `cfg.count_symmetry` (default 0 = the ADR-0002 SB-0
+    // yardstick; `--count-symmetry 20` = the SB-20 count net). The jar applies its
+    // own `expect 1 → symmetry = 0` override internally per command, exactly as
+    // mettle does on its side (translation-ref §16.4), so the two stay matched.
     let oracle_cfg = OracleConfig::new(&cfg.jar_path, &cfg.shim_source)
-        .with_symmetry(0)
+        .with_symmetry(i32::try_from(cfg.count_symmetry).unwrap_or(i32::MAX))
         .with_no_overflow(!cfg.allow_overflow)
         .with_solver("sat4j")
         .with_timeout(cfg.jar_timeout);
@@ -634,6 +668,7 @@ impl SolveGaugeReport {
         let mut out = String::new();
         let _ = writeln!(out, "=== mt-037 solve gauge ===");
         let _ = writeln!(out, "commands          : {}", self.commands);
+        let _ = writeln!(out, "stage-1 symmetry  : {}", self.symmetry);
         let _ = writeln!(
             out,
             "baselines         : {} ({} command entries)",
@@ -655,7 +690,11 @@ impl SolveGaugeReport {
         render_list(&mut out, "panics", &self.panics);
 
         if self.count_enabled {
-            let _ = writeln!(out, "\n=== SB-0 counting net (--count) ===");
+            let _ = writeln!(
+                out,
+                "\n=== counting net (--count, symmetry {}) ===",
+                self.count_symmetry
+            );
             if self.count_buckets.is_empty() {
                 let _ = writeln!(out, "  (no SAT commands reached the counting net)");
             }

@@ -28,6 +28,7 @@
 mod circuit;
 mod int;
 mod matrix;
+pub(crate) mod symmetry;
 
 use std::collections::BTreeMap;
 
@@ -191,9 +192,158 @@ impl<'a> Encoder<'a> {
     /// becomes a formula by the Milicevic/Jackson polarity rule (translation-ref
     /// §11.3, [`Encoder::int_compare`]). So the goal formula already embeds every
     /// guard; nothing is conjoined here.
-    pub(crate) fn finish_goal(mut self, goal: FormulaId) -> Result<(Bool, Cnf), TranslateError> {
+    ///
+    /// **Symmetry breaking (translation-ref §16.1).** When `sbp` is `Some` (a
+    /// non-zero [`crate::SolveOptions::symmetry`]) and the goal circuit did **not**
+    /// fold to a constant, the lex-leader predicate is generated and conjoined with
+    /// the goal (§16.1.5: the jar skips the SBP entirely on a trivial circuit,
+    /// returning the constant before conjoining). The SBP adds only Tseitin
+    /// auxiliaries, so the primary-variable set is unchanged.
+    pub(crate) fn finish_goal(
+        mut self,
+        goal: FormulaId,
+        sbp: Option<&symmetry::SbpPlan>,
+        symmetry: u32,
+    ) -> Result<(Bool, Cnf), TranslateError> {
+        let span = self.ir.formulas[goal].span;
         let g = self.formula(goal)?;
+        // §16.1.5: a goal that folded to a constant TRUE/FALSE gets no SBP.
+        let g = match (g, sbp) {
+            (Bool::Lit(_), Some(plan)) if !plan.is_trivial() && symmetry > 0 => {
+                let s = self.generate_sbp(plan, symmetry, span)?;
+                self.circ().and(g, s)
+            }
+            _ => g,
+        };
         Ok((g, self.cnf))
+    }
+
+    /// Generates the lex-leader symmetry-breaking predicate for `plan`
+    /// (translation-ref §16.3, a bit-exact port of `SymmetryBreaker.generateSBP`).
+    ///
+    /// For each class and each adjacent ascending atom pair `(prev, cur)`, two
+    /// parallel `original`/`permuted` boolean lists are built by walking the
+    /// `relparts` relations (in `(arity, name)` order) and, per relation, its upper
+    /// tuples in ascending lexicographic order: the `original` entry is the tuple's
+    /// matrix cell, the `permuted` entry the cell of the tuple with `prev`/`cur`
+    /// swapped. Identity tuples (`t' == t`) and mirror duplicates (an earlier
+    /// `(original[i], permuted[i]) == (permValue, entryValue)`) are skipped; the
+    /// list is capped at `cap` entries — checked at each relation boundary, exactly
+    /// as the jar's `original.size() < predLength` loop guard. Each pair's list is
+    /// closed with a `lex-leq` circuit, and all are conjoined.
+    fn generate_sbp(
+        &mut self,
+        plan: &symmetry::SbpPlan,
+        cap: u32,
+        span: als_syntax::Span,
+    ) -> Result<Bool, TranslateError> {
+        let cap = cap as usize;
+        let mut clauses: Vec<Bool> = Vec::new();
+        for class in plan.classes() {
+            if class.len() < 2 {
+                continue;
+            }
+            for pair in class.windows(2) {
+                let (prev, cur) = (pair[0], pair[1]);
+                let mut original: Vec<Bool> = Vec::new();
+                let mut permuted: Vec<Bool> = Vec::new();
+                for &rel in plan.relparts() {
+                    if original.len() >= cap {
+                        break;
+                    }
+                    if !self.rel_touches_class(rel, class) {
+                        continue;
+                    }
+                    self.sbp_relation(rel, prev, cur, &mut original, &mut permuted);
+                }
+                // Charge the pair's circuit against the encode budget, then close
+                // it with the lex-leq comparator.
+                self.check_capacity(span)?;
+                let leq = self.lex_leq(&original, &permuted);
+                clauses.push(leq);
+            }
+        }
+        Ok(self.circ().and_many(clauses))
+    }
+
+    /// Whether relation `rel`'s upper bound touches `class` — some atom of some
+    /// upper tuple lands in the class (the jar's `representatives.contains(
+    /// sym.min())`, translation-ref §16.3).
+    fn rel_touches_class(&self, rel: RelId, class: &[AtomId]) -> bool {
+        let Some(bound) = self.bounds.get(rel) else {
+            return false;
+        };
+        let class_set: std::collections::BTreeSet<AtomId> = class.iter().copied().collect();
+        bound
+            .upper()
+            .iter()
+            .any(|t| t.atoms().iter().any(|a| class_set.contains(a)))
+    }
+
+    /// Appends one relation's SBP entries for the `(prev, cur)` swap
+    /// (translation-ref §16.3). Iterates the relation's upper tuples in ascending
+    /// lexicographic order; for each, the `original` value is the tuple's cell and
+    /// the `permuted` value the swapped tuple's cell (`FALSE` when outside upper),
+    /// with the identity and mirror-duplicate skips applied.
+    fn sbp_relation(
+        &self,
+        rel: RelId,
+        prev: AtomId,
+        cur: AtomId,
+        original: &mut Vec<Bool>,
+        permuted: &mut Vec<Bool>,
+    ) {
+        let Some(bound) = self.bounds.get(rel) else {
+            return;
+        };
+        for t in bound.upper().iter() {
+            let e = self.sbp_cell(rel, bound, t);
+            let swapped = swap_tuple(t, prev, cur);
+            if swapped == *t {
+                continue;
+            }
+            let p = self.sbp_cell(rel, bound, &swapped);
+            // Mirror filter (jar `atSameIndex`): skip when some earlier accepted
+            // pair equals `(permValue, entryValue)` = `(p, e)`.
+            if original
+                .iter()
+                .zip(permuted.iter())
+                .any(|(&o, &pm)| o == p && pm == e)
+            {
+                continue;
+            }
+            original.push(e);
+            permuted.push(p);
+        }
+    }
+
+    /// The boolean matrix cell of `tuple` for `rel` (translation-ref §16.3): `TRUE`
+    /// for a lower-bound tuple, its primary variable for a floating upper tuple, and
+    /// `FALSE` for a tuple outside the upper bound.
+    fn sbp_cell(&self, rel: RelId, bound: &crate::bounds::RelBound, tuple: &Tuple) -> Bool {
+        if bound.lower().contains(tuple) {
+            Bool::TRUE
+        } else if let Some(&var) = self.prim.get(&(rel, tuple.clone())) {
+            Bool::var(var)
+        } else {
+            Bool::FALSE
+        }
+    }
+
+    /// The `lex-leq` circuit (translation-ref §16.3, SymmetryBreaker.java:350):
+    /// `⋀_i (prevEq_{i−1} → (orig_i → perm_i))` with `prevEq_i = prevEq_{i−1} ∧
+    /// (orig_i ↔ perm_i)`, `prevEq_{−1} = TRUE`.
+    fn lex_leq(&mut self, original: &[Bool], permuted: &[Bool]) -> Bool {
+        let mut cmp: Vec<Bool> = Vec::with_capacity(original.len());
+        let mut prev_eq = Bool::TRUE;
+        for (&o, &p) in original.iter().zip(permuted.iter()) {
+            let imp = self.circ().implies(o, p);
+            let clause = self.circ().implies(prev_eq, imp);
+            cmp.push(clause);
+            let eq = self.circ().iff(o, p);
+            prev_eq = self.circ().and(prev_eq, eq);
+        }
+        self.circ().and_many(cmp)
     }
 
     // ------------------------------------------------------------------ gates
@@ -1194,6 +1344,26 @@ impl<'a> Encoder<'a> {
             self.circ().and(atom, nof)
         }
     }
+}
+
+/// The tuple with `prev`/`cur` swapped in every position (translation-ref §16.3,
+/// the jar's `permutation`): each occurrence of `prev` becomes `cur` and vice
+/// versa; all other atoms unchanged.
+fn swap_tuple(t: &Tuple, prev: AtomId, cur: AtomId) -> Tuple {
+    let atoms = t
+        .atoms()
+        .iter()
+        .map(|&a| {
+            if a == prev {
+                cur
+            } else if a == cur {
+                prev
+            } else {
+                a
+            }
+        })
+        .collect();
+    Tuple::new(atoms)
 }
 
 /// Transpose of a binary matrix (translation-ref §2.1): reverse each tuple, cell

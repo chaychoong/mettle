@@ -67,6 +67,17 @@ fn assert_bounds_respected(inst: &Instance, bounds: &BoundsResult) {
     }
 }
 
+/// The SB-0 counting-net options (translation-ref §3, ADR-0002): symmetry
+/// breaking off, so enumeration yields the raw satisfying-assignment count these
+/// goldens pin. `SolveOptions::default()` now defaults symmetry to 20 (mt-048),
+/// which quotients isomorphic instances — a different (also-correct) count.
+fn sb0() -> SolveOptions {
+    SolveOptions {
+        symmetry: 0,
+        ..SolveOptions::default()
+    }
+}
+
 /// Exhaustively enumerates command `idx` of `src` and returns the SB-0 count.
 fn count(src: &str, idx: usize) -> usize {
     let loader = MapLoader::new().with("root.als", src);
@@ -76,7 +87,7 @@ fn count(src: &str, idx: usize) -> usize {
     let mut ir = Ir::default();
     let bounds = compute_bounds(&world, &scoped, &mut ir);
     let goal = lower_command(&world, &graph, &scoped, &bounds, &mut ir, idx).expect("lower");
-    enumerate(&ir, &scoped, &goal, &bounds, &SolveOptions::default())
+    enumerate(&ir, &scoped, &goal, &bounds, &sb0())
         .expect("enumerate")
         .count()
 }
@@ -668,7 +679,7 @@ fn enum_effort_budget_zero_exhausts_short_of_full_count() {
     let (ir, scoped, goal, bounds) = enum_pipeline(src, 0);
     let opts = SolveOptions {
         enum_effort_budget: Some(0),
-        ..SolveOptions::default()
+        ..sb0()
     };
     let mut it = enumerate(&ir, &scoped, &goal, &bounds, &opts).expect("enumerate");
     let n = it.by_ref().count();
@@ -689,7 +700,7 @@ fn enum_effort_budget_zero_exhausts_short_of_full_count() {
 fn enum_effort_budget_none_reaches_full_count_not_exhausted() {
     let src = "sig A {}\nrun { some A } for 3\n";
     let (ir, scoped, goal, bounds) = enum_pipeline(src, 0);
-    let opts = SolveOptions::default();
+    let opts = sb0();
     assert_eq!(opts.enum_effort_budget, None);
     let mut it = enumerate(&ir, &scoped, &goal, &bounds, &opts).expect("enumerate");
     let n = it.by_ref().count();

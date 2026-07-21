@@ -144,6 +144,14 @@ fn assert_differential_both_modes(src: &str) {
 
 fn assert_differential_opts(src: &str, opts: &SolveOptions) {
     let (ir, scoped, goal, bounds, layout) = build(src, 0);
+    // The brute-force evaluator counts every satisfying assignment (no symmetry
+    // quotient), so the encoder must enumerate at symmetry 0 for the differential
+    // to be an apples-to-apples model-count comparison (mt-048). Symmetry breaking
+    // has its own dedicated conformance suite (`sb_conformance.rs`).
+    let opts = &SolveOptions {
+        symmetry: 0,
+        ..*opts
+    };
     let solver_count = enumerate(&ir, &scoped, &goal, &bounds, opts)
         .expect("enumerate")
         .count();

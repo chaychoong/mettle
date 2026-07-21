@@ -36,7 +36,12 @@ use crate::scope::ScopedUniverse;
 /// Solver knobs (translation-ref §2.4): the LEDGER-001 overflow switch plus the
 /// **deterministic effort budgets**. Kept as a struct so mt-036/Rung-4 can
 /// extend it without churning the driver signature.
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+///
+/// `Default` is a **manual** impl (not derived) because [`Self::symmetry`]
+/// defaults to **20** — the jar's `A4Options.symmetry` default (translation-ref
+/// §16.4). Every other field is its type's own default (`false`/`None`), so the
+/// only reason `Default` cannot be derived is that non-zero symmetry.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct SolveOptions {
     /// Whether integer overflow **wraps** (`true`) or **excludes the instance**.
     /// The default (`false`) is mettle's canonical **forbid** per LEDGER-001 —
@@ -78,6 +83,38 @@ pub struct SolveOptions {
     /// net) can skip the command typed rather than either hang or fabricate a
     /// count.
     pub enum_effort_budget: Option<u64>,
+    /// Symmetry-breaking predicate length cap (translation-ref §3/§16, the jar's
+    /// `A4Options.symmetry` / Kodkod `Options.symmetryBreaking`): the bound on the
+    /// number of `(original, permuted)` boolean pairs generated **per symmetry
+    /// class adjacent-atom pair**. Default **20** (the jar's own default — a
+    /// drop-in). `0` disables symmetry breaking entirely (the ADR-0002 SB-0
+    /// counting regime, mettle's original no-SB behavior). A lex-leader predicate
+    /// only removes isomorphic copies of satisfying assignments, so this **never
+    /// changes the SAT/UNSAT verdict** — it changes the enumerated (SB-quotiented)
+    /// instance count and solve performance. The primary-variable set is untouched
+    /// (the SBP adds only Tseitin auxiliaries), so instance decoding is unaffected.
+    ///
+    /// **`expect 1` forces this to 0** at every jar-comparing command boundary
+    /// (translation-ref §3, §16.4): the jar's `A4Solution` does `int sym =
+    /// (expected == 1 ? 0 : opt.symmetry)`, so a command annotated `expect 1`
+    /// enumerates the raw (SB-0) count. Callers that compare against the jar apply
+    /// that override before handing the options here.
+    pub symmetry: u32,
+}
+
+impl Default for SolveOptions {
+    /// The jar-matching defaults: forbid overflow (LEDGER-001), no effort budgets,
+    /// and **symmetry 20** (translation-ref §16.4) — the one field that is not its
+    /// type's own default.
+    fn default() -> Self {
+        Self {
+            allow_overflow: false,
+            conflict_budget: None,
+            encode_budget: None,
+            enum_effort_budget: None,
+            symmetry: 20,
+        }
+    }
 }
 
 /// A solving verdict for one command.
@@ -237,6 +274,26 @@ fn translate(
     }
     let (prim, primary_vars, layout) = allocate_primaries(&aug_bounds, &mut cnf);
 
+    // Symmetry-breaking plan (translation-ref §16): the coarsest atom partition +
+    // the post-skolem relation order for the lex-leader predicate. Built only when
+    // symmetry breaking is on; the encoder conjoins it with the goal circuit
+    // (unless the goal folded to a constant, §16.1.5). `expect 1`-forcing to
+    // `symmetry = 0` happens at the command boundary (the CLI / gauge), so an
+    // `opts.symmetry == 0` here means "no SBP" unconditionally.
+    let sbp_plan = if opts.symmetry > 0 {
+        // Every atom from the start of the int run to the end of the universe
+        // (ints, then the string tail) is its own singleton class,
+        // unconditionally (translation-ref §16.1.1, probes Y6/uf1-SB20/fmrun).
+        let int_start = scoped.sig_atom_count;
+        Some(crate::encode::symmetry::build_plan(
+            ir,
+            &aug_bounds,
+            int_start,
+        ))
+    } else {
+        None
+    };
+
     let encoder = Encoder::new(
         ir,
         &aug_bounds,
@@ -248,7 +305,7 @@ fn translate(
         bounds.int_sig,
         bounds.seq_int_sig,
     );
-    let (goal_bool, mut cnf) = encoder.finish_goal(goal.goal)?;
+    let (goal_bool, mut cnf) = encoder.finish_goal(goal.goal, sbp_plan.as_ref(), opts.symmetry)?;
 
     let mut trivially_unsat = false;
     match goal_bool {

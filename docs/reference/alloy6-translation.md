@@ -2136,11 +2136,22 @@ black-box.
 | K3 | `run bar { all y: A | some x: A | x!=y }` | **no** `$` skolem in the instance — an `∃` nested under an `∀` is **not** skolemized at depth 0 |
 | K4 | SB-0 count of `run { some x: A | x=x } for 3` | jar **12** vs a no-FO-skolem count **7**: `12 = Σ over non-empty subsets |subset|` (the jar enumerates each skolem-constant witness); this is the `skip_fo_skolem` divergence mt-047 closes |
 
-### 10.12 mt-043 symmetry-breaking probes (jar-verified 2026-07-18)
+### 10.12 mt-043 symmetry-breaking probes (jar-verified 2026-07-18; mt-048 rows 2026-07-21)
 
 | # | Case | Observation |
 |---|---|---|
 | Y1 | `run { some A } for 3`, SB=20 vs SB=0 | count **3** vs **7**, verdict **SAT** both — SB changes the enumerated count, never the verdict; SB=0 is the raw count (matches probe T3) |
+| Y2 | `run { #A = 2 } for 3` | SB=20 **1**, SB=0 **3** — `usesInts` true (`#` cast); int-atom singletons stay symmetry-inert |
+| Y3 | `run show { some x: A \| x = x } for 3` | SB=20 **3**, SB=0 **12** — the `$show_x` skolem participates in `relParts` (sorts before `this/A`) |
+| Y4 | `sig A { f, g: set A }` + `lone` fact, `for 3` | SB=20 **1140**, SB=2 **1403**, SB=1 **4182**, SB=0 **4352** — cap-sensitive counts pin the per-`(class, pair)` soft truncation + `(arity, name)` relation order bit-exactly |
+| Y5 | `open util/ordering[A]` `for 4` | **1** at SB=20 *and* SB=0 — ordered atoms symmetry-inert (exact bounds), §16.1 item 3 |
+| Y6 | `sig A {} sig B {} run { some A } for 3` (mt-048 review) | SB=0 **56**, SB=20 **12** — a sig the command never references still enumerates freely *and* eats SBP slots: the `retainAll` of §16.1 item 1 is a **no-op for Alloy-generated problems** (every sig/field is mentioned by the conjoined formula); mettle's full-bounds detection/`relParts` input is the jar's effective set |
+| Y7 | `sig A { f: A -> univ } run { some f } for 2 A, 1 Int` (mt-048 review) | SB-0 jar **65549** vs mettle **65565**, jar SB=20 **32902** — a **pre-existing, symmetry-independent** divergence: the jar's `univ` is the *live* universe (`Int ∪ String ∪ live top sigs`, A4Solution.java:336–338/:699), not the all-atoms constant → **bead mt-053**; its jar-pinned test lands with that fix |
+
+All Y-row counts re-verified against the jar at mt-048 (probe files:
+`scratchpad/src794/sbprobes/`, review rows under `review/`). mt-048's
+implementation reproduces Y1–Y6 exactly at every cap
+(`crates/als-core/tests/sb_conformance.rs`).
 
 ---
 
@@ -2583,3 +2594,131 @@ lex-leader replication to match the jar's SB=20 counts, is **not** on the verdic
 gate, and never touches the SB-0 counting net. This keeps the exit gate's counting
 argument unchanged while giving a dedicated SB=20 comparison where the jar's
 default-symmetry counts can be checked.
+
+### 16.1 Pipeline placement (mt-048, source-pinned at `794226dd`)
+
+Where symmetry machinery sits in the jar's `Translator.translate` (all files
+cached in `scratchpad/src794/`; `SymmetryDetector.java`, `SymmetryBreaker.java`,
+`Translator.java`, `AnnotatedNode.java`):
+
+1. **Relation retention — a dead letter on the jar's actual solve path
+   (mt-048 review, jar-probed).** The static source has, on the
+   *non-incremental* path, `bounds.relations().retainAll(formula.relations())`
+   (unmentioned relations dropped) and `if (!annotated.usesInts())
+   bounds.ints().clear()` (`usesInts` per AnnotatedNode.java:192). Three
+   probes show **neither fires on the pinned jar's solve path** (Pardinus
+   incremental): **Y6** — a sig the command never references still enumerates
+   freely *and* eats SBP slots (SB-0 56 / SB-20 12); **uf1-SB20** — a
+   `univ`-ranging field over int atoms with zero int usage shows **no**
+   int-atom quotient (SB-20 = SB-0 = 7: the per-int exact bounds always
+   refine, so int atoms are **always singletons**); **fmrun** — string atoms
+   are likewise never quotiented (SB-20 3 / SB-0 4: only the class swap
+   collapses; the per-atom `s2k` exact singletons, minted for **every** string
+   atom padding included at A4Solution.java:391–400, always refine). The
+   effective rule mettle mirrors: **nothing is mention-gated — every
+   sig/field/builtin bound refines detection, every sig/field takes part in
+   `relParts`, and every int and string atom is its own singleton class.**
+2. **Detection.** `new SymmetryBreaker(bounds, …)` runs
+   `SymmetryDetector.partition(bounds)` on the **post-retention,
+   post-Simplifier, pre-skolemization, pre-matrix-break** bounds. Skolem
+   relations are added to the bounds later (by the Skolemizer) and never
+   refine the partition.
+3. **Matrix symmetry breaking.** `breakMatrixSymmetries(preds, aggressive=true)`
+   (logging off — SAT4J is not a prover) handles the `totalOrder`/`acyclic`
+   `RelationPredicate`s. Alloy emits `totalOrder` for `util/ordering`
+   (TranslateAlloyToKodkod.java:1073–77); the aggressive break rebinds
+   first/last/ordered/next to the exact constants **and removes the ordered
+   partition** from the symmetry set. mettle's LEDGER-004 pinning (mt-035)
+   produces those same exact bounds *up front*, so its detector splits the
+   ordered atoms into singleton classes — same net outcome (no SBP bits over
+   ordered atoms, ordering relations constant → skipped) by a different route.
+4. **Skolemization** adds skolem relations + bounds. They **do** participate in
+   SBP generation (`relParts` iterates `bounds.relations()` at generate time;
+   the `r.isSkolem() && options.temporal()` skip is inert non-temporally).
+5. **SBP generation.** After FOL→Bool translation, `generateSBP(interpreter,
+   options)` is conjoined with the goal circuit — **unless the circuit folded
+   to a constant** (trivial TRUE/FALSE returns before the SBP is conjoined).
+6. **`expect 1` forces SB=0** (§3, A4Solution) — applies at the command
+   boundary, not inside Kodkod.
+
+### 16.2 SymmetryDetector — the coarsest partition (mt-048)
+
+`partition(bounds)` computes the **coarsest** partition of the universe's atom
+indices such that every bound tupleset is a union of cross-products of classes.
+Refinement inputs, in the jar's order (the *result* is order-independent — the
+coarsest such partition is unique, which is why the jar's HashMap-order
+internals are harmless):
+
+- each retained integer's exact bound (a singleton — splits that atom out),
+  **iff** `usesInts` (§16.1.1);
+- for each retained relation (reified-atom relations skipped — Pardinus-only):
+  its **lower bound** iff non-empty *and* strictly smaller than the upper, and
+  its **upper bound** iff non-empty — note constant/exact relations' uppers
+  **do** refine (they just never join `relParts`), sorted by increasing
+  tupleset size (tie order irrelevant).
+
+Arity-n refinement projects to the first column, refines by it, groups the
+atoms of each affected class by their **remainder-tuple pattern** (atoms with
+identical continuations stay together; the diagonal `a→a…a`-only atoms form an
+"identity" subclass), then recurses on the distinct patterns at arity n−1.
+mettle may implement any algorithm producing the same partition-as-a-set;
+determinism of *class order* is then imposed canonically (ascending class
+minimum) — class order provably never affects the SBP (per-pair bit lists are
+built and cleared independently; see §16.3).
+
+### 16.3 generateSBP — the lex-leader predicate, bit-exactly (mt-048)
+
+For each symmetry class `sym` and each **adjacent pair** `(prev, cur)` of its
+atoms in ascending index order, build two parallel lists `original`/`permuted`
+of Boolean values (primary vars or constants), capped at
+`options.symmetryBreaking` (**default 20**) entries per pair, then conjoin
+`lex-leq(original, permuted)` over all pairs of all classes:
+
+- **Relation order** (`relParts`, SymmetryBreaker.java:284): every relation in
+  the (post-skolem) bounds with `lower.size() != upper.size()` (constants
+  skipped), **sorted by arity ascending, then name ascending** (Java
+  `String.compareTo` = UTF-16 code-unit order; ASCII in practice). Names are
+  the jar's spellings — `this/A`, `this/A.f`, `$cmd_x`, … — which mettle's
+  `Relation.name` already carries (mt-030/047). **`$`-prefixed skolems sort
+  before `this/…`**, so skolem constants eat SBP slots *first* among same-arity
+  relations — truncation-visible.
+- A relation contributes to a pair only if its upper bound touches the class
+  (`representatives.contains(sym.min())` — any column of any upper tuple lands
+  in `sym`).
+- Per relation, iterate the **upper-bound tuples in ascending tuple-index
+  order** (index = Σ atomIdx·usize^(arity−1−i), i.e. lexicographic by atom
+  columns; matrix values: `TRUE` for lower-bound tuples, else the tuple's
+  primary var). For each entry `e` at tuple `t`: let `t′` = `t` with `prev`
+  and `cur` **swapped** everywhere, `p` = matrix value at `t′` (`FALSE` when
+  `t′` is outside the upper bound). Skip when `t′ == t`; skip when some
+  earlier accepted pair `(original[i], permuted[i]) == (p, e)` (the mirror
+  filter, exact `Bool` equality). Otherwise push `(e, p)`. Stop at the cap.
+- **`lex-leq`** (SymmetryBreaker.java:350): `AND_i (prevEq_{i−1} → (orig_i →
+  perm_i))` with `prevEq_i = prevEq_{i−1} ∧ (orig_i ↔ perm_i)`, `prevEq_{−1} =
+  TRUE`. Any logically equivalent CNF encoding preserves counts — enumeration
+  blocks on primary variables only (both sides).
+
+**Worked check (probe Y1).** `run { some A } for 3`, SB=20: universe = 3 `A`
+atoms + 16 int atoms; the int atoms are singleton classes (§16.1.1 — always;
+no adjacent pairs ⇒ no bits). Class {A0,A1,A2},
+pairs (A0,A1),(A1,A2): the mirror filter leaves exactly `v_{A0}→v_{A1}` and
+`v_{A1}→v_{A2}` — upward-closed non-empty subsets of {A0,A1,A2} = **3**
+instances (jar-verified count 3; SB-0 raw count 7). The contract reproduces
+the pinned probe exactly.
+
+### 16.4 What mettle mirrors where (mt-048)
+
+- `SolveOptions::symmetry: u32`, **default 20** (drop-in = the jar's default);
+  `0` disables (the ADR-0002 counting regime, unchanged as the yardstick).
+- **`expect == 1` ⇒ effective symmetry 0**, applied wherever a command's
+  verdict/count is produced for jar comparison (exec CLI, gauge both stages).
+- Detection input = every non-skolem relation bound in the command's bounds
+  (skolems excluded — detection is pre-skolemization, §16.1.2), plus an
+  unconditional singleton per **int atom** and per **string atom** (the jar's
+  per-int exact bounds and per-string `s2k` singletons, which its solve path
+  never clears — §16.1.1). No mention-gating anywhere.
+- SBP participates in the encode-effort budget like any other gates; the SBP
+  is skipped when the goal circuit folds to a constant (§16.1.5).
+- SB-20 count parity is checked by a dedicated gauge mode (both sides at
+  symmetry 20, live jar); the SB-0 counting net and its ADR-0002 authority are
+  untouched.

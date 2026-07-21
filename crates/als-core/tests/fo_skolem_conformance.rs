@@ -44,7 +44,14 @@ fn count(src: &str) -> usize {
     let mut ir = Ir::default();
     let bounds = compute_bounds(&world, &scoped, &mut ir);
     let goal = lower_command(&world, &graph, &scoped, &bounds, &mut ir, 0).expect("lower");
-    enumerate(&ir, &scoped, &goal, &bounds, &SolveOptions::default())
+    // SB-0 counting yardstick (ADR-0002): symmetry off, so these pinned counts are
+    // the raw jar SB-0 counts (K4 = 12, NoEmpty = 561). `SolveOptions::default()`
+    // now defaults symmetry to 20 (mt-048), a different quotiented count.
+    let opts = SolveOptions {
+        symmetry: 0,
+        ..SolveOptions::default()
+    };
+    enumerate(&ir, &scoped, &goal, &bounds, &opts)
         .expect("enumerate")
         .count()
 }

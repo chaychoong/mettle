@@ -33,6 +33,8 @@ fn test1_config() -> GaugeConfig {
         encode_budget: 50_000_000,
         primary_var_cap: 200_000,
         allow_overflow: false,
+        symmetry: 20,
+        count_symmetry: 0,
         count: true,
         count_cap: 10_000,
         enum_budget: 2_000_000,
