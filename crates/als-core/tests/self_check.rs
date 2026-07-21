@@ -4,7 +4,7 @@
 //! conjunct via its [`Provenance`]. This exercises the net's teeth — the same
 //! check `solve_goal` runs as a `debug_assert!` on every SAT verdict.
 
-use als_core::bounds::{Tuple, TupleSet};
+use als_core::bounds::{Bounds, Tuple, TupleSet};
 use als_core::ir::{Ir, RelId};
 use als_core::{
     compute_bounds, compute_universe, lower_command, self_check, solve_goal, Instance, Provenance,
@@ -17,6 +17,7 @@ struct Solved {
     scoped: ScopedUniverse,
     goal: als_core::LoweredGoal,
     instance: Instance,
+    bounds: Bounds,
 }
 
 fn solve(src: &str) -> Solved {
@@ -39,6 +40,7 @@ fn solve(src: &str) -> Solved {
         scoped,
         goal,
         instance,
+        bounds: bounds.bounds,
     }
 }
 
@@ -66,7 +68,8 @@ fn correct_instance_passes() {
         &s.scoped,
         &s.goal,
         &s.instance,
-        &SolveOptions::default()
+        &SolveOptions::default(),
+        &s.bounds,
     )
     .is_ok());
 }
@@ -84,6 +87,7 @@ fn corrupting_a_fact_is_caught() {
         &s.goal,
         &corrupt,
         &SolveOptions::default(),
+        &s.bounds,
     )
     .expect_err("corrupted instance must be rejected");
     assert!(
@@ -106,6 +110,7 @@ fn corrupting_a_field_multiplicity_is_caught() {
         &s.goal,
         &corrupt,
         &SolveOptions::default(),
+        &s.bounds,
     )
     .expect_err("emptying a `one` field must be rejected");
     assert!(
@@ -128,6 +133,7 @@ fn corrupting_the_command_is_caught() {
         &s.goal,
         &corrupt,
         &SolveOptions::default(),
+        &s.bounds,
     )
     .expect_err("emptying A must violate `some A`");
     assert!(
@@ -170,6 +176,7 @@ fn adding_an_illegal_tuple_is_caught() {
         &s.goal,
         &corrupt,
         &SolveOptions::default(),
+        &s.bounds,
     )
     .expect_err("a second f image must break `one`");
     assert!(

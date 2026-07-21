@@ -129,7 +129,7 @@ fn solve_budgeted(
     };
     match solve_goal(ir, scoped, goal, bounds, &opts) {
         Ok(SolveVerdict::Sat(inst)) => {
-            let sc = self_check(ir, scoped, goal, &inst, &opts)
+            let sc = self_check(ir, scoped, goal, &inst, &opts, &bounds.bounds)
                 .err()
                 .map(|f| f.to_string());
             SolveOutcome::Solved(true, sc)

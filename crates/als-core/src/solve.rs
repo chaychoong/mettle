@@ -149,14 +149,15 @@ fn debug_self_check(
     goal: &LoweredGoal,
     inst: &Instance,
     opts: SolveOptions,
+    bounds: &Bounds,
 ) {
     #[cfg(debug_assertions)]
-    if let Err(failure) = self_check(ir, scoped, goal, inst, &opts) {
+    if let Err(failure) = self_check(ir, scoped, goal, inst, &opts, bounds) {
         debug_assert!(false, "self-check failed (a mettle bug): {failure}");
     }
     #[cfg(not(debug_assertions))]
     {
-        let _ = (ir, scoped, goal, inst, opts);
+        let _ = (ir, scoped, goal, inst, opts, bounds);
     }
 }
 
@@ -179,6 +180,10 @@ struct Translated {
     layout: Vec<RelDecode>,
     universe: Universe,
     trivially_unsat: bool,
+    /// The augmented bounds the encoder used (base bounds + skolem bounds), so the
+    /// self-check evaluator shares the encoder's exact relation bounds for the
+    /// (C) constant-escape predicate (translation-ref §10.7c ext, mt-051).
+    bounds: Bounds,
 }
 
 /// Mints the primary variables (ADR-0011 decision 3) and builds the decode
@@ -258,6 +263,7 @@ fn translate(
         layout,
         universe: bounds.bounds.universe.clone(),
         trivially_unsat,
+        bounds: aug_bounds,
     })
 }
 
@@ -312,7 +318,7 @@ pub fn solve_goal(
             None => SolveVerdict::Unknown,
             Some(Outcome::Sat(model)) => {
                 let inst = decode(&t.layout, &t.universe, &model);
-                debug_self_check(ir, scoped, goal, &inst, *opts);
+                debug_self_check(ir, scoped, goal, &inst, *opts, &t.bounds);
                 SolveVerdict::Sat(inst)
             }
             Some(Outcome::Unsat) => SolveVerdict::Unsat,
@@ -351,6 +357,9 @@ pub struct InstanceEnumerator<'a> {
     scoped: &'a ScopedUniverse,
     goal: &'a LoweredGoal,
     opts: SolveOptions,
+    /// The augmented bounds the encoder used, for the self-check evaluator's
+    /// (C) constant-escape predicate (translation-ref §10.7c ext, mt-051).
+    bounds: Bounds,
     /// Remaining cumulative effort (conflicts + decisions) before
     /// [`SolveOptions::enum_effort_budget`] is exhausted; `None` = unbudgeted
     /// (charge nothing, never exhaust).
@@ -417,7 +426,14 @@ impl Iterator for InstanceEnumerator<'_> {
             }
             Outcome::Sat(model) => {
                 let inst = decode(&self.layout, &self.universe, &model);
-                debug_self_check(self.ir, self.scoped, self.goal, &inst, self.opts);
+                debug_self_check(
+                    self.ir,
+                    self.scoped,
+                    self.goal,
+                    &inst,
+                    self.opts,
+                    &self.bounds,
+                );
                 let clause = block(&model, &self.primary_vars);
                 if clause.is_empty() {
                     // No primary variables ⇒ a single distinguishable instance.
@@ -462,6 +478,7 @@ pub fn enumerate<'a>(
         scoped,
         goal,
         opts: *opts,
+        bounds: t.bounds,
         budget_remaining: opts.enum_effort_budget,
         exhausted: false,
     })

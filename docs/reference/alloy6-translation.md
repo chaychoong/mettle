@@ -322,6 +322,8 @@ both sides are integer casts** (`IntToExprCast`), in which case they compare the
 underlying int expressions. This is how a field of declared type `Int` compared
 to an int literal (`a.n = 1`) type-checks and solves as an integer equality — the
 resolution contract's "both sides `is_int`" case (resolution §4.5, probe 02).
+The one-sided case (exactly one side a cast) is **pinned in §10.7e** (mt-051):
+set equality always, with forbid-mode cast-emptiness + guard semantics.
 
 ### 2.3 Quantifiers & skolemization
 
@@ -1600,7 +1602,7 @@ coincidentally-matching UNSAT of the `∃∃` cell to "robustness" while never
 noticing the `∀∀` cell's SAT was equally coincidental (propped up by the
 `negate[8]` vacuous-domain artifact, not genuine rescue).
 
-#### Open, not closed by this investigation: ITE/`implies` interaction with Defect A
+#### ~~Open, not closed by this investigation~~ — CLOSED at mt-051 (§10.7e FACT 5): ITE/`implies` interaction with Defect A
 
 Defect A's "own domain must be bare `Int`" precondition, tested on a **single**
 universally-quantified variable with **no second quantifier at all**, gives
@@ -1790,9 +1792,11 @@ simpler than the first two passes of this section:
    `Int`" branch restated for the common single-quantifier case).
 4. **Comparison sits behind an int-ITE or an `implies` antecedent, and rule
    0/2's precondition (driver's own domain is not bare `Int`) would
-   otherwise apply** → **open** (see the Open note above; P9 and P12 show
-   the defect NOT firing in this configuration, for reasons not traced to
-   source, and this was not re-examined this round); do not guess.
+   otherwise apply** → ~~open; do not guess~~ **PINNED at mt-051 (§10.7e
+   FACT 5)**: the driver behaves as correctly classified (universal ⇒
+   rescue); antecedent-position and int-ITE (either branch) only —
+   consequents, `and`-wrapping, and bare negation get ordinary rule-0
+   treatment.
 5. **A single comparison whose two operands overflow with different
    classifications** (P13a/b) → **out of scope**, unchanged from §10.7b
    ("ambiguous by hand," ordering question never resolved).
@@ -1985,6 +1989,101 @@ independent of `x`. Confirmed directly:
 anywhere and is unaffected** — it stands exactly as reported: a
 genuinely-universal sig-bound variable is misclassified as existential,
 unconditionally, at any nesting depth including zero.
+
+### 10.7e mt-051 integer-equality typing & cast overflow semantics, pinned (jar-verified 2026-07-21)
+
+Two probe rounds (sonnet probe agent `ProbeEqTyping.java`, 27 cells; tech-lead
+verification + boundary rounds `ProbeEqTyping2–5.java`, 25 more cells; raw
+outputs `mt051_output.txt`, `mt051_verify_output*.txt`; full narrative incl.
+one withdrawn intermediate rule in `scratchpad/probe/mt051_report.md` + its
+review addendum) close §10.7c's GAP1a corner **and** its rule-4 "Open"
+sliver. Everything below is jar-verified at commit `794226dd` (sat4j,
+symmetry 0, both `noOverflow` settings per cell; hygiene note reconfirmed the
+hard way: the `0-N` MINUS peephole is literally `0-(max+1)` only —
+`TranslateAlloyToKodkod.java:1239-1248` — so `(0-2)` in expression position
+is the SET `{0}−{2}={0}`, the same artifact class as mt-044's `(0-1)`).
+
+**FACT 1 — value semantics: one-sided `=`/`!=`/`in` is ALWAYS Kodkod set
+equality/subset, never int promotion.** `EQUALS`/`NOT_EQUALS` int-compare
+only when *both* translated operands are literally `IntToExprCast`
+(`TranslateAlloyToKodkod.java:1288-1306`); `IN` never consults cast-ness at
+all (`isIn`, line 1327); bare `+` on int-typed operands is always relational
+union (`case PLUS`, line 1230). Decisive cells: `#priority = #pid + 1` at
+forced `(#pid,#priority)=(1,1)` is **SAT** — `{1}∪{1}` collapses to `{1}` —
+and at `(2,3)` is **UNSAT** (3 ≠ {1,2} as sets); a 2-element or empty RHS
+never equals a singleton cast (Q1-multi/empty/swap/neq, 8/8 predicted).
+mettle: the one-sided shape stays `RelCompare` (set semantics); only the
+lowering-level both-cast peephole becomes `IntCompare` (unchanged).
+
+**FACT 2 — cast value semantics in forbid mode: an overflowed cast denotes
+the EMPTY set.** The `IntToExprCast` translation builds each cell as
+`Int.eq(factory.integer(atom))` — and `Int.eq(other)` ≡
+`eq(other, Environment.empty())` → `ensureNoOverflow` (`Int.java:129,229`),
+i.e. every cast cell carries `∧ ¬accumOverflow`. Polarity-independent,
+context-independent (comparisons, unions, `some`/MultTest, joins). Allow
+mode: the wrapped atom, always (T5-allow pins wrapped-not-empty content:
+`#priority in #pid + 1` at `#pid=10`, bw 3, wraps to 2 and the subset
+holds). Confirmed end-to-end by D3a (`some i: Int | plus[3,3] = i` for 3 but
+3 int → allow SAT via `i=−2`, forbid UNSAT via the emptied cast).
+
+**FACT 3 — the comparison-level guard applies the §10.7c rules 0–3
+classification, unchanged, to every capable cast reachable through the
+compared sides' set-operator structure.** `BooleanMatrix.eq/subset/some/…`
+call `DefCond.ensureDef` with the live env and the operand matrices'
+defConds (bytecode = fetched source, verified by `javap`); matrix ops merge
+defConds (`mergeDefConds`), so union-nested casts guard too. Cells:
+bare-Int-∃ dependence excludes (GAP1a reconfirmed; V-depun under a union),
+bare-Int-∀ dependence RESCUES (Q2-rescue — first jar-confirmed rescue on the
+set-eq path), sig-∀ dependence excludes (Q2-defectA = Defect A verbatim),
+and **closed operands exclude** (D4 direct / T1 union / T4 `in` — circuit
+arithmetic; D6 direct cardinality; D1/D2 pin the same for the int-compare
+path). An intermediate "no dependency ⇒ no guard" rule proposed after the
+first round is **withdrawn** — its three supporting cells were all
+fully-constant translations (see FACT 4).
+
+**FACT 4 — the constant escape: a TRANSLATION-CONSTANT cast operand
+contributes no comparison-level guard.** When the cast's operand is
+variable-free over exactly-bound relations (its overflow flag folds to a
+constant), the (FACT 2) empty value still applies but the (FACT 3) ensureDef
+contribution is lost — R-cardun (`#priority = #pid + 1`, exactly 9/1, bw 3:
+forbid **SAT**, the raw `{1}={1}` survives) and T6 (negated form, forbid
+**SAT**) vs T5 (`in` form whose UNSAT comes from the emptied *value*, not
+the guard) and D6 (variable RHS → guard fires). Mechanism: the
+constant-empty cast matrix sheds its DefCond in matrix fast paths; probes
+decisive, exact fast-path line not chased. The int-compare path KEEPS
+constant flags (D1/D2, i9/i12). mettle implements this as a shared
+structural predicate (`translation_constant`: no `Var`/`Sum` in the int
+subtree, every referenced relation exactly bound) used identically by
+encoder and evaluator, rather than circuit-const-ness, so the matched pair
+cannot drift.
+
+**FACT 5 — §10.7c rule 4 is CLOSED: the ITE/`implies` escape is pinned.**
+Behind an int-ITE (either branch, vacuous or genuinely-reachable condition,
+one or both branches arithmetic — 4/4 cells) or in an `implies` ANTECEDENT
+(nested antecedents included — IMP-P9/IMP-nested), a non-bare-Int
+effective-∀ driver behaves as **correctly classified** (universal ⇒ rescue;
+the usual swap at flipped polarity). A CONSEQUENT-position comparison gets
+ordinary Defect-A exclusion (IMP-conseq), `and`-wrapping changes nothing
+(AND-ctl), and bare negation is NOT an escape (V-not: `!(plus[n,7] < 0)`
+under a comprehension-∀ → forbid UNSAT). mettle: `GuardDecision::Defer` →
+`Guard{forall_dep: true}`; the `behind_implies` (antecedent-only) and
+`contains_int_ite` boundaries were already jar-exact.
+
+**Corpus impact (the 10 mt-051 defers).** peterson ×8: the fact
+`# priority = # pid + 1` is FACT 1's union pitfall — as sets it forces
+`#pid = #priority = 1`, so `TwoRun`/`ThreeRun`/`Safety`/`NotStuck` all go
+UNSAT with a single pid atom in existence; the jar's verdict is a
+bug-compatible set-collapse, not the arithmetic the model author intended.
+converge/money: both sides guaranteed singletons at their scopes (set-eq
+coincides with value-eq), no reachable overflow → SAT. All 10 cached
+baseline verdicts retrodicted by the rule.
+
+**Out-of-scope corners (documented, not pinned):** casts nested *inside* a
+`Card`/`sum` operand (the jar merges those defConds transitively; mettle
+collects only through set-operator structure), casts in quantifier-decl
+bounds (FACT 2's value semantics apply; the decl-level ensureDef analog is
+not implemented), and `&`/`-`-nested casts (source-read as identical to
+union — all matrix ops merge — but not probe-confirmed).
 
 ### 10.9 mt-043 String probes (jar-verified 2026-07-18)
 

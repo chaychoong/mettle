@@ -221,20 +221,17 @@ fn mixed_type_bare_int_nesting_solves() {
 // ------------------- integer-equality typing defer (§10.7c GAP1a) -----------
 
 #[test]
-fn arith_eq_plain_int_defers_in_forbid_only() {
+fn arith_eq_plain_int_solves_both_modes() {
     // `plus[X.v,7] = X.v`: an arithmetic `Int[·]` cast compared to a plain
-    // `Int`-typed field. The jar int-compares this (guard fires); mettle would
-    // lower it as relational equality (guard skipped), so — since that shape is
-    // jar-pinned (§10.7c GAP1a) — forbid mode typed-defers rather than answer
-    // allow-style. Allow mode stays relational (wrapped-value equality is exact).
+    // `Int`-typed field. The eq-typing defer is retired (mt-051): this now SOLVES
+    // in both modes under the pinned one-sided-cast rule. Both verdicts are
+    // rule-DERIVED (Q1 set-equality), not a direct jar cell: `{plus[X.v,7]} =
+    // {X.v}` as singletons requires `X.v+7 ≡ X.v` — impossible mod 2^bw — so UNSAT
+    // in allow mode; forbid mode is at least as constrained (the (A) empty cast
+    // makes it UNSAT too). Neither may defer.
     let src = "one sig X { v: one Int }\nrun { plus[X.v, 7] = X.v } for 1\n";
-    assert_eq!(solve(src, false), Err(())); // forbid: typed defer
-    assert!(solve(src, true).is_ok()); // allow: solves relationally
-
-    // GAP1a's exact shape — nested, over bare `Int`.
-    let gap1a = "run { all n: Int | some m: Int | plus[m, 7] = n }\n";
-    assert_eq!(solve(gap1a, false), Err(()));
-    assert!(solve(gap1a, true).is_ok());
+    assert_eq!(solve(src, false), Ok(false)); // forbid: rule-derived UNSAT
+    assert_eq!(solve(src, true), Ok(false)); // allow: rule-derived UNSAT
 }
 
 #[test]

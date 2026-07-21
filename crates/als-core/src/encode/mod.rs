@@ -296,11 +296,21 @@ impl<'a> Encoder<'a> {
                 self.comprehension(&decls, body)
             }
             RelExprKind::IntToAtom(ie) => {
-                // `Int[·]` is Int→relation, not Int→formula, so the operand's
-                // accumulated overflow is dropped (Kodkod guards only at
-                // comparisons — translation-ref §11.3).
-                let (v, _of) = self.int(*ie)?;
-                Ok(self.int_to_atom(&v))
+                let ie = *ie;
+                let (v, of) = self.int(ie)?;
+                let m = self.int_to_atom(&v);
+                // (A) Cast value semantics (translation-ref §10.7c ext, mt-051):
+                // the jar builds every `IntToExprCast` cell with `Int.eq(other,
+                // empty)` (`∧ ¬accumOverflow`), so in forbid mode an overflowed
+                // overflow-capable cast denotes the EMPTY set — polarity-
+                // independent, in every context. Allow mode keeps the wrapped
+                // atom; a non-capable cast (`Int[3]`) carries a constant-false
+                // flag, so the gate folds away.
+                if !self.allow_overflow && crate::overflow_guard::overflow_capable(self.ir, ie) {
+                    Ok(self.empty_on_overflow(&m, of))
+                } else {
+                    Ok(m)
+                }
             }
             RelExprKind::Prime(_) => Err(TranslateError::LoweringUnsupported {
                 what: "temporal prime (`'`) reached the encoder — a lowering invariant \
@@ -617,34 +627,29 @@ impl<'a> Encoder<'a> {
             }
             FormulaKind::RelCompare { op, lhs, rhs } => {
                 let (op, lhs, rhs) = (*op, *lhs, *rhs);
-                // Forbid-mode integer-equality typing defer (translation-ref
-                // §10.7c GAP1a): an arithmetic `Int[·]` compared to a plain
-                // `Int`-typed operand is int-compared in the jar (guard fires) but
-                // would lower relationally here — defer rather than answer
-                // allow-style.
-                if crate::overflow_guard::eq_typing_defer(self.ir, lhs, rhs, self.allow_overflow) {
-                    return Err(TranslateError::LoweringUnsupported {
-                        what: "forbid-mode overflow guard for a relational (=/in) comparison \
-                               between an arithmetic result and a plain Int-typed operand is \
-                               not pinned (translation-ref §10.7c GAP1a: integer-equality \
-                               typing rule)"
-                            .to_owned(),
-                        span: self.ir.rel_exprs[lhs].span,
-                    });
-                }
                 let a = self.rel(lhs)?;
                 let b = self.rel(rhs)?;
-                Ok(self.rel_compare(op, &a, &b))
+                let atom = self.rel_compare(op, &a, &b);
+                // (B) Comparison-level overflow guard (translation-ref §10.7c ext,
+                // mt-051): each overflow-capable `Int[·]` cast reachable through
+                // the compared sides' set structure threads the rules 0–3 polarity
+                // guard, lhs-then-rhs; the constant-escape (C) skips it. Allow mode
+                // never guards.
+                self.guard_sides(atom, &[lhs, rhs])
             }
             FormulaKind::IntCompare { op, lhs, rhs } => {
                 let (op, lhs, rhs) = (*op, *lhs, *rhs);
                 let (a, oa) = self.int(lhs)?;
                 let (b, ob) = self.int(rhs)?;
-                self.int_compare(op, &a, &b, oa, ob, lhs, rhs)
+                Ok(self.int_compare(op, &a, &b, oa, ob, lhs, rhs))
             }
             FormulaKind::MultTest { test, expr } => {
-                let m = self.rel(*expr)?;
-                Ok(self.mult_test(*test, &m))
+                let expr = *expr;
+                let m = self.rel(expr)?;
+                let atom = self.mult_test(*test, &m);
+                // (B) guard also threads through a multiplicity test's set
+                // structure (probe T7, mt-051).
+                self.guard_sides(atom, &[expr])
             }
             FormulaKind::Quant {
                 kind,
@@ -1079,10 +1084,8 @@ impl<'a> Encoder<'a> {
     /// An integer comparison, applying the forbid-mode overflow polarity guard
     /// (translation-ref §11.3). In allow mode the raw wrapped comparison is
     /// returned. In forbid mode each operand's accumulated overflow guards the
-    /// atom per its polarity/quantifier-dependence; a comparison over an
-    /// **overflow-capable** operand lying under mixed-type (`∀∃`/`∃∀`) enclosing
-    /// quantifiers is a **typed defer** — the jar's guard behaviour there is not
-    /// yet pinned (§10.7b residual 2), and a defer is never a wrong verdict.
+    /// atom per its polarity/quantifier-dependence (the §10.7c rules 0–3
+    /// classification, rule 4 pinned mt-051 — no comparison defers).
     #[allow(
         clippy::too_many_arguments,
         reason = "one comparison needs both operands, both overflow flags, and both \
@@ -1097,7 +1100,7 @@ impl<'a> Encoder<'a> {
         ob: Bool,
         lhs: IntExprId,
         rhs: IntExprId,
-    ) -> Result<Bool, TranslateError> {
+    ) -> Bool {
         let width = self.bitwidth as usize;
         let atom = {
             let mut circ = self.circ();
@@ -1111,53 +1114,84 @@ impl<'a> Encoder<'a> {
             }
         };
         if self.allow_overflow {
+            return atom;
+        }
+        let guarded = self.apply_overflow_guard(atom, oa, lhs);
+        self.apply_overflow_guard(guarded, ob, rhs)
+    }
+
+    /// Collects the overflow-capable casts of the given comparison sides
+    /// (lhs-then-rhs order) and applies the (B) guard; allow mode passes the atom
+    /// through unchanged (translation-ref §10.7c ext, mt-051).
+    fn guard_sides(&mut self, atom: Bool, sides: &[RelExprId]) -> Result<Bool, TranslateError> {
+        if self.allow_overflow {
             return Ok(atom);
         }
-        let guarded = self.apply_overflow_guard(atom, oa, lhs)?;
-        self.apply_overflow_guard(guarded, ob, rhs)
+        let mut casts = Vec::new();
+        for &s in sides {
+            crate::overflow_guard::collect_capable_casts(self.ir, s, &mut casts);
+        }
+        self.guard_rel_casts(atom, &casts)
+    }
+
+    /// Applies the (B) comparison-level guard for each collected overflow-capable
+    /// cast operand (translation-ref §10.7c ext, mt-051), in the given order. A
+    /// [`translation_constant`](crate::overflow_guard::translation_constant) cast
+    /// contributes no guard (the (C) constant escape); its value semantics are
+    /// already baked into the operand matrix. Forbid mode only (callers gate).
+    fn guard_rel_casts(&mut self, atom: Bool, casts: &[IntExprId]) -> Result<Bool, TranslateError> {
+        let mut guarded = atom;
+        for &ie in casts {
+            if crate::overflow_guard::translation_constant(self.ir, self.bounds, ie) {
+                continue;
+            }
+            // `int(ie)` is memoised (already visited when the cast matrix was
+            // built), so this returns the same `(value, overflow)` cell.
+            let (_v, of) = self.int(ie)?;
+            guarded = self.apply_overflow_guard(guarded, of, ie);
+        }
+        Ok(guarded)
+    }
+
+    /// Empties a cast matrix when its operand overflowed (`∧ ¬of` on every cell)
+    /// — the (A) value semantics (translation-ref §10.7c ext, mt-051). A
+    /// constant-false `of` folds each gate back to the original cell.
+    fn empty_on_overflow(&mut self, m: &Matrix, of: Bool) -> Matrix {
+        let nof = self.circ().not(of);
+        let cells: Vec<(Tuple, Bool)> = m.iter().map(|(t, b)| (t.clone(), b)).collect();
+        let mut out = Matrix::empty(m.arity());
+        for (t, cell) in cells {
+            let gated = self.circ().and(cell, nof);
+            out.set(t, gated);
+        }
+        out
     }
 
     /// Applies one operand's overflow guard to a comparison atom (translation-ref
     /// §10.7c). The shared classifier decides the direction from the enclosing
-    /// quantifier stack and the operand's dependence; a jar-unpinned corner
-    /// (Defect B / the ITE-`implies` sliver) yields a typed defer. A rescue
-    /// (`forall_dep`) forces the atom true at positive polarity (`∨ of`), an
-    /// exclusion false (`∧ ¬of`); negative polarity swaps them. A constant-false
-    /// overflow makes the guard inert.
-    fn apply_overflow_guard(
-        &mut self,
-        atom: Bool,
-        of: Bool,
-        operand: IntExprId,
-    ) -> Result<Bool, TranslateError> {
-        use crate::overflow_guard::{classify, contains_int_ite, overflow_capable, GuardDecision};
+    /// quantifier stack and the operand's dependence. A rescue (`forall_dep`)
+    /// forces the atom true at positive polarity (`∨ of`), an exclusion false
+    /// (`∧ ¬of`); negative polarity swaps them. A constant-false overflow makes
+    /// the guard inert.
+    fn apply_overflow_guard(&mut self, atom: Bool, of: Bool, operand: IntExprId) -> Bool {
+        use crate::overflow_guard::{classify, contains_int_ite, overflow_capable};
         let capable = overflow_capable(self.ir, operand);
         let behind_conditional = self.behind_implies || contains_int_ite(self.ir, operand);
-        match classify(
+        let forall_dep = classify(
             &self.quant_frames,
             self.freevars.int(operand),
             capable,
             behind_conditional,
-        ) {
-            GuardDecision::Defer => Err(TranslateError::LoweringUnsupported {
-                what: "forbid-mode overflow guard for this arithmetic comparison is not \
-                       yet pinned in the jar (translation-ref §10.7c: Defect B nesting \
-                       or the int-ITE/`implies` sliver)"
-                    .to_owned(),
-                span: self.ir.int_exprs[operand].span,
-            }),
-            GuardDecision::Guard { forall_dep } => {
-                if matches!(of, Bool::Const(false)) {
-                    return Ok(atom);
-                }
-                // `∨ of` iff polarity and dependence agree; else `∧ ¬of`.
-                Ok(if self.pol_positive == forall_dep {
-                    self.circ().or(atom, of)
-                } else {
-                    let nof = self.circ().not(of);
-                    self.circ().and(atom, nof)
-                })
-            }
+        );
+        if matches!(of, Bool::Const(false)) {
+            return atom;
+        }
+        // `∨ of` iff polarity and dependence agree; else `∧ ¬of`.
+        if self.pol_positive == forall_dep {
+            self.circ().or(atom, of)
+        } else {
+            let nof = self.circ().not(of);
+            self.circ().and(atom, nof)
         }
     }
 }

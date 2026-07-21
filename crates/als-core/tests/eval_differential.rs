@@ -96,6 +96,7 @@ fn evaluator_count(
     goal: &LoweredGoal,
     layout: &Layout,
     opts: &SolveOptions,
+    bounds: &BoundsResult,
 ) -> usize {
     assert!(
         layout.total_floating <= 22,
@@ -105,7 +106,15 @@ fn evaluator_count(
     let mut count = 0usize;
     for mask in 0..(1u64 << layout.total_floating) {
         let inst = instance_for(layout, mask);
-        let mut ev = Evaluator::new(ir, &inst, scoped, opts, goal.int_sig, goal.seq_int_sig);
+        let mut ev = Evaluator::new(
+            ir,
+            &inst,
+            scoped,
+            opts,
+            goal.int_sig,
+            goal.seq_int_sig,
+            &bounds.bounds,
+        );
         if ev.accepts(goal.goal).expect("evaluable goal") {
             count += 1;
         }
@@ -138,7 +147,7 @@ fn assert_differential_opts(src: &str, opts: &SolveOptions) {
     let solver_count = enumerate(&ir, &scoped, &goal, &bounds, opts)
         .expect("enumerate")
         .count();
-    let eval_count = evaluator_count(&ir, &scoped, &goal, &layout, opts);
+    let eval_count = evaluator_count(&ir, &scoped, &goal, &layout, opts, &bounds);
     assert_eq!(
         eval_count, solver_count,
         "encoder↔evaluator count mismatch for:\n{src}\n  evaluator={eval_count} solver={solver_count} (floating={}, allow_overflow={})",
@@ -295,11 +304,12 @@ fn sum_and_int_ite_both_modes() {
 }
 
 #[test]
-fn eq_typing_defer_matches_between_encoder_and_evaluator() {
-    // §10.7c GAP1a: `plus[X.v,7] = X.v` (arithmetic `Int[·]` vs a plain Int
-    // field) typed-defers in FORBID mode. The matched-pair invariant requires the
-    // encoder and evaluator to defer on *exactly* the same commands, so assert
-    // both raise the defer in forbid and both succeed in allow.
+fn eq_typing_one_sided_cast_solves_matched_pair() {
+    // §10.7c ext (mt-051): `plus[X.v,7] = X.v` (arithmetic `Int[·]` vs a plain Int
+    // field) is no longer deferred — the retired eq-typing defer is now the pinned
+    // (A) value semantics + (B) comparison guard. The matched-pair invariant now
+    // requires both back ends to SOLVE (no defer) in both modes; the differential
+    // pins encoder ≡ evaluator on the resulting accept counts.
     let src = "one sig X { v: one Int }\nrun { plus[X.v, 7] = X.v } for 1\n";
     let (ir, scoped, goal, bounds, layout) = build(src, 0);
 
@@ -309,28 +319,43 @@ fn eq_typing_defer_matches_between_encoder_and_evaluator() {
         ..SolveOptions::default()
     };
 
-    // Encoder defers in forbid, succeeds in allow.
+    // Encoder solves (no defer) in both modes.
     assert!(
-        enumerate(&ir, &scoped, &goal, &bounds, &forbid).is_err(),
-        "encoder must defer in forbid mode"
+        enumerate(&ir, &scoped, &goal, &bounds, &forbid).is_ok(),
+        "encoder must solve in forbid mode (defer retired)"
     );
     assert!(
         enumerate(&ir, &scoped, &goal, &bounds, &allow).is_ok(),
         "encoder must solve in allow mode"
     );
 
-    // Evaluator defers identically on a concrete instance.
+    // Evaluator solves (no defer) identically on a concrete instance, both modes.
     let inst = instance_for(&layout, 0);
-    let mut ev_forbid =
-        Evaluator::new(&ir, &inst, &scoped, &forbid, goal.int_sig, goal.seq_int_sig);
-    assert!(
-        ev_forbid.accepts(goal.goal).is_err(),
-        "evaluator must defer in forbid mode"
+    let mut ev_forbid = Evaluator::new(
+        &ir,
+        &inst,
+        &scoped,
+        &forbid,
+        goal.int_sig,
+        goal.seq_int_sig,
+        &bounds.bounds,
     );
-    let mut ev_allow = Evaluator::new(&ir, &inst, &scoped, &allow, goal.int_sig, goal.seq_int_sig);
+    assert!(
+        ev_forbid.accepts(goal.goal).is_ok(),
+        "evaluator must solve in forbid mode (defer retired)"
+    );
+    let mut ev_allow = Evaluator::new(
+        &ir,
+        &inst,
+        &scoped,
+        &allow,
+        goal.int_sig,
+        goal.seq_int_sig,
+        &bounds.bounds,
+    );
     assert!(
         ev_allow.accepts(goal.goal).is_ok(),
-        "evaluator must accept/reject (not defer) in allow mode"
+        "evaluator must solve in allow mode"
     );
 }
 

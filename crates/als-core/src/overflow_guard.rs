@@ -1,6 +1,6 @@
 //! The forbid-mode overflow-guard classifier (translation-ref §10.7c) — shared
 //! by the encoder ([`crate::encode`]) and the evaluator ([`crate::eval`]) so the
-//! two implementations apply an identical guard and defer identically.
+//! two implementations apply an identical guard.
 //!
 //! The jar's `DefCond.isUnivQuant` walk recognizes a quantifier binder as
 //! **universal** for the Milicevic/Jackson rescue only when its domain is
@@ -13,15 +13,36 @@
 //! defect — was **retracted** in §10.7c/§10.7d round 3: its decisive probes were
 //! all confounded by `negate[8]` silently emptying conjunction-shaped domains).
 //!
-//! One jar corner remains genuinely unpinned and is typed-deferred:
+//! ## The one-sided `Int[·]`-cast shape at `=`/`in`/mult-tests (§10.7c ext, mt-051)
+//! A relational comparison (`RelCompare`) or multiplicity test (`MultTest`) whose
+//! set-operator structure contains an overflow-capable `Int[·]` cast is governed
+//! by two jar-pinned effects (probe labels in `scratchpad/probe/mt051_report.md`):
 //!
-//! - **The ITE/`implies` sliver** (§10.7c rule 4): a non-bare-`Int` universal
-//!   overflow-driver reached through an int-ITE branch or an `implies` antecedent,
-//!   where the jar's behaviour is Open (P9/P12). Deferred, not guessed.
+//! - **(A) cast value semantics** — the jar builds every `IntToExprCast` cell with
+//!   `Int.eq(other, Environment.empty())` (`∧ ¬accumOverflow`), so in forbid mode
+//!   an overflowed cast denotes the **empty** set, polarity-independent, in every
+//!   context. This lives at the `IntToAtom` node in both back ends.
+//! - **(B) comparison-level guard** — `BooleanMatrix.eq/subset/some` additionally
+//!   thread `DefCond.ensureDef`, i.e. the same rules 0–3 classification below is
+//!   applied to each capable cast reachable through the compared sides' set
+//!   structure ([`collect_capable_casts`]), **unless** the cast's overflow flag is
+//!   translation-constant ([`translation_constant`]) — a constant-empty matrix
+//!   sheds its `DefCond` in the jar's matrix fast paths, so (B) is lost while (A)
+//!   still fires (the R-cardun/T5/T6 constant-escape trio).
+//!
+//! ## Rule 4 (the int-ITE / `implies`-antecedent sliver) — now pinned (mt-051)
+//! A non-bare-`Int` effective-∀ overflow-driver reached through an int-ITE branch
+//! or an `implies` **antecedent** behaves as **correctly classified** (rescue at
+//! positive polarity; the usual swap at negative) — probe Part C, boundary fixed
+//! by V-not (a bare `!` is **not** an escape). Consequents and bare negation get
+//! ordinary Defect-A treatment.
 
 use std::collections::BTreeSet;
 
-use crate::ir::{IntExprId, IntExprKind, Ir, RelExprId, RelExprKind, VarId};
+use crate::bounds::Bounds;
+use crate::ir::{
+    CompDecl, FormulaKind, IntExprId, IntExprKind, Ir, RelConst, RelExprId, RelExprKind, VarId,
+};
 
 /// The shift-amount mask width `⌈log2 w⌉` = `32 − leading_zeros(w−1)` (Kodkod
 /// `TwosComplementInt`, translation-ref §10.7d): only the low `mask` bits of a
@@ -47,18 +68,9 @@ pub(crate) struct QuantFrame {
     pub effective_forall: bool,
 }
 
-/// The guard decision for one overflowing operand at a comparison.
-pub(crate) enum GuardDecision {
-    /// The jar-unpinned ITE/`implies` sliver (§10.7c rule 4): typed defer.
-    Defer,
-    /// Apply the polarity guard; `forall_dep` = the operand classifies as
-    /// depending on an effective-∀ (rescue) rather than existential (exclude).
-    Guard { forall_dep: bool },
-}
-
 /// Whether an integer expression can overflow — it syntactically contains
 /// arithmetic, `sum`, or cardinality (not `Const`, not `int[·]`; translation-ref
-/// §10.7c). Drives both the guard and the defer.
+/// §10.7c). Drives both the value semantics and the comparison-level guard.
 pub(crate) fn overflow_capable(ir: &Ir, id: IntExprId) -> bool {
     match &ir.int_exprs[id].kind {
         IntExprKind::Const(_) | IntExprKind::AtomToInt(_) => false,
@@ -74,37 +86,137 @@ pub(crate) fn overflow_capable(ir: &Ir, id: IntExprId) -> bool {
     }
 }
 
-/// Whether a **relational** equality/subset must typed-defer in forbid mode
-/// because of the unpinned integer-equality typing rule (translation-ref §10.7c
-/// `GAP1a`). The jar compares two `Int`-typed operands as integers — firing the
-/// overflow guard — but mettle only reliably detects an integer comparison when
-/// *both* sides are `Int[·]` casts (the pinned `div[5,0]=div[5,0]` cell) or a
-/// literal/cardinality; an arithmetic result compared to a plain `Int`-typed
-/// var/field (`plus[m,7] = n`) currently lowers to *relational* equality, whose
-/// wrapped-value semantics silently skip the guard. Rather than answer
-/// allow-style on this jar-pinned shape (a wrong verdict), we defer.
-///
-/// Fires only in forbid mode, only when **exactly one** side is an `Int[·]` cast
-/// of an [`overflow_capable`] int expression and the other side is a plain
-/// relational expression (not a cast). Allow mode stays on the relational path
-/// (wrapped-value equality is exact there); non-capable casts (`Int[3]`,
-/// `Int[int[e]]`) stay relational in both modes (no guard could fire).
-pub(crate) fn eq_typing_defer(
-    ir: &Ir,
-    lhs: RelExprId,
-    rhs: RelExprId,
-    allow_overflow: bool,
-) -> bool {
-    if allow_overflow {
-        return false;
+/// Collects every **overflow-capable** `Int[·]` cast reachable through the
+/// SET-OPERATOR structure of a relational expression (translation-ref §10.7c
+/// ext (B), mt-051): recurse through relational `Binary` (union/intersect/diff/
+/// join/product/override), `Unary`, and `IfThenElse` branches — but **not** into
+/// `Formula` positions (an ITE condition, a comprehension body: those guard at
+/// their own comparison sites) nor into the int expr beneath a cast (a
+/// nested-inside-`Card` cast is a documented out-of-scope corner). Pushed in
+/// traversal order so the caller's lhs-then-rhs walk is deterministic (STYLE D2).
+pub(crate) fn collect_capable_casts(ir: &Ir, id: RelExprId, out: &mut Vec<IntExprId>) {
+    match &ir.rel_exprs[id].kind {
+        RelExprKind::IntToAtom(ie) => {
+            if overflow_capable(ir, *ie) {
+                out.push(*ie);
+            }
+        }
+        RelExprKind::Binary { lhs, rhs, .. } => {
+            collect_capable_casts(ir, *lhs, out);
+            collect_capable_casts(ir, *rhs, out);
+        }
+        RelExprKind::Unary { expr, .. } => collect_capable_casts(ir, *expr, out),
+        RelExprKind::IfThenElse {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            collect_capable_casts(ir, *then_branch, out);
+            collect_capable_casts(ir, *else_branch, out);
+        }
+        // Leaves and Formula-bearing nodes stop the set-structure walk.
+        RelExprKind::Relation(_)
+        | RelExprKind::Var(_)
+        | RelExprKind::Const(_)
+        | RelExprKind::Comprehension { .. }
+        | RelExprKind::Prime(_) => {}
     }
-    let cast_capable = |id: RelExprId| matches!(&ir.rel_exprs[id].kind, RelExprKind::IntToAtom(ie) if overflow_capable(ir, *ie));
-    let is_cast = |id: RelExprId| matches!(ir.rel_exprs[id].kind, RelExprKind::IntToAtom(_));
-    (cast_capable(lhs) && !is_cast(rhs)) || (cast_capable(rhs) && !is_cast(lhs))
+}
+
+/// Whether a cast operand's overflow flag is **translation-constant** (§10.7c ext
+/// (C), mt-051): its int-expr subtree contains no `Var` reference and no `Sum`
+/// node, and every relation it references (through `Card`/`int[·]`, etc.) is
+/// **exactly** bound (`lower == upper`). Such a cast contributes NO
+/// comparison-level (B) guard — the jar's constant-empty matrices shed their
+/// `DefCond` — while its (A) value semantics still applies (R-cardun/T5/T6). The
+/// SAME predicate runs in the encoder and the evaluator, so the two can never
+/// drift (do NOT substitute `Bool::Const`-ness on the encoder side).
+pub(crate) fn translation_constant(ir: &Ir, bounds: &Bounds, id: IntExprId) -> bool {
+    match &ir.int_exprs[id].kind {
+        IntExprKind::Const(_) => true,
+        IntExprKind::Card(rel) | IntExprKind::AtomToInt(rel) => rel_const(ir, bounds, *rel),
+        IntExprKind::Neg(ie) => translation_constant(ir, bounds, *ie),
+        IntExprKind::Binary { lhs, rhs, .. } => {
+            translation_constant(ir, bounds, *lhs) && translation_constant(ir, bounds, *rhs)
+        }
+        // A `Sum` binder makes the operand non-constant regardless of its body.
+        IntExprKind::Sum { .. } => false,
+        IntExprKind::IfThenElse {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            formula_const(ir, bounds, *cond)
+                && translation_constant(ir, bounds, *then_branch)
+                && translation_constant(ir, bounds, *else_branch)
+        }
+    }
+}
+
+/// [`translation_constant`] over a relation expression: no `Var`, and every
+/// referenced free relation is exactly bound.
+fn rel_const(ir: &Ir, bounds: &Bounds, id: RelExprId) -> bool {
+    match &ir.rel_exprs[id].kind {
+        RelExprKind::Relation(r) => bounds.get(*r).is_some_and(|b| b.lower() == b.upper()),
+        // A quantifier/comprehension variable is never a translation constant.
+        RelExprKind::Var(_) => false,
+        // `none`/`univ`/`iden` are fixed functions of the universe.
+        RelExprKind::Const(RelConst::None | RelConst::Univ | RelConst::Iden) => true,
+        RelExprKind::Binary { lhs, rhs, .. } => {
+            rel_const(ir, bounds, *lhs) && rel_const(ir, bounds, *rhs)
+        }
+        RelExprKind::Unary { expr, .. } | RelExprKind::Prime(expr) => rel_const(ir, bounds, *expr),
+        RelExprKind::IfThenElse {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            formula_const(ir, bounds, *cond)
+                && rel_const(ir, bounds, *then_branch)
+                && rel_const(ir, bounds, *else_branch)
+        }
+        RelExprKind::Comprehension { decls, body } => {
+            decls
+                .iter()
+                .all(|d: &CompDecl| rel_const(ir, bounds, d.bound))
+                && formula_const(ir, bounds, *body)
+        }
+        RelExprKind::IntToAtom(ie) => translation_constant(ir, bounds, *ie),
+    }
+}
+
+/// [`translation_constant`] over a formula (reached only through an ITE
+/// condition or a comprehension body): no `Var`/`Sum`, exact relations only.
+fn formula_const(ir: &Ir, bounds: &Bounds, id: crate::ir::FormulaId) -> bool {
+    match &ir.formulas[id].kind {
+        FormulaKind::Const(_) => true,
+        FormulaKind::Not(f) => formula_const(ir, bounds, *f),
+        FormulaKind::And(parts) | FormulaKind::Or(parts) => {
+            parts.iter().all(|&p| formula_const(ir, bounds, p))
+        }
+        FormulaKind::Implies {
+            antecedent,
+            consequent,
+        } => formula_const(ir, bounds, *antecedent) && formula_const(ir, bounds, *consequent),
+        FormulaKind::Iff(l, r) => formula_const(ir, bounds, *l) && formula_const(ir, bounds, *r),
+        FormulaKind::RelCompare { lhs, rhs, .. } => {
+            rel_const(ir, bounds, *lhs) && rel_const(ir, bounds, *rhs)
+        }
+        FormulaKind::IntCompare { lhs, rhs, .. } => {
+            translation_constant(ir, bounds, *lhs) && translation_constant(ir, bounds, *rhs)
+        }
+        FormulaKind::MultTest { expr, .. } => rel_const(ir, bounds, *expr),
+        // A quantifier binds a variable — its body is not a translation constant.
+        FormulaKind::Quant { .. } => false,
+        FormulaKind::TemporalUnary { body, .. } => formula_const(ir, bounds, *body),
+        FormulaKind::TemporalBinary { lhs, rhs, .. } => {
+            formula_const(ir, bounds, *lhs) && formula_const(ir, bounds, *rhs)
+        }
+    }
 }
 
 /// Whether an integer expression's subtree contains an int-ITE node — the
-/// syntactic half of the rule-6 "reachable through an int-ITE branch" defer.
+/// syntactic half of the rule-4 "reachable through an int-ITE branch" escape.
 pub(crate) fn contains_int_ite(ir: &Ir, id: IntExprId) -> bool {
     match &ir.int_exprs[id].kind {
         IntExprKind::Const(_) | IntExprKind::Card(_) | IntExprKind::AtomToInt(_) => false,
@@ -118,17 +230,18 @@ pub(crate) fn contains_int_ite(ir: &Ir, id: IntExprId) -> bool {
 }
 
 /// Classifies one overflowing operand at a comparison (translation-ref §10.7c's
-/// operational rule list). `frames` is the enclosing-quantifier stack
-/// (innermost last); `free` is the operand's free-variable set; `capable` is
-/// [`overflow_capable`] of the operand; `behind_conditional` is true when the
-/// comparison is reached through an `implies` antecedent or the operand contains
-/// an int-ITE (the rule-6 precondition).
+/// operational rule list), returning `forall_dep` = whether it classifies as
+/// depending on an effective-∀ (a **rescue**) rather than an existential (an
+/// **exclude**). `frames` is the enclosing-quantifier stack (innermost last);
+/// `free` is the operand's free-variable set; `capable` is [`overflow_capable`]
+/// of the operand; `behind_conditional` is true when the comparison is reached
+/// through an `implies` antecedent or the operand contains an int-ITE.
 pub(crate) fn classify(
     frames: &[QuantFrame],
     free: &BTreeSet<VarId>,
     capable: bool,
     behind_conditional: bool,
-) -> GuardDecision {
+) -> bool {
     let mentions = |v: VarId| free.contains(&v);
     // The single per-variable rule (§10.7c rules 0–3): classify by the innermost
     // enclosing binder whose domain is bare `Int`/`seq/Int` and whose variable the
@@ -137,11 +250,12 @@ pub(crate) fn classify(
     // (exclude), regardless of nesting shape/depth/type.
     let driver = frames.iter().rev().find(|f| f.bare_int && mentions(f.var));
 
-    // Rule 4 (the sole open sub-corner): when the classifier would default to
+    // Rule 4 (§10.7c, pinned mt-051): when the classifier would default to
     // existential *because* the operand's overflow-driving ∀ has a non-bare-`Int`
     // domain (Defect A's precondition), and the comparison is reached through an
-    // int-ITE branch or an `implies` antecedent, the jar's behaviour is Open —
-    // typed defer. Only when no bare-`Int` binder classifies the operand first.
+    // int-ITE branch or an `implies` antecedent, the driver behaves as CORRECTLY
+    // classified — i.e. universal ⇒ rescue. Only when no bare-`Int` binder
+    // classifies the operand first (a bare `!` is NOT an escape — probe V-not).
     if capable
         && behind_conditional
         && driver.is_none()
@@ -149,9 +263,8 @@ pub(crate) fn classify(
             .iter()
             .any(|f| !f.bare_int && f.effective_forall && mentions(f.var))
     {
-        return GuardDecision::Defer;
+        return true;
     }
 
-    let forall_dep = driver.is_some_and(|f| f.effective_forall);
-    GuardDecision::Guard { forall_dep }
+    driver.is_some_and(|f| f.effective_forall)
 }
