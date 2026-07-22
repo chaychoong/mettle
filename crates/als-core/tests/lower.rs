@@ -564,9 +564,15 @@ fn relational_ops_and_transpose() {
 #[test]
 fn iden_univ_none_constants() {
     let (ir, cj) = build("sig A {}\npred p { some iden and some univ and no none }\nrun p for 3\n");
+    // mt-053 (LEDGER-011, §10.8): `univ`/`iden` in a **user expression** lower to
+    // the jar's *live union* `Int ∪ String ∪ ⋃(top-level sig denotes)` (here
+    // `(Int + String) + A`), not the all-atoms constant; `iden` is that live set's
+    // diagonal `iden & (live -> live)`. `none` is untouched. The all-atoms
+    // `RelConst::{Univ, Iden}` survive only for the encoder's internal uses.
     assert_eq!(
         command_str(&ir, &cj),
-        "((some iden and some univ) and no none)"
+        "((some (iden & (((Int + String) + A) -> ((Int + String) + A))) \
+         and some ((Int + String) + A)) and no none)"
     );
 }
 

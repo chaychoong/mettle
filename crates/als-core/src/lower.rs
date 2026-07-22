@@ -2018,14 +2018,20 @@ impl<'a> Lowerer<'a> {
         match node.kind {
             ExprKind::Name(_) | ExprKind::AtName(_) => self.lower_name_rel(ctx, e, span),
             ExprKind::This => self.lower_this(span),
-            ExprKind::Const(c) => Ok(self.mk_rel(
-                RelExprKind::Const(match c {
-                    Const::None => RelConst::None,
-                    Const::Univ => RelConst::Univ,
-                    Const::Iden => RelConst::Iden,
-                }),
-                span,
-            )),
+            // `univ`/`iden` in **user-expression** position denote the jar's
+            // *live universe*, not the all-atoms constant (mt-053, LEDGER-011;
+            // A4Solution.java:336–338/699 + TranslateAlloyToKodkod.java:824/893 @
+            // `794226dd`; probe matrix `scratchpad/probe/mt053/NOTES.md`). The
+            // all-atoms `RelConst::Univ`/`Iden` survive only for the encoder's
+            // internal/bounds-level uses (field-domain projection, `<:`/`:>`
+            // padding, seq contiguity, `abstract_upper`) — sound
+            // over-approximations there, with liveness enforced by these live
+            // membership expressions.
+            ExprKind::Const(Const::None) => {
+                Ok(self.mk_rel(RelExprKind::Const(RelConst::None), span))
+            }
+            ExprKind::Const(Const::Univ) => Ok(self.live_univ(span)),
+            ExprKind::Const(Const::Iden) => Ok(self.live_iden(span)),
             ExprKind::Num(_) => {
                 // A small-int in relation position → its `Int` atom.
                 let ie = self.lower_int(ctx, e)?;
@@ -3766,6 +3772,93 @@ impl<'a> Lowerer<'a> {
                 what: format!("sig `{}` has no denotation", self.world.sigs[sig].name),
                 span,
             }
+        })
+    }
+
+    /// The jar's **live universe** as a relation expression (mt-053, LEDGER-011):
+    /// the union, in `SigId` order, of every top-level prim sig's *denotation* —
+    /// i.e. each direct child of the root `univ` (`Int`, `String`, and every
+    /// user top-level sig). Because each sig denote is itself a relation whose
+    /// value tracks that sig's *current* population per candidate instance
+    /// (`⋃children + remainder`), the union is genuinely dynamic: an
+    /// allocated-but-empty non-exact sig's atoms drop out of `univ` in exactly
+    /// the instances where the sig doesn't contain them (probe rows 4/7). `Int`
+    /// and `String` atoms (padding included) are always present (their builtin
+    /// relations are exact constants — probe rows 2/3). Subset (`in`) and
+    /// `extends` children contribute nothing extra: they are already covered by
+    /// their prim parent's population (idempotent union — probe row 5).
+    ///
+    /// `none` is excluded (its denote is the empty `RelConst::None`, contributing
+    /// nothing). `seq/Int` is excluded (its prim parent is `Int`, not `univ`).
+    fn live_univ(&mut self, span: Span) -> RelExprId {
+        let univ = self.world.builtins.univ;
+        let none = self.world.builtins.none;
+        let parts: Vec<RelExprId> = self
+            .world
+            .sigs
+            .iter()
+            .filter(|(id, s)| {
+                *id != none
+                    && matches!(&s.kind, als_types::SigKind::Prim { parent: Some(p) } if *p == univ)
+            })
+            .map(|(id, s)| {
+                // The mt-030 denote seam is total over sigs; a missing denote
+                // here would silently shrink `univ` (a wrong-verdict shape),
+                // so it is an invariant violation, never a skip (STYLE I1).
+                *self
+                    .bounds
+                    .sig_denote
+                    .get(&id)
+                    .unwrap_or_else(|| panic!("no denote for top-level sig {}", s.name))
+            })
+            .collect();
+        self.union_rel(&parts, span)
+    }
+
+    /// `iden` in user-expression position: the identity relation restricted to
+    /// the [live universe](Self::live_univ) — `iden & (live -> live)` — so it
+    /// tracks the same dynamic per-instance liveness as `univ` (mt-053,
+    /// LEDGER-011; probe row 6b). The all-atoms `RelConst::Iden` is intersected
+    /// down to `{(a, a) | a ∈ live}`.
+    fn live_iden(&mut self, span: Span) -> RelExprId {
+        let live = self.live_univ(span);
+        let iden = self.mk_rel(RelExprKind::Const(RelConst::Iden), span);
+        let square = self.mk_rel(
+            RelExprKind::Binary {
+                op: RelBinOp::Product,
+                lhs: live,
+                rhs: live,
+            },
+            span,
+        );
+        self.mk_rel(
+            RelExprKind::Binary {
+                op: RelBinOp::Intersect,
+                lhs: iden,
+                rhs: square,
+            },
+            span,
+        )
+    }
+
+    /// Folds a non-empty slice of same-arity relation expressions into a
+    /// left-nested union, deterministically (source/`SigId` order). An empty
+    /// slice cannot arise for [`Self::live_univ`] (`Int`/`String` are always
+    /// present); guarded to the empty unary relation for totality.
+    fn union_rel(&mut self, parts: &[RelExprId], span: Span) -> RelExprId {
+        let mut iter = parts.iter().copied();
+        let Some(first) = iter.next() else {
+            return self.mk_rel(RelExprKind::Const(RelConst::None), span);
+        };
+        iter.fold(first, |acc, next| {
+            self.mk_rel(
+                RelExprKind::Binary {
+                    op: RelBinOp::Union,
+                    lhs: acc,
+                    rhs: next,
+                },
+                span,
+            )
         })
     }
 

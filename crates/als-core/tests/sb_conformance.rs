@@ -132,9 +132,12 @@ fn unmentioned_sig_participates() {
 // A `univ`-typed field probe (`sbprobes/review/univfield_small.als`) found a
 // **pre-existing, symmetry-independent** SB-0 count divergence at mt-048 review:
 // the jar's `univ` is `Int ∪ String ∪ (live union of top-level sigs)`
-// (A4Solution.java:336–338/699 at `794226dd`), not the all-atoms constant
-// mettle lowers (`for 2 A, 1 Int`: jar 65549 vs mettle 65565 at SB-0; jar
-// SB=20 = 32902). Filed as **mt-053**; the jar-pinned test lands with its fix.
+// (A4Solution.java:336–338/699 at `794226dd`), not the all-atoms constant mettle
+// lowered. **Fixed in mt-053** (LEDGER-011): `univ`/`iden` in user-expression
+// position now lower to that live union, so `sig A { f: A -> univ } run { some f }
+// for 2 A, 1 Int` counts **65549** at SB-0 (was 65565) and **32902** at SB=20.
+// The full jar-pinned probe matrix (rows 1–9 of `scratchpad/probe/mt053/NOTES.md`)
+// lands as live tests in `crates/als-core/tests/univ_conformance.rs`.
 
 /// String atoms are symmetry-inert, padding included (translation-ref §16.1.1,
 /// probe fmrun — the mt-048-review root cause of the fm2cfs SB-20 family): the
@@ -167,9 +170,9 @@ fn string_check_skolem_no_quotient() {
 /// Int atoms are singletons even in a goal with zero int usage while a relation
 /// ranges over them via `univ` (probe uf1-SB20): SB=20 equals SB-0 — no
 /// quotient over the int columns. **7** at both.
-/// (`univ` here is mettle's all-atoms constant; the jar's live-`univ` (mt-053)
-/// coincides on this model since `A` is exact-1 — both counts are jar-pinned.)
-/// Probe: `sbprobes/review/uf1.als`.
+/// (`univ` here is the live union since mt-053, but it coincides with all-atoms
+/// on this model — `A` is exact-1, so no dead atoms — and both counts are
+/// jar-pinned.) Probe: `sbprobes/review/uf1.als`.
 #[test]
 fn int_atoms_inert_under_univ_field() {
     let src = "sig A { f: A -> univ }\nrun { some f } for 1 A, 1 Int\n";

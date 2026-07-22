@@ -38,9 +38,9 @@ change lands after it, per that section's note.
    | | |
    |---|---|
    | Command | `cargo build --release -p als-conform && ./target/release/solve-gauge --jobs N` (any `N`; defaults for everything else — 10,000 conflicts / 4,000,000 encode-budget / 20,000 primary-var cap / symmetry 20) |
-   | stdout SHA-256 | `c4f7f8ca119fb11503f72aa96bbc329bef902d1bfc9ec617ff9846255ac988c6` |
-   | Recorded | 2026-07-21 |
-   | Commands / verdict | 564 commands, **agree 300** (166 SAT / 134 UNSAT), DISAGREE 0 |
+   | stdout SHA-256 | `72ad3b3368ace33623ac83dac5be608128dfc47dc88b53196d2a50a585be9cf2` |
+   | Recorded | 2026-07-22 (post-mt-053; supersedes the 2026-07-21 `c4f7f8ca…` hash) |
+   | Commands / verdict | 564 commands, **agree 301** (166 SAT / 135 UNSAT), DISAGREE 0 |
 
    **This hash is only valid as of the commit it was recorded at.** Any code change
    landing after 2026-07-21 (encoder, evaluator, solver, gauge, budgets, corpus
@@ -127,7 +127,7 @@ change lands after it, per that section's note.
    ```
    ./target/release/solve-gauge --count
    ```
-   Expect **count_match 49 / COUNT_MISMATCH 3** (the three filed mt-041 rows —
+   Expect **count_match 49 / COUNT_MISMATCH 3** (verified post-mt-053, 2026-07-22; the three filed mt-041 rows —
    see `docs/TASKS.md`). Any other number is a new finding, not a known
    quantity — investigate before treating the box as ready for mt-050's
    deep-budget exit sweeps.

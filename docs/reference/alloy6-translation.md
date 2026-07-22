@@ -292,7 +292,8 @@ structure):
 | Alloy | Kodkod / mettle `RelExprKind` |
 |---|---|
 | sig / field / bound var | the allocated `Relation` / the bound `Variable` |
-| `none` / `univ` / `iden` | `RelConst::{None, Univ, Iden}` |
+| `none` | `RelConst::None` |
+| `univ` / `iden` **in a user expression** (mt-053, §10.8, LEDGER-011) | the jar's **live union** `Int ∪ String ∪ ⋃(top-level sig denotes)`, not the all-atoms constant — a per-instance-dynamic set (dead atoms of a currently-empty non-exact sig drop out). `iden` = that live set's diagonal (`RelConst::Iden ∩ (live → live)`). The all-atoms `RelConst::{Univ, Iden}` survive **only** for the encoder's internal/bounds-level uses (field-domain projection, `<:`/`:>` padding, seq contiguity, skolem `abstract_upper`), which are sound over-approximations |
 | `+` `&` `-` `++` | `Union` / `Intersect` / `Diff` / `Override` |
 | `.` (join) | `Join` |
 | `->` (product; all 16 multiplicity arrows) | `Product` — the multiplicity (`some`/`one`/`lone` on either side) becomes an **added formula** (a per-column `some`/`one`/`lone` quantification, `ExprBinary` arrow case), not part of the product node |
@@ -2084,6 +2085,61 @@ collects only through set-operator structure), casts in quantifier-decl
 bounds (FACT 2's value semantics apply; the decl-level ensureDef analog is
 not implemented), and `&`/`-`-nested casts (source-read as identical to
 union — all matrix ops merge — but not probe-confirmed).
+
+### 10.8 mt-053 `univ`/`iden` live-universe probes (jar-verified 2026-07-21)
+
+Harness: `scratchpad/probe/mt053/run.sh` over `OracleShim` (Alloy 6.2.0,
+`sat4j`, `noOverflow=true`); `enumCap 0` = verdict, `-1` = exhaustive count;
+symmetry 0 unless noted. Full arithmetic and per-cell reflexivity controls in
+`scratchpad/probe/mt053/NOTES.md`. Source (`794226dd`, fetched into
+`scratchpad/src794/`): `A4Solution.java:336–338` builds the initial universe
+expression as `Expression.INTS ∪ KK_STRING ∪ ⋃(top-level sig relations)`,
+`:699` re-derives it per-instance; `TranslateAlloyToKodkod.java:824/893` are
+the `ExprConstant.UNIV`/`IDEN` translation sites that resolve to that live
+expression, not a Kodkod all-atoms constant.
+
+**The pinned rule.** `univ`, wherever it appears in a translated **user**
+formula (direct reference, field-type position `X -> univ`, quantifier/decl
+domain, skolem/pred-param membership), denotes **per candidate instance**
+`Int ∪ String(incl. padding) ∪ ⋃(each top-level sig's *current* population)` —
+a genuinely dynamic set (an allocated-but-empty non-exact sig's atoms are
+excluded exactly in the instances where the sig doesn't contain them; exact
+sigs are always fully live). `iden` is that live set's diagonal. Bounds-level
+uppers (field products over `-> univ`, skolem `abstract_upper`) keep all-atoms
+`univ` — sound over-approximations, with liveness enforced by the lowered
+membership expressions.
+
+| Row | Model (`for …`) | Observed | Discriminates |
+|---|---|---|---|
+| 1 | `sig A { f: A -> univ } run { some f }` `2 A, 1 Int` | **65549** (SB-0), **32902** (SB-20) | live vs all-atoms (was mettle 65565) |
+| 2a | `sig A {} run { some u: univ \| u not in A }` `exactly 1 A, 2 Int` | **SAT** | Int unconditionally in `univ`, never mention-gated |
+| 2b | `sig A { f: A->univ } run { some f }` `exactly 1 A, {2,3} Int` | **31 / 511** | Int scales as `2^(1·(1+2^bw))−1` |
+| 3a | `run { some u: univ \| u not in A and u != "x" and "x" in String }` `exactly 1 A, exactly 3 String` | **SAT** | padding String atoms unconditionally in `univ` |
+| 3b | `... run { some f and "x" in String }` `exactly 1 A, 1 Int, exactly {2,3} String` | **31 / 63** | padding included, scales |
+| 4/7 | `sig A {} sig B {} run { no B; some u: univ \| u not in A and u not in Int and u not in String }` `exactly 1 A, 1 B` | **UNSAT** | dead atom of empty non-exact top-level sig excluded — **dynamic** per instance |
+| 5 | control / `+ sig B in A {}` (`no B`) / `+ sig A1 extends A {}` (`no A1`), `exactly 1 A, 1 Int` | **7 / 7 / 7** | subset & extends children add nothing (idempotent union) |
+| 6a | `sig A { r: set A } run { r in iden }` `2 A` | **9** | control (non-discriminating; `r` already `A`-bound) |
+| 6b | `sig A {} sig B {} run { no B and #(iden - (Int->Int)) = N }` `exactly 1 A, 1 B, 3 Int` | `N=2` **UNSAT**, `N=1` **SAT** | `iden` live-restricted, tracks the same dynamic set |
+| 8a | `sig A {} sig B {} run { some p: A -> univ \| some p }` `exactly 1 A, {1,2} B, 1 Int` | jar (HO) **22 / 68**; mettle (FO) **7 / 16** | **liveness threads** (mettle 7/16 are live, not all-atoms 8/20); absolute count needs the jar's higher-order plain-product-arrow decl reading — see caveat |
+| 8b | `pred P[u: univ] {…} fact { no B } run P` `exactly 1 A, 1 B` | **UNSAT** | scalar pred-param `univ` is live too |
+| 9 | `sig A { f: set A, g: set A } fact {…} run {}` `for 3` | **4352 / 1140** | control: `univ`/`iden` unmentioned ⇒ bit-identical |
+
+**Caveat (row 8a, the mt-055 boundary).** The probe confirms the jar treats a
+**plain-product** arrow quantifier decl `some p: A -> univ` as *higher-order*
+(`p` ranges over sub-relations: counts are `2^|A×univ|−1`). mettle deliberately
+reads such a decl as *first-order* (`p` = one pair, `one $p`; verdict-correct,
+pinned via `closure.als`/`hotel2.als`/`solve.rs`; the SB-0 counting gauge
+`skip_ho_skolem`s exactly this shape). That FO/HO reading is an **orthogonal,
+deliberately-deferred** decision (mt-055), *not* a `univ`-liveness question:
+mt-053 correctly threads the live union through this path — under mettle's FO
+reading the counts are the *live* pair-counts (7 = 3+4, 16 = 3+8+5), strictly
+below the all-atoms pair-counts (8, 20). So row 8a's finding **contradicts the
+mt-053 bead's suspected mt-055 mechanism** ("the jar keeps true-UNIV for
+internal skolem decl domains" — false; the domain is live); mt-055's real cause
+is this decl-reading gap, to be pinned on the deployed `tso_transistency`
+shape. Tests: `crates/als-core/tests/univ_conformance.rs`
+(`row8a_live_univ_threads_skolem_domain` pins the liveness win;
+`row8a_jar_ho_reading` is `#[ignore]`d for mt-055).
 
 ### 10.9 mt-043 String probes (jar-verified 2026-07-18)
 
