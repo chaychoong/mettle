@@ -103,7 +103,7 @@ fn assert_singleton_in_sig(inst: &Instance, ir: &Ir, name: &str, sig_name: &str)
 #[test]
 fn k1_named_command_skolem_is_labelled() {
     let (inst, ir) = sat_instance("sig A {}\nrun foo { some x: A | x = x } for 3\n");
-    assert_singleton_in_sig(&inst, &ir, "$foo_x", "A");
+    assert_singleton_in_sig(&inst, &ir, "$foo_x", "this/A");
 }
 
 /// K2 (§10.11): an anonymous command's label contains `$` (jar `run$1`), so the
@@ -111,7 +111,7 @@ fn k1_named_command_skolem_is_labelled() {
 #[test]
 fn k2_anonymous_command_skolem_is_bare() {
     let (inst, ir) = sat_instance("sig A {}\nrun { some x: A | x = x } for 3\n");
-    assert_singleton_in_sig(&inst, &ir, "$x", "A");
+    assert_singleton_in_sig(&inst, &ir, "$x", "this/A");
 }
 
 // ------------------------------------------------------------------ K3
@@ -156,8 +156,8 @@ fn k4_control_non_quantifier_shape_unchanged() {
 #[test]
 fn disj_group_skolemizes_each_var_and_holds_disjointness() {
     let (inst, ir) = sat_instance("sig A {}\nrun { some disj x, y: A | x != y } for 3\n");
-    assert_singleton_in_sig(&inst, &ir, "$x", "A");
-    assert_singleton_in_sig(&inst, &ir, "$y", "A");
+    assert_singleton_in_sig(&inst, &ir, "$x", "this/A");
+    assert_singleton_in_sig(&inst, &ir, "$y", "this/A");
     let x = inst.get(rel_named(&ir, "$x").unwrap()).unwrap();
     let y = inst.get(rel_named(&ir, "$y").unwrap()).unwrap();
     let xt = x.iter().next().unwrap();
@@ -179,7 +179,7 @@ fn check_negated_all_skolemizes_with_command_label() {
     let (inst, ir) = sat_instance(
         "sig A {}\nsig B { r: set A }\nassert NoEmpty { all b: B | some b.r }\ncheck NoEmpty for 3\n",
     );
-    assert_singleton_in_sig(&inst, &ir, "$NoEmpty_b", "B");
+    assert_singleton_in_sig(&inst, &ir, "$NoEmpty_b", "this/B");
 }
 
 /// The jar-pinned SB-0 count of `check NoEmpty` is **561** (§10.4/§15), matching
@@ -217,7 +217,7 @@ fn colliding_skolem_names_are_uniquified() {
 #[test]
 fn called_pred_existential_uses_func_label() {
     let (inst, ir) = sat_instance("sig A {}\npred q { some x: A | x = x }\nrun foo { q } for 3\n");
-    assert_singleton_in_sig(&inst, &ir, "$q_x", "A");
+    assert_singleton_in_sig(&inst, &ir, "$q_x", "this/A");
 }
 
 /// A decl bounded by an EARLIER skolem must still skolemize — its upper comes
@@ -229,6 +229,6 @@ fn dependent_decl_skolemizes_through_earlier_skolem() {
     let (inst, ir) = sat_instance(
         "sig T {}\nsig B { names: set T }\nassert q { all b: B, n: b.names | n != n }\ncheck q for 3\n",
     );
-    assert_singleton_in_sig(&inst, &ir, "$q_b", "B");
-    assert_singleton_in_sig(&inst, &ir, "$q_n", "T");
+    assert_singleton_in_sig(&inst, &ir, "$q_b", "this/B");
+    assert_singleton_in_sig(&inst, &ir, "$q_n", "this/T");
 }

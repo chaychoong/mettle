@@ -79,7 +79,7 @@ fn corrupting_a_fact_is_caught() {
     // `fact NonEmpty { some A }` holds in the solved instance; empty out A and the
     // self-check must reject, blaming the Fact conjunct.
     let s = solve("sig A {}\nfact NonEmpty { some A }\nrun {} for 3\n");
-    let a = rel_named(&s.ir, "A");
+    let a = rel_named(&s.ir, "this/A");
     let corrupt = with_rel(&s.instance, a, &TupleSet::empty(1));
     let failure = self_check(
         &s.ir,
@@ -102,7 +102,7 @@ fn corrupting_a_field_multiplicity_is_caught() {
     // `f: one B` forces exactly one `f` per `A`. Emptying `A.f` breaks the `one`
     // multiplicity → the FieldFact conjunct is blamed.
     let s = solve("sig B {}\nsig A { f: one B }\nrun { some A } for 2\n");
-    let f = rel_named(&s.ir, "A.f");
+    let f = rel_named(&s.ir, "this/A.f");
     let corrupt = with_rel(&s.instance, f, &TupleSet::empty(2));
     let failure = self_check(
         &s.ir,
@@ -125,7 +125,7 @@ fn corrupting_the_command_is_caught() {
     // The command `some A` holds; empty A and the Command conjunct is blamed
     // (facts/fields above it still pass).
     let s = solve("sig A {}\nrun { some A } for 3\n");
-    let a = rel_named(&s.ir, "A");
+    let a = rel_named(&s.ir, "this/A");
     let corrupt = with_rel(&s.instance, a, &TupleSet::empty(1));
     let failure = self_check(
         &s.ir,
@@ -148,8 +148,8 @@ fn adding_an_illegal_tuple_is_caught() {
     // `f: one B` — give some A a *second* legal image, breaking `one`.
     // Force at least two B atoms so a second, *type-legal* image exists.
     let s = solve("sig B {}\nsig A { f: one B }\nrun { some A and #B = 2 } for 2\n");
-    let f = rel_named(&s.ir, "A.f");
-    let b = rel_named(&s.ir, "B");
+    let f = rel_named(&s.ir, "this/A.f");
+    let b = rel_named(&s.ir, "this/B");
     let b_atoms: Vec<_> = s
         .instance
         .get(b)

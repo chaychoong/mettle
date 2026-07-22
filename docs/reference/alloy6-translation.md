@@ -2735,8 +2735,23 @@ of Boolean values (primary vars or constants), capped at
   skipped), **sorted by arity ascending, then name ascending** (Java
   `String.compareTo` = UTF-16 code-unit order; ASCII in practice). Names are
   the jar's spellings — `this/A`, `this/A.f`, `$cmd_x`, … — which mettle's
-  `Relation.name` already carries (mt-030/047). **`$`-prefixed skolems sort
-  before `this/…`**, so skolem constants eat SBP slots *first* among same-arity
+  `Relation.name` now carries too (mt-030/047/055): a **root-module** sig's
+  `qualified_name` is prefixed literal `this/` (`als_types::resolve::compute_qualified_names`),
+  an opened-module sig keeps its alias path (`mesh/Vertex`, unprefixed). This
+  is a **relation-name-only** convention — it must never reach an atom label
+  (§1.3's atom naming keeps the jar's `Util.tailThis`-stripped bare form;
+  `als_core::scope::ScopeSolver::walk` strips a leading `this/` off
+  `qualified_name` before minting `A$0`-style atom names, so `this/A` the
+  relation and `A$0` the atom coexist without contradiction — see §1.4 for the
+  relation-name convention this feeds, and §1.3 for why atom names never see
+  it). Before mt-055 mettle left root sigs bare, so ASCII order put them
+  **before** opened-module relations (`"Element" < "mesh/…"`, uppercase sorts
+  below lowercase); the jar's `this/` marker instead sorts root relations
+  **after** (`"mesh/…" < "this/Element"`, `'m' < 't'`) — under the soft SB-20
+  cap, the wrong order burned lex bits on the wrong (non-discriminating)
+  relations first, producing under-breaking (wetdry.als[0] mismatched 888 vs
+  the jar's 784). **`$`-prefixed skolems sort before both** (`$` < any
+  letter), so skolem constants eat SBP slots *first* among same-arity
   relations — truncation-visible.
 - A relation contributes to a pair only if its upper bound touches the class
   (`representatives.contains(sym.min())` — any column of any upper tuple lands

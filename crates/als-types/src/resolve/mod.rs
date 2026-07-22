@@ -286,13 +286,21 @@ impl<'g> Resolver<'g> {
     }
 
     /// Fills every sig's `qualified_name` — the global label the reference
-    /// names its atoms after. A root-module sig keeps its bare name; an
+    /// names its **relations** after (translation-ref §1.4/§16.3; distinct
+    /// from the atom label, translation-ref §1.3, which strips this prefix —
+    /// see `als_core::scope::ScopeSolver::walk`). A root-module sig is
+    /// prefixed `this/` (the reference's `A4Solution.debugExtractKInput()`
+    /// spells root relations `this/Element`, `this/Node.W`); an
     /// opened-module sig is prefixed by the alias path from the root
     /// (`foo/Widget`, `a/b/Beta`). The path is the preorder DFS over `open`
     /// edges in source order (first reach wins), mirroring how the reference
     /// assigns labels during recursive module loading.
     fn compute_qualified_names(&mut self) {
         let n = self.graph.modules.len();
+        // Alias-path prefixes propagate from the root using the **bare** path
+        // (`mesh/`, `a/b/`) — the `this/` root marker is not part of this
+        // path and must not cascade into opened-module prefixes
+        // (`mesh/Vertex`, never `this/mesh/Vertex`).
         let mut prefix: Vec<Option<String>> = vec![None; n];
         prefix[self.graph.root.index()] = Some(String::new());
         let mut stack = vec![self.graph.root];
@@ -312,6 +320,14 @@ impl<'g> Resolver<'g> {
             let sig = SigId::from_index(i);
             let m = self.world.sigs[sig].module;
             let here = prefix[m.index()].clone().unwrap_or_default();
+            // The root module's own sigs get the jar's literal `this/`
+            // relation-name marker (translation-ref §16.3); opened-module
+            // sigs use only their alias path.
+            let here = if m == self.graph.root {
+                format!("this/{here}")
+            } else {
+                here
+            };
             self.world.sigs[sig].qualified_name = format!("{here}{}", self.world.sigs[sig].name);
         }
     }

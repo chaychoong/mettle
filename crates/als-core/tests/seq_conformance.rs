@@ -108,7 +108,7 @@ fn q1_seq_field_is_arity3_indexed_by_seq_int() {
     // relation is arity 3 (`owner -> index -> value`), the index column upper is
     // exactly the `seq/Int` atoms {0,1,2}, and the upper = P × {0,1,2} × ints.
     let b = build("sig P { f: seq Int }\nrun {} for 2 but 3 seq, 4 int\n");
-    let up = b.field_bound("P.f").upper();
+    let up = b.field_bound("this/P.f").upper();
     assert_eq!(up.arity(), 3, "seq field is owner -> index -> value");
     // Index column (column 1) is bounded by the seq/Int atoms {0,1,2}.
     assert_eq!(

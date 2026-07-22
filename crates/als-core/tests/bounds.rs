@@ -109,8 +109,8 @@ fn unary(names: &[&str]) -> Vec<Vec<String>> {
 fn plain_leaf_lower_empty_upper_full() {
     // Probe B1: `sig A {} run {} for 3` → this/A lower {} upper {A$0..A$2}.
     let b = build("sig A {}\nrun {} for 3\n");
-    assert_eq!(b.lower("A"), Vec::<Vec<String>>::new());
-    assert_eq!(b.upper("A"), unary(&["A$0", "A$1", "A$2"]));
+    assert_eq!(b.lower("this/A"), Vec::<Vec<String>>::new());
+    assert_eq!(b.upper("this/A"), unary(&["A$0", "A$1", "A$2"]));
     // Bound alone caps #A (upper==scope): no size constraint (probe B1).
     assert!(b.result.constraints.is_empty());
 }
@@ -120,8 +120,8 @@ fn exact_leaf_is_pinned_lower_equals_upper() {
     // Probe B2: `run {} for exactly 3 A` → lower == upper == {A$0..A$2}; no
     // size formula (bounds pin it).
     let b = build("sig A {}\nrun {} for exactly 3 A\n");
-    assert_eq!(b.lower("A"), unary(&["A$0", "A$1", "A$2"]));
-    assert_eq!(b.upper("A"), unary(&["A$0", "A$1", "A$2"]));
+    assert_eq!(b.lower("this/A"), unary(&["A$0", "A$1", "A$2"]));
+    assert_eq!(b.upper("this/A"), unary(&["A$0", "A$1", "A$2"]));
     assert!(b.result.constraints.is_empty());
 }
 
@@ -132,10 +132,13 @@ fn non_abstract_parent_gets_remainder_no_this_relation() {
     // Probe B3: `sig A {} sig B extends A {} for 3`. A has no own relation; a
     // this/A_remainder relation appears; both B and remainder upper = A pool.
     let b = build("sig A {}\nsig B extends A {}\nrun {} for 3\n");
-    assert!(!b.has_rel("A"), "parent A must not get its own relation");
-    assert_eq!(b.upper("B"), unary(&["A$0", "A$1", "A$2"]));
-    assert_eq!(b.upper("A_remainder"), unary(&["A$0", "A$1", "A$2"]));
-    assert_eq!(b.lower("A_remainder"), Vec::<Vec<String>>::new());
+    assert!(
+        !b.has_rel("this/A"),
+        "parent A must not get its own relation"
+    );
+    assert_eq!(b.upper("this/B"), unary(&["A$0", "A$1", "A$2"]));
+    assert_eq!(b.upper("this/A_remainder"), unary(&["A$0", "A$1", "A$2"]));
+    assert_eq!(b.lower("this/A_remainder"), Vec::<Vec<String>>::new());
     // One child ⇒ no sibling-disjointness formula, and upper==scope ⇒ no size.
     assert!(b.result.constraints.is_empty());
 }
@@ -144,25 +147,25 @@ fn non_abstract_parent_gets_remainder_no_this_relation() {
 fn two_children_share_pool_and_get_disjointness() {
     // Probe B4: two children of A share the 3-atom pool; formula `no (B & C)`.
     let b = build("sig A {}\nsig B extends A {}\nsig C extends A {}\nrun {} for 3\n");
-    for r in ["B", "C", "A_remainder"] {
+    for r in ["this/B", "this/C", "this/A_remainder"] {
         assert_eq!(b.upper(r), unary(&["A$0", "A$1", "A$2"]), "{r}");
     }
     assert_eq!(b.result.constraints.len(), 1, "one disjointness formula");
-    assert_disjointness(&b, b.result.constraints[0], "B", "C");
+    assert_disjointness(&b, b.result.constraints[0], "this/B", "this/C");
 }
 
 #[test]
 fn abstract_parent_has_no_remainder() {
     // Probe B5: abstract A ⇒ no this/A and no this/A_remainder; children only.
     let b = build("abstract sig A {}\nsig B extends A {}\nsig C extends A {}\nrun {} for 3\n");
-    assert!(!b.has_rel("A"));
+    assert!(!b.has_rel("this/A"));
     assert!(
-        !b.has_rel("A_remainder"),
+        !b.has_rel("this/A_remainder"),
         "abstract parent has no remainder"
     );
-    assert_eq!(b.upper("B"), unary(&["A$0", "A$1", "A$2"]));
+    assert_eq!(b.upper("this/B"), unary(&["A$0", "A$1", "A$2"]));
     assert_eq!(b.result.constraints.len(), 1);
-    assert_disjointness(&b, b.result.constraints[0], "B", "C");
+    assert_disjointness(&b, b.result.constraints[0], "this/B", "this/C");
 }
 
 #[test]
@@ -171,8 +174,11 @@ fn inexact_child_upper_is_full_parent_pool_with_size_cap() {
     // parent pool (not capped at 2); the `#B <= 2` cap is a size FORMULA, never
     // a tighter bound — this is the corner where an off-by-one flips verdicts.
     let b = build("sig A {}\nsig B extends A {}\nrun {} for 4 A, 2 B\n");
-    assert_eq!(b.upper("B"), unary(&["A$0", "A$1", "A$2", "A$3"]));
-    assert_eq!(b.upper("A_remainder"), unary(&["A$0", "A$1", "A$2", "A$3"]));
+    assert_eq!(b.upper("this/B"), unary(&["A$0", "A$1", "A$2", "A$3"]));
+    assert_eq!(
+        b.upper("this/A_remainder"),
+        unary(&["A$0", "A$1", "A$2", "A$3"])
+    );
     // Exactly one constraint: the `#B <= 2` size formula (n=2 form).
     assert_eq!(b.result.constraints.len(), 1);
     let f = &b.ir.formulas[b.result.constraints[0]].kind;
@@ -190,7 +196,7 @@ fn disjointness_emitted_even_for_disjoint_uppers() {
         "abstract sig A {}\nsig B extends A {}\nsig C extends A {}\nrun {} for exactly 2 B, exactly 1 C\n",
     );
     assert_eq!(b.result.constraints.len(), 1);
-    assert_disjointness(&b, b.result.constraints[0], "B", "C");
+    assert_disjointness(&b, b.result.constraints[0], "this/B", "this/C");
 }
 
 // ==================== §1.4 subset sigs ====================
@@ -199,8 +205,8 @@ fn disjointness_emitted_even_for_disjoint_uppers() {
 fn in_subset_sig_fresh_relation_and_containment() {
     // Probe B8: `sig B in A` → fresh this/B lower {} upper = A pool; `B in A`.
     let b = build("sig A {}\nsig B in A {}\nrun {} for 3\n");
-    assert_eq!(b.lower("B"), Vec::<Vec<String>>::new());
-    assert_eq!(b.upper("B"), unary(&["A$0", "A$1", "A$2"]));
+    assert_eq!(b.lower("this/B"), Vec::<Vec<String>>::new());
+    assert_eq!(b.upper("this/B"), unary(&["A$0", "A$1", "A$2"]));
     assert_eq!(b.result.constraints.len(), 1, "one containment formula");
     let f = &b.ir.formulas[b.result.constraints[0]].kind;
     let FormulaKind::RelCompare {
@@ -211,9 +217,9 @@ fn in_subset_sig_fresh_relation_and_containment() {
     else {
         panic!("expected `B in A`: {f:?}");
     };
-    assert!(matches!(b.ir.rel_exprs[*lhs].kind, RelExprKind::Relation(r) if r == b.rel("B")));
+    assert!(matches!(b.ir.rel_exprs[*lhs].kind, RelExprKind::Relation(r) if r == b.rel("this/B")));
     // rhs = the parents' union; here a single parent A (leaf) ⇒ Relation(A).
-    assert!(matches!(b.ir.rel_exprs[*rhs].kind, RelExprKind::Relation(r) if r == b.rel("A")));
+    assert!(matches!(b.ir.rel_exprs[*rhs].kind, RelExprKind::Relation(r) if r == b.rel("this/A")));
 }
 
 #[test]
@@ -221,13 +227,16 @@ fn exact_subset_sig_is_parent_union_no_relation() {
     // Probe B9: `sig B = A + C` → NO this/B relation, NO formula; B denotes the
     // union A ∪ C.
     let b = build("sig A {}\nsig C {}\nsig B = A + C {}\nrun {} for 3\n");
-    assert!(!b.has_rel("B"), "exact subset must not allocate a relation");
+    assert!(
+        !b.has_rel("this/B"),
+        "exact subset must not allocate a relation"
+    );
     assert!(
         b.result.constraints.is_empty(),
         "exact subset adds no formula"
     );
     // B's denotation is `A + C` (a Union of the two parent relations).
-    let denote = b.result.sig_denote[&b.sig("B")];
+    let denote = b.result.sig_denote[&b.sig("this/B")];
     let RelExprKind::Binary {
         op: RelBinOp::Union,
         lhs,
@@ -236,8 +245,8 @@ fn exact_subset_sig_is_parent_union_no_relation() {
     else {
         panic!("B should denote a union");
     };
-    assert!(matches!(b.ir.rel_exprs[*lhs].kind, RelExprKind::Relation(r) if r == b.rel("A")));
-    assert!(matches!(b.ir.rel_exprs[*rhs].kind, RelExprKind::Relation(r) if r == b.rel("C")));
+    assert!(matches!(b.ir.rel_exprs[*lhs].kind, RelExprKind::Relation(r) if r == b.rel("this/A")));
+    assert!(matches!(b.ir.rel_exprs[*rhs].kind, RelExprKind::Relation(r) if r == b.rel("this/C")));
 }
 
 // ==================== §1.4 fields ====================
@@ -246,28 +255,28 @@ fn exact_subset_sig_is_parent_union_no_relation() {
 fn ordinary_field_upper_is_product_of_column_uppers() {
     // Probe B10: `sig B { f: A }` → this/B.f arity 2, upper = B pool × A pool.
     let b = build("sig A {}\nsig B { f: A }\nrun {} for 3\n");
-    assert_eq!(b.bound("B.f").upper().arity(), 2);
-    let up = b.upper("B.f");
+    assert_eq!(b.bound("this/B.f").upper().arity(), 2);
+    let up = b.upper("this/B.f");
     assert_eq!(up.len(), 9, "3 B × 3 A");
     assert!(up.contains(&vec!["B$0".to_owned(), "A$0".to_owned()]));
     assert!(up.contains(&vec!["B$2".to_owned(), "A$2".to_owned()]));
-    assert_eq!(b.lower("B.f"), Vec::<Vec<String>>::new());
+    assert_eq!(b.lower("this/B.f"), Vec::<Vec<String>>::new());
 }
 
 #[test]
 fn multi_column_field_products_all_columns() {
     // Probe B11: `sig B { f: A -> A }` at for 2 → this/B.f arity 3 = B×A×A.
     let b = build("sig A {}\nsig B { f: A -> A }\nrun {} for 2\n");
-    assert_eq!(b.bound("B.f").upper().arity(), 3);
-    assert_eq!(b.upper("B.f").len(), 2 * 2 * 2);
+    assert_eq!(b.bound("this/B.f").upper().arity(), 3);
+    assert_eq!(b.upper("this/B.f").len(), 2 * 2 * 2);
 }
 
 #[test]
 fn int_field_column_is_all_int_atoms() {
     // Probe B12: `sig A { n: Int }` → this/A.n arity 2 upper = A × {all 16 ints}.
     let b = build("sig A { n: Int }\nrun {} for 3\n");
-    assert_eq!(b.bound("A.n").upper().arity(), 2);
-    let up = b.upper("A.n");
+    assert_eq!(b.bound("this/A.n").upper().arity(), 2);
+    let up = b.upper("this/A.n");
     assert_eq!(up.len(), 3 * 16, "3 A × 16 int atoms");
     assert!(up.contains(&vec!["A$0".to_owned(), "-8".to_owned()]));
     assert!(up.contains(&vec!["A$2".to_owned(), "7".to_owned()]));
@@ -278,13 +287,17 @@ fn one_sig_field_strips_owner_column() {
     // Probe B13: `one sig B { f: A }` → this/B.f arity **1** (value only),
     // upper = A pool; the field denotes `B -> B.f`.
     let b = build("sig A {}\none sig B { f: A }\nrun {} for 3\n");
-    assert_eq!(b.bound("B.f").upper().arity(), 1, "owner column stripped");
-    assert_eq!(b.upper("B.f"), unary(&["A$0", "A$1", "A$2"]));
+    assert_eq!(
+        b.bound("this/B.f").upper().arity(),
+        1,
+        "owner column stripped"
+    );
+    assert_eq!(b.upper("this/B.f"), unary(&["A$0", "A$1", "A$2"]));
     // one sig B is exact-1 pinned.
-    assert_eq!(b.lower("B"), unary(&["B$0"]));
-    assert_eq!(b.upper("B"), unary(&["B$0"]));
+    assert_eq!(b.lower("this/B"), unary(&["B$0"]));
+    assert_eq!(b.upper("this/B"), unary(&["B$0"]));
     // Field denotation = owner -> stored (arity 2 in the IR).
-    let fid = b.world.sigs[b.sig("B")].fields[0];
+    let fid = b.world.sigs[b.sig("this/B")].fields[0];
     let denote = b.result.field_denote[&fid];
     let RelExprKind::Binary {
         op: RelBinOp::Product,
@@ -294,8 +307,10 @@ fn one_sig_field_strips_owner_column() {
     else {
         panic!("one-sig field must denote owner -> stored");
     };
-    assert!(matches!(b.ir.rel_exprs[*lhs].kind, RelExprKind::Relation(r) if r == b.rel("B")));
-    assert!(matches!(b.ir.rel_exprs[*rhs].kind, RelExprKind::Relation(r) if r == b.rel("B.f")));
+    assert!(matches!(b.ir.rel_exprs[*lhs].kind, RelExprKind::Relation(r) if r == b.rel("this/B")));
+    assert!(
+        matches!(b.ir.rel_exprs[*rhs].kind, RelExprKind::Relation(r) if r == b.rel("this/B.f"))
+    );
 }
 
 #[test]
@@ -303,7 +318,11 @@ fn lone_sig_field_keeps_owner_column() {
     // Probe B14: `lone sig B { f: A }` → the owner-column strip is `one`-only;
     // a lone sig's field stays arity 2 (B × A).
     let b = build("sig A {}\nlone sig B { f: A }\nrun {} for 3\n");
-    assert_eq!(b.bound("B.f").upper().arity(), 2, "lone does not strip");
+    assert_eq!(
+        b.bound("this/B.f").upper().arity(),
+        2,
+        "lone does not strip"
+    );
 }
 
 // ==================== §1.4 size & multiplicity ====================
@@ -322,7 +341,7 @@ fn some_sig_gets_some_multiplicity_formula() {
     else {
         panic!("expected `some A`: {f:?}");
     };
-    assert!(matches!(b.ir.rel_exprs[*expr].kind, RelExprKind::Relation(r) if r == b.rel("A")));
+    assert!(matches!(b.ir.rel_exprs[*expr].kind, RelExprKind::Relation(r) if r == b.rel("this/A")));
 }
 
 #[test]
@@ -472,9 +491,12 @@ fn raised_exact_parent_gets_no_size_formula() {
     // 2026-07-16, probe B19; found in mt-030 review: without the raise this
     // model tripped the builder's exactness debug_assert).
     let b = build("sig P {}\nsig C extends P {}\nrun {} for exactly 2 P, exactly 3 C\n");
-    assert_eq!(b.lower("C"), b.upper("C"), "C exact");
-    assert_eq!(b.upper("C").len(), 3);
-    assert!(b.upper("P_remainder").is_empty(), "no floating P atoms");
+    assert_eq!(b.lower("this/C"), b.upper("this/C"), "C exact");
+    assert_eq!(b.upper("this/C").len(), 3);
+    assert!(
+        b.upper("this/P_remainder").is_empty(),
+        "no floating P atoms"
+    );
     assert!(
         b.result.constraints.is_empty(),
         "no size/disjointness formulas: single child, bound-pinned"

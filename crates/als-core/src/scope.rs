@@ -634,7 +634,15 @@ impl ScopeSolver<'_> {
         let mints = self.exact[sig.index()] || self.is_top_level(sig);
         if n > lower && mints {
             let count = n - lower;
-            let label = unique_label(&mut u.used_labels, &self.world.sigs[sig].qualified_name);
+            // Atom labels are jar-pinned bare (`A$0`, `mesh/Vertex$0`,
+            // translation-ref §1.3 `Util.tailThis`) — strip the root's
+            // `this/` relation-name marker (translation-ref §16.3) that
+            // `qualified_name` now carries; it must never reach an atom name.
+            let qualified_name = &self.world.sigs[sig].qualified_name;
+            let bare_name = qualified_name
+                .strip_prefix("this/")
+                .unwrap_or(qualified_name);
+            let label = unique_label(&mut u.used_labels, bare_name);
             let first = AtomId::from_index(u.atoms.len());
             for k in 0..count {
                 u.atoms.push(format!("{label}${k}"));

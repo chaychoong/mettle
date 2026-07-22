@@ -179,3 +179,76 @@ fn int_atoms_inert_under_univ_field() {
     assert_eq!(count_at(src, 20), 7, "uf1 SB=20 = 7");
     assert_eq!(count_at(src, 0), 7, "uf1 SB=0 = 7 (raw)");
 }
+
+// ==================== mt-055: root-module `this/` relation-ordering ====================
+
+/// Exhaustively enumerates command 0 of a two-module `(lib, root)` model at
+/// the given symmetry cap — the multi-module counterpart of [`count_at`],
+/// using the same injected [`MapLoader`] pattern as
+/// `als_types::tests::module_graph` (a root module `open`ing a library
+/// module, no filesystem).
+fn count_at_multi(lib: &str, root: &str, symmetry: u32) -> usize {
+    let loader = MapLoader::new().with("lib.als", lib).with("root.als", root);
+    let graph = ModuleGraph::load("root.als", &loader).expect("load");
+    let world = resolve(&graph).expect("resolve").world;
+    let scoped = compute_universe(&world, &graph, &world.commands[0]).expect("universe");
+    let mut ir = Ir::default();
+    let bounds = compute_bounds(&world, &scoped, &mut ir);
+    let goal = lower_command(&world, &graph, &scoped, &bounds, &mut ir, 0).expect("lower");
+    let opts = SolveOptions {
+        symmetry,
+        ..SolveOptions::default()
+    };
+    enumerate(&ir, &scoped, &goal, &bounds, &opts)
+        .expect("enumerate")
+        .count()
+}
+
+/// mt-055 (translation-ref §16.3): the jar's Kodkod relation names prefix
+/// root-module sigs/fields with `this/` (`this/Node`, `this/Node.f`); an
+/// opened-module sig keeps its alias path unprefixed (`lib/Item_remainder`,
+/// unaffected by this bug either side). So `relParts`'s `(arity, name)` order
+/// puts root relations **after** opened-module ones post-fix
+/// (`"lib/Item_remainder" < "this/Node"`, `'l' < 't'`). Before the fix
+/// mettle's root relations were bare (`"Node"`, `"Big"`), and ASCII sorts
+/// every uppercase letter below every lowercase one, so they instead sorted
+/// **before** any `lib/…` relation (`"Node" < "lib/Item_remainder"`, `'N' <
+/// 'l'`) — the reverse of the jar's order, burning SB-20 lex bits on the
+/// wrong relations first (under-breaking).
+/// This probe mirrors `wetdry.als`'s exact shape (a non-abstract sig declared
+/// in an *opened* module, extended by a sig in the *root* module and forced
+/// equal via a fact rather than `abstract`, both owning a same-symmetry-class
+/// relation) at a scale small enough to enumerate directly. Jar-pinned counts
+/// (probe files: `scratchpad/probe/mt055-wetdry/{lib,root}.als`): **1750** at
+/// SB=5, **1652** at SB=20 (buggy pre-fix mettle gave 2550/2028 — the wrong
+/// relation order burned bits on `Big`'s non-discriminating column instead of
+/// `Node`'s). The real `wetdry.als[0]` divergence (888 vs the jar's 784 at
+/// SB=20) is covered by the solve-gauge's cached SB-20 count baseline, not
+/// re-pinned here (too large to enumerate in a unit test).
+#[test]
+fn root_module_this_prefix_fixes_relation_order() {
+    let lib = "module lib\n\
+               open util/relation\n\
+               sig Item {}\n\
+               one sig Hub {\n  ring: Item -> Item\n}\n\
+               fact ringFact {\n  \
+               all v: dom[Hub.ring] | one v.(Hub.ring) and dom[Hub.ring] in v.^(Hub.ring)\n\
+               }\n";
+    let root = "module root\n\
+                open lib\n\
+                sig Big {}\n\
+                sig Node extends lib/Item {\n  f: Big\n}\n\
+                fact { all v: lib/Item | v in Node }\n\
+                pred p { some Node }\n\
+                run p for 3 but 15 Big\n";
+    assert_eq!(
+        count_at_multi(lib, root, 5),
+        1750,
+        "mt055-wetdry SB=5 = 1750"
+    );
+    assert_eq!(
+        count_at_multi(lib, root, 20),
+        1652,
+        "mt055-wetdry SB=20 = 1652"
+    );
+}

@@ -100,8 +100,8 @@ fn golden_quant_all_and_set_field() {
     // Field fact: `set` bound → membership only (no multiplicity) + domain.
     assert_eq!(
         all_str(&ir, &cj),
-        "((all this: Node | (this . Node.next) in Node) and (Node.next . univ) in Node) \
-         && (all n: Node | n in (n . Node.next))"
+        "((all this: this/Node | (this . this/Node.next) in this/Node) and (this/Node.next . univ) in this/Node) \
+         && (all n: this/Node | n in (n . this/Node.next))"
     );
 }
 
@@ -112,8 +112,8 @@ fn golden_default_field_is_one() {
     let (ir, cj) = build("sig A {}\nsig B { f: A }\nrun { some A } for 3\n");
     assert_eq!(
         all_str(&ir, &cj),
-        "((all this: B | ((this . B.f) in A and one (this . B.f))) and (B.f . univ) in B) \
-         && some A"
+        "((all this: this/B | ((this . this/B.f) in this/A and one (this . this/B.f))) and (this/B.f . univ) in this/B) \
+         && some this/A"
     );
 }
 
@@ -124,7 +124,10 @@ fn golden_pred_call_is_inlined() {
     let (ir, cj) = build(
         "sig A { f: set A }\npred sub[x: A] { some x.f }\npred q { all a: A | sub[a] }\nrun q for 3\n",
     );
-    assert_eq!(command_str(&ir, &cj), "(all a: A | some (a . A.f))");
+    assert_eq!(
+        command_str(&ir, &cj),
+        "(all a: this/A | some (a . this/A.f))"
+    );
 }
 
 #[test]
@@ -132,7 +135,10 @@ fn golden_int_equality_promotes_literal() {
     // sig A { n: one Int }  pred r { all a: A | a.n = 1 }  run r
     // jar: (a.n) = Int[1]  — the literal 1 is cast to its Int atom, set-compared.
     let (ir, cj) = build("sig A { n: one Int }\npred r { all a: A | a.n = 1 }\nrun r for 3\n");
-    assert_eq!(command_str(&ir, &cj), "(all a: A | (a . A.n) = Int[1])");
+    assert_eq!(
+        command_str(&ir, &cj),
+        "(all a: this/A | (a . this/A.n) = Int[1])"
+    );
 }
 
 #[test]
@@ -150,7 +156,7 @@ fn golden_check_negates_assertion() {
     );
     assert_eq!(
         command_str(&ir, &cj),
-        "!((($noSelf_a in A and one $noSelf_a) => !($noSelf_a in ($noSelf_a . A.f))))"
+        "!((($noSelf_a in this/A and one $noSelf_a) => !($noSelf_a in ($noSelf_a . this/A.f))))"
     );
 }
 
@@ -162,16 +168,16 @@ fn golden_arrow_right_one_multiplicity() {
     let (ir, cj) = build("sig A {}\nsig B { f: A -> one A }\nrun { some B } for 3\n");
     let field = pf(&ir, cj[0].formula);
     assert!(
-        field.contains("(this . B.f) in (A -> A)"),
+        field.contains("(this . this/B.f) in (this/A -> this/A)"),
         "membership: {field}"
     );
     assert!(
-        field.contains("all _c0: A | one (_c0 . (this . B.f))"),
+        field.contains("all _c0: this/A | one (_c0 . (this . this/B.f))"),
         "right-one column mult: {field}"
     );
     // Domain, projected twice for the arity-3 field.
     assert!(
-        field.contains("((B.f . univ) . univ) in B"),
+        field.contains("((this/B.f . univ) . univ) in this/B"),
         "domain: {field}"
     );
 }
@@ -205,20 +211,20 @@ fn golden_nested_arrow_right_nested_marked_inner() {
         build("sig A {}\nsig B {}\nsig C {}\nsig S { f: A -> (B one -> one C) }\nrun {} for 3\n");
     let field = pf(&ir, cj[0].formula);
     assert!(
-        field.contains("(this . S.f) in (A -> (B -> C))"),
+        field.contains("(this . this/S.f) in (this/A -> (this/B -> this/C))"),
         "membership: {field}"
     );
     assert!(
         field.contains(
-            "all _c0: A | ((_c0 . (this . S.f)) in (B -> C) \
-            and (all _c1: B | one (_c1 . (_c0 . (this . S.f)))) \
-            and (all _c2: C | one ((_c0 . (this . S.f)) . _c2)))"
+            "all _c0: this/A | ((_c0 . (this . this/S.f)) in (this/B -> this/C) \
+            and (all _c1: this/B | one (_c1 . (_c0 . (this . this/S.f)))) \
+            and (all _c2: this/C | one ((_c0 . (this . this/S.f)) . _c2)))"
         ),
         "recursive inner one/one columns: {field}"
     );
     assert!(
         !field.contains(": univ |"),
-        "outer A column unmarked, other side plain -> fully redundant, omitted: {field}"
+        "outer this/A column unmarked, other side plain -> fully redundant, omitted: {field}"
     );
 }
 
@@ -236,17 +242,17 @@ fn golden_nested_arrow_outer_marked_plain_inner() {
         build("sig A {}\nsig B {}\nsig C {}\nsig S { f: A one -> (B -> C) }\nrun {} for 3\n");
     let field = pf(&ir, cj[0].formula);
     assert!(
-        field.contains("(this . S.f) in (A -> (B -> C))"),
+        field.contains("(this . this/S.f) in (this/A -> (this/B -> this/C))"),
         "membership: {field}"
     );
     assert!(
-        field.contains("all _c0: A | (_c0 . (this . S.f)) in (B -> C)"),
+        field.contains("all _c0: this/A | (_c0 . (this . this/S.f)) in (this/B -> this/C)"),
         "unmarked inner recursion (membership only): {field}"
     );
     assert!(
         field.contains(
             "all _c1: univ | (all _c2: univ | \
-            ((_c1 -> _c2) in (B -> C) => one (((this . S.f) . _c2) . _c1)))"
+            ((_c1 -> _c2) in (this/B -> this/C) => one (((this . this/S.f) . _c2) . _c1)))"
         ),
         "outer `one` over the compound RHS, univ-leaf destructured: {field}"
     );
@@ -265,22 +271,22 @@ fn golden_nested_arrow_left_nested() {
         build("sig A {}\nsig B {}\nsig C {}\nsig S { f: (A -> B) one -> one C }\nrun {} for 3\n");
     let field = pf(&ir, cj[0].formula);
     assert!(
-        field.contains("(this . S.f) in ((A -> B) -> C)"),
+        field.contains("(this . this/S.f) in ((this/A -> this/B) -> this/C)"),
         "membership: {field}"
     );
     assert!(
         field.contains(
             "all _c0: univ | (all _c1: univ | \
-            ((_c0 -> _c1) in (A -> B) => one (_c1 . (_c0 . (this . S.f)))))"
+            ((_c0 -> _c1) in (this/A -> this/B) => one (_c1 . (_c0 . (this . this/S.f)))))"
         ),
         "compound-LHS right column, univ-leaf destructured: {field}"
     );
     assert!(
         field.contains(
-            "all _c2: C | (one ((this . S.f) . _c2) \
-            and ((this . S.f) . _c2) in (A -> B))"
+            "all _c2: this/C | (one ((this . this/S.f) . _c2) \
+            and ((this . this/S.f) . _c2) in (this/A -> this/B))"
         ),
-        "left column over plain C, recursing into the compound LHS: {field}"
+        "left column over plain this/C, recursing into the compound LHS: {field}"
     );
 }
 
@@ -294,9 +300,9 @@ fn golden_nested_arrow_some_lone_columns() {
     let field = pf(&ir, cj[0].formula);
     assert!(
         field.contains(
-            "all _c0: A | ((_c0 . (this . S.f)) in (B -> C) \
-            and (all _c1: B | lone (_c1 . (_c0 . (this . S.f)))) \
-            and (all _c2: C | some ((_c0 . (this . S.f)) . _c2)))"
+            "all _c0: this/A | ((_c0 . (this . this/S.f)) in (this/B -> this/C) \
+            and (all _c1: this/B | lone (_c1 . (_c0 . (this . this/S.f)))) \
+            and (all _c2: this/C | some ((_c0 . (this . this/S.f)) . _c2)))"
         ),
         "some/lone column mult mapping preserved under recursion: {field}"
     );
@@ -311,7 +317,7 @@ fn golden_nested_arrow_lone_outer() {
     assert!(
         field.contains(
             "all _c1: univ | (all _c2: univ | \
-            ((_c1 -> _c2) in (B -> C) => lone (((this . S.f) . _c2) . _c1)))"
+            ((_c1 -> _c2) in (this/B -> this/C) => lone (((this . this/S.f) . _c2) . _c1)))"
         ),
         "outer `lone` over the compound RHS: {field}"
     );
@@ -330,15 +336,15 @@ fn golden_nested_arrow_three_deep() {
     );
     let field = pf(&ir, cj[0].formula);
     assert!(
-        field.contains("(this . S.f) in (A -> (B -> (C -> D)))"),
+        field.contains("(this . this/S.f) in (this/A -> (this/B -> (this/C -> this/D)))"),
         "membership: {field}"
     );
     assert!(
         field.contains(
-            "all _c0: A | ((_c0 . (this . S.f)) in (B -> (C -> D)) \
-             and (all _c1: B | ((_c1 . (_c0 . (this . S.f))) in (C -> D) \
-             and (all _c2: C | one (_c2 . (_c1 . (_c0 . (this . S.f))))) \
-             and (all _c3: D | one ((_c1 . (_c0 . (this . S.f))) . _c3)))))"
+            "all _c0: this/A | ((_c0 . (this . this/S.f)) in (this/B -> (this/C -> this/D)) \
+             and (all _c1: this/B | ((_c1 . (_c0 . (this . this/S.f))) in (this/C -> this/D) \
+             and (all _c2: this/C | one (_c2 . (_c1 . (_c0 . (this . this/S.f))))) \
+             and (all _c3: this/D | one ((_c1 . (_c0 . (this . this/S.f))) . _c3)))))"
         ),
         "three levels of recursion: {field}"
     );
@@ -360,10 +366,10 @@ fn golden_nested_arrow_double_mark() {
     let field = pf(&ir, cj[0].formula);
     assert!(
         field.contains(
-            "all _c0: A | (some (_c0 . (this . S.f)) \
-             and (_c0 . (this . S.f)) in (B -> C) \
-             and (all _c1: B | one (_c1 . (_c0 . (this . S.f)))) \
-             and (all _c2: C | one ((_c0 . (this . S.f)) . _c2)))"
+            "all _c0: this/A | (some (_c0 . (this . this/S.f)) \
+             and (_c0 . (this . this/S.f)) in (this/B -> this/C) \
+             and (all _c1: this/B | one (_c1 . (_c0 . (this . this/S.f)))) \
+             and (all _c2: this/C | one ((_c0 . (this . this/S.f)) . _c2)))"
         ),
         "outer `some` mult test AND the recursive inner one/one, both present: {field}"
     );
@@ -376,7 +382,7 @@ fn golden_defined_field_equals_value() {
     let (ir, cj) = build("sig A { r: set A, s = r }\nrun { some A } for 3\n");
     let s_fact = pf(&ir, cj[1].formula);
     assert!(
-        s_fact.contains("(this . A.s) = (this . A.r)"),
+        s_fact.contains("(this . this/A.s) = (this . this/A.r)"),
         "defined field: {s_fact}"
     );
 }
@@ -387,7 +393,7 @@ fn golden_disj_decl_guard() {
     let (ir, cj) = build("sig A {}\npred p { all disj x, y: A | x != y }\nrun p for 3\n");
     assert_eq!(
         command_str(&ir, &cj),
-        "(all x: A | (all y: A | (no (x & y) => !(x = y))))"
+        "(all x: this/A | (all y: this/A | (no (x & y) => !(x = y))))"
     );
 }
 
@@ -397,7 +403,7 @@ fn golden_field_disj_two_fields() {
     // jar goal (DumpK2 probe p1): after both fields' mult+domain facts —
     //   no (this/S.a & this/S.b)
     let (ir, cj) = build("sig E {}\nsig S { disj a, b: set E }\nrun {} for 3\n");
-    assert_eq!(disj_str(&ir, &cj), "no (S.a & S.b)");
+    assert_eq!(disj_str(&ir, &cj), "no (this/S.a & this/S.b)");
 }
 
 #[test]
@@ -410,7 +416,7 @@ fn golden_field_disj_three_fields_staged() {
     let (ir, cj) = build("sig E {}\nsig S { disj a, b, c: set E }\nrun {} for 3\n");
     assert_eq!(
         disj_str(&ir, &cj),
-        "(no (S.a & S.b) and no ((S.a + S.b) & S.c))"
+        "(no (this/S.a & this/S.b) and no ((this/S.a + this/S.b) & this/S.c))"
     );
 }
 
@@ -420,7 +426,7 @@ fn golden_field_disj_arity_two() {
     // jar goal (DumpK2 probe p3): disjointness is over the full field relations
     //   no (this/S.f & this/S.g)
     let (ir, cj) = build("sig E {}\nsig S { disj f, g: E -> E }\nrun {} for 3\n");
-    assert_eq!(disj_str(&ir, &cj), "no (S.f & S.g)");
+    assert_eq!(disj_str(&ir, &cj), "no (this/S.f & this/S.g)");
 }
 
 #[test]
@@ -430,7 +436,7 @@ fn golden_field_disj_implicit_one() {
     // change the disj fact —
     //   no (this/S.a & this/S.b)
     let (ir, cj) = build("sig E {}\nsig S { disj a, b: E }\nrun {} for 3\n");
-    assert_eq!(disj_str(&ir, &cj), "no (S.a & S.b)");
+    assert_eq!(disj_str(&ir, &cj), "no (this/S.a & this/S.b)");
 }
 
 #[test]
@@ -449,7 +455,7 @@ fn field_disj_var_group_defers() {
 fn golden_cardinality_and_int_compare() {
     // #A = 2 and #A < 3.
     let (ir, cj) = build("sig A {}\npred p { #A = 2 and #A < 3 }\nrun p for 3\n");
-    assert_eq!(command_str(&ir, &cj), "(#A = 2 and #A < 3)");
+    assert_eq!(command_str(&ir, &cj), "(#this/A = 2 and #this/A < 3)");
 }
 
 #[test]
@@ -458,7 +464,7 @@ fn golden_reflexive_closure_star() {
     let (ir, cj) = build("sig N { nx: set N }\npred p { all a, b: N | b in a.*nx }\nrun p for 3\n");
     assert_eq!(
         command_str(&ir, &cj),
-        "(all a: N | (all b: N | b in (a . *(N.nx))))"
+        "(all a: this/N | (all b: this/N | b in (a . *(this/N.nx))))"
     );
 }
 
@@ -470,7 +476,7 @@ fn golden_domain_range_restrict() {
     // A <: f = f & (A -> univ);  f :> A = f & (univ -> A).
     assert_eq!(
         command_str(&ir, &cj),
-        "(some (A.f & (A -> univ)) and some (A.f & (univ -> A)))"
+        "(some (this/A.f & (this/A -> univ)) and some (this/A.f & (univ -> this/A)))"
     );
 }
 
@@ -484,7 +490,7 @@ fn golden_sig_appended_fact_binds_this() {
         .expect("appended fact conjunct");
     assert_eq!(
         pf(&ir, appended.formula),
-        "(all this: A | (this . A.f) in (this . A.f))"
+        "(all this: this/A | (this . this/A.f) in (this . this/A.f))"
     );
 }
 
@@ -493,7 +499,10 @@ fn golden_one_sig_field_owner_strip() {
     // one sig Cfg { limit: one A } — the field relation is `Cfg -> Cfg.limit`.
     let (ir, cj) =
         build("one sig Cfg { limit: one A }\nsig A {}\npred p { some Cfg.limit }\nrun p for 3\n");
-    assert_eq!(command_str(&ir, &cj), "some (Cfg . (Cfg -> Cfg.limit))");
+    assert_eq!(
+        command_str(&ir, &cj),
+        "some (this/Cfg . (this/Cfg -> this/Cfg.limit))"
+    );
 }
 
 #[test]
@@ -504,12 +513,12 @@ fn golden_subset_sig_bound_constraint() {
     assert!(
         cj.iter().any(
             |c| matches!(c.provenance, als_core::Provenance::BoundsConstraint)
-                && pf(&ir, c.formula) == "B in A"
+                && pf(&ir, c.formula) == "this/B in this/A"
         ),
         "subset containment: {}",
         all_str(&ir, &cj)
     );
-    assert_eq!(command_str(&ir, &cj), "(some B and B in A)");
+    assert_eq!(command_str(&ir, &cj), "(some this/B and this/B in this/A)");
 }
 
 // ---------------------------------------------------------------------------
@@ -524,7 +533,7 @@ fn run_pred_existentially_quantifies_params() {
     let (ir, cj) = build("sig A { f: set A }\npred p[x: A] { some x.f }\nrun p for 3\n");
     assert_eq!(
         command_str(&ir, &cj),
-        "($p_x in A and one $p_x and some ($p_x . A.f))"
+        "($p_x in this/A and one $p_x and some ($p_x . this/A.f))"
     );
 }
 
@@ -532,20 +541,29 @@ fn run_pred_existentially_quantifies_params() {
 fn no_quantifier_desugars_to_all_not() {
     // no x: A | φ  ⇒  all x: A | ¬φ.
     let (ir, cj) = build("sig A { f: set A }\npred p { no x: A | some x.f }\nrun p for 3\n");
-    assert_eq!(command_str(&ir, &cj), "(all x: A | !(some (x . A.f)))");
+    assert_eq!(
+        command_str(&ir, &cj),
+        "(all x: this/A | !(some (x . this/A.f)))"
+    );
 }
 
 #[test]
 fn one_quantifier_uses_comprehension_cardinality() {
     // one x: A | φ  ⇒  one { x: A | φ }.
     let (ir, cj) = build("sig A { f: set A }\npred p { one x: A | some x.f }\nrun p for 3\n");
-    assert_eq!(command_str(&ir, &cj), "one {x: A | some (x . A.f)}");
+    assert_eq!(
+        command_str(&ir, &cj),
+        "one {x: this/A | some (x . this/A.f)}"
+    );
 }
 
 #[test]
 fn comprehension_lowers_to_comprehension() {
     let (ir, cj) = build("sig A { f: set A }\npred p { some { x: A | some x.f } }\nrun p for 3\n");
-    assert_eq!(command_str(&ir, &cj), "some {x: A | some (x . A.f)}");
+    assert_eq!(
+        command_str(&ir, &cj),
+        "some {x: this/A | some (x . this/A.f)}"
+    );
 }
 
 #[test]
@@ -557,7 +575,7 @@ fn relational_ops_and_transpose() {
     // reference's balanced-binary `and`, translation-ref §2.2).
     assert_eq!(
         command_str(&ir, &cj),
-        "(((some (A.f + A.g) and some (A.f & A.g)) and some (A.f - A.g)) and some ~(A.f))"
+        "(((some (this/A.f + this/A.g) and some (this/A.f & this/A.g)) and some (this/A.f - this/A.g)) and some ~(this/A.f))"
     );
 }
 
@@ -571,8 +589,8 @@ fn iden_univ_none_constants() {
     // `RelConst::{Univ, Iden}` survive only for the encoder's internal uses.
     assert_eq!(
         command_str(&ir, &cj),
-        "((some (iden & (((Int + String) + A) -> ((Int + String) + A))) \
-         and some ((Int + String) + A)) and no none)"
+        "((some (iden & (((Int + String) + this/A) -> ((Int + String) + this/A))) \
+         and some ((Int + String) + this/A)) and no none)"
     );
 }
 
@@ -582,13 +600,16 @@ fn disj_builtin_staged_expansion() {
     let (ir, cj) = build(
         "sig X {} sig A extends X {} sig B extends X {} sig C extends X {}\npred p { disj[A, B, C] }\nrun p for 3\n",
     );
-    assert_eq!(command_str(&ir, &cj), "(no (A & B) and no ((A + B) & C))");
+    assert_eq!(
+        command_str(&ir, &cj),
+        "(no (this/A & this/B) and no ((this/A + this/B) & this/C))"
+    );
 }
 
 #[test]
 fn let_binding_substitutes() {
     let (ir, cj) = build("sig A { f: set A }\npred p { let y = A.f | some y }\nrun p for 3\n");
-    assert_eq!(command_str(&ir, &cj), "some (A . A.f)");
+    assert_eq!(command_str(&ir, &cj), "some (this/A . this/A.f)");
 }
 
 #[test]
@@ -598,14 +619,17 @@ fn implies_iff_and_or() {
     );
     assert_eq!(
         command_str(&ir, &cj),
-        "(((some A => some A) and (some A <=> some A)) or no A)"
+        "(((some this/A => some this/A) and (some this/A <=> some this/A)) or no this/A)"
     );
 }
 
 #[test]
 fn sum_quantifier_lowers_to_int_sum() {
     let (ir, cj) = build("sig A { n: one Int }\npred p { (sum a: A | a.n) = 0 }\nrun p for 3\n");
-    assert_eq!(command_str(&ir, &cj), "(sum a: A | int[(a . A.n)]) = 0");
+    assert_eq!(
+        command_str(&ir, &cj),
+        "(sum a: this/A | int[(a . this/A.n)]) = 0"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -817,7 +841,7 @@ fn golden_skolem_set_unary() {
     // jar dump T9a: (some foo_r: set this/A | some foo_r) — Kodkod skolemizes
     // `foo_r` to a free relation ⊆ upper(A); replacement = `$foo_r in A` ∧ body.
     let (ir, cj) = build("sig A {}\nrun foo { some r: set A | some r } for 3\n");
-    assert_eq!(command_str(&ir, &cj), "($foo_r in A and some $foo_r)");
+    assert_eq!(command_str(&ir, &cj), "($foo_r in this/A and some $foo_r)");
 }
 
 #[test]
@@ -830,8 +854,8 @@ fn golden_skolem_marked_arrow() {
     let (ir, cj) = build("sig A {}\nsig B {}\nrun foo { some f: A one -> one B | some f } for 3\n");
     assert_eq!(
         command_str(&ir, &cj),
-        "($foo_f in (A -> B) and (all _c0: A | one (_c0 . $foo_f)) \
-         and (all _c1: B | one ($foo_f . _c1)) and some $foo_f)"
+        "($foo_f in (this/A -> this/B) and (all _c0: this/A | one (_c0 . $foo_f)) \
+         and (all _c1: this/B | one ($foo_f . _c1)) and some $foo_f)"
     );
 }
 
@@ -849,7 +873,7 @@ fn golden_skolem_check_negated_universal() {
         build("sig A {}\nsig B {}\nassert Inj { all f: A lone -> B | some f }\ncheck Inj for 3\n");
     assert_eq!(
         command_str(&ir, &cj),
-        "!((($Inj_f in (A -> B) and (all _c0: B | lone ($Inj_f . _c0))) => some $Inj_f))"
+        "!((($Inj_f in (this/A -> this/B) and (all _c0: this/B | lone ($Inj_f . _c0))) => some $Inj_f))"
     );
 }
 
@@ -858,14 +882,17 @@ fn golden_skolem_run_pred_relational_param() {
     // pred p[r: A -> B] { some r } run p for 3
     // jar dump T9f: some p_r: set A->B | p_r in (A->B) and some p_r
     let (ir, cj) = build("sig A {}\nsig B {}\npred p[r: A -> B] { some r }\nrun p for 3\n");
-    assert_eq!(command_str(&ir, &cj), "($p_r in (A -> B) and some $p_r)");
+    assert_eq!(
+        command_str(&ir, &cj),
+        "($p_r in (this/A -> this/B) and some $p_r)"
+    );
 }
 
 #[test]
 fn golden_skolem_run_pred_set_unary_param() {
     // pred q[s: set A] { some s } run q — a set-marked unary param.
     let (ir, cj) = build("sig A {}\npred q[s: set A] { some s }\nrun q for 3\n");
-    assert_eq!(command_str(&ir, &cj), "($q_s in A and some $q_s)");
+    assert_eq!(command_str(&ir, &cj), "($q_s in this/A and some $q_s)");
 }
 
 #[test]
@@ -907,7 +934,7 @@ fn int_operand_of_relational_plus_promotes() {
     // this fix, `#B` (a bare `Card` reaching `lower_rel` as a union operand)
     // hit the "unary operator in a relation position" typed defer.
     let (ir, cj) = build("sig A {}\nsig B {}\nfact { #A = #B + 1 }\nrun {} for 3\n");
-    assert_eq!(fact_str(&ir, &cj), "Int[#A] = (Int[#B] + Int[1])");
+    assert_eq!(fact_str(&ir, &cj), "Int[#this/A] = (Int[#this/B] + Int[1])");
 }
 
 #[test]
@@ -920,7 +947,7 @@ fn let_bound_int_value_promotes_in_relation_position() {
     // (translation-ref §2.4) folds back to `#A` — keeping the accumulated
     // overflow the `Int[·]` boundary would otherwise drop (§11.3).
     let (ir, cj) = build("sig A {}\npred p { let t = #A | t > 0 }\nrun p for 3\n");
-    assert_eq!(command_str(&ir, &cj), "#A > 0");
+    assert_eq!(command_str(&ir, &cj), "#this/A > 0");
 }
 
 #[test]
@@ -968,7 +995,7 @@ fn explicit_receiver_binds_this_from_the_join() {
     );
     assert_eq!(
         command_str(&ir, &cj),
-        "($a in A and one $a and $b in B and one $b and some ($a . A.f))"
+        "($a in this/A and one $a and $b in this/B and one $b and some ($a . this/A.f))"
     );
 }
 
