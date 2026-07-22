@@ -10,6 +10,7 @@ Every doc in the project is reachable from here. Nothing is orphaned. Superseded
 ## Session routines
 - Pickup: **[../CLAUDE.md](../CLAUDE.md)** → "Start here" (what "proceed" means).
 - Wrap-up: **[SESSION_WRAP.md](SESSION_WRAP.md)** — the end-of-session checklist.
+- **[MIGRATION.md](MIGRATION.md)** — moving the working environment to a new machine: pre-move checklist, the move itself, and the on-arrival determinism cross-check (mt-042(d)).
 - **[LESSONS.md](LESSONS.md)** — cross-cutting lessons learned.
 
 ## Steering documents (enforced as review rubrics)

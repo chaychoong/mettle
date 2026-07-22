@@ -27,6 +27,8 @@ the full tag history is `v6.2.0 > v6.0.0 > v5.1.0 > v5.0.0.1 > (pre-releases)`.
 There is no `v6.1.0`.
 
 Store the jar at `oracle/org.alloytools.alloy.dist.jar` (already git-ignored).
+`scripts/bootstrap.sh` (mt-042(b)) automates the fetch-and-verify below —
+idempotent, SHA-256-checked, refuses to silently overwrite a mismatched jar.
 
 ---
 

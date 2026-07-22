@@ -1,0 +1,11 @@
+# Pins the exact rustc mettle is developed and gauge-verified against
+# (see docs/STATE.md / docs/MIGRATION.md). rustup (and dtolnay/rust-toolchain
+# in CI, which defers to this file when present) install this toolchain
+# automatically on `cargo` invocation — no manual `rustup install` needed.
+#
+# This is the authority for non-nix environments (CI, rustup users). `nix
+# develop` (flake.nix) pins its own rustc from nixpkgs and notes any delta
+# from this exact version in its header comment.
+[toolchain]
+channel = "1.97.0"
+components = ["rustfmt", "clippy"]
