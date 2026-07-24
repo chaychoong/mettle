@@ -128,6 +128,20 @@ machinery notes its effect on the 314 alloy4fun over-accepts. **This gate is the
 one genuine owner decision of the ADR; silence = the proposal stands** (per the
 operating contract's "surface genuine decisions before dependent work").
 
+**Measured state (mt-050, 2026-07-25 — the touchpoint report):** every criterion
+met. Solve-gauge **DISAGREE 0 at default budgets (agree 343 over 544 cached jar
+verdicts) AND at deep budgets** (L1/L2 sweeps to 400k conflicts / 128M encode
+over the whole capacity/over_budget worklist — no hidden disagreements at 32×
+depth); counting nets clean (SB-0 52 / 0 — `skip_fo_skolem` retired at mt-047,
+the mt-041 family at mt-041; SB-20 74 / 2 = the mt-055 count-only residual);
+remaining typed defers = temporal 22 (Rung 6), HO 4 (jar-error parity), the
+honest capacity/budget remainder (~76 commands capped even at L2; correctChord's
+16 additionally non-comparable — the jar itself cannot sweep that file in
+7200s), **plus one family the proposal text did not name, disclosed for the
+blessing: a 7-command typed resolver-recording tail** (LIMITATIONS; zero wrong
+verdicts, zero corpus movement). Owner blessing at the touchpoint (or standing
+silence) closes the rung.
+
 ## Consequences
 
 - Implementation beads land per the TASKS.md sequencing: mt-040 (recording gaps,

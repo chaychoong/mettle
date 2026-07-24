@@ -879,6 +879,57 @@ fn higher_order_macro_callable_by_name_lowers() {
     );
 }
 
+// ==================== formula-valued `let` bindings ========================
+// A `let` may bind a boolean (translation-ref §2, referential transparency):
+// `let p = some a | p` behaves exactly as `some a`. These verdicts are derivable
+// by hand and discriminate a correct formula binding from the old behavior
+// (forcing the value through `lower_rel`, which deferred).
+
+#[test]
+fn let_bound_formula_behaves_as_its_value_sat() {
+    // `let f = some A | f` ≡ `some A`; A may be non-empty ⟹ SAT.
+    assert_sat("sig A {}\nrun { let f = some A | f } for 3\n");
+}
+
+#[test]
+fn let_bound_formula_behaves_as_its_value_unsat() {
+    // `(let f = some A | f) and no A` ≡ `some A and no A` — a contradiction ⟹
+    // UNSAT. Forces the binding to be the *formula* `some A`, not a relation.
+    assert_unsat("sig A {}\nrun { (let f = some A | f) and (no A) } for 3\n");
+}
+
+#[test]
+fn let_bound_formula_ite_selects_then_branch_sat() {
+    // `let f = (some A) => (some A) else (some none) | f`: when A is non-empty the
+    // condition holds and the then-branch `some A` is true ⟹ SAT. Confirms the
+    // then-branch is reachable and correctly evaluated.
+    assert_sat("sig A {}\nrun { let f = (some A) => (some A) else (some none) | f } for 3\n");
+}
+
+#[test]
+fn let_bound_formula_ite_selects_else_branch_unsat() {
+    // The same binding conjoined with `no A`: the condition `some A` is now false,
+    // so the else-branch `some none` (always false) is selected ⟹ the asserted
+    // `f` is unsatisfiable ⟹ UNSAT. Confirms the else-branch is taken when the
+    // condition fails (a wrong-branch bug would let the then-branch's `some A`
+    // leak and flip the verdict).
+    assert_unsat(
+        "sig A {}\n\
+         run { (let f = (some A) => (some A) else (some none) | f) and (no A) } for 3\n",
+    );
+}
+
+#[test]
+fn let_bound_int_value_still_solves_sat() {
+    // Int-valued lets are unchanged by the formula seam: the value round-trips
+    // through `Int[·]`/`int[·]` as a `Binding::Expr`. `let x = plus[1, 2] | x = 3`
+    // is SAT (`util/integer` is auto-opened, so `plus` is reachable unqualified).
+    assert_sat("sig A {}\nrun { let x = plus[1, 2] | x = 3 } for 3\n");
+    // And the contradictory comparison is UNSAT, confirming the value is really
+    // consumed (not vacuously ignored).
+    assert_unsat("sig A {}\nrun { let x = plus[1, 2] | x = 4 } for 3\n");
+}
+
 // ======================= enumeration conflict budget =======================
 // mt-046 unlocked corpus models (e.g. `correctChord.als`) that pass the
 // primary-var cap but whose per-instance solves are individually expensive, so

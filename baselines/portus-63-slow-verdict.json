@@ -1,0 +1,1597 @@
+{
+ "note": "Slow-file jar verdict supplement (mt-050, 2026-07-25): the portus files that timed out at the original 60s capture, re-captured at 1800s/7200s per-file JVM timeouts on the M-series box (JDK 21, LEDGER-001 defaults: symmetry 20, noOverflow=true, sat4j). Merged by the gauge after portus-63-verdict.json (sorted-name order), command entries override that file's file-level timeouts. ertms_1A captured at 7200s; correctChord absent if still timing out \u2014 see README triage.",
+ "files": [
+  {
+   "file": "corpus/portus-63/expert-models/3zltn65gds66b6f4q3lvbtgdkb6snmuu-alloy/mesh.als",
+   "outcome": {
+    "type": "commands",
+    "data": [
+     {
+      "index": 0,
+      "label": "show",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 1,
+      "label": "NoCutPoints",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     }
+    ]
+   }
+  },
+  {
+   "file": "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Algorithms/LC-Lenses/lc-lenses.als",
+   "outcome": {
+    "type": "commands",
+    "data": [
+     {
+      "index": 0,
+      "label": "LeastPutGet_Stronger_PutGet",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 1,
+      "label": "LeastGetPut_Stronger_GetPut",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 2,
+      "label": "UniqueDeterministicPut",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 3,
+      "label": "DetLeastChangeLens_RegularLens",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 4,
+      "label": "RegularLens_DetLeastChangeLens",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 5,
+      "label": "RegularLens_NDetLeastChangeLens",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 6,
+      "label": "DetLeastChangeLens_Injective_g",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 7,
+      "label": "DetLeastChangeLens_StrictlyIncreasing_f",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 8,
+      "label": "Compose_StrictlyIncreasing",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 9,
+      "label": "DetLeastChangeLens_QuasiStrictlyIncreasing_f",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 10,
+      "label": "Compose_QuasiStrictlyIncreasing",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 11,
+      "label": "DetLeastChangeLens_CplStrictlyIncreasing_f",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 12,
+      "label": "NDetLeastChangeLens_Injective_g",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 13,
+      "label": "NDetLeastChangeLens_Monotonic_f",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 14,
+      "label": "Compose_Monotonic",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 15,
+      "label": "NDetLeastChangeLens_QuasiMonotonic_f",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 16,
+      "label": "Compose_QuasiMonotonic",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 17,
+      "label": "NDetLeastChangeLens_CplMonotonic_f",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 18,
+      "label": "NDetLeastChangeLens_Total_put",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 19,
+      "label": "StrictlyIncreasing_QuasiStrictlyIncreasing",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 20,
+      "label": "Monotonic_QuasiMonotonic",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 21,
+      "label": "check$22",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 22,
+      "label": "ExampleDeterministic",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 23,
+      "label": "ExampleNondeterministic",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     }
+    ]
+   }
+  },
+  {
+   "file": "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als",
+   "outcome": {
+    "type": "commands",
+    "data": [
+     {
+      "index": 0,
+      "label": "sc_per_loc",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 1,
+      "label": "rmw_atomicity",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 2,
+      "label": "causality",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 3,
+      "label": "invlpg",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 4,
+      "label": "tlb_causality",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 5,
+      "label": "test_dirtybittest",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 6,
+      "label": "test_dirtybit2",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 7,
+      "label": "test_dirtybit3",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 8,
+      "label": "test_dirtybit4",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 9,
+      "label": "test_dirtybit5",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 10,
+      "label": "test_dirtybit6",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 11,
+      "label": "test_ghosttest",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 12,
+      "label": "test_intelbug",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 13,
+      "label": "test_invlpgtest",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 14,
+      "label": "test_ipi_ordering",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 15,
+      "label": "test_ipi3",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 16,
+      "label": "test_ipi4",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 17,
+      "label": "test_ipi5",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 18,
+      "label": "test_ipi6",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 19,
+      "label": "test_ipi7",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 20,
+      "label": "test_ipi8",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 21,
+      "label": "test_mp",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 22,
+      "label": "test_mrf1",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 23,
+      "label": "test_n2",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 24,
+      "label": "test_n5",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 25,
+      "label": "test_n5_synonym",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 26,
+      "label": "test_new_sb_synonym_permit",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 27,
+      "label": "test_null",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 28,
+      "label": "test_ptwalktest",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 29,
+      "label": "test_ptwalk2",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 30,
+      "label": "test_ptwalk3",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 31,
+      "label": "test_readfrominitial",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 32,
+      "label": "test_rftest",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 33,
+      "label": "test_sb",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 34,
+      "label": "test_sb_synonym",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 35,
+      "label": "test_sb_synonym_permit",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     }
+    ]
+   }
+  },
+  {
+   "file": "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als",
+   "outcome": {
+    "type": "commands",
+    "data": [
+     {
+      "index": 0,
+      "label": "sc_per_loc",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 1,
+      "label": "rmw_atomicity",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 2,
+      "label": "causality",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 3,
+      "label": "invlpg",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 4,
+      "label": "tlb_causality",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 5,
+      "label": "test_dirtybittest",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 6,
+      "label": "test_dirtybit2",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 7,
+      "label": "test_dirtybit3",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 8,
+      "label": "test_dirtybit4",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 9,
+      "label": "test_dirtybit5",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 10,
+      "label": "test_dirtybit6",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 11,
+      "label": "test_ghosttest",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 12,
+      "label": "test_intelbug",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 13,
+      "label": "test_invlpgtest",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 14,
+      "label": "test_ipi_ordering",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 15,
+      "label": "test_ipi3",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 16,
+      "label": "test_ipi4",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 17,
+      "label": "test_ipi5",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 18,
+      "label": "test_ipi6",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 19,
+      "label": "test_ipi7",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 20,
+      "label": "test_ipi8",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 21,
+      "label": "test_mp",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 22,
+      "label": "test_mrf1",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 23,
+      "label": "test_n2",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 24,
+      "label": "test_n5",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 25,
+      "label": "test_n5_synonym",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 26,
+      "label": "test_new_sb_synonym_permit",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 27,
+      "label": "test_null",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 28,
+      "label": "test_ptwalktest",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 29,
+      "label": "test_ptwalk2",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 30,
+      "label": "test_ptwalk3",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 31,
+      "label": "test_readfrominitial",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 32,
+      "label": "test_rftest",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 33,
+      "label": "test_sb",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 34,
+      "label": "test_sb_synonym",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 35,
+      "label": "test_sb_synonym_permit",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     }
+    ]
+   }
+  },
+  {
+   "file": "corpus/portus-63/expert-models/3zltn65gds66b6f4q3lvbtgdkb6snmuu-alloy/fullsub2.als",
+   "outcome": {
+    "type": "commands",
+    "data": [
+     {
+      "index": 0,
+      "label": "SameFinalStates",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     }
+    ]
+   }
+  },
+  {
+   "file": "corpus/portus-63/expert-models/7d25ioxqmue65lp6ntzz735gpbg4fmgq-amazon-snapshot-spec/serializableSnapshotIsolation.als",
+   "outcome": {
+    "type": "commands",
+    "data": [
+     {
+      "index": 0,
+      "label": "run$1",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     }
+    ]
+   }
+  },
+  {
+   "file": "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als",
+   "outcome": {
+    "type": "commands",
+    "data": [
+     {
+      "index": 0,
+      "label": "B1",
+      "check": true,
+      "expects": false,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 1,
+      "label": "E1",
+      "check": true,
+      "expects": false,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 2,
+      "label": "O1",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 3,
+      "label": "T1",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 4,
+      "label": "I1",
+      "check": true,
+      "expects": false,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 5,
+      "label": "X1",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 6,
+      "label": "P1",
+      "check": true,
+      "expects": false,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 7,
+      "label": "EO1",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 8,
+      "label": "A1",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 9,
+      "label": "B1\"",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 10,
+      "label": "E1\"",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 11,
+      "label": "O1\"",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 12,
+      "label": "T1\"",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 13,
+      "label": "I1\"",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 14,
+      "label": "X1",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 15,
+      "label": "EO1\"",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 16,
+      "label": "A1\"",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 17,
+      "label": "A1\"\"",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 18,
+      "label": "B2",
+      "check": true,
+      "expects": false,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 19,
+      "label": "E2",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 20,
+      "label": "O2",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 21,
+      "label": "T2",
+      "check": true,
+      "expects": false,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 22,
+      "label": "I2",
+      "check": true,
+      "expects": false,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 23,
+      "label": "X2",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 24,
+      "label": "P2",
+      "check": true,
+      "expects": false,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 25,
+      "label": "EO2",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 26,
+      "label": "A2",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 27,
+      "label": "B3a",
+      "check": true,
+      "expects": false,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 28,
+      "label": "E3a",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 29,
+      "label": "O3a",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 30,
+      "label": "T3a",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 31,
+      "label": "I3a",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 32,
+      "label": "X3a",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 33,
+      "label": "P3a",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 34,
+      "label": "EO3a",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 35,
+      "label": "A3a",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     }
+    ]
+   }
+  },
+  {
+   "file": "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/HotelLocking/HotelVar.als",
+   "outcome": {
+    "type": "commands",
+    "data": [
+     {
+      "index": 0,
+      "label": "BadSafety",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 1,
+      "label": "GoodSafety",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     }
+    ]
+   }
+  },
+  {
+   "file": "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/ERTMS/ertms_1A.als",
+   "outcome": {
+    "type": "commands",
+    "data": [
+     {
+      "index": 0,
+      "label": "S1",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 1,
+      "label": "S2",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 2,
+      "label": "S3",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 3,
+      "label": "S4",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 4,
+      "label": "S5",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 5,
+      "label": "S6",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 6,
+      "label": "S7",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 7,
+      "label": "S8",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 8,
+      "label": "S9",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 9,
+      "label": "trains_ok_states_ok",
+      "check": true,
+      "expects": false,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 10,
+      "label": "trains_ok_free_ok",
+      "check": true,
+      "expects": false,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 11,
+      "label": "trains_ok_occupied_ok",
+      "check": true,
+      "expects": false,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 12,
+      "label": "timers_auto_free_ok",
+      "check": true,
+      "expects": false,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 13,
+      "label": "timers_auto_occupied_ok",
+      "check": true,
+      "expects": false,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     }
+    ]
+   }
+  }
+ ]
+}

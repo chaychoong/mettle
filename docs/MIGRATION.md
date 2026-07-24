@@ -38,9 +38,9 @@ change lands after it, per that section's note.
    | | |
    |---|---|
    | Command | `cargo build --release -p als-conform && ./target/release/solve-gauge --jobs N` (any `N`; defaults for everything else — 10,000 conflicts / 4,000,000 encode-budget / 20,000 primary-var cap / symmetry 20) |
-   | stdout SHA-256 | `72ad3b3368ace33623ac83dac5be608128dfc47dc88b53196d2a50a585be9cf2` |
-   | Recorded | 2026-07-22 (post-mt-053; supersedes the 2026-07-21 `c4f7f8ca…` hash). Re-verified byte-identical 2026-07-24 post-mt-041 on the Mac (the mt-041 change is verdict-invisible — stage-1 output unchanged) |
-   | Commands / verdict | 564 commands, **agree 301** (166 SAT / 135 UNSAT), DISAGREE 0 |
+   | stdout SHA-256 | `e7a6c1a854ae6ed0301418ef4316f8d7188d0a2dba3ec2c6a4ae7b9bc50c93ce` |
+   | Recorded | 2026-07-25 (post-mt-050: the let-formula lowering fix + the slow-file verdict supplement both change the sweep; supersedes the 2026-07-22 `72ad3b33…` hash, which was still valid post-mt-041) |
+   | Commands / verdict | 564 commands, **agree 343** (195 SAT / 148 UNSAT), DISAGREE 0 |
 
    **This hash is only valid as of the commit it was recorded at.** Any code change
    landing after 2026-07-21 (encoder, evaluator, solver, gauge, budgets, corpus

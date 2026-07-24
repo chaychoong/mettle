@@ -17,12 +17,14 @@
 //! The comparison is over a deterministic pretty-print of the goal formula
 //! (relation names as the builder names them: `A`, `A.f`, `Int`, …).
 
+use std::path::PathBuf;
+
 use als_core::ir::{
     FormulaId, FormulaKind, IntCmpOp, IntExprId, IntExprKind, Ir, MultTest, QuantKind, RelBinOp,
     RelCmpOp, RelConst, RelExprId, RelExprKind, RelUnOp,
 };
 use als_core::{compute_bounds, compute_universe, lower_command, GoalConjunct, TranslateError};
-use als_types::{resolve, MapLoader, ModuleGraph};
+use als_types::{resolve, FilesystemLoader, MapLoader, ModuleGraph};
 
 /// Resolve `src`, lower command 0, and return the goal conjuncts + IR.
 fn build(src: &str) -> (Ir, Vec<GoalConjunct>) {
@@ -1017,4 +1019,87 @@ fn run_target_own_module_first() {
     // Own-module `pred add` shadows the auto-opened `util/integer/add`; the
     // command must lower (to the user pred), not defer as overloaded.
     assert!(try_build("one sig A {}\nsig S {}\npred add { no A }\nrun add for 3\n").is_ok());
+}
+
+// ---------------------------------------------------------------------------
+// formula-valued `let` bindings (translation-ref §2, referential transparency)
+// ---------------------------------------------------------------------------
+// Alloy allows a `let` to bind a boolean value (`let p = some a | p …`). The
+// binding value is lowered in its own sort: a formula value becomes a
+// `Binding::Formula` consumed directly in formula position, rather than being
+// forced through `lower_rel` (which rejected the leaf `some a`/`some none` with
+// "unary operator in a relation position"). Relation- and int-valued lets are
+// unchanged — they still lower via `lower_rel`.
+
+#[test]
+fn let_bound_formula_value_lowers_and_is_the_formula() {
+    // sig A {}  pred p { let f = some A | f }  run p for 3
+    // `f` is a formula-valued binding; used in formula position it *is* `some A`,
+    // so the inlined command conjunct is exactly `some this/A`.
+    let (ir, cj) = build("sig A {}\npred p { let f = some A | f }\nrun p for 3\n");
+    assert_eq!(command_str(&ir, &cj), "some this/A");
+}
+
+#[test]
+fn let_bound_formula_ite_value_lowers() {
+    // The `=> … else …` (formula-ITE) spelling with a bare `some none` leaf — the
+    // exact shape from elevator_spl_events' `willOpen` — lowers without the
+    // relation-position defer. `c => t else e` desugars to `(c and t) or
+    // (not c and e)`.
+    let (ir, cj) = build(
+        "sig A {}\npred p { let f = (some A) => (some A) else (some none) | f }\nrun p for 3\n",
+    );
+    assert_eq!(
+        command_str(&ir, &cj),
+        "((some this/A and some this/A) or (!(some this/A) and some none))"
+    );
+}
+
+#[test]
+fn let_bound_formula_over_a_parameter_lowers() {
+    // The exact elevator_spl_events `willOpen` shape: a pred parameter `a`, a
+    // formula-ITE value with a bare `some none` leaf, and the call reached
+    // through a quantifier (`some a: A | p[a]`). Before the fix this whole file's
+    // 36 commands deferred on the `some a` / `some none` leaves being forced into
+    // relation position.
+    assert!(try_build(
+        "sig A {}\n\
+         pred p[a: A] { let extra = (some a) => (some a) else some none | extra }\n\
+         run { some a: A | p[a] } for 3\n"
+    )
+    .is_ok());
+}
+
+#[test]
+fn elevator_spl_events_command0_no_relation_position_defer() {
+    // Regression for the corpus file whose shared `willOpen` fact carries the
+    // formula-valued `let extra = FIdle in Product => idle[s] else some none`.
+    // Before the fix, all 36 commands deferred with "unary operator in a relation
+    // position"; command 0 must no longer emit that specific defer (whatever
+    // verdict/other defer replaces it — the file is temporal via `trace` — is
+    // fine). Resolve + lower only; never solves. Skips cleanly without `corpus/`.
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
+        "../../corpus/portus-63/expert-models/\
+         7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als",
+    );
+    let Ok(canon) = std::fs::canonicalize(&path) else {
+        eprintln!("SKIP elevator_spl_events regression: corpus file absent");
+        return;
+    };
+    let root_str = canon.to_string_lossy().replace('\\', "/");
+    let loader = FilesystemLoader::new();
+    let graph = ModuleGraph::load(&root_str, &loader).expect("load elevator file");
+    let world = resolve(&graph).expect("resolve elevator file").world;
+    let cmd = &world.commands[0];
+    let scoped = compute_universe(&world, &graph, cmd).expect("universe");
+    let mut ir = Ir::default();
+    let bounds = compute_bounds(&world, &scoped, &mut ir);
+    if let Err(TranslateError::LoweringUnsupported { what, .. }) =
+        lower_command(&world, &graph, &scoped, &bounds, &mut ir, 0)
+    {
+        assert_ne!(
+            what, "unary operator in a relation position",
+            "the formula-valued `let` defer must be gone for command 0"
+        );
+    }
 }

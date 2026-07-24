@@ -64,7 +64,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use als_syntax::ast::{Ast, BinOp, CmpOp, Const, Decl, ExprId, ExprKind, Mult, Quant, UnOp};
+use als_syntax::ast::{
+    Ast, BinOp, CmpOp, Const, Decl, ExprId, ExprKind, LetBinding, Mult, Quant, UnOp,
+};
 use als_syntax::{ArenaId, Span};
 use als_types::choice::{BuiltinCall, BuiltinValue, ExprChoice, NameChoice, SpineChoice};
 use als_types::{
@@ -250,6 +252,13 @@ enum Binding {
     /// already-lowered value expression (substituted in place, the reference's
     /// inlining).
     Expr(RelExprId),
+    /// A formula-valued `let` binding (Alloy allows a `let` to bind a boolean:
+    /// `let p = some a | p …`) → the already-lowered formula, evaluated once in
+    /// the enclosing env (translation-ref §2, referential transparency). Only
+    /// consumable in formula position; a use anywhere relational is a checker
+    /// type error, so `lookup_binder` rejects it there rather than inventing a
+    /// value.
+    Formula(FormulaId),
     /// A callable (func/pred) passed to a higher-order macro by bare name (§3.7,
     /// mt-040): the parameter is invoked as `param[args]` in the body and inlined
     /// as the real call, never used as a relational value.
@@ -1648,12 +1657,7 @@ impl<'a> Lowerer<'a> {
                 Ok(self.mk_formula(FormulaKind::Or(vec![a, b]), span))
             }
             ExprKind::Let { bindings, body } => {
-                let mut pushed = 0;
-                for b in &bindings {
-                    let v = self.lower_rel(ctx, b.value)?;
-                    self.binders.push((b.name.text.clone(), Binding::Expr(v)));
-                    pushed += 1;
-                }
+                let pushed = self.push_let_bindings(ctx, &bindings)?;
                 let r = self.lower_formula(ctx, body);
                 for _ in 0..pushed {
                     self.binders.pop();
@@ -1687,6 +1691,12 @@ impl<'a> Lowerer<'a> {
         e: ExprId,
         span: Span,
     ) -> Result<FormulaId, TranslateError> {
+        // A bare name resolving to a formula-valued `let` binding is that
+        // formula (translation-ref §2): `let p = some a | p` uses `p` here.
+        if let Some(ExprChoice::Name(NameChoice::Var(name))) = self.choice(ctx, e) {
+            let name = name.clone();
+            return self.lookup_binder_formula(&name, span);
+        }
         // A higher-order-macro callable parameter applied as a formula
         // (`axiom[no_p]`, or bare `axiom`) inlines the recorded pred (mt-040).
         if let Some((c, args)) = self.callable_head(ctx, e) {
@@ -2108,12 +2118,7 @@ impl<'a> Lowerer<'a> {
                 self.lower_comprehension(ctx, &decls, body, span)
             }
             ExprKind::Let { bindings, body } => {
-                let mut pushed = 0;
-                for b in &bindings {
-                    let v = self.lower_rel(ctx, b.value)?;
-                    self.binders.push((b.name.text.clone(), Binding::Expr(v)));
-                    pushed += 1;
-                }
+                let pushed = self.push_let_bindings(ctx, &bindings)?;
                 let r = self.lower_rel(ctx, body);
                 for _ in 0..pushed {
                     self.binders.pop();
@@ -2661,12 +2666,7 @@ impl<'a> Lowerer<'a> {
                 }
             }
             ExprKind::Let { bindings, body } => {
-                let mut pushed = 0;
-                for b in &bindings {
-                    let v = self.lower_rel(ctx, b.value)?;
-                    self.binders.push((b.name.text.clone(), Binding::Expr(v)));
-                    pushed += 1;
-                }
+                let pushed = self.push_let_bindings(ctx, &bindings)?;
                 let r = self.lower_int(ctx, body);
                 for _ in 0..pushed {
                     self.binders.pop();
@@ -3682,10 +3682,17 @@ impl<'a> Lowerer<'a> {
                 else_branch,
                 ..
             } => {
-                if self.sort_of(ctx, *then_branch) == Sort::Int
-                    || self.sort_of(ctx, *else_branch) == Sort::Int
-                {
+                // Both branches share the ITE's sort (the checker unifies them).
+                // Read it off either branch: an Int branch makes it an int-ITE,
+                // a Formula branch a formula-ITE (`c => f else g`, both boolean),
+                // otherwise relational. Naming Formula matters for routing a
+                // formula-valued `let` value (see `push_let_bindings`).
+                let t = self.sort_of(ctx, *then_branch);
+                let el = self.sort_of(ctx, *else_branch);
+                if t == Sort::Int || el == Sort::Int {
                     Sort::Int
+                } else if t == Sort::Formula || el == Sort::Formula {
+                    Sort::Formula
                 } else {
                     Sort::Rel
                 }
@@ -3862,6 +3869,63 @@ impl<'a> Lowerer<'a> {
         })
     }
 
+    /// Lowers each `let` binding value in its own sort and pushes it onto the
+    /// binder stack (innermost last), returning how many were pushed so the
+    /// caller can pop them after the body. Referential transparency: the value
+    /// is lowered once here, in the enclosing env, and its IR node is reused at
+    /// every use of the name (translation-ref §2 — the jar binds it once in the
+    /// Kodkod env, no re-evaluation).
+    ///
+    /// A formula-valued binding (`let p = some a | p …`, including the
+    /// `c => f else g` formula-ITE spelling) becomes a [`Binding::Formula`], so a
+    /// use in formula position consumes it directly; every other sort lowers via
+    /// `lower_rel`. Int values need no special case — `lower_rel`'s `Int[·]`
+    /// cast guard wraps them and the symmetric `int[·]` guard unwraps them at the
+    /// use site, so an int-valued `let` round-trips as a `Binding::Expr` exactly
+    /// as before this seam existed.
+    fn push_let_bindings(
+        &mut self,
+        ctx: Ctx,
+        bindings: &[LetBinding],
+    ) -> Result<usize, TranslateError> {
+        let mut pushed = 0;
+        for b in bindings {
+            let binding = if self.sort_of(ctx, b.value) == Sort::Formula {
+                Binding::Formula(self.lower_formula(ctx, b.value)?)
+            } else {
+                Binding::Expr(self.lower_rel(ctx, b.value)?)
+            };
+            self.binders.push((b.name.text.clone(), binding));
+            pushed += 1;
+        }
+        Ok(pushed)
+    }
+
+    /// The formula bound to a formula-valued `let` name (translation-ref §2). A
+    /// name that is instead relation- or int-valued reaching formula position is
+    /// a checker type error, so it is a typed defer, never a wrong verdict.
+    fn lookup_binder_formula(
+        &mut self,
+        name: &str,
+        span: Span,
+    ) -> Result<FormulaId, TranslateError> {
+        for (n, b) in self.binders.iter().rev() {
+            if n == name {
+                return match b {
+                    Binding::Formula(f) => Ok(*f),
+                    _ => Err(TranslateError::LoweringUnsupported {
+                        what: format!("non-formula binding `{name}` used in a formula position"),
+                        span,
+                    }),
+                };
+            }
+        }
+        Err(TranslateError::LoweringUnsupported {
+            what: format!("unbound variable `{name}`"),
+            span,
+        })
+    }
+
     fn lookup_binder(&mut self, name: &str, span: Span) -> Result<RelExprId, TranslateError> {
         for (n, b) in self.binders.iter().rev() {
             if n == name {
@@ -3871,6 +3935,14 @@ impl<'a> Lowerer<'a> {
                         Ok(self.mk_rel(RelExprKind::Var(vid), span))
                     }
                     Binding::Expr(id) => Ok(*id),
+                    // A formula-valued `let` binding has no relational value; a
+                    // use in relation position is a checker type error, so defer
+                    // typed here rather than fabricate one (translation-ref §2;
+                    // consumed in formula position by `lookup_binder_formula`).
+                    Binding::Formula(_) => Err(TranslateError::LoweringUnsupported {
+                        what: format!("formula-valued let `{name}` used in a relation position"),
+                        span,
+                    }),
                     // A higher-order-macro callable parameter has no relational
                     // value; it is only meaningful applied (`param[args]`), handled
                     // by `callable_head` before this lookup (mt-040).

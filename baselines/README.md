@@ -67,3 +67,25 @@ commands, one per corpus/config, ~2h40m total on the 2-core VM:
 
     solve-gauge --refresh-counts baselines/<corpus>-count-sb<N>.json \
       --count-symmetry <N> --resume <corpus-root>
+
+## portus-63-slow-verdict.json (2026-07-25, mt-050)
+
+Verdict supplement for 8 of the 10 portus files that were file-level 60s
+timeouts in `portus-63-verdict.json`: re-captured on the M-series box at
+1800s per-file JVM timeouts (HotelVar needed 7200s) — **138 command verdicts**
+(mesh 2, lc-lenses 24, both TransForm minimality scripts 36 each, fullsub2 1,
+serializableSnapshotIsolation 1, elevator_spl_events 36, HotelVar 2). The
+gauge merges this after the base file, and command entries take precedence
+over the base file's file-level timeouts.
+
+Triage (2026-07-25, tech lead):
+- **1 expect-mismatch**: `elevator_spl_events.als[31]` (`I3a`) — `expect 1`
+  but the jar answers UNSAT, in **both** overflow modes (allow-overflow
+  re-run verified) — same stale-upstream-expect class as the dijkstra/peterson
+  rows above; the jar's UNSAT is the oracle.
+- **ertms_1A.als converted at 7200s** (14 commands, 14/14 expect-matches —
+  merged into the supplement). **correctChord.als times out at 1800s AND at a final 7200s attempt**
+  (2026-07-25, M-series box — no further retries planned; the reference jar
+  itself cannot sweep this file's 39 commands in 2h): it stays
+  a file-level non-verdict: mettle commands there bucket as `jar_nonverdict`,
+  the honest "nothing to compare against" outcome.
