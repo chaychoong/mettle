@@ -139,3 +139,32 @@ change lands after it, per that section's note.
 - [reference/alloy6-reference.md](reference/alloy6-reference.md) — the jar pin `scripts/bootstrap.sh` fetches and SHA-256-verifies.
 - [reference/corpora.md](reference/corpora.md) — the corpora pin `scripts/fetch-corpora.sh` (invoked by `bootstrap.sh`) fetches.
 - `flake.nix` / `rust-toolchain.toml` (repo root) — the pinned toolchain Phase 3 step 1 enters.
+
+---
+
+## As executed — 2026-07-24, exe.dev VM (x86_64-linux) → MacBook Pro (aarch64-darwin)
+
+**Outcome: verified drop-in.** The stage-1 sweep reproduced the recorded hash
+`72ad3b33…` **byte-for-byte across architectures** (the first cross-arch test of
+the determinism contract — 10-core M-series, macOS 26, rustc 1.97.0 via rustup
+inside `nix develop`'s JDK 21 shell); full gauntlet 50 suites green incl. the 5
+jar-integration facts; cached SB-0 net bucket-identical (49 / mt-041 ×3).
+
+Deltas from the checklist as written, for the next migration:
+- **Different path is fine** — the agent-memory directory was *re-keyed*, not
+  same-path'd: copy `~/.claude/projects/<old-path-key>/memory/` to the new
+  machine under the new path's key (`-Users-choong-repos-chaychoong-mettle`)
+  and update absolute paths inside the memory files. Do NOT rsync `~/.claude`
+  wholesale onto a machine that already uses Claude — merge only the project dir.
+- **macOS notes:** `nix` may not be on non-interactive SSH `PATH` — invoke
+  `/nix/var/nix/profiles/default/bin/nix` absolutely; `--extra-experimental-features
+  "nix-command flakes"` needed unless the host config enables them. macOS
+  `/bin/bash` is 3.2 — one `set -u` empty-array expansion bug in bootstrap.sh
+  was found and fixed (`99444be`). This macOS ships `sha256sum` and `timeout`;
+  older ones may not.
+- **Two first-party fixture files lived in git-ignored `oracle/`** and were
+  missing on the clean clone (the mt-006 lesson, fixture edition) — moved into
+  `crates/als-conform/fixtures/` (`26ccd1d`). `oracle/` now holds only the jar.
+- `flake.lock` generated on first `nix develop` and committed (`d997803`);
+  the flake worked first try on `aarch64-darwin` (rustc 1.95.0 + OpenJDK 21.0.11;
+  the 1.95-vs-1.97 caveat above stands — builds/tests ran at rustup's 1.97).
