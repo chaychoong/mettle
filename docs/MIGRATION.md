@@ -39,7 +39,7 @@ change lands after it, per that section's note.
    |---|---|
    | Command | `cargo build --release -p als-conform && ./target/release/solve-gauge --jobs N` (any `N`; defaults for everything else — 10,000 conflicts / 4,000,000 encode-budget / 20,000 primary-var cap / symmetry 20) |
    | stdout SHA-256 | `72ad3b3368ace33623ac83dac5be608128dfc47dc88b53196d2a50a585be9cf2` |
-   | Recorded | 2026-07-22 (post-mt-053; supersedes the 2026-07-21 `c4f7f8ca…` hash) |
+   | Recorded | 2026-07-22 (post-mt-053; supersedes the 2026-07-21 `c4f7f8ca…` hash). Re-verified byte-identical 2026-07-24 post-mt-041 on the Mac (the mt-041 change is verdict-invisible — stage-1 output unchanged) |
    | Commands / verdict | 564 commands, **agree 301** (166 SAT / 135 UNSAT), DISAGREE 0 |
 
    **This hash is only valid as of the commit it was recorded at.** Any code change

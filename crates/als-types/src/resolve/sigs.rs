@@ -68,20 +68,30 @@ impl Resolver<'_> {
         }
     }
 
-    /// Registers the root module's header parameters as top-level sigs.
+    /// Registers the root module's header parameters as top-level sigs. A
+    /// parameter marked `exactly` (`module m[exactly X]` run as the entry point)
+    /// has its materialized sig recorded in `root_exact_sigs` so
+    /// `resolve_ordering` part (a) forces it exact in every command — the
+    /// reference's `addModelName` root-path `exactSigs.add`, independent of the
+    /// command's own scope clause (mt-041, probe row 7).
     fn register_root_param_sigs(&mut self) {
         let root = self.graph.root;
         let Some(header) = &self.ast(root).header else {
             return;
         };
-        let params: Vec<(String, Span)> = header
+        let params: Vec<(String, Span, bool)> = header
             .params
             .iter()
-            .filter_map(|p| p.name.segments.last().map(|s| (s.text.clone(), s.span)))
+            .filter_map(|p| {
+                p.name
+                    .segments
+                    .last()
+                    .map(|s| (s.text.clone(), s.span, p.is_exact))
+            })
             .collect();
-        for (name, span) in params {
+        for (name, span, is_exact) in params {
             if !self.mods[root.index()].sigs.contains_key(&name) {
-                self.declare_sig(
+                let id = self.declare_sig(
                     root,
                     &name,
                     span,
@@ -93,6 +103,9 @@ impl Resolver<'_> {
                     Vec::new(),
                     None,
                 );
+                if is_exact {
+                    self.root_exact_sigs.push(id);
+                }
             }
         }
     }

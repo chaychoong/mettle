@@ -26,15 +26,18 @@ mod expr;
 mod members;
 mod sigs;
 
-use als_syntax::ast::Ast;
+use als_syntax::ast::{Ast, BinOp, ExprId, ExprKind, SigMult};
 use als_syntax::{Arena, ArenaId};
 use indexmap::IndexMap;
 
+use crate::choice::{BuiltinCall, ExprChoice, NameChoice, SpineChoice};
 use crate::error::ResolveError;
 use crate::graph::{ModuleGraph, ModuleId};
 use crate::ty::Type;
 use crate::warning::ResolveWarning;
-use crate::world::{Builtins, FuncId, MacroId, ResolvedWorld, SigId, SigKind};
+use crate::world::{
+    Builtins, FieldId, FuncId, MacroId, OrderingInstance, ResolvedWorld, SigId, SigKind,
+};
 
 /// The successful output of [`resolve`]: the resolved world plus the
 /// (never-fatal) warnings, ordered by source `Span` (resolution-doc §8).
@@ -104,6 +107,13 @@ struct Resolver<'g> {
     /// Func/pred source records: `(id, module, paragraph)`, threaded from
     /// member registration into the decl/body passes.
     func_srcs: Vec<(FuncId, ModuleId, als_syntax::ast::ParaId)>,
+    /// Root-module header parameters marked `exactly`, materialized as
+    /// top-level sigs (`register_root_param_sigs`). The reference's
+    /// `CompModule.addModelName` adds these directly to `exactSigs` at
+    /// header-parse time, independent of any command's own scope clause
+    /// (mt-041, probe row 7); `resolve_ordering` part (a) folds them into every
+    /// command's `additional_exact`.
+    root_exact_sigs: Vec<SigId>,
     errors: Vec<ResolveError>,
     warnings: Vec<ResolveWarning>,
 }
@@ -136,6 +146,7 @@ impl<'g> Resolver<'g> {
             reachable: Vec::new(),
             sig_srcs: Vec::new(),
             func_srcs: Vec::new(),
+            root_exact_sigs: Vec::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
         }
@@ -204,15 +215,35 @@ impl<'g> Resolver<'g> {
     /// reference's `additionalExactScopes` mechanism, jar-verified general — not
     /// ordering-specific) forces its argument sig to an exact scope. `util/
     /// ordering[exactly elem]` is the one stdlib module that uses it (enums
-    /// auto-open it), but a user module `foo[exactly x]` behaves identically.
-    /// Every command gets the same set; the scope layer already honors
+    /// auto-open it), but a user module `foo[exactly x]` behaves identically. A
+    /// **root** module's own `exactly` header params are materialized as
+    /// top-level sigs and marked exact directly (mt-041, `addModelName`
+    /// root path; probe row 7), carried here in [`Self::root_exact_sigs`]. Every
+    /// command gets the same set; the scope layer already honors
     /// [`ResolvedCommand::additional_exact`].
     ///
-    /// **Part (b) — the pinning seam.** The stdlib ordering module is detected by
-    /// its resolved identity (module header name `util/ordering` + the private
-    /// `Ord` sig with `First`/`Next` fields), never by a user alias, so `open
-    /// util/ordering[S] as foo` and enum auto-opens are both caught. The bounds
-    /// phase reads [`ResolvedWorld::ordering`] to pin `first`/`next` when eligible.
+    /// **Part (b) — the pinning seam.** The trigger is **syntactic**, not
+    /// module-identity based (mt-041, probe matrix): a resolved reserved
+    /// `pred/totalOrder[S, F, N]` box-join (the grammar's context-sensitive
+    /// `pred/totalOrder` keyword, not an ordinary predicate call) appearing as a
+    /// top-level conjunct of the appended fact of a **`one` sig**, with `S` a sig
+    /// and `F`/`N` the `one` sig's **own** fields (the stdlib `Ord` shape).
+    /// Renaming the module, sig, or fields keeps it detected (rows 2–5);
+    /// expressing the same order without the keyword does not (row 6). The stdlib
+    /// `util/ordering` path — opened, aliased, enum-auto-opened, or run as the
+    /// root file — all carry this fact, so all are caught. The bounds phase reads
+    /// [`ResolvedWorld::ordering`] to pin `first`/`next` when eligible.
+    ///
+    /// This under-approximates the jar's own trigger (`first`/`next`/`elem` all
+    /// translating to plain Kodkod `Relation`s): only the `one`-sig-owns-its-own-
+    /// fields shape, where `this` is a fixed singleton so the args ARE plain
+    /// relations, is matched. Two jar-firing spellings are deliberately not
+    /// matched — a `pred/totalOrder` fact inside a plural subsig of a `one` sig
+    /// (`this` ranges, args are not plain relations there anyway), and a
+    /// module-level `fact { pred/totalOrder[S, Ord.First, Ord.Next] }` with
+    /// explicit qualification. Both are unprobed, have zero corpus incidence, and
+    /// are count-only (the hand-built `pred/totalOrder` formula still governs the
+    /// verdict), so the miss is conservative.
     fn resolve_ordering(&mut self) {
         // Part (a): collect every exactly-param argument sig, deterministically.
         let mut exact: Vec<SigId> = Vec::new();
@@ -226,46 +257,122 @@ impl<'g> Resolver<'g> {
                 }
             }
         }
+        exact.extend(self.root_exact_sigs.iter().copied());
         exact.sort_unstable_by_key(|s| s.index());
         exact.dedup();
         for cmd in &mut self.world.commands {
             cmd.additional_exact.clone_from(&exact);
         }
 
-        // Part (b): the ordering-instance seam, in ModuleId order (determinism).
-        let mut instances: Vec<crate::world::OrderingInstance> = Vec::new();
-        for m in 0..self.graph.modules.len() {
-            let mid = ModuleId::from_index(m);
-            if self.graph.modules[mid].module_name != ["util", "ordering"] {
+        // Part (b): structural detection of the `pred/totalOrder[S, F, N]` seam.
+        self.world.ordering = self.collect_ordering_instances();
+    }
+
+    /// Scans every `one` sig's appended fact (in `SigId` order) for the reserved
+    /// `pred/totalOrder[S, F, N]` shape over the sig's own fields, returning the
+    /// detected instances deduped and in a deterministic order (mt-041 part (b)).
+    /// Only `one` sigs can carry a pinnable instance — a fixed singleton `this`
+    /// is what makes `F`/`N` translate to plain relations in the jar — so plural
+    /// sigs are skipped outright.
+    fn collect_ordering_instances(&self) -> Vec<OrderingInstance> {
+        let mut instances: Vec<OrderingInstance> = Vec::new();
+        for (sid, sig) in self.world.sigs.iter() {
+            if sig.mult != Some(SigMult::One) {
                 continue;
             }
-            // The single `exactly elem` parameter's bound sig.
-            let Some(elem) = self.graph.modules[mid]
-                .params
-                .iter()
-                .find(|b| b.is_exact)
-                .and_then(|b| self.mods[m].param_sigs.get(&b.param).copied())
-            else {
-                continue;
-            };
-            // The private `Ord` sig declared in this instance, with `First`/`Next`.
-            let mut first = None;
-            let mut next = None;
-            for (fid, field) in self.world.fields.iter() {
-                if self.world.sigs[field.owner].module != mid {
-                    continue;
-                }
-                match field.name.as_str() {
-                    "First" => first = Some(fid),
-                    "Next" => next = Some(fid),
-                    _ => {}
-                }
-            }
-            if let (Some(first), Some(next)) = (first, next) {
-                instances.push(crate::world::OrderingInstance { elem, first, next });
+            if let Some(body) = sig.appended_fact {
+                self.scan_ordering_conjuncts(sig.module, sid, body, &mut instances);
             }
         }
-        self.world.ordering = instances;
+        instances.sort_unstable_by_key(|i| (i.elem.index(), i.first.index(), i.next.index()));
+        instances.dedup();
+        instances
+    }
+
+    /// Descends the **top-level conjuncts** of `owner`'s appended fact (blocks
+    /// and `&&`), pushing an [`OrderingInstance`] for each reserved
+    /// `pred/totalOrder` call found among them. A `pred/totalOrder` buried under
+    /// a quantifier or a disjunction is not a top-level constraint the bounds
+    /// phase can pin, so it is not descended into.
+    fn scan_ordering_conjuncts(
+        &self,
+        module: ModuleId,
+        owner: SigId,
+        body: ExprId,
+        out: &mut Vec<OrderingInstance>,
+    ) {
+        match &self.ast(module).exprs[body].kind {
+            ExprKind::Block(items) => {
+                for &item in items {
+                    self.scan_ordering_conjuncts(module, owner, item, out);
+                }
+            }
+            ExprKind::Binary {
+                op: BinOp::And,
+                lhs,
+                rhs,
+            } => {
+                self.scan_ordering_conjuncts(module, owner, *lhs, out);
+                self.scan_ordering_conjuncts(module, owner, *rhs, out);
+            }
+            ExprKind::BoxJoin { args, .. } => {
+                if let Some(inst) = self.match_total_order(module, owner, body, args) {
+                    out.push(inst);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Matches a box-join node against the reserved `pred/totalOrder[S, F, N]`
+    /// shape: the node resolved to [`BuiltinCall::TotalOrder`] (the same
+    /// recognition `als_core::lower` consumes — the grammar keyword, not an
+    /// ordinary `totalOrder` predicate, so probe row 6 does not match), with
+    /// three arguments — a sig `S`, and `F`/`N` fields **owned by `owner`
+    /// itself** (the `one` sig whose fact this is). Requiring own-fields, not
+    /// merely fields of some `one` ancestor, keeps a `pred/totalOrder` in a
+    /// plural subsig's fact (where `this` ranges and the args are not plain
+    /// relations) from wrongly pinning.
+    fn match_total_order(
+        &self,
+        module: ModuleId,
+        owner: SigId,
+        node: ExprId,
+        args: &[ExprId],
+    ) -> Option<OrderingInstance> {
+        if !matches!(
+            self.world.choices.get(module, node),
+            Some(ExprChoice::Spine(SpineChoice::Builtin {
+                op: BuiltinCall::TotalOrder,
+            }))
+        ) {
+            return None;
+        }
+        let [a_elem, a_first, a_next] = args else {
+            return None;
+        };
+        let elem = match self.world.choices.get(module, *a_elem) {
+            Some(ExprChoice::Name(NameChoice::Sig(s))) => *s,
+            _ => return None,
+        };
+        let first = self.own_field_arg(module, owner, *a_first)?;
+        let next = self.own_field_arg(module, owner, *a_next)?;
+        Some(OrderingInstance { elem, first, next })
+    }
+
+    /// The [`FieldId`] an argument resolves to when it is a bare implicit-`this`
+    /// reference to a field `owner` **declares itself** — the shape the stdlib
+    /// `one sig Ord` appended fact spells `First`/`Next` (mt-041). A field
+    /// inherited from an ancestor, or any non-field, returns `None`.
+    fn own_field_arg(&self, module: ModuleId, owner: SigId, arg: ExprId) -> Option<FieldId> {
+        let Some(ExprChoice::Name(NameChoice::Field {
+            field,
+            implicit_this: true,
+        })) = self.world.choices.get(module, arg)
+        else {
+            return None;
+        };
+        (self.world.fields[*field].owner == owner).then_some(*field)
     }
 
     /// Seeds the five builtin sigs as fixed `SigId`s (resolution-doc §4.1).

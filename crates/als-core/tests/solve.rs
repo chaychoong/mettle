@@ -408,6 +408,225 @@ fn ledger004_unrelated_field_still_pins_count_16() {
     assert_eq!(count(src, 0), 16);
 }
 
+// ========= mt-041: util/ordering run as the ROOT module (probe matrix) =========
+// The pinning trigger is the reserved `pred/totalOrder` keyword, NOT the module,
+// sig, or field identity (renaming any keeps count 1 — probe rows 2–5; dropping
+// the keyword for an equivalent hand-built order does not — probe row 6). A root
+// header `exactly` param forces its sig exact at header-parse time, independent
+// of the command's own scope clause (probe row 7). Counts jar-verified at
+// symmetry 0 (`scratchpad/probe/mt041/NOTES.md`); the tests never run the jar.
+
+/// A `util/ordering`-shaped root module: a private `one sig` carrying the
+/// `First`/`Next` fields with the reserved `pred/totalOrder` appended fact,
+/// parameterised so the identity-independence rows can rename the module, sig,
+/// and fields without disturbing the structure.
+fn root_ordering(
+    header: &str,
+    sig: &str,
+    first: &str,
+    next: &str,
+    param: &str,
+    cmd: &str,
+) -> String {
+    format!(
+        "module {header}[exactly {param}]\n\
+         private one sig {sig} {{\n\
+         \x20   private {first}: set {param},\n\
+         \x20   private {next}: {param} -> {param}\n\
+         }} {{\n\
+         \x20   pred/totalOrder[{param}, {first}, {next}]\n\
+         }}\n\
+         {cmd}\n"
+    )
+}
+
+/// (row 1) The stdlib `util/ordering.als` verbatim as the entry point: header
+/// `module util/ordering[exactly elem]` + `run {} for exactly 3 elem` pins to a
+/// single linear order — count **1** (jar sym0 = 1). This is the defect mt-041
+/// fixes: the old identity keying yielded n! here.
+#[test]
+fn mt041_root_ordering_pins_single_instance() {
+    let src = root_ordering(
+        "util/ordering",
+        "Ord",
+        "First",
+        "Next",
+        "elem",
+        "run {} for exactly 3 elem",
+    );
+    assert_eq!(count(&src, 0), 1);
+}
+
+/// (rows 3–5) Identity-independence: the same structure with the module, sig,
+/// and fields all renamed still pins — count **1**. Proves detection keys on the
+/// reserved keyword, not on `util/ordering`/`Ord`/`First`/`Next` spellings.
+#[test]
+fn mt041_root_ordering_identity_independent() {
+    let src = root_ordering(
+        "my/order",
+        "Chain",
+        "Head",
+        "Step",
+        "thing",
+        "run {} for exactly 3 thing",
+    );
+    assert_eq!(count(&src, 0), 1);
+}
+
+/// (row 6) Negative control: the identical `one sig` + two-field shape, but the
+/// order imposed by an ordinary predicate instead of the reserved keyword, gets
+/// **no** pinning — the raw count is the n! = **6** linear orders over 3 atoms.
+/// Decisive proof the trigger is the keyword, not the field/sig shape.
+#[test]
+fn mt041_root_ordering_no_keyword_not_pinned() {
+    let src = "module my/order[exactly elem]\n\
+               private one sig Ord {\n\
+               \x20   private First: set elem,\n\
+               \x20   private Next: elem -> elem\n\
+               } {\n\
+               \x20   succ[elem, First, Next]\n\
+               }\n\
+               pred succ[e: set univ, f: set univ, n: univ -> univ] {\n\
+               \x20   f = e - e.n\n\
+               \x20   one f\n\
+               \x20   all x: e | lone x.n\n\
+               \x20   all x: e | lone n.x\n\
+               \x20   e in f.*n\n\
+               }\n\
+               run {} for exactly 3 elem\n";
+    assert_eq!(count(src, 0), 6);
+}
+
+/// (row 7) The root header's `exactly` marking forces `elem` exact on its own —
+/// a plain `for 3 elem` command (no `exactly`) still pins to count **1**, and
+/// the population is forced to exactly 3 (`#elem = 2` is UNSAT). The header alone
+/// does the work, independent of the command scope syntax (jar sym0 = 1).
+#[test]
+fn mt041_root_header_exactly_forces_scope() {
+    let pin = root_ordering(
+        "util/ordering",
+        "Ord",
+        "First",
+        "Next",
+        "elem",
+        "run {} for 3 elem",
+    );
+    assert_eq!(count(&pin, 0), 1);
+    // Population forced to exactly 3 by the header, not merely bounded above.
+    let two = root_ordering(
+        "util/ordering",
+        "Ord",
+        "First",
+        "Next",
+        "elem",
+        "run { #elem = 2 } for 3 elem",
+    );
+    assert_unsat(&two);
+}
+
+/// The detected `world.ordering` seam for command 0 of `src` (mt-041 part (b)).
+fn ordering_len(src: &str) -> usize {
+    let loader = MapLoader::new().with("root.als", src);
+    let graph = ModuleGraph::load("root.als", &loader).expect("load");
+    resolve(&graph).expect("resolve").world.ordering.len()
+}
+
+/// (over-match guard) A `pred/totalOrder` inside a **plural subsig** of a `one`
+/// sig, over fields *inherited* from that `one` parent, must NOT be detected:
+/// there `this` ranges over the subsig, so the fields do not translate to plain
+/// Kodkod relations and the jar's `TotalOrdering` predicate cannot fire. Detection
+/// keys on the fields being the scanned **`one`** sig's OWN fields, so the subsig
+/// spelling yields no ordering instance (and no pin — count is not the collapsed
+/// 1). The positive control (identical fact in the `one` sig's own body) is
+/// detected, so the negative result is not a vacuous "detection is dead".
+#[test]
+fn mt041_subsig_of_one_fact_not_pinned() {
+    let subsig_fact = "module m[exactly elem]\n\
+                       one sig A {\n\
+                       \x20   First: set elem,\n\
+                       \x20   Next: elem -> elem\n\
+                       }\n\
+                       sig B extends A {} {\n\
+                       \x20   pred/totalOrder[elem, First, Next]\n\
+                       }\n\
+                       run {} for exactly 3 elem\n";
+    assert_eq!(
+        ordering_len(subsig_fact),
+        0,
+        "subsig fact must not be detected"
+    );
+    assert_ne!(count(subsig_fact, 0), 1, "subsig fact must not pin to 1");
+
+    // Positive control: the same fact in the `one` sig's OWN body IS detected.
+    let own_fact = "module m[exactly elem]\n\
+                    one sig A {\n\
+                    \x20   First: set elem,\n\
+                    \x20   Next: elem -> elem\n\
+                    } {\n\
+                    \x20   pred/totalOrder[elem, First, Next]\n\
+                    }\n\
+                    run {} for exactly 3 elem\n";
+    assert_eq!(ordering_len(own_fact), 1, "own-body fact must be detected");
+    assert_eq!(count(own_fact, 0), 1, "own-body fact pins to 1");
+}
+
+/// (conjunct descent) `pred/totalOrder` as one of several **top-level
+/// conjuncts** of the appended fact — a multi-statement block and the `and`
+/// spelling — is still detected and pins to count 1 (mt-041 codex review). Every
+/// other fixture has it as the block's sole statement; this exercises the
+/// `Block` and `Binary{And}` descent branches of `scan_ordering_conjuncts`.
+#[test]
+fn mt041_total_order_as_one_conjunct_still_pins() {
+    let block = "module m[exactly elem]\n\
+                 one sig Ord {\n\
+                 \x20   First: set elem,\n\
+                 \x20   Next: elem -> elem\n\
+                 } {\n\
+                 \x20   some First\n\
+                 \x20   pred/totalOrder[elem, First, Next]\n\
+                 }\n\
+                 run {} for exactly 3 elem\n";
+    assert_eq!(ordering_len(block), 1, "block conjunct must be detected");
+    assert_eq!(count(block, 0), 1);
+
+    let anded = "module m[exactly elem]\n\
+                 one sig Ord {\n\
+                 \x20   First: set elem,\n\
+                 \x20   Next: elem -> elem\n\
+                 } {\n\
+                 \x20   some First and pred/totalOrder[elem, First, Next]\n\
+                 }\n\
+                 run {} for exactly 3 elem\n";
+    assert_eq!(ordering_len(anded), 1, "`and` conjunct must be detected");
+    assert_eq!(count(anded, 0), 1);
+}
+
+/// (mt-041 codex-review HIGH — soundness of the pin when the one-sig fields are
+/// typed over a SUBSET sig `B in A`, `A` forced exact). mettle prim-normalizes
+/// the `in`-subset field column to its prim parent `A`, so the field uppers
+/// equal `A`'s atom set: the bounds-shape guard in `pin_ordering` is a no-op
+/// here and the instance is detected and pinned. That pin is **sound** — the
+/// field subset constraint `Ord.First in B` is a lowered formula, so the pinned
+/// atoms are forced into `B` and no ill-typed instance is minted: the model is
+/// SAT with every relation inside its bounds (the property net catches an
+/// ill-typed pin), and `some (Ord.First - B)` is UNSAT. The jar pins this shape
+/// too — the native `TotalOrdering` fires on the plain field relations
+/// regardless of the declared column type — so the SB-0 count is **1** (probe
+/// row 8, jar-verified 2026-07-24), matching mettle; the Codex "ill-typed pin"
+/// concern was a false positive.
+#[test]
+fn mt041_subset_field_pin_is_sound() {
+    let base = "sig A {}\nsig B in A {}\n\
+                one sig Ord { First: set B, Next: B -> B } { pred/totalOrder[A, First, Next] }\n\
+                run {} for exactly 3 A\n";
+    assert_sat(base); // SAT + bounds-respected — no ill-typed tuples decoded.
+    assert_eq!(count(base, 0), 1); // jar sym0 = 1 (probe row 8).
+    let violate = "sig A {}\nsig B in A {}\n\
+                   one sig Ord { First: set B, Next: B -> B } { pred/totalOrder[A, First, Next] }\n\
+                   fact { some (Ord.First - B) }\nrun {} for exactly 3 A\n";
+    assert_unsat(violate); // `Ord.First in B` stays enforced under the pin.
+}
+
 // ======= higher-order quantifier skolemization (mt-038, §10.6) =======
 
 /// Whether command 0 of `src` defers at lowering (a typed `TranslateError`,

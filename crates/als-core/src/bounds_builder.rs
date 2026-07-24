@@ -587,13 +587,21 @@ impl<'a> BoundsBuilder<'a> {
             if !eligible {
                 continue;
             }
-            // `S`'s determined atoms in universe order (== lower == upper: part
-            // (a) forces `S` exact, and an enum's members are `one` sigs).
-            let atoms: Vec<AtomId> = self
-                .upper
-                .get(&elem)
-                .map(|s| s.iter().copied().collect())
-                .unwrap_or_default();
+            // `elem`'s population must be fully determined — no remaining freedom
+            // (`lower == upper`). For the stdlib path this is implied (the
+            // `exactly elem` param / root header param forces it exact, mt-035);
+            // mt-041's syntactic re-keying means a `pred/totalOrder` over a
+            // genuinely non-exact leaf now reaches here, and pinning `first`/
+            // `next` to a fixed atom chain would be unsound there — the hand-built
+            // `pred/totalOrder` formula (`lower.rs`) governs that corner instead.
+            let (Some(lower), Some(upper)) = (self.lower.get(&elem), self.upper.get(&elem)) else {
+                continue;
+            };
+            if lower != upper {
+                continue;
+            }
+            // `S`'s determined atoms in universe order (== lower == upper).
+            let atoms: Vec<AtomId> = upper.iter().copied().collect();
             let (Some(&first_rel), Some(&next_rel)) = (
                 self.field_rel.get(&inst.first),
                 self.field_rel.get(&inst.next),
@@ -604,6 +612,38 @@ impl<'a> BoundsBuilder<'a> {
             // `Next`) is pinnable to a plain atom order; anything else falls back
             // to the `pred/totalOrder` formula.
             if self.ir.relations[first_rel].arity != 1 || self.ir.relations[next_rel].arity != 2 {
+                continue;
+            }
+            // Bounds-shape guard (mt-041 codex review): the fields' existing
+            // computed uppers must already BE the full shapes we pin over —
+            // `first` over all of `elem`'s atoms (unary), `next` over `elem ×
+            // elem` — so the exact rebind only ever tightens within the existing
+            // upper and never mints an out-of-bounds tuple (`Bounds::rebind`
+            // asserts nothing). Believed unreachable-as-a-block for any *detected*
+            // instance: mettle prim-normalizes an `in`-subset field column to its
+            // prim parent, so `First: set B` (`B in A`) already has `upper ==
+            // elem`'s atoms, and an `extends`-subsig column is caught earlier by
+            // the leaf-or-enum eligibility gate — the jar pins the subset shape
+            // too (probe row 8, jar sym0 = 1). Kept as a release-safe precondition
+            // that documents why `rebind` is sound here and, if it ever did fire,
+            // fails toward under-pinning (count-conservative, the safe direction).
+            let mut elem_unary = TupleSet::empty(1);
+            let mut elem_product = TupleSet::empty(2);
+            for &a in &atoms {
+                elem_unary.insert(Tuple::new(vec![a]));
+                for &b in &atoms {
+                    elem_product.insert(Tuple::new(vec![a, b]));
+                }
+            }
+            let shapes_match = self
+                .bounds
+                .get(first_rel)
+                .is_some_and(|b| b.upper() == &elem_unary)
+                && self
+                    .bounds
+                    .get(next_rel)
+                    .is_some_and(|b| b.upper() == &elem_product);
+            if !shapes_match {
                 continue;
             }
             // first = { S$0 } (empty for a degenerate empty ordered sig).

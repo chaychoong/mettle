@@ -540,6 +540,13 @@ marks its parameter `exactly`. When a user writes `open util/ordering[A]`, that
 `additionalExactScopes` — `ScopeComputer` then makes `A`'s scope **exact** (its
 lower bound == upper bound == scope). So `open util/ordering[A]` + `for 3` gives
 **exactly 3** `A` atoms, not ≤ 3. (jar-verified: probe T4 — atoms `A$0 A$1 A$2`.)
+**mt-041 addendum (2026-07-24):** a parametric module run **as the root** gets
+the same forcing with no opener at all — `CompModule.addModelName`
+(`CompModule.java:1270–1298`) materializes each root header param as a fresh
+top-level sig and adds an `exactly`-marked one to `exactSigs` **at header-parse
+time**, independent of the command's own scope clause (probe row 7, §10.1b:
+plain `for N elem` still counts 1). This is general to any parametric root
+module, not ordering-specific.
 
 **(b) Exact bounds on `first`/`next` via the total-order predicate.** `util/
 ordering`'s internal `Ord` sig carries an appended fact
@@ -553,6 +560,18 @@ elem$1->elem$2, …}`. Additionally, `BoundsComputer` has a **direct** pre-bindi
 path for the *enum* case: a `one` sig with exactly two fields and a single
 `pred/totalOrder` fact over an enum's children pre-binds `First`/`Next` to exact
 constants without going through the predicate.
+**mt-041 amendment (2026-07-24): the trigger is purely syntactic — module,
+sig, and field identity are all irrelevant.** `pred/totalOrder` is a
+context-sensitive **reserved keyword** (`Alloy.cup:146`, `:383–390` — a
+string-compare on the spelling in grammar action code, before name resolution
+exists); `util/ordering` merely happens to be the one stdlib file that uses it,
+in an appended fact exactly as reachable when the file is the **root module** as
+when it is opened. Renaming the module header, the file, the `Ord` sig, or the
+`First`/`Next` fields all keep the pinning; expressing the identical total order
+without the keyword loses it (decisive probe matrix, §10.1b). Any earlier
+framing of this section as "opening `util/ordering`"-specific is superseded —
+detection in mettle is re-keyed structurally at mt-041, and the old
+root-module count divergence (count n! vs the jar's 1) is fixed.
 
 **Consequence pinned by probe:** an `open util/ordering[A]` + `for 3` model has
 **exactly one** instance, and that count is **1 under both `symmetry=20` and
@@ -803,6 +822,78 @@ knowledge from this document's existing §5 prose).
 Anything this document leaves ambiguous: **test against the jar first** (extend
 `ProbeT`/`LedgerShim`), record the answer here (verdict/count) or in
 SEMANTICS_LEDGER.md (behavior), then implement.
+
+### 10.1b mt-041 root-module / identity-independence probe matrix (jar-verified 2026-07-24)
+
+The mt-041 question: why does `util/ordering.als` run **as the root module**
+(`corpus/alloytools-models/models/util/ordering.als`, commands
+`run {} for exactly N elem`) get the exact-bound pinning from the jar (count 1)
+when mettle's mt-035 implementation — keyed on *opening* `util/ordering` —
+misses it (count n!)? Answer: **the trigger was never module-identity-based in
+the jar at all.** All rows at symmetry 0, sat4j, noOverflow=true, exhaustive
+enumeration, JDK 21 (`nix develop`); models + logs in
+`scratchpad/probe/mt041/` (gitignored), harness = the mt053-style
+`run.sh`/OracleShim.
+
+| row | change from the corpus file | observed @ exactly 2/3/4 elem | conclusion |
+|---|---|---|---|
+| 1 | none (verbatim, run as root) | **1/1/1** | harness validation; reproduces the mt-041 premise |
+| 2 | byte-identical, different filename on disk | **1/1/1** | filename irrelevant (the root's `path` is `""` regardless of disk name) |
+| 3 | header `module util/ordering[...]` → `module util/ordering2[...]` | **1/1/1** | module/header name irrelevant |
+| 4 | `Ord` → `Ord2` everywhere | **1/1/1** | sig label irrelevant |
+| 5 | `First`/`Next` → `Fst`/`Nxt` everywhere | **1/1/1** | field labels irrelevant |
+| 6 | reserved `pred/totalOrder[...]` dropped; an *equivalent* total order via `util/relation`'s ordinary `totalOrder` pred + `First = elem - Next.elem` (same solution set, same `one sig` + 2-field shape) | **2/6/24** | **decisive negative control** — the trigger is the reserved keyword itself, not the shape and not the math |
+| 7 | header keeps `[exactly elem]` + the real keyword call, but every command uses plain `for N elem` (no `exactly`) | **1/1/1** | the root header's `exactly` alone forces the sig exact, independent of command scope syntax |
+
+Source chain (commit `794226dd`, fetched into `scratchpad/src794/`):
+
+- `Alloy.cup:146` — `totalOrder` is a **context-sensitive reserved token** (only
+  after the literal `pred` token); `Alloy.cup:383–390` — grammar action code
+  string-compares the spelling `"pred/totalOrder"` and builds
+  `ExprList.makeTOTALORDER`, **before any name resolution exists**.
+  `ExprList.java:213–222` — the only semantic check is 3 args of
+  unary/unary/binary shape. Module, sig, and field identity never participate.
+- `TranslateAlloyToKodkod.java:1069–1077` — a TOTALORDER node whose 3 args
+  translate to plain Kodkod `Relation`s emits Kodkod's **native**
+  `RelationPredicate.TotalOrdering`; Kodkod's own predicate optimizer performs
+  the collapse-to-exact-bounds (outside this repo's source scope; conditional on
+  the atom symmetry-class structure — which is what §10.1's T14 subsig
+  eligibility rows pinned empirically; that eligibility gate is unchanged).
+- `CompModule.java:1270–1298` (`addModelName`): a parametric module parsed as
+  the **root** (`path.length()==0`) materializes each header param as a fresh
+  top-level sig immediately, and a `[exactly X]` marking adds it to `exactSigs`
+  **at header-parse time** — the row-7 mechanism. An opened module instead defers
+  params to open-edge binding (`params.put(name, null)` + `exactParams`).
+
+**mettle consequence (implemented at mt-041):** detection re-keyed structurally —
+an `OrderingInstance` is a resolved reserved `pred/totalOrder[S, F, N]` call
+appearing as a top-level conjunct (block/`&&` descent) of a **`one` sig's own
+appended fact**, with `F`/`N` implicit-`this` fields **owned by that sig** (the
+probed stdlib shape; `crates/als-types/src/resolve/mod.rs::collect_ordering_instances`);
+root header `exactly` params land in `additional_exact`
+(`register_root_param_sigs`); `pin_ordering` additionally requires `elem`'s
+population fully determined (`lower == upper`) before pinning. Documented
+boundary corners, both verdict-safe (the hand-built `pred/totalOrder` formula
+always still governs; only counts could diverge): **(i)** a module-level fact
+spelling the fields by explicit qualification (`Ord.First`) is deliberately
+**not matched** — the jar's plain-Relation trigger may fire there (unprobed,
+zero corpus incidence; a deliberate under-approximation); **(ii)** a
+`pred/totalOrder` in a **plural subsig's** fact over fields inherited from a
+`one` parent is correctly refused on both sides — the jar's `this` ranges over
+the subsig so the args are *not* plain relations (regression
+`mt041_subsig_of_one_fact_not_pinned`); **(iii)** the reserved keyword over a
+**genuinely non-exact** elem does not newly pin (the `lower == upper` gate) —
+unprobed on the jar side, conservative; **(iv)** fields **declared over a proper
+`in`-subset** of elem (`First: set B`, `B in A`, call over `A`) still pin on
+BOTH sides — jar-probed count **1** (row 8, 2026-07-24, a codex-review
+follow-up): both implementations bound a subset sig's field columns
+parent-wide and enforce the `in B` narrowing as a formula, so the pin soundly
+forces `B = A` along the chain (row 8b: `some (Ord.First - B)` UNSAT;
+`mt041_subset_field_pin_is_sound`). `pin_ordering` additionally carries a
+release-safe bounds-shape guard (upper(first) == elem's atoms, upper(next) ==
+elem×elem, believed unreachable-to-fail per the prim-normalization analysis) so
+`rebind`'s soundness precondition is enforced, failing toward under-pinning if
+a future bounds change ever narrows a field's upper.
 
 ### 10.2 mt-030 bounds probe matrix (jar-verified 2026-07-16)
 
