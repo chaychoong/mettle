@@ -25,8 +25,15 @@ fn shim_source() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("shim/OracleShim.java")
 }
 
+// Fixture models are first-party test inputs, so they live IN the crate
+// (committed), never in git-ignored `oracle/` — a fresh clone must not lose
+// them (the mt-006 lesson; resurfaced by the mt-042 migration when a clean
+// macOS clone had no `oracle/*.als`). `oracle/` holds only the re-downloadable
+// jar.
 fn oracle_file(name: &str) -> PathBuf {
-    oracle_dir().join(name)
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("fixtures")
+        .join(name)
 }
 
 fn jar_present() -> bool {

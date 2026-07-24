@@ -2,7 +2,7 @@
 //! the *real* reference jar. Skips cleanly (not fails) when the jar is absent
 //! (CI has no JDK), matching `oracle_integration.rs`.
 //!
-//! Pins the golden from the task spec on `oracle/test1.als` at `--count`:
+//! Pins the golden from the task spec on the crate fixture `test1.als` at `--count`:
 //! - `run show` (`run { some r } for 3`) has no skolemizable existential and no
 //!   ordered-abstract partition, so it reaches the net and its SB-0 count
 //!   matches the jar exactly (1129 = 1129) → `count_match`;
@@ -26,7 +26,7 @@ fn jar_path() -> PathBuf {
 fn test1_config() -> GaugeConfig {
     let root = workspace_root();
     GaugeConfig {
-        roots: vec![root.join("oracle/test1.als")],
+        roots: vec![root.join("crates/als-conform/fixtures/test1.als")],
         workspace_root: root.clone(),
         baselines_dir: root.join("baselines"),
         conflict_budget: 200_000,
@@ -110,7 +110,7 @@ fn refresh_counts_resume_smoke() {
     ));
     let _ = std::fs::remove_file(&out);
 
-    // A fast, single-file corpus: oracle/test1.als.
+    // A fast, single-file corpus: the crate fixture test1.als.
     let cfg = test1_config();
 
     // First pass populates the baseline.
@@ -124,7 +124,7 @@ fn refresh_counts_resume_smoke() {
     assert!(
         value["entries"]
             .as_object()
-            .is_some_and(|m| m.contains_key("oracle/test1.als")),
+            .is_some_and(|m| m.contains_key("crates/als-conform/fixtures/test1.als")),
         "test1.als recorded: {value}"
     );
 
