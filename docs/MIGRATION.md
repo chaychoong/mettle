@@ -51,12 +51,15 @@ change lands after it, per that section's note.
 
 ## Phase 2 — the move
 
-1. **Clone to the same absolute path.** The new checkout must live at
-   `/home/exedev/repos/mettle` — the Claude agent memory directory
-   (`~/.claude/projects/-home-exedev-repos-mettle/...`) is keyed off this exact
-   path, and losing that keying loses cross-session memory continuity.
+1. **Clone, then re-key the agent memory to the new path.** The Claude agent
+   memory directory (`~/.claude/projects/<path-key>/...`) is keyed off the
+   repo's absolute path; same-path cloning preserves it automatically, but a
+   different path works fine (proven 2026-07-24, see the as-executed log):
+   copy `memory/` under the new path's key and rewrite absolute paths inside
+   the memory files. Current primary: `/Users/choong/repos/chaychoong/mettle`
+   (key `-Users-choong-repos-chaychoong-mettle`).
    ```
-   git clone git@github.com:chaychoong/mettle.git /home/exedev/repos/mettle
+   git clone git@github.com:chaychoong/mettle.git <repo-path>
    ```
 2. **Move `~/.claude` once**, as a single rsync — this carries the agent memory
    (`~/.claude/projects/.../memory/`) and project settings:
