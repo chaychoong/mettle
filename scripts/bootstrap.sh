@@ -157,7 +157,9 @@ corpora_args=()
 [[ "$WITH_ALLOY4FUN" -eq 1 ]] && corpora_args+=(--with-alloy4fun)
 
 log "corpora: delegating to fetch-corpora.sh ${corpora_args[*]:-}..."
-"$FETCH_CORPORA" "${corpora_args[@]}"
+# `${arr[@]}` on an EMPTY array is an "unbound variable" under `set -u` in
+# bash 3.2 (macOS /bin/bash) — the `+`-guarded expansion is the portable form.
+"$FETCH_CORPORA" ${corpora_args[@]+"${corpora_args[@]}"}
 
 # ---------------------------------------------------------------------------
 # next steps
