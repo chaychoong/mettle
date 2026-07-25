@@ -1,7 +1,8 @@
 # ADR-0012 — Rung-4 architecture: integers, strings, seq, counting & symmetry
 
-**Status:** Proposed · **Date:** 2026-07-18 · **Beads:** mt-043 (this ADR + the
-pinned contract), mt-044–mt-048 (implementation), mt-050 (exit gauge)
+**Status:** Accepted (gate blessed 2026-07-25 — see §7) · **Date:** 2026-07-18 ·
+**Beads:** mt-043 (this ADR + the pinned contract), mt-044–mt-048
+(implementation), mt-050 (exit gauge)
 
 ## Context
 
@@ -141,6 +142,15 @@ honest capacity/budget remainder (~76 commands capped even at L2; correctChord's
 blessing: a 7-command typed resolver-recording tail** (LIMITATIONS; zero wrong
 verdicts, zero corpus movement). Owner blessing at the touchpoint (or standing
 silence) closes the rung.
+
+**Blessed — Rung 4 is closed (2026-07-25).** The touchpoint report of 2026-07-25
+named the measured state and the 7-command disclosure; the owner's response
+("do what you think is best", after two interim "proceed"s with no objection)
+delegates the call, and under the standing silence rule the gate stands. By the
+time of the blessing the criteria were strictly stronger than proposed: both
+counting nets mismatch-free at both symmetry settings (SB-0 53/0, SB-20 77/0,
+post-mt-055/mt-059). What Rung 5/6 inherit: the 7-command recording tail
+(mt-040 family), mt-056, mt-052, mt-027, mt-021 — all filed, none rung-gating.
 
 ## Consequences
 
