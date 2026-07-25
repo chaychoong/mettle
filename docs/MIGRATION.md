@@ -38,8 +38,8 @@ change lands after it, per that section's note.
    | | |
    |---|---|
    | Command | `cargo build --release -p als-conform && ./target/release/solve-gauge --jobs N` (any `N`; defaults for everything else — 10,000 conflicts / 4,000,000 encode-budget / 20,000 primary-var cap / symmetry 20) |
-   | stdout SHA-256 | `e7a6c1a854ae6ed0301418ef4316f8d7188d0a2dba3ec2c6a4ae7b9bc50c93ce` |
-   | Recorded | 2026-07-25 (post-mt-050: the let-formula lowering fix + the slow-file verdict supplement both change the sweep; supersedes the 2026-07-22 `72ad3b33…` hash, which was still valid post-mt-041) |
+   | stdout SHA-256 | `c77ef8ce0ff92c91c62fb3c726d535376956954f2c823dd1f487b26f1df2f927` |
+   | Recorded | 2026-07-25 (post-mt-055: the skolemization-blocking rule moves one command between the `capacity` and `over_budget` defer buckets, so the report text changes even though every verdict is identical; supersedes the same-day post-mt-050 `e7a6c1a8…` hash) |
    | Commands / verdict | 564 commands, **agree 343** (195 SAT / 148 UNSAT), DISAGREE 0 |
 
    **This hash is only valid as of the commit it was recorded at.** Any code change

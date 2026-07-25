@@ -308,10 +308,17 @@ struct Pol {
     positive: bool,
     /// Whether skolemization is **blocked** here regardless of polarity: set once
     /// we descend under an effective-**universal** quantifier (a skolem constant
-    /// would have to become a skolem function, depth ≥ 1), or into a non-monotone
+    /// would have to become a skolem function, depth ≥ 1), into a non-monotone
     /// context (`iff`, an int/formula-ITE condition, a comprehension/`sum` body, a
-    /// temporal body). Monotone `and`/`or` leave it unchanged, so a top-level
-    /// existential stays skolemizable under them.
+    /// temporal body), **or into a connective the jar refuses to skolemize under**
+    /// (mt-055): a positive `or`/`implies` and a negated `and` (incl. a negated
+    /// multi-conjunct block). Kodkod's `Skolemizer` sets `skolemDepth = -1` for
+    /// the whole subtree in exactly those cases
+    /// (`visit(BinaryFormula)`: `IFF || (negated && AND) || (!negated && (OR ||
+    /// IMPLIES))`; `visit(NaryFormula)`: same for the n-ary forms). Skolemizing
+    /// there would be *sound* — the jar is merely conservative — but a skolem is
+    /// an extra free relation, so it is observable in model counts and in the
+    /// §16.3 SBP relation order. Translation-ref §10.6.
     blocked: bool,
 }
 
@@ -1613,9 +1620,33 @@ impl<'a> Lowerer<'a> {
         let span = node.span;
         match node.kind {
             ExprKind::Block(exprs) => {
+                // An Alloy block is an `ExprList(AND)`, which `getSingleFormula`
+                // (`TranslateAlloyToKodkod.java:1035-1058`) folds into a binary
+                // heap of **`BinaryFormula` ANDs** — so a *negated* block blocks
+                // skolemization throughout, via `visit(BinaryFormula)`'s
+                // `negated && AND` (mt-055, translation-ref §10.6). The carve-out
+                // is `getSingleFormula`'s own short-circuit: `n == 1` returns the
+                // conjunct with **no AND node built at all**, so a single-conjunct
+                // block (an `assert` body reached through `check`) still
+                // skolemizes — which is what keeps §10.4's pinned 561 correct.
+                let saved = self.pol;
+                if !saved.positive && exprs.len() >= 2 {
+                    self.pol.blocked = true;
+                }
                 let mut parts = Vec::with_capacity(exprs.len());
+                let mut err = None;
                 for f in exprs {
-                    parts.push(self.lower_formula(ctx, f)?);
+                    match self.lower_formula(ctx, f) {
+                        Ok(p) => parts.push(p),
+                        Err(e) => {
+                            err = Some(e);
+                            break;
+                        }
+                    }
+                }
+                self.pol = saved;
+                if let Some(e) = err {
+                    return Err(e);
                 }
                 Ok(self.conjoin(parts, span))
             }
@@ -1642,15 +1673,25 @@ impl<'a> Lowerer<'a> {
                 then_branch,
                 else_branch,
             } => {
-                // A formula-valued ITE: `(cond and then) or (not cond and else)`;
-                // `cond` appears in both polarities, so block skolemization in it.
+                // A formula-valued ITE. mettle's own IR shape is
+                // `(cond and then) or (not cond and else)`, but the **jar's** is
+                // `c.implies(then) and c.not().implies(else)`
+                // (`TranslateAlloyToKodkod.visit(ExprITE)`, `.java:776-783`), and
+                // that is what decides skolemization: at positive polarity the
+                // two children are positive `IMPLIES` nodes, at negative polarity
+                // the parent is a negated `AND` — `skolemDepth = -1` either way
+                // (mt-055, translation-ref §10.6). So the condition **and both
+                // branches** are blocked, at either polarity; `cond` was already
+                // blocked for the independent non-monotone reason.
                 let saved = self.pol;
                 self.pol.blocked = true;
                 let c = self.lower_formula(ctx, cond);
+                let t = self.lower_formula(ctx, then_branch);
+                let el = self.lower_formula(ctx, else_branch);
                 self.pol = saved;
                 let c = c?;
-                let t = self.lower_formula(ctx, then_branch)?;
-                let el = self.lower_formula(ctx, else_branch)?;
+                let t = t?;
+                let el = el?;
                 let nc = self.not(c, span);
                 let a = self.mk_formula(FormulaKind::And(vec![c, t]), span);
                 let b = self.mk_formula(FormulaKind::And(vec![nc, el]), span);
@@ -1800,24 +1841,48 @@ impl<'a> Lowerer<'a> {
     ) -> Result<FormulaId, TranslateError> {
         match op {
             BinOp::And => {
-                let l = self.lower_formula(ctx, lhs)?;
-                let r = self.lower_formula(ctx, rhs)?;
+                // Kodkod blocks skolemization under a **negated** `and`
+                // (`Skolemizer.visit(BinaryFormula)`, mt-055 / §10.6).
+                let saved = self.pol;
+                if !saved.positive {
+                    self.pol.blocked = true;
+                }
+                let l = self.lower_formula(ctx, lhs);
+                let r = self.lower_formula(ctx, rhs);
+                self.pol = saved;
+                let (l, r) = (l?, r?);
                 Ok(self.mk_formula(FormulaKind::And(vec![l, r]), span))
             }
             BinOp::Or => {
-                let l = self.lower_formula(ctx, lhs)?;
-                let r = self.lower_formula(ctx, rhs)?;
+                // …and under a **positive** `or`, in both branches (§10.6). This
+                // is the mt-055 rule: skolemizing here is sound but the jar does
+                // not, and a skolem is an observable extra free relation.
+                let saved = self.pol;
+                if saved.positive {
+                    self.pol.blocked = true;
+                }
+                let l = self.lower_formula(ctx, lhs);
+                let r = self.lower_formula(ctx, rhs);
+                self.pol = saved;
+                let (l, r) = (l?, r?);
                 Ok(self.mk_formula(FormulaKind::Or(vec![l, r]), span))
             }
             BinOp::Implies => {
                 // `a implies b` ≡ `¬a ∨ b`: the antecedent flips polarity, the
-                // consequent keeps it (translation-ref §10.6).
+                // consequent keeps it (translation-ref §10.6). A **positive**
+                // implies blocks skolemization on both sides, like `or`; a
+                // negated one does not (`!negated && IMPLIES` is the jar's test).
                 let saved = self.pol;
+                if saved.positive {
+                    self.pol.blocked = true;
+                }
                 self.pol.positive = !saved.positive;
                 let l = self.lower_formula(ctx, lhs);
+                self.pol.positive = saved.positive;
+                let r = self.lower_formula(ctx, rhs);
                 self.pol = saved;
                 let l = l?;
-                let r = self.lower_formula(ctx, rhs)?;
+                let r = r?;
                 Ok(self.mk_formula(
                     FormulaKind::Implies {
                         antecedent: l,

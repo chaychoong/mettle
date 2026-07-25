@@ -1213,8 +1213,10 @@ no separate Kodkod skolemization pass.
 mettle does not NNF the goal; it threads a `SkolemPolarity { positive, blocked }`
 through `lower_formula` (`positive` flips on `not`, on an `implies` antecedent, and
 is set false for a `check`'s negated body before lowering; `blocked` is set by an
-effective-**universal** quantifier body and by non-monotone contexts —
-`iff`/int-ITE condition — and by comprehension/`sum`/temporal bodies). A HO decl
+effective-**universal** quantifier body, by non-monotone contexts —
+`iff`/int-ITE condition — by comprehension/`sum`/temporal bodies, **and by the
+connectives the jar refuses to skolemize under (see the connective rule below,
+mt-055)**). A HO decl
 is **skolemizable** iff its quantifier is effective-existential *and* `!blocked`:
 a `some` at positive polarity (emit `And([bound_constraint(X), body]`), or an
 `all`/`no` at negative polarity (emit `Implies(bound_constraint(X), body)` /
@@ -1222,7 +1224,96 @@ a `some` at positive polarity (emit `And([bound_constraint(X), body]`), or an
 is sound in a non-NNF lowering because the surrounding context down to the goal
 root is a monotone Boolean context (∧/∨ only — `blocked` excludes ∀ and
 non-monotone connectives) with the tracked parity, so `∃` pulls to the top past
-∧/∨/∨-with-free-var without a skolem function. Everything else keeps a typed
+∧/∨ without a skolem function.
+
+**The connective rule (mt-055, jar-pinned 2026-07-25).** Soundness is *not* the
+binding constraint — the **jar's own conservatism** is. Kodkod's `Skolemizer`
+kills skolemization for the *entire subtree* the moment it descends into certain
+connectives, by setting `skolemDepth = -1` (restored only after **both** children
+are visited):
+
+```java
+// kodkod/engine/fol2sat/Skolemizer.java @ 794226dd
+// visit(BinaryFormula bf), line 471
+if (op==IFF || (negated && op==AND) || (!negated && (op==OR || op==IMPLIES)))
+    skolemDepth = -1;
+// visit(NaryFormula bf), lines 541-542   (unreachable for Alloy goals — see below)
+case AND : if (negated)  skolemDepth = -1; break;
+case OR  : if (!negated) skolemDepth = -1; break;
+```
+
+So a positive `or`, a positive `implies`, an `iff`, and a **negated** `and` all
+block; a *negated* `implies` does **not** — it takes the `negated && op==IMPLIES`
+path (lines 475–483), which flips `negated` on the **antecedent only**. Note that
+Kodkod flips its `negated` flag *only* there: for a **positive** `a => b` it visits
+both children un-flipped (the flip is unnecessary because `skolemDepth` is already
+−1). mettle's `Pol` flips `positive` on an `implies` antecedent unconditionally,
+which has **no jar counterpart** at positive polarity; it is unobservable, because
+`blocked` is monotone downward and `positive` is only ever read at `lower_quant`
+behind `!blocked`. Do not read the unconditional flip as mirroring the jar.
+
+Skolemizing under a positive ∨ would be perfectly sound, but a skolem is an extra
+free relation: it is observable in the enumerated model count *and* in the §16.3
+SBP relation order (`$`-names sort first and eat the lex-leader cap). mettle
+therefore copies the conservatism, in `lower_binary_formula`'s `And`/`Or`/`Implies`
+arms and in `lower_formula`'s `ExprKind::Block` and `ExprKind::IfThenElse` arms.
+
+**Only the `BinaryFormula` arm ever fires.** Alloy never builds an n-ary `AND`/`OR`
+for a block or an `and`/`or` chain: `visit(ExprList)`
+(`TranslateAlloyToKodkod.java:1062-1067`) delegates to `getSingleFormula`
+(`:1035-1058`), which folds the conjuncts into a **binary heap of `BinaryFormula`
+ANDs** — `n == 0 → Formula.TRUE`, `n == 1 → return me` (**no AND node is built at
+all**), `n >= 2 → me.and(other)`. The only n-ary node in an Alloy goal is the root
+`fgoal = Formula.and(formulas)` (`A4Solution.java:1573`), which is always positive,
+so `visit(NaryFormula)`'s two guards are dead for Alloy input. **Consequence
+(mettle's `len >= 2` guard):** a negated block blocks because of the *binary* ANDs
+`getSingleFormula` builds, and a **single-conjunct** block (an `assert` body reached
+through `check`, e.g. `assert NoEmpty { all b: B | some b.r }`) still skolemizes
+because `getSingleFormula` short-circuits before building any AND — which is what
+keeps §10.4's jar-pinned **561** correct.
+
+**Formula-valued if/else (mt-055 review).** The blocking mechanism is *not* mettle's
+own `(c ∧ t) ∨ (¬ c ∧ e)` IR rewrite — the jar never sees that shape.
+`visit(ExprITE)` (`TranslateAlloyToKodkod.java:776-783`) emits
+`c.implies(l).and(c.not().implies(r))`. At **positive** polarity the two children
+are positive `IMPLIES` nodes; at **negative** polarity the parent is a negated
+`AND`. Either way `skolemDepth = -1`, so the condition **and both branches** are
+blocked at either polarity.
+
+Jar-pinned probes (`crates/als-core/tests/skolem_polarity_conformance.rs`, sources
+in `scratchpad/probe/mt055-tso/repro/` and `…/review/`, `sig A {} sig B {}` `for 2`,
+SB-20 / SB-0; the two if/else rows are SB-20 only, the one figure the review
+pinned):
+
+| body | jar | mettle before mt-055 |
+|---|---|---|
+| `some b: B \| b = b` | 6 / 16 | 6 / 16 |
+| `some A and (some b: B \| b = b)` | 4 / 12 | 4 / 12 |
+| `some A iff (some b: B \| b = b)` | 5 / 10 | 5 / 10 |
+| `some A or (some b: B \| b = b)` | **8 / 15** | 22 / 52 |
+| `some A or some C or (some b: B \| b = b)` | **26 / 63** | 82 / 244 |
+| `some A implies (some b: B \| b = b)` | **7 / 13** | 14 / 28 |
+| `not (some A and (all b: B \| b in A))` | **7 / 13** | 14 / 28 |
+| `not {` ↵ `some A` ↵ `all b: B \| b in A }` | **7 / 13** | 14 / 28 |
+| `check {` ↵ `some A` ↵ `all b: B \| b in A }` | **7 / 13** | 14 / 28 |
+| `some A implies (some b: B \| b = b) else (some b: B \| b in A)` | **4** | 16 |
+| `check { some A implies (all b: B \| b in A) else (all b: B \| no b) }` | **6** | 24 |
+
+↵ is a **newline**, and it is load-bearing: `;` is Alloy 6's sequencing operator,
+not a conjunct separator, and `not { some A ; all b: B | b in A }` is a *different
+model* — the jar counts **1** for it. The rows above are the newline spelling the
+tests actually use.
+
+This was the whole of the mt-055 tso residual: `tso_transistency_perturbed.als`'s
+"Constraints on the search space" fact is a positive `or` whose right disjunct is
+`some a: pte.map.VirtualAddress | …`, so mettle minted a `$<cmd>_a` the jar never
+mints (`A4Solution.getAllSkolems() == []`). Commands 0/4 counted 121/96 against the
+jar's 11/8; with the rule all five commands match exactly (11, 36, 24, 1, 8).
+
+A **formula-valued `let`** remains divergent in the same family and is *not* fixed
+here — see LIMITATIONS.md and bead mt-056.
+
+Everything else keeps a typed
 defer aligned with the jar's `HigherOrderDeclException` text (`TranslateError::
 HigherOrder`). Run-pred params are top-level (`positive`, `!blocked`) → always
 skolemizable. **The skolem's upper bound** is a small sound abstract evaluation
