@@ -41,6 +41,7 @@ fn test1_config() -> GaugeConfig {
         count: true,
         count_cap: 10_000,
         enum_budget: 2_000_000,
+        enumerate_all: false,
         jar_path: jar_path(),
         shim_source: PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/shim/OracleShim.java")),
         jar_timeout: Duration::from_mins(5),
@@ -173,6 +174,7 @@ fn fixtures_config(baselines_dir: &Path, jobs: usize) -> GaugeConfig {
         count: false,
         count_cap: 10_000,
         enum_budget: 250_000_000,
+        enumerate_all: false,
         jar_path: jar_path(),
         shim_source: PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/shim/OracleShim.java")),
         jar_timeout: Duration::from_mins(5),
@@ -201,6 +203,7 @@ fn fixtures_header() -> SweepConfig {
         count_symmetry: 0,
         count_cap: 10_000,
         enum_budget: 250_000_000,
+        enumerate_all: false,
         capture_commit: None,
     }
 }
@@ -243,6 +246,7 @@ fn an_artifact_never_changes_the_report() {
                     verdict_bucket: "mettle_defer:capacity".to_owned(),
                     count_bucket: None,
                     ms: 1_000 * (i as u64 + 1),
+                    ms_by_mode: BTreeMap::new(),
                 },
             )
         })
@@ -301,6 +305,7 @@ fn lpt_scheduling_never_moves_a_byte_at_any_job_count() {
                     verdict_bucket: pc.verdict_bucket.clone(),
                     count_bucket: None,
                     ms: (n - i as u64) * 10_000,
+                    ms_by_mode: BTreeMap::new(),
                 },
             )
         })
@@ -407,6 +412,146 @@ fn capture_is_refused_for_every_kind_of_incomplete_run() {
     let ok = run_gauge(&narrowed, &mut |_| {}).expect("unfiltered capture");
     assert!(out.is_file());
     assert!(ok.commands > 0);
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+// ---------------------------------------------------------------------------
+// mt-059: the count baseline is consulted BEFORE the enumeration. Jar-free —
+// the scratch baselines dir *is* the count baseline.
+// ---------------------------------------------------------------------------
+
+/// A counting config over the fixtures with `count_cap: 0`, which makes the two
+/// worlds trivially distinguishable: any command that is actually enumerated
+/// produces one instance, exceeds the cap, and lands `skip_mettle_cap`; a
+/// command whose bucket the baseline already settles is never enumerated at all
+/// and keeps the settled bucket.
+fn counting_config(baselines_dir: &Path, enumerate_all: bool) -> GaugeConfig {
+    GaugeConfig {
+        count: true,
+        count_cap: 0,
+        enumerate_all,
+        ..fixtures_config(baselines_dir, 1)
+    }
+}
+
+/// The heart of mt-059: with no count to compare against, the enumerator is
+/// never constructed, and the command lands in the bucket the baseline implies
+/// rather than in whatever the enumeration would have run out of.
+#[test]
+fn a_command_the_baseline_cannot_compare_is_never_enumerated() {
+    let dir = scratch_dir("presettled");
+
+    // No count baseline at all → every command is a miss.
+    let skipped = run_gauge(&counting_config(&dir, false), &mut |_| {}).expect("skipping run");
+    let counted = run_gauge(&counting_config(&dir, true), &mut |_| {}).expect("enumerating run");
+
+    // Stage 1 is untouched by the stage-2 reordering.
+    assert_eq!(skipped.verdict_buckets, counted.verdict_buckets);
+    assert_eq!(skipped.commands, counted.commands);
+    assert!(skipped.disagreements.is_empty() && skipped.panics.is_empty());
+
+    // The same commands reach the net either way — a settled command keeps its
+    // slot and its count bucket, it just does not pay for one.
+    let total = |r: &als_conform::SolveGaugeReport| -> usize { r.count_buckets.values().sum() };
+    assert!(total(&skipped) > 0, "fixtures reach the counting net");
+    assert_eq!(total(&skipped), total(&counted));
+
+    // Skipping: nothing was enumerated, so no enumeration-shaped bucket exists.
+    assert_eq!(
+        skipped.count_buckets.get("skip_mettle_cap"),
+        None,
+        "a settled command must not construct an enumerator: {:?}",
+        skipped.count_buckets
+    );
+    assert_eq!(
+        skipped.count_buckets.get("skip_enum_budget"),
+        None,
+        "nor exhaust an enumeration budget: {:?}",
+        skipped.count_buckets
+    );
+    assert!(
+        skipped.count_buckets["skip_no_count_baseline"] > 0,
+        "they land in the baseline's own bucket instead: {:?}",
+        skipped.count_buckets
+    );
+
+    // `--enumerate-all` restores the old behavior exactly: the enumerator runs
+    // and the command is bucketed by what the enumeration found.
+    assert_eq!(
+        counted.count_buckets.get("skip_no_count_baseline"),
+        None,
+        "--enumerate-all must not pre-settle anything: {:?}",
+        counted.count_buckets
+    );
+    assert!(
+        counted.count_buckets["skip_mettle_cap"] > 0,
+        "--enumerate-all must actually enumerate: {:?}",
+        counted.count_buckets
+    );
+
+    // STYLE I1: the verdict partition still holds in both worlds.
+    for r in [&skipped, &counted] {
+        let sum: usize = r.verdict_buckets.values().sum();
+        assert_eq!(
+            sum, r.commands,
+            "verdict buckets must partition the commands"
+        );
+    }
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The negative space: a command the baseline *does* hold a count for is still
+/// enumerated and still compared, in the very same run that skips its
+/// neighbours. This is the acceptance criterion in miniature — the reordering
+/// may re-partition skips, never a comparison.
+#[test]
+fn a_recorded_count_is_still_enumerated_and_compared() {
+    use als_conform::solve_gauge::count_baseline::{
+        CountBaselineFile, CountConfig, CountEntry, FileCounts,
+    };
+
+    let dir = scratch_dir("compare");
+    let mut cmds = BTreeMap::new();
+    // test1.als's two jar-pinned SB-0 counts (see this file's header comment).
+    cmds.insert("0".to_owned(), CountEntry::Count { count: 1129 });
+    cmds.insert("1".to_owned(), CountEntry::Count { count: 561 });
+    let mut entries = BTreeMap::new();
+    entries.insert(
+        "crates/als-conform/fixtures/test1.als".to_owned(),
+        FileCounts::Commands(cmds),
+    );
+    let json = CountBaselineFile {
+        config: CountConfig {
+            count_symmetry: 0,
+            count_cap: 10_000,
+            jar_timeout_secs: 300,
+            no_overflow: true,
+            solver: "sat4j".to_owned(),
+        },
+        entries,
+    }
+    .to_json()
+    .expect("count baseline serializes");
+    std::fs::write(dir.join("fixtures-count-sb0.json"), json).expect("count baseline written");
+
+    let cfg = GaugeConfig {
+        count: true,
+        count_cap: 10_000,
+        enum_budget: 2_000_000,
+        only: vec!["test1.als".to_owned()],
+        ..fixtures_config(&dir, 1)
+    };
+    let report = run_gauge(&cfg, &mut |_| {}).expect("comparing run");
+
+    assert_eq!(
+        report.count_buckets.get("count_match"),
+        Some(&2),
+        "both recorded counts must still be enumerated and matched: {:?}",
+        report.count_buckets
+    );
+    assert!(report.count_mismatches.is_empty());
 
     std::fs::remove_dir_all(&dir).ok();
 }

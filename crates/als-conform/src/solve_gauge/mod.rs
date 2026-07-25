@@ -28,6 +28,16 @@
 //! `--live-jar` restores the per-file live-JVM path. Everything else is a **typed
 //! skip**, never a fabricated mismatch.
 //!
+//! **The baseline is consulted BEFORE the enumeration (mt-059).** A counting-net
+//! command is an exhaustive enumeration — solve, block, solve again — and for
+//! roughly half the corpus the cached baseline holds no count to compare
+//! against, so no possible result of that enumeration could change the command's
+//! bucket. [`count_baseline::CountResolution`] states, once, which baseline
+//! entries depend on mettle's count; `classify_count` skips the enumeration for
+//! the rest. This declines no comparison — the comparison does not exist — but
+//! it does lapse exercise of the incremental enumerator on those models, so
+//! `--enumerate-all` forces the old behavior back on deliberately.
+//!
 //! **The sweep artifact (mt-057).** A committed [`sweep_baseline`]
 //! (`baselines/*-sweep-sb<N>.json`) records every command's bucket plus an
 //! advisory wall time, and does two things that cost **no coverage**: it
@@ -72,10 +82,10 @@ use crate::model::{FileOutcome, Outcome};
 use crate::shim::{ensure_shim_compiled, run_oracle_on_file};
 
 use baseline::{load_baselines, JarVerdict};
-use count_baseline::{load_count_baselines, CountBaseline};
+use count_baseline::{load_count_baselines, CountBaseline, CountResolution};
 use detect::{lower_defer_class, ordered_abstract_partition};
 use parallel::{lpt_order, parallel_fold, parallel_fold_ordered};
-use sweep_baseline::{command_key, load_sweep_baselines, SweepConfig, SweepDelta};
+use sweep_baseline::{command_key, load_sweep_baselines, mode_key, SweepConfig, SweepDelta};
 
 /// Default corpus roots (mirrors [`crate::DEFAULT_CORPUS_ROOTS`] but relative to
 /// the workspace root the gauge is handed).
@@ -122,6 +132,13 @@ pub struct GaugeConfig {
     pub count_cap: u64,
     /// Cumulative **effort** budget across one command's whole enumeration.
     pub enum_budget: u64,
+    /// mt-059 escape hatch: enumerate every eligible command even where the
+    /// count baseline has already settled its bucket, so the *incremental*
+    /// enumeration path (`block()` + retained learned clauses) keeps being
+    /// exercised on models the baseline cannot compare. Costs a great deal of
+    /// wall time and can change nothing but which `skip_*` bucket a
+    /// non-comparable command lands in.
+    pub enumerate_all: bool,
     /// Reference jar (stage 2 with `--live-jar`, or `--refresh-counts`).
     pub jar_path: PathBuf,
     /// `OracleShim.java` source (stage 2 / refresh).
@@ -448,7 +465,12 @@ pub fn run_gauge(
     // mt-057 (2): dispatch longest-first so the tail starts instead of finishing
     // last. Results still come back indexed by their position in `items`, which
     // is (file-sorted, index-ascending) — so this cannot move a byte (STYLE D5).
-    let order = lpt_order(&items, |it| sweep.command_millis(&it.file.rel, it.idx));
+    // mt-059: hints are read per **mode** — a stage-1 recording says nothing
+    // about what the same command costs when a counting run enumerates it.
+    let mode = mode_key(&sweep_config(cfg));
+    let order = lpt_order(&items, |it| {
+        sweep.command_millis(&it.file.rel, it.idx, &mode)
+    });
     let (results, stage1_trig) = parallel_fold_ordered(
         &items,
         &order,
@@ -525,6 +547,7 @@ fn sweep_config(cfg: &GaugeConfig) -> SweepConfig {
         count_symmetry: cfg.count_symmetry,
         count_cap: cfg.count_cap,
         enum_budget: cfg.enum_budget,
+        enumerate_all: cfg.enumerate_all,
         capture_commit: cfg.capture_commit.clone(),
     }
 }
@@ -576,7 +599,11 @@ fn write_sweep_capture(
             reason: "the run was filtered (--only / --from-report), which would overwrite the committed artifact with a narrow one; capture unfiltered",
         });
     }
-    let file = sweep_baseline::capture(sweep_config(cfg), report, millis);
+    // Carry the modes this run did not measure forward from whatever is already
+    // at `out` (mt-059): a stage-1 capture must not erase the counting nets'
+    // recorded times, and vice versa.
+    let prior = sweep_baseline::read_prior(out);
+    let file = sweep_baseline::capture(sweep_config(cfg), report, millis, prior.as_ref());
     file.write_atomic(out)?;
     progress(&format!(
         "capture-sweep: {} commands recorded → {}",
@@ -881,7 +908,16 @@ fn compute_command(
     send(&format!("  {rel}[{idx}] …"));
     let started = std::time::Instant::now();
     let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
-        classify_command(&file.world, &file.graph, &scoped, baseline, cfg, rel, idx)
+        classify_command(
+            &file.world,
+            &file.graph,
+            &scoped,
+            baseline,
+            count_baseline,
+            cfg,
+            rel,
+            idx,
+        )
     }));
     let secs = started.elapsed().as_secs_f64();
     if secs > 5.0 {
@@ -953,13 +989,50 @@ fn resolve_count(
     }
 }
 
+/// The count bucket this command is **already** in before anything is
+/// enumerated, or `None` when only a real count can decide it (mt-059).
+///
+/// The rule lives once, in [`CountResolution`], next to the `disposition` that
+/// buckets a counted command — so "skip the enumeration" and "bucket the
+/// result" cannot drift into disagreeing. Two callers here are deliberately not
+/// asked:
+/// - `--live-jar` recomputes the jar side per file *after* the sweep, so
+///   nothing is known up front and every eligible command must be enumerated;
+/// - `--enumerate-all` opts back into the enumeration precisely to keep
+///   exercising the incremental enumerator on non-comparable models.
+///
+/// With no count baseline loaded at all, every command is a miss — the same
+/// answer [`resolve_count`] gives after the fact.
+fn presettled_count_bucket(
+    cfg: &GaugeConfig,
+    count_baseline: Option<&CountBaseline>,
+    rel: &str,
+    idx: usize,
+) -> Option<&'static str> {
+    if cfg.live_jar || cfg.enumerate_all {
+        return None;
+    }
+    let Some(cb) = count_baseline else {
+        return Some("skip_no_count_baseline");
+    };
+    match cb.resolution(rel, idx) {
+        CountResolution::Fixed(bucket) => Some(bucket),
+        CountResolution::NeedsCount(_) => None,
+    }
+}
+
 /// Builds, solves, and (if `--count`) classifies the count for one command.
 /// Returns a fully-computed [`CmdResult`]; mutates nothing shared.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one command's whole input: the resolve, both baselines, its key"
+)]
 fn classify_command(
     world: &ResolvedWorld,
     graph: &ModuleGraph,
     scoped: &ScopedUniverse,
     baseline: &baseline::Baseline,
+    count_baseline: Option<&CountBaseline>,
     cfg: &GaugeConfig,
     rel: &str,
     idx: usize,
@@ -1023,6 +1096,7 @@ fn classify_command(
             world,
             &enum_opts,
             cfg.count_cap,
+            presettled_count_bucket(cfg, count_baseline, rel, idx),
         ))
     } else {
         None
@@ -1071,8 +1145,21 @@ fn compare_verdict(
 }
 
 /// Classifies the count disposition of a mettle-SAT command: documented
-/// divergence families are typed skips; everything else is enumerated to an exact
+/// divergence families are typed skips; a command the count baseline has already
+/// settled is its settled bucket; everything else is enumerated to an exact
 /// mettle count (or `skip_mettle_cap` past the cap / budget).
+///
+/// `presettled` is the mt-059 reordering: an exhaustive enumeration (solve →
+/// block → solve, at symmetry 0 over the raw solution space) is the most
+/// expensive thing the gauge does, and for roughly half the corpus no possible
+/// result of it could change the bucket. It is consulted **after** the
+/// divergence families deliberately — those are free to compute and strictly
+/// more informative than "no comparison exists", so keeping their order leaves
+/// `skip_ho_skolem`/`skip_ordered_abstract` counts exactly as they were.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the lowered command plus the two stage-2 policy inputs"
+)]
 fn classify_count(
     ir: &Ir,
     scoped: &ScopedUniverse,
@@ -1081,12 +1168,16 @@ fn classify_count(
     world: &ResolvedWorld,
     opts: &SolveOptions,
     count_cap: u64,
+    presettled: Option<&'static str>,
 ) -> CountOutcome {
     if goal.has_higher_order_skolem {
         return CountOutcome::Skip("skip_ho_skolem");
     }
     if ordered_abstract_partition(world, scoped) {
         return CountOutcome::Skip("skip_ordered_abstract");
+    }
+    if let Some(bucket) = presettled {
+        return CountOutcome::Skip(bucket);
     }
 
     let Ok(mut it) = enumerate(ir, scoped, goal, bounds, opts) else {
@@ -1441,6 +1532,7 @@ mod tests {
             count: false,
             count_cap: 0,
             enum_budget: 0,
+            enumerate_all: false,
             jar_path: PathBuf::new(),
             shim_source: PathBuf::new(),
             jar_timeout: Duration::from_secs(1),

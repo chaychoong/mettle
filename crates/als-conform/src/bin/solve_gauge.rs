@@ -50,6 +50,12 @@ fn print_usage() {
          Stage 1 (always): mettle verdict vs baselines/*-verdict.json.\n\
          Stage 2 (--count): model count vs cached baselines/*-count-sb<N>.json (or --live-jar).\n\
          \n\
+         Stage 2 consults the count baseline BEFORE enumerating: where it holds no count to\n\
+         compare against (a jar timeout/unsat/error marker, or no entry), the command's bucket\n\
+         is the same whatever mettle counts, so the enumeration is skipped. --enumerate-all\n\
+         forces it anyway -- much slower, changes no comparison, and exists only to keep the\n\
+         incremental enumeration path exercised on models the baseline cannot compare.\n\
+         \n\
          Every run is COMPLETE: every command is swept, always. Work is parallelized per\n\
          COMMAND (not per file), so one pathological file no longer serializes the sweep.\n\
          \n\
@@ -63,6 +69,7 @@ fn print_usage() {
          Options:\n\
          \x20\x20--count                enable stage 2 (cached count baselines by default)\n\
          \x20\x20--live-jar             stage 2 runs one live JVM per file (needs the jar)\n\
+         \x20\x20--enumerate-all        count even commands the baseline cannot compare (see below)\n\
          \x20\x20--jobs N               parallel workers (default: all CPUs; 1 = sequential)\n\
          \x20\x20--fail-fast            stop at the first DISAGREE/panic/self-check/COUNT_MISMATCH (exit 1)\n\
          \x20\x20--full                 accepted and ignored: every run is complete (alias --recheck-capacity)\n\
@@ -134,6 +141,7 @@ fn parse_args() -> Option<Cli> {
         count: false,
         count_cap: 10_000,
         enum_budget: 250_000_000,
+        enumerate_all: false,
         jar_path: root.join("oracle/org.alloytools.alloy.dist.jar"),
         shim_source: default_shim(),
         jar_timeout: Duration::from_mins(5),
@@ -158,6 +166,7 @@ fn parse_args() -> Option<Cli> {
         match arg.as_str() {
             "--count" => cfg.count = true,
             "--live-jar" => cfg.live_jar = true,
+            "--enumerate-all" => cfg.enumerate_all = true,
             "--jobs" => cfg.jobs = it.next()?.parse::<usize>().ok()?.max(1),
             "--fail-fast" => cfg.fail_fast = true,
             // Accepted and ignored: every run is complete (mt-057). Kept so

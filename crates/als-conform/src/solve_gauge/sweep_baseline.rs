@@ -8,6 +8,10 @@
 //!    wall-times feed a descending sort on the work queue
 //!    ([`super::parallel::lpt_order`]) so the tail starts first. They are
 //!    **scheduling hints only** and never enter the report (STYLE D1/D4).
+//!    Times are keyed by **run mode** ([`mode_key`]) — a stage-1 time is not a
+//!    hint for a counting run, which enumerates rather than solving once — and
+//!    a capture carries the modes it did not measure forward, so one artifact
+//!    accumulates the whole battery's schedule (mt-059).
 //! 2. **Deltas for free (`--delta`).** [`SweepBaseline::delta`] diffs a finished
 //!    report against the artifact, so "what changed" costs no second run.
 //!
@@ -49,6 +53,29 @@ pub fn command_key(relpath: &str, idx: usize) -> String {
     format!("{relpath}[{idx}]")
 }
 
+/// The **scheduling mode** a recorded time belongs to (mt-059).
+///
+/// The same command costs wildly different amounts in a verdict-only run and in
+/// a counting run, because a counting run *enumerates* it rather than solving it
+/// once: `mesh.als[0]` is 0.7s in stage 1 and was 753s in the SB-0 counting net.
+/// A time recorded in one mode is therefore not a hint for another — feeding
+/// stage-1 times to a counting net's LPT schedules that net's true tail **last**,
+/// the exact pathology mt-057 fixed for stage 1. Times are keyed by this string
+/// so each run type schedules on its own measurements; a mode with no recording
+/// is simply unknown (LPT dispatches unknowns first), never mis-hinted.
+///
+/// `--enumerate-all` is part of the key because it changes what a counting run
+/// *does* — it re-enumerates the commands mt-059 settles from the baseline — so
+/// its times are not the normal net's times either.
+#[must_use]
+pub fn mode_key(cfg: &SweepConfig) -> String {
+    if !cfg.count_enabled {
+        return "stage1".to_owned();
+    }
+    let all = if cfg.enumerate_all { "-all" } else { "" };
+    format!("count-sb{}{all}", cfg.count_symmetry)
+}
+
 /// The `relpath` part of a `relpath[idx]` key (the whole key if it has no `[`).
 fn relpath_of(key: &str) -> &str {
     key.rsplit_once('[').map_or(key, |(rel, _)| rel)
@@ -76,6 +103,13 @@ pub struct SweepConfig {
     pub count_symmetry: u32,
     pub count_cap: u64,
     pub enum_budget: u64,
+    /// mt-059: whether the capture forced enumeration of commands the count
+    /// baseline had already settled. It changes which `skip_*` bucket those
+    /// commands land in, so — like the other stage-2 fields — a `--delta`
+    /// against a capture that differs here would be a fabricated delta.
+    /// `#[serde(default)]`: absent in pre-mt-059 artifacts, where it was false.
+    #[serde(default)]
+    pub enumerate_all: bool,
     /// The commit the artifact was captured at, for triage. Advisory only —
     /// never validated (every commit would otherwise be a hard error).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -90,12 +124,35 @@ pub struct SweepEntry {
     /// The counting-net bucket, when the capture ran stage 2 and covered it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub count_bucket: Option<String>,
-    /// Wall time in **milliseconds**, rounded. A *scheduling hint only*: it is
-    /// nondeterministic and must never reach report output (STYLE D1/D4).
-    /// Integer milliseconds (not float seconds) so the LPT sort is a total
-    /// order and the JSON is byte-stable.
+    /// Wall time in **milliseconds**, rounded, for the mode the artifact's own
+    /// header describes. A *scheduling hint only*: it is nondeterministic and
+    /// must never reach report output (STYLE D1/D4). Integer milliseconds (not
+    /// float seconds) so the LPT sort is a total order and the JSON is
+    /// byte-stable.
+    ///
+    /// Kept alongside [`Self::ms_by_mode`] for backward compatibility: a
+    /// pre-mt-059 artifact has only this field, and the loader folds it into the
+    /// map under the mode its header pins ([`mode_key`]).
     #[serde(default)]
     pub ms: u64,
+    /// mt-059: wall milliseconds **per scheduling mode** (`stage1`,
+    /// `count-sb0`, …). One artifact accumulates every mode the battery runs,
+    /// and each run reads only its own — a stage-1 time is not a hint for a
+    /// counting run. Empty in a pre-mt-059 artifact until the loader migrates
+    /// [`Self::ms`] into it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub ms_by_mode: BTreeMap<String, u64>,
+}
+
+impl SweepEntry {
+    /// This entry's timings with the legacy scalar [`Self::ms`] folded in under
+    /// `mode` — the mode of the header that wrote it. An explicit `ms_by_mode`
+    /// value always wins, so migrating twice is a no-op.
+    fn timings(&self, mode: &str) -> BTreeMap<String, u64> {
+        let mut by_mode = self.ms_by_mode.clone();
+        by_mode.entry(mode.to_owned()).or_insert(self.ms);
+        by_mode
+    }
 }
 
 /// The whole on-disk artifact (`config` header + per-command entries keyed by
@@ -149,17 +206,25 @@ impl SweepBaseline {
         self.loaded.is_empty()
     }
 
-    /// The recorded cost of `relpath[idx]`, or `None` when the command is not
-    /// covered (LPT then schedules it as "unknown").
+    /// The recorded cost of `relpath[idx]` **in `mode`** ([`mode_key`]), or
+    /// `None` when the command has no recording for that mode (LPT then
+    /// schedules it as "unknown", i.e. first).
     ///
     /// The unit is the **command**, not the file: the gauge's work queue is
     /// command-granular, and a file's cost can be dominated by one of its
     /// commands (`correctChord.als` sums to 556s across 39 commands, of which
     /// the worst single one is ~190s — scheduling by file total would put the
     /// whole chain on one worker).
+    ///
+    /// The unit is also the **mode** (mt-059): a stage-1 time answers only a
+    /// stage-1 run. Returning `None` across modes is deliberate — an unmeasured
+    /// command is scheduled first, which is neutral, whereas a stage-1 time fed
+    /// to a counting net is actively wrong (`mesh.als[0]`: 0.7s vs 753s).
     #[must_use]
-    pub fn command_millis(&self, relpath: &str, idx: usize) -> Option<u64> {
-        self.entries.get(&command_key(relpath, idx)).map(|e| e.ms)
+    pub fn command_millis(&self, relpath: &str, idx: usize, mode: &str) -> Option<u64> {
+        self.entries
+            .get(&command_key(relpath, idx))
+            .and_then(|e| e.ms_by_mode.get(mode).copied())
     }
 
     /// Number of merged command entries (report diagnostics).
@@ -256,27 +321,56 @@ impl SweepDelta {
 
 /// Builds the artifact for a finished run. `millis` maps `relpath[idx]` to the
 /// command's measured wall time; a command with no measurement records `0`.
+///
+/// `prior` is the artifact already at the output path, if any: this run measured
+/// exactly one mode, so the **other** modes' timings are carried forward rather
+/// than erased (mt-059). Only timings are carried — every bucket comes from this
+/// run, so a capture still records only what it observed.
 #[must_use]
 pub fn capture(
     config: SweepConfig,
     report: &SolveGaugeReport,
     millis: &BTreeMap<String, u64>,
+    prior: Option<&SweepBaselineFile>,
 ) -> SweepBaselineFile {
+    let mode = mode_key(&config);
+    let prior_mode = prior.map(|p| mode_key(&p.config));
     let entries = report
         .per_command
         .iter()
         .map(|pc| {
+            let ms = millis.get(&pc.key).copied().unwrap_or(0);
+            let mut ms_by_mode = match (prior, &prior_mode) {
+                (Some(p), Some(pm)) => p
+                    .entries
+                    .get(&pc.key)
+                    .map(|e| e.timings(pm))
+                    .unwrap_or_default(),
+                _ => BTreeMap::new(),
+            };
+            ms_by_mode.insert(mode.clone(), ms);
             (
                 pc.key.clone(),
                 SweepEntry {
                     verdict_bucket: pc.verdict_bucket.clone(),
                     count_bucket: pc.count_bucket.clone(),
-                    ms: millis.get(&pc.key).copied().unwrap_or(0),
+                    ms,
+                    ms_by_mode,
                 },
             )
         })
         .collect();
     SweepBaselineFile { config, entries }
+}
+
+/// Reads the artifact already at `path`, for [`capture`] to carry its other
+/// modes' timings forward. Every failure — absent, unreadable, malformed — is
+/// `None`: a capture must never fail because an old artifact is unusable, and
+/// the worst case is losing advisory hints.
+#[must_use]
+pub fn read_prior(path: &Path) -> Option<SweepBaselineFile> {
+    let text = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&text).ok()
 }
 
 /// Loads and merges every `*-sweep-sb<N>.json` (for `N = run.symmetry`) under
@@ -369,7 +463,17 @@ pub fn load_sweep_baselines(
             ));
         }
         baseline.count_enabled &= file.config.count_enabled;
-        for (key, entry) in file.entries {
+        let file_mode = mode_key(&file.config);
+        for (key, mut entry) in file.entries {
+            // Buckets: later file wins outright. Timings: merged per mode, so
+            // one file's stage-1 recording and another's counting recording both
+            // survive (mt-059); within a mode the later file still wins.
+            entry.ms_by_mode = entry.timings(&file_mode);
+            if let Some(prev) = baseline.entries.get(&key) {
+                for (mode, ms) in &prev.ms_by_mode {
+                    entry.ms_by_mode.entry(mode.clone()).or_insert(*ms);
+                }
+            }
             baseline.entries.insert(key, entry);
         }
         baseline.loaded.push(name);
@@ -442,6 +546,11 @@ fn config_mismatch(
             run.enum_budget.to_string(),
             header.enum_budget.to_string(),
         ),
+        (
+            "enumerate_all",
+            run.enumerate_all.to_string(),
+            header.enumerate_all.to_string(),
+        ),
     ];
     stage2.into_iter().find(|(_, run, base)| run != base)
 }
@@ -468,15 +577,19 @@ mod tests {
             count_symmetry: 0,
             count_cap: 10_000,
             enum_budget: 250_000_000,
+            enumerate_all: false,
             capture_commit: Some("deadbeef".to_owned()),
         }
     }
 
+    /// A pre-mt-059-shaped entry: a bare `ms`, no mode map. The loader migrates
+    /// it under the mode of the header it came with.
     fn entry(verdict: &str, count: Option<&str>, ms: u64) -> SweepEntry {
         SweepEntry {
             verdict_bucket: verdict.to_owned(),
             count_bucket: count.map(str::to_owned),
             ms,
+            ms_by_mode: BTreeMap::new(),
         }
     }
 
@@ -546,11 +659,17 @@ mod tests {
         assert!(loaded.warnings.is_empty());
 
         // Cost is per command, not per file — the work queue is command-granular.
-        assert_eq!(loaded.command_millis("a.als", 0), Some(1_234));
-        assert_eq!(loaded.command_millis("a.als", 1), Some(183_000));
-        assert_eq!(loaded.command_millis("b.als", 0), Some(175_500));
-        assert_eq!(loaded.command_millis("a.als", 9), None);
-        assert_eq!(loaded.command_millis("nope.als", 0), None);
+        let mode = mode_key(&header());
+        assert_eq!(mode, "count-sb0");
+        assert_eq!(loaded.command_millis("a.als", 0, &mode), Some(1_234));
+        assert_eq!(loaded.command_millis("a.als", 1, &mode), Some(183_000));
+        assert_eq!(loaded.command_millis("b.als", 0, &mode), Some(175_500));
+        assert_eq!(loaded.command_millis("a.als", 9, &mode), None);
+        assert_eq!(loaded.command_millis("nope.als", 0, &mode), None);
+        // …and per mode: these are a counting run's times, so a stage-1 run
+        // (or the other counting symmetry) is told nothing rather than lied to.
+        assert_eq!(loaded.command_millis("a.als", 0, "stage1"), None);
+        assert_eq!(loaded.command_millis("a.als", 0, "count-sb20"), None);
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -582,7 +701,7 @@ mod tests {
             load_sweep_baselines(Path::new("/nonexistent/als-sweep-bl"), &header(), true).unwrap();
         assert!(loaded.is_empty());
         assert!(!loaded.count_enabled);
-        assert_eq!(loaded.command_millis("a.als", 0), None);
+        assert_eq!(loaded.command_millis("a.als", 0, "stage1"), None);
     }
 
     #[test]
@@ -631,7 +750,10 @@ mod tests {
         assert_eq!(loaded.warnings.len(), 1);
         assert!(loaded.warnings[0].contains("conflict_budget"));
         // Nothing from it can leak into scheduling either.
-        assert_eq!(loaded.command_millis("a.als", 0), None);
+        assert_eq!(
+            loaded.command_millis("a.als", 0, &mode_key(&header())),
+            None
+        );
 
         // The same file under --delta is still a hard error.
         assert!(load_sweep_baselines(&dir, &header(), true).is_err());
@@ -724,7 +846,10 @@ mod tests {
         let loaded = load_sweep_baselines(&dir, &header(), true).unwrap();
         assert_eq!(loaded.loaded.len(), 2);
         // b- sorts after a-, so its entry wins.
-        assert_eq!(loaded.command_millis("a.als", 0), Some(20));
+        assert_eq!(
+            loaded.command_millis("a.als", 0, &mode_key(&header())),
+            Some(20)
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -811,6 +936,82 @@ mod tests {
         assert_eq!(d.unchanged, 1);
     }
 
+    /// mt-059: the committed artifact predates `ms_by_mode`, so its bare `ms`
+    /// must keep scheduling the mode it was captured in — and only that mode.
+    #[test]
+    fn a_legacy_ms_is_migrated_under_its_own_headers_mode() {
+        let dir = tmp_dir("legacy");
+        let mut cfg = header();
+        cfg.count_enabled = false; // as captured by a stage-1-only run
+        let mut entries = BTreeMap::new();
+        entries.insert("a.als[0]".to_owned(), entry("agree_sat", None, 738));
+        SweepBaselineFile {
+            config: cfg,
+            entries,
+        }
+        .write_atomic(&dir.join("legacy-sweep-sb20.json"))
+        .unwrap();
+
+        let mut stage1 = header();
+        stage1.count_enabled = false;
+        let loaded = load_sweep_baselines(&dir, &stage1, false).unwrap();
+        assert_eq!(loaded.command_millis("a.als", 0, "stage1"), Some(738));
+        // `mesh.als[0]` is the cautionary tale: 738ms in stage 1, 753_000ms in
+        // the SB-0 counting net. A counting run must be told nothing here.
+        assert_eq!(loaded.command_millis("a.als", 0, "count-sb0"), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// One artifact accumulates the whole battery: capturing a counting run over
+    /// a stage-1 capture keeps both modes' times, and each mode reads its own.
+    #[test]
+    fn a_capture_carries_the_modes_it_did_not_measure_forward() {
+        let mut stage1_cfg = header();
+        stage1_cfg.count_enabled = false;
+        let report = report_with(vec![pc("a.als[0]", "agree_sat", None)], false);
+        let mut millis = BTreeMap::new();
+        millis.insert("a.als[0]".to_owned(), 738);
+        let first = capture(stage1_cfg, &report, &millis, None);
+        assert_eq!(first.entries["a.als[0]"].ms_by_mode["stage1"], 738);
+
+        // Now the SB-0 counting net captures over it: 753s for the same command.
+        let count_report = report_with(
+            vec![pc("a.als[0]", "agree_sat", Some("skip_jar_timeout"))],
+            true,
+        );
+        let mut count_millis = BTreeMap::new();
+        count_millis.insert("a.als[0]".to_owned(), 753_100);
+        let second = capture(header(), &count_report, &count_millis, Some(&first));
+        let by_mode = &second.entries["a.als[0]"].ms_by_mode;
+        assert_eq!(by_mode["stage1"], 738, "the stage-1 time must survive");
+        assert_eq!(by_mode["count-sb0"], 753_100);
+        // The buckets, unlike the times, are wholly this run's.
+        assert_eq!(
+            second.entries["a.als[0]"].count_bucket.as_deref(),
+            Some("skip_jar_timeout")
+        );
+        assert_eq!(second.entries["a.als[0]"].ms, 753_100);
+    }
+
+    /// `--enumerate-all` is a different run: its times are not the normal net's,
+    /// and a `--delta` across the switch would compare different skip buckets.
+    #[test]
+    fn enumerate_all_is_its_own_mode_and_its_own_delta_domain() {
+        let base = header();
+        let mut all = header();
+        all.enumerate_all = true;
+        assert_eq!(mode_key(&base), "count-sb0");
+        assert_eq!(mode_key(&all), "count-sb0-all");
+        assert_eq!(
+            config_mismatch(&all, &base).map(|(f, _, _)| f),
+            Some("enumerate_all")
+        );
+        // …but only for a counting run: it cannot change a stage-1 bucket.
+        let mut stage1 = header();
+        stage1.count_enabled = false;
+        assert_eq!(config_mismatch(&all, &stage1), None);
+    }
+
     #[test]
     fn capture_round_trips_through_a_report() {
         let report = report_with(
@@ -822,7 +1023,7 @@ mod tests {
         );
         let mut millis = BTreeMap::new();
         millis.insert("a.als[0]".to_owned(), 42);
-        let file = capture(header(), &report, &millis);
+        let file = capture(header(), &report, &millis, None);
         assert_eq!(file.entries.len(), 2);
         assert_eq!(file.entries["a.als[0]"].ms, 42);
         // A command with no measurement records 0 rather than being dropped.

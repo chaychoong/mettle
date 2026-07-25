@@ -194,6 +194,55 @@ pub enum CountLookup {
     Miss,
 }
 
+/// **What the baseline can settle before mettle counts anything** (mt-059).
+///
+/// This is the single statement of the rule "can enumerating this command
+/// change its bucket?", and it exists so that the two callers who need the
+/// answer — [`CountBaseline::disposition`], which buckets a command *after* the
+/// count, and the gauge, which decides *before* it whether to enumerate at all —
+/// cannot drift apart. A second copy of the mapping in the caller is exactly how
+/// a reordering would start reporting a wrong bucket.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CountResolution {
+    /// The baseline holds a real jar count: the bucket is `count_match` or
+    /// `COUNT_MISMATCH` **depending on mettle's count**, so only a full
+    /// enumeration can settle it. Carries the jar's count.
+    NeedsCount(u64),
+    /// The bucket is this one for *every* possible mettle count — enumerating
+    /// cannot change it, and no `COUNT_MISMATCH` line can come out of it.
+    Fixed(&'static str),
+}
+
+impl CountLookup {
+    /// The [`CountResolution`] of this lookup — the case analysis that proves
+    /// which baseline entries depend on mettle's count.
+    ///
+    /// Case by case, against the buckets [`CountBaseline::disposition`] emits:
+    /// - `Count(j)` compares `j` against mettle's count → the one `NeedsCount`.
+    /// - `Marker(Timeout)` → `skip_jar_timeout`, count-independent. Note this
+    ///   covers **file-level** `timeout`/`error` markers too, which
+    ///   [`CountBaseline::lookup`] answers with for every index of that file.
+    /// - `Marker(Unsat)` → `skip_jar_error`, count-independent: a jar UNSAT for
+    ///   a mettle-SAT command is **not** compared against `mettle_count == 0`.
+    ///   The counting net only ever runs on commands mettle solved SAT *and*
+    ///   whose verdict baseline is absent or SAT, so a jar UNSAT here is a
+    ///   verdict-stage disagreement already reported as such; fabricating a
+    ///   count comparison out of it would double-count one divergence as two.
+    /// - `Marker(Nonverdict)` / `Marker(Error)` → `skip_jar_error`, likewise.
+    /// - `Miss` → `skip_no_count_baseline`, count-independent.
+    #[must_use]
+    pub fn resolution(self) -> CountResolution {
+        match self {
+            Self::Count(j) => CountResolution::NeedsCount(j),
+            Self::Marker(CountMarker::Timeout) => CountResolution::Fixed("skip_jar_timeout"),
+            Self::Marker(CountMarker::Unsat | CountMarker::Nonverdict | CountMarker::Error) => {
+                CountResolution::Fixed("skip_jar_error")
+            }
+            Self::Miss => CountResolution::Fixed("skip_no_count_baseline"),
+        }
+    }
+}
+
 /// The merged count baseline over every loaded `*-count-sb<N>.json`.
 #[derive(Debug, Default)]
 pub struct CountBaseline {
@@ -221,12 +270,23 @@ impl CountBaseline {
         }
     }
 
+    /// Whether `relpath[idx]`'s count bucket is already settled, and how — the
+    /// question the gauge asks **before** paying for an enumeration (mt-059).
+    #[must_use]
+    pub fn resolution(&self, relpath: &str, idx: usize) -> CountResolution {
+        self.lookup(relpath, idx).resolution()
+    }
+
     /// The gauge's stage-2 disposition for a mettle-SAT command whose exact SB
     /// count is `mettle_count`: the count bucket key plus an optional
     /// `COUNT_MISMATCH` line. Mirrors the live `jar_count_bucket` mapping exactly
     /// (a jar UNSAT / error / non-verdict for a mettle-SAT command is a
-    /// `skip_jar_error`, never a fabricated mismatch), and adds the new typed
+    /// `skip_jar_error`, never a fabricated mismatch), and adds the typed
     /// `skip_no_count_baseline` on a miss.
+    ///
+    /// Every bucket that does not depend on `mettle_count` comes from
+    /// [`CountResolution`], so the pre-enumeration decision and this
+    /// post-enumeration one are the same rule read twice.
     #[must_use]
     pub fn disposition(
         &self,
@@ -234,20 +294,13 @@ impl CountBaseline {
         idx: usize,
         mettle_count: u64,
     ) -> (String, Option<String>) {
-        match self.lookup(relpath, idx) {
-            CountLookup::Count(j) => {
-                if j == mettle_count {
-                    ("count_match".to_owned(), None)
-                } else {
-                    (
-                        "COUNT_MISMATCH".to_owned(),
-                        Some(format!("{relpath}[{idx}]: mettle={mettle_count} jar={j}")),
-                    )
-                }
-            }
-            CountLookup::Marker(CountMarker::Timeout) => ("skip_jar_timeout".to_owned(), None),
-            CountLookup::Marker(_) => ("skip_jar_error".to_owned(), None),
-            CountLookup::Miss => ("skip_no_count_baseline".to_owned(), None),
+        match self.resolution(relpath, idx) {
+            CountResolution::Fixed(bucket) => (bucket.to_owned(), None),
+            CountResolution::NeedsCount(j) if j == mettle_count => ("count_match".to_owned(), None),
+            CountResolution::NeedsCount(j) => (
+                "COUNT_MISMATCH".to_owned(),
+                Some(format!("{relpath}[{idx}]: mettle={mettle_count} jar={j}")),
+            ),
         }
     }
 }
@@ -462,6 +515,79 @@ mod tests {
             cb.disposition("missing.als", 0, 5).0,
             "skip_no_count_baseline"
         );
+    }
+
+    /// mt-059, case by case: **every** entry kind except a real count yields the
+    /// same bucket for every possible mettle count, so enumerating cannot change
+    /// it. Proved by evaluating `disposition` at the extremes of `u64` — the
+    /// `unsat` row is the one the spec flagged as unknown, and it does **not**
+    /// compare against `mettle_count == 0`.
+    #[test]
+    fn every_marker_kind_resolves_without_a_count() {
+        let mut cmds = BTreeMap::new();
+        cmds.insert("0".to_owned(), CountEntry::Marker(CountMarker::Unsat));
+        cmds.insert("1".to_owned(), CountEntry::Marker(CountMarker::Nonverdict));
+        cmds.insert("2".to_owned(), CountEntry::Marker(CountMarker::Timeout));
+        cmds.insert("3".to_owned(), CountEntry::Marker(CountMarker::Error));
+        let mut entries = BTreeMap::new();
+        entries.insert("a.als".to_owned(), FileCounts::Commands(cmds));
+        // File-level markers answer for every index of the file.
+        entries.insert("t.als".to_owned(), FileCounts::Level(CountMarker::Timeout));
+        entries.insert("e.als".to_owned(), FileCounts::Level(CountMarker::Error));
+        let cb = CountBaseline {
+            files: entries,
+            loaded: vec![],
+            warnings: vec![],
+        };
+
+        let expected = [
+            ("a.als", 0, "skip_jar_error"),            // unsat
+            ("a.als", 1, "skip_jar_error"),            // nonverdict
+            ("a.als", 2, "skip_jar_timeout"),          // timeout
+            ("a.als", 3, "skip_jar_error"),            // error
+            ("t.als", 7, "skip_jar_timeout"),          // file-level timeout, any index
+            ("e.als", 7, "skip_jar_error"),            // file-level error, any index
+            ("nope.als", 0, "skip_no_count_baseline"), // no entry at all
+            ("a.als", 9, "skip_no_count_baseline"),    // file present, index absent
+        ];
+        for (rel, idx, bucket) in expected {
+            assert_eq!(
+                cb.resolution(rel, idx),
+                CountResolution::Fixed(bucket),
+                "{rel}[{idx}] must be settled without a count"
+            );
+            // …and the post-enumeration disposition agrees, at every count.
+            for n in [0, 1, 561, u64::MAX] {
+                assert_eq!(
+                    cb.disposition(rel, idx, n),
+                    (bucket.to_owned(), None),
+                    "{rel}[{idx}] must bucket the same at mettle_count={n}"
+                );
+            }
+        }
+    }
+
+    /// The negative space of the rule above: a recorded count is the *only*
+    /// entry kind whose bucket moves with mettle's count, so it is the only one
+    /// that must still be enumerated.
+    #[test]
+    fn a_recorded_count_is_the_only_count_dependent_case() {
+        let mut cmds = BTreeMap::new();
+        cmds.insert("0".to_owned(), CountEntry::Count { count: 1129 });
+        let mut entries = BTreeMap::new();
+        entries.insert("a.als".to_owned(), FileCounts::Commands(cmds));
+        let cb = CountBaseline {
+            files: entries,
+            loaded: vec![],
+            warnings: vec![],
+        };
+        assert_eq!(
+            cb.resolution("a.als", 0),
+            CountResolution::NeedsCount(1129),
+            "a real jar count can only be settled by counting"
+        );
+        assert_eq!(cb.disposition("a.als", 0, 1129).0, "count_match");
+        assert_eq!(cb.disposition("a.als", 0, 1128).0, "COUNT_MISMATCH");
     }
 
     #[test]

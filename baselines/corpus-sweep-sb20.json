@@ -10,2264 +10,5085 @@
     "count_symmetry": 0,
     "count_cap": 10000,
     "enum_budget": 250000000,
-    "capture_commit": "b0753c1fa004406195a45d5e8538ba81e2567941"
+    "enumerate_all": false,
+    "capture_commit": "62367c13d66af94e091d1f33f5cc7ac5b1209438"
   },
   "entries": {
     "corpus/alloytools-models/models/book/appendixA/addressBook1.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 1
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 178,
+        "count-sb20": 277,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/book/appendixA/closure.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 101
+      "ms": 91,
+      "ms_by_mode": {
+        "count-sb0": 117,
+        "count-sb20": 125,
+        "stage1": 91
+      }
     },
     "corpus/alloytools-models/models/book/appendixA/distribution.als[0]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 5038
+      "ms": 5067,
+      "ms_by_mode": {
+        "count-sb0": 4774,
+        "count-sb20": 4766,
+        "stage1": 5067
+      }
     },
     "corpus/alloytools-models/models/book/appendixA/prison.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 1
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 242,
+        "count-sb20": 12,
+        "stage1": 1
+      }
     },
     "corpus/alloytools-models/models/book/appendixA/properties.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 42
+      "ms": 35,
+      "ms_by_mode": {
+        "count-sb0": 53,
+        "count-sb20": 35,
+        "stage1": 35
+      }
     },
     "corpus/alloytools-models/models/book/appendixA/properties.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 33
+      "ms": 32,
+      "ms_by_mode": {
+        "count-sb0": 42,
+        "count-sb20": 28,
+        "stage1": 32
+      }
     },
     "corpus/alloytools-models/models/book/appendixA/ring.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 198,
+        "count-sb20": 172,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/book/appendixA/spanning.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 4
+      "ms": 2,
+      "ms_by_mode": {
+        "count-sb0": 3,
+        "count-sb20": 7,
+        "stage1": 2
+      }
     },
     "corpus/alloytools-models/models/book/appendixA/tree.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 2
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 1,
+        "count-sb20": 1,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/book/appendixA/tube.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 2
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 3104,
+        "count-sb20": 3153,
+        "stage1": 1
+      }
     },
     "corpus/alloytools-models/models/book/appendixA/undirected.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 18,
+        "count-sb20": 6,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/book/appendixE/p300-hotel.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 294
+      "ms": 267,
+      "ms_by_mode": {
+        "count-sb0": 867,
+        "count-sb20": 385,
+        "stage1": 267
+      }
     },
     "corpus/alloytools-models/models/book/appendixE/p303-hotel.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 103
+      "ms": 160,
+      "ms_by_mode": {
+        "count-sb0": 94,
+        "count-sb20": 105,
+        "stage1": 160
+      }
     },
     "corpus/alloytools-models/models/book/appendixE/p303-hotel.als[1]": {
       "verdict_bucket": "agree_sat",
-      "ms": 449
+      "ms": 388,
+      "ms_by_mode": {
+        "count-sb0": 7729,
+        "count-sb20": 601,
+        "stage1": 388
+      }
     },
     "corpus/alloytools-models/models/book/appendixE/p306-hotel.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 96
+      "ms": 80,
+      "ms_by_mode": {
+        "count-sb0": 94,
+        "count-sb20": 103,
+        "stage1": 80
+      }
     },
     "corpus/alloytools-models/models/book/appendixE/p306-hotel.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 177
+      "ms": 172,
+      "ms_by_mode": {
+        "count-sb0": 155,
+        "count-sb20": 161,
+        "stage1": 172
+      }
     },
     "corpus/alloytools-models/models/book/appendixE/p306-hotel.als[2]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 9862
+      "ms": 10393,
+      "ms_by_mode": {
+        "count-sb0": 9453,
+        "count-sb20": 9713,
+        "stage1": 10393
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook1a.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 3,
+        "count-sb20": 1,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook1b.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 2,
+        "count-sb20": 1,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook1c.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook1d.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 2,
+        "count-sb20": 1,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook1e.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 0
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 303,
+        "count-sb20": 23,
+        "stage1": 1
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook1f.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 1
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 355,
+        "count-sb20": 9,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook1g.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 1
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 444,
+        "count-sb20": 29,
+        "stage1": 1
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook1h.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 2,
+        "count-sb20": 1,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook1h.als[1]": {
       "verdict_bucket": "agree_sat",
-      "ms": 1
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 349,
+        "count-sb20": 9,
+        "stage1": 1
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook1h.als[2]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 1
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 1,
+        "count-sb20": 2,
+        "stage1": 1
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook1h.als[3]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 265
+      "ms": 227,
+      "ms_by_mode": {
+        "count-sb0": 237,
+        "count-sb20": 251,
+        "stage1": 227
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook1h.als[4]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 6
+      "ms": 5,
+      "ms_by_mode": {
+        "count-sb0": 2,
+        "count-sb20": 2,
+        "stage1": 5
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook1h.als[5]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 1
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 1,
+        "count-sb20": 1,
+        "stage1": 1
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook2a.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 71,
+        "count-sb20": 15,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook2b.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 1
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 5,
+        "count-sb20": 2,
+        "stage1": 1
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook2c.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 1
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 4,
+        "count-sb20": 2,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook2d.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 1
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 3,
+        "count-sb20": 1,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook2e.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 2
+      "ms": 2,
+      "ms_by_mode": {
+        "count-sb0": 2,
+        "count-sb20": 2,
+        "stage1": 2
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook2e.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 3
+      "ms": 13,
+      "ms_by_mode": {
+        "count-sb0": 3,
+        "count-sb20": 3,
+        "stage1": 13
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook2e.als[2]": {
       "verdict_bucket": "agree_sat",
-      "ms": 1
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 8,
+        "count-sb20": 3,
+        "stage1": 1
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook2e.als[3]": {
       "verdict_bucket": "agree_sat",
-      "ms": 1
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 693,
+        "count-sb20": 44,
+        "stage1": 1
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook3a.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 6
+      "ms": 5,
+      "ms_by_mode": {
+        "count-sb0": 4358,
+        "count-sb20": 1095,
+        "stage1": 5
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook3b.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 5
+      "ms": 3,
+      "ms_by_mode": {
+        "count-sb0": 3,
+        "count-sb20": 7,
+        "stage1": 3
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook3b.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 3
+      "ms": 3,
+      "ms_by_mode": {
+        "count-sb0": 3,
+        "count-sb20": 7,
+        "stage1": 3
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook3b.als[2]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 2
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 1,
+        "count-sb20": 3,
+        "stage1": 1
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook3b.als[3]": {
       "verdict_bucket": "agree_sat",
-      "ms": 2
+      "ms": 3,
+      "ms_by_mode": {
+        "count-sb0": 738,
+        "count-sb20": 114,
+        "stage1": 3
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook3c.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 6
+      "ms": 3,
+      "ms_by_mode": {
+        "count-sb0": 3,
+        "count-sb20": 3,
+        "stage1": 3
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook3c.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 7
+      "ms": 3,
+      "ms_by_mode": {
+        "count-sb0": 3,
+        "count-sb20": 3,
+        "stage1": 3
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook3c.als[2]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 2
+      "ms": 2,
+      "ms_by_mode": {
+        "count-sb0": 2,
+        "count-sb20": 2,
+        "stage1": 2
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook3c.als[3]": {
       "verdict_bucket": "agree_sat",
-      "ms": 4
+      "ms": 4,
+      "ms_by_mode": {
+        "count-sb0": 29,
+        "count-sb20": 9,
+        "stage1": 4
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook3d.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 4
+      "ms": 7,
+      "ms_by_mode": {
+        "count-sb0": 3,
+        "count-sb20": 3,
+        "stage1": 7
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook3d.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 3
+      "ms": 3,
+      "ms_by_mode": {
+        "count-sb0": 3,
+        "count-sb20": 3,
+        "stage1": 3
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook3d.als[2]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 2
+      "ms": 2,
+      "ms_by_mode": {
+        "count-sb0": 2,
+        "count-sb20": 2,
+        "stage1": 2
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook3d.als[3]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 5
+      "ms": 5,
+      "ms_by_mode": {
+        "count-sb0": 5,
+        "count-sb20": 5,
+        "stage1": 5
+      }
     },
     "corpus/alloytools-models/models/book/chapter2/addressBook3d.als[4]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 10194
+      "ms": 8485,
+      "ms_by_mode": {
+        "count-sb0": 9566,
+        "count-sb20": 9511,
+        "stage1": 8485
+      }
     },
     "corpus/alloytools-models/models/book/chapter4/filesystem.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/book/chapter4/filesystem.als[1]": {
       "verdict_bucket": "agree_sat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 6,
+        "count-sb20": 3,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/book/chapter4/filesystem.als[2]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/book/chapter4/grandpa1.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 1
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 1,
+        "count-sb20": 1,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/book/chapter4/grandpa1.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 3
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 1,
+        "count-sb20": 1,
+        "stage1": 1
+      }
     },
     "corpus/alloytools-models/models/book/chapter4/grandpa1.als[2]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 1
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 1,
+        "count-sb20": 1,
+        "stage1": 1
+      }
     },
     "corpus/alloytools-models/models/book/chapter4/grandpa2.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 1
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 1,
+        "count-sb20": 1,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/book/chapter4/grandpa2.als[1]": {
       "verdict_bucket": "agree_sat",
-      "ms": 1
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 758,
+        "count-sb20": 23,
+        "stage1": 1
+      }
     },
     "corpus/alloytools-models/models/book/chapter4/grandpa3.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 1
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 1,
+        "count-sb20": 1,
+        "stage1": 1
+      }
     },
     "corpus/alloytools-models/models/book/chapter4/grandpa3.als[1]": {
       "verdict_bucket": "agree_sat",
-      "ms": 4
+      "ms": 2,
+      "ms_by_mode": {
+        "count-sb0": 24,
+        "count-sb20": 5,
+        "stage1": 2
+      }
     },
     "corpus/alloytools-models/models/book/chapter4/grandpa3.als[2]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 2
+      "ms": 3,
+      "ms_by_mode": {
+        "count-sb0": 2,
+        "count-sb20": 2,
+        "stage1": 3
+      }
     },
     "corpus/alloytools-models/models/book/chapter4/lights.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 1
+      "ms": 4,
+      "ms_by_mode": {
+        "count-sb0": 1,
+        "count-sb20": 1,
+        "stage1": 4
+      }
     },
     "corpus/alloytools-models/models/book/chapter5/addressBook.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 1
+      "ms": 2,
+      "ms_by_mode": {
+        "count-sb0": 176,
+        "count-sb20": 15,
+        "stage1": 2
+      }
     },
     "corpus/alloytools-models/models/book/chapter5/addressBook.als[1]": {
       "verdict_bucket": "agree_sat",
-      "ms": 3
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 7,
+        "count-sb20": 2,
+        "stage1": 1
+      }
     },
     "corpus/alloytools-models/models/book/chapter5/lists.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 1,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/book/chapter5/sets1.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 14,
+        "count-sb20": 1,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/book/chapter5/sets2.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 848
+      "ms": 653,
+      "ms_by_mode": {
+        "count-sb0": 838,
+        "count-sb20": 903,
+        "stage1": 653
+      }
     },
     "corpus/alloytools-models/models/book/chapter6/hotel1.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 7
+      "ms": 6,
+      "ms_by_mode": {
+        "count-sb0": 24,
+        "count-sb20": 14,
+        "stage1": 6
+      }
     },
     "corpus/alloytools-models/models/book/chapter6/hotel2.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 14
+      "ms": 15,
+      "ms_by_mode": {
+        "count-sb0": 12,
+        "count-sb20": 8,
+        "stage1": 15
+      }
     },
     "corpus/alloytools-models/models/book/chapter6/hotel2.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 105
+      "ms": 155,
+      "ms_by_mode": {
+        "count-sb0": 110,
+        "count-sb20": 111,
+        "stage1": 155
+      }
     },
     "corpus/alloytools-models/models/book/chapter6/hotel2.als[2]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 5576
+      "ms": 5202,
+      "ms_by_mode": {
+        "count-sb0": 5234,
+        "count-sb20": 5220,
+        "stage1": 5202
+      }
     },
     "corpus/alloytools-models/models/book/chapter6/hotel3.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 178
+      "ms": 155,
+      "ms_by_mode": {
+        "count-sb0": 10419,
+        "count-sb20": 728,
+        "stage1": 155
+      }
     },
     "corpus/alloytools-models/models/book/chapter6/hotel4.als[0]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 5305
+      "ms": 3888,
+      "ms_by_mode": {
+        "count-sb0": 5113,
+        "count-sb20": 4862,
+        "stage1": 3888
+      }
     },
     "corpus/alloytools-models/models/book/chapter6/mediaAssets.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 5
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 1,
+        "count-sb20": 1,
+        "stage1": 1
+      }
     },
     "corpus/alloytools-models/models/book/chapter6/mediaAssets.als[1]": {
       "verdict_bucket": "agree_sat",
-      "ms": 11
+      "ms": 11,
+      "ms_by_mode": {
+        "count-sb0": 1551,
+        "count-sb20": 2470,
+        "stage1": 11
+      }
     },
     "corpus/alloytools-models/models/book/chapter6/mediaAssets.als[2]": {
       "verdict_bucket": "agree_sat",
-      "ms": 3
+      "ms": 3,
+      "ms_by_mode": {
+        "count-sb0": 1662,
+        "count-sb20": 2271,
+        "stage1": 3
+      }
     },
     "corpus/alloytools-models/models/book/chapter6/mediaAssets.als[3]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 13
+      "ms": 6,
+      "ms_by_mode": {
+        "count-sb0": 4,
+        "count-sb20": 4,
+        "stage1": 6
+      }
     },
     "corpus/alloytools-models/models/book/chapter6/memory/abstractMemory.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 1
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 1,
+        "count-sb20": 1,
+        "stage1": 1
+      }
     },
     "corpus/alloytools-models/models/book/chapter6/memory/abstractMemory.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 2
+      "ms": 2,
+      "ms_by_mode": {
+        "count-sb0": 2,
+        "count-sb20": 2,
+        "stage1": 2
+      }
     },
     "corpus/alloytools-models/models/book/chapter6/memory/cacheMemory.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 2
+      "ms": 2,
+      "ms_by_mode": {
+        "count-sb0": 2,
+        "count-sb20": 2,
+        "stage1": 2
+      }
     },
     "corpus/alloytools-models/models/book/chapter6/memory/checkCache.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 2
+      "ms": 2,
+      "ms_by_mode": {
+        "count-sb0": 2,
+        "count-sb20": 1,
+        "stage1": 2
+      }
     },
     "corpus/alloytools-models/models/book/chapter6/memory/checkCache.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 4
+      "ms": 3,
+      "ms_by_mode": {
+        "count-sb0": 4,
+        "count-sb20": 4,
+        "stage1": 3
+      }
     },
     "corpus/alloytools-models/models/book/chapter6/memory/checkCache.als[2]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 6
+      "ms": 5,
+      "ms_by_mode": {
+        "count-sb0": 5,
+        "count-sb20": 5,
+        "stage1": 5
+      }
     },
     "corpus/alloytools-models/models/book/chapter6/memory/checkCache.als[3]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 3
+      "ms": 3,
+      "ms_by_mode": {
+        "count-sb0": 4,
+        "count-sb20": 3,
+        "stage1": 3
+      }
     },
     "corpus/alloytools-models/models/book/chapter6/memory/checkFixedSize.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 2
+      "ms": 2,
+      "ms_by_mode": {
+        "count-sb0": 2,
+        "count-sb20": 2,
+        "stage1": 2
+      }
     },
     "corpus/alloytools-models/models/book/chapter6/memory/checkFixedSize.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 2
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 12,
+        "count-sb20": 1,
+        "stage1": 1
+      }
     },
     "corpus/alloytools-models/models/book/chapter6/memory/checkFixedSize.als[2]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 3
+      "ms": 3,
+      "ms_by_mode": {
+        "count-sb0": 7,
+        "count-sb20": 3,
+        "stage1": 3
+      }
     },
     "corpus/alloytools-models/models/book/chapter6/ringElection1.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 3
+      "ms": 3,
+      "ms_by_mode": {
+        "count-sb0": 8,
+        "count-sb20": 7,
+        "stage1": 3
+      }
     },
     "corpus/alloytools-models/models/book/chapter6/ringElection1.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 13
+      "ms": 12,
+      "ms_by_mode": {
+        "count-sb0": 13,
+        "count-sb20": 12,
+        "stage1": 12
+      }
     },
     "corpus/alloytools-models/models/book/chapter6/ringElection1.als[2]": {
       "verdict_bucket": "agree_sat",
-      "ms": 4
+      "ms": 4,
+      "ms_by_mode": {
+        "count-sb0": 387,
+        "count-sb20": 375,
+        "stage1": 4
+      }
     },
     "corpus/alloytools-models/models/book/chapter6/ringElection2.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 3
+      "ms": 3,
+      "ms_by_mode": {
+        "count-sb0": 8,
+        "count-sb20": 7,
+        "stage1": 3
+      }
     },
     "corpus/alloytools-models/models/book/chapter6/ringElection2.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 13
+      "ms": 12,
+      "ms_by_mode": {
+        "count-sb0": 13,
+        "count-sb20": 19,
+        "stage1": 12
+      }
     },
     "corpus/alloytools-models/models/book/chapter6/ringElection2.als[2]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 16
+      "ms": 15,
+      "ms_by_mode": {
+        "count-sb0": 22,
+        "count-sb20": 16,
+        "stage1": 15
+      }
     },
     "corpus/alloytools-models/models/book/chapter6/ringElection2.als[3]": {
       "verdict_bucket": "agree_sat",
-      "ms": 73
+      "ms": 49,
+      "ms_by_mode": {
+        "count-sb0": 180,
+        "count-sb20": 150,
+        "stage1": 49
+      }
     },
     "corpus/alloytools-models/models/book/chapter6/ringElection2.als[4]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 79
+      "ms": 79,
+      "ms_by_mode": {
+        "count-sb0": 97,
+        "count-sb20": 82,
+        "stage1": 79
+      }
     },
     "corpus/alloytools-models/models/examples/algorithms/dijkstra.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 300,
+        "count-sb20": 300,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/examples/algorithms/dijkstra.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 3
+      "ms": 3,
+      "ms_by_mode": {
+        "count-sb0": 3,
+        "count-sb20": 3,
+        "stage1": 3
+      }
     },
     "corpus/alloytools-models/models/examples/algorithms/dijkstra.als[2]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 99
+      "ms": 84,
+      "ms_by_mode": {
+        "count-sb0": 97,
+        "count-sb20": 103,
+        "stage1": 84
+      }
     },
     "corpus/alloytools-models/models/examples/algorithms/messaging.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 1
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 394,
+        "count-sb20": 399,
+        "stage1": 1
+      }
     },
     "corpus/alloytools-models/models/examples/algorithms/messaging.als[1]": {
       "verdict_bucket": "agree_sat",
-      "ms": 5
+      "ms": 5,
+      "ms_by_mode": {
+        "count-sb0": 4338,
+        "count-sb20": 4139,
+        "stage1": 5
+      }
     },
     "corpus/alloytools-models/models/examples/algorithms/opt_spantree.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 21
+      "ms": 14,
+      "ms_by_mode": {
+        "count-sb0": 6043,
+        "count-sb20": 6274,
+        "stage1": 14
+      }
     },
     "corpus/alloytools-models/models/examples/algorithms/opt_spantree.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 418
+      "ms": 358,
+      "ms_by_mode": {
+        "count-sb0": 409,
+        "count-sb20": 412,
+        "stage1": 358
+      }
     },
     "corpus/alloytools-models/models/examples/algorithms/opt_spantree.als[2]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 908
+      "ms": 762,
+      "ms_by_mode": {
+        "count-sb0": 946,
+        "count-sb20": 923,
+        "stage1": 762
+      }
     },
     "corpus/alloytools-models/models/examples/algorithms/peterson.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 25
+      "ms": 19,
+      "ms_by_mode": {
+        "count-sb0": 16,
+        "count-sb20": 16,
+        "stage1": 19
+      }
     },
     "corpus/alloytools-models/models/examples/algorithms/peterson.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 31
+      "ms": 34,
+      "ms_by_mode": {
+        "count-sb0": 27,
+        "count-sb20": 27,
+        "stage1": 34
+      }
     },
     "corpus/alloytools-models/models/examples/algorithms/peterson.als[2]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 7
+      "ms": 6,
+      "ms_by_mode": {
+        "count-sb0": 13,
+        "count-sb20": 14,
+        "stage1": 6
+      }
     },
     "corpus/alloytools-models/models/examples/algorithms/peterson.als[3]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 8
+      "ms": 7,
+      "ms_by_mode": {
+        "count-sb0": 7,
+        "count-sb20": 14,
+        "stage1": 7
+      }
     },
     "corpus/alloytools-models/models/examples/algorithms/ringlead.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 2
+      "ms": 2,
+      "ms_by_mode": {
+        "count-sb0": 2,
+        "count-sb20": 2,
+        "stage1": 2
+      }
     },
     "corpus/alloytools-models/models/examples/algorithms/ringlead.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 187
+      "ms": 146,
+      "ms_by_mode": {
+        "count-sb0": 199,
+        "count-sb20": 177,
+        "stage1": 146
+      }
     },
     "corpus/alloytools-models/models/examples/algorithms/ringlead.als[2]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 4548
+      "ms": 3435,
+      "ms_by_mode": {
+        "count-sb0": 4339,
+        "count-sb20": 4410,
+        "stage1": 3435
+      }
     },
     "corpus/alloytools-models/models/examples/algorithms/ringlead.als[3]": {
       "verdict_bucket": "agree_sat",
-      "ms": 30
+      "ms": 32,
+      "ms_by_mode": {
+        "count-sb0": 52,
+        "count-sb20": 32,
+        "stage1": 32
+      }
     },
     "corpus/alloytools-models/models/examples/algorithms/ringlead.als[4]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 2660
+      "ms": 2982,
+      "ms_by_mode": {
+        "count-sb0": 2629,
+        "count-sb20": 2668,
+        "stage1": 2982
+      }
     },
     "corpus/alloytools-models/models/examples/algorithms/s_ringlead.als[0]": {
       "verdict_bucket": "mettle_defer:lower:higher_order",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/examples/algorithms/s_ringlead.als[1]": {
       "verdict_bucket": "mettle_defer:lower:higher_order",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/examples/algorithms/s_ringlead.als[2]": {
       "verdict_bucket": "mettle_defer:lower:higher_order",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/examples/algorithms/s_ringlead.als[3]": {
       "verdict_bucket": "mettle_defer:lower:higher_order",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/examples/algorithms/stable_mutex_ring.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 3
+      "ms": 2,
+      "ms_by_mode": {
+        "count-sb0": 383,
+        "count-sb20": 374,
+        "stage1": 2
+      }
     },
     "corpus/alloytools-models/models/examples/algorithms/stable_mutex_ring.als[1]": {
       "verdict_bucket": "agree_sat",
-      "ms": 11
+      "ms": 6,
+      "ms_by_mode": {
+        "count-sb0": 5353,
+        "count-sb20": 5586,
+        "stage1": 6
+      }
     },
     "corpus/alloytools-models/models/examples/algorithms/stable_mutex_ring.als[2]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 2716
+      "ms": 2792,
+      "ms_by_mode": {
+        "count-sb0": 2581,
+        "count-sb20": 2792,
+        "stage1": 2792
+      }
     },
     "corpus/alloytools-models/models/examples/algorithms/stable_orient_ring.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 5
+      "ms": 4,
+      "ms_by_mode": {
+        "count-sb0": 2326,
+        "count-sb20": 2321,
+        "stage1": 4
+      }
     },
     "corpus/alloytools-models/models/examples/algorithms/stable_orient_ring.als[1]": {
       "verdict_bucket": "agree_sat",
-      "ms": 11
+      "ms": 5,
+      "ms_by_mode": {
+        "count-sb0": 2456,
+        "count-sb20": 2570,
+        "stage1": 5
+      }
     },
     "corpus/alloytools-models/models/examples/algorithms/stable_ringlead.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 17
+      "ms": 23,
+      "ms_by_mode": {
+        "count-sb0": 2070,
+        "count-sb20": 2172,
+        "stage1": 23
+      }
     },
     "corpus/alloytools-models/models/examples/algorithms/stable_ringlead.als[1]": {
       "verdict_bucket": "agree_sat",
-      "ms": 57
+      "ms": 45,
+      "ms_by_mode": {
+        "count-sb0": 657,
+        "count-sb20": 623,
+        "stage1": 45
+      }
     },
     "corpus/alloytools-models/models/examples/algorithms/stable_ringlead.als[2]": {
       "verdict_bucket": "agree_sat",
-      "ms": 71
+      "ms": 50,
+      "ms_by_mode": {
+        "count-sb0": 430,
+        "count-sb20": 438,
+        "stage1": 50
+      }
     },
     "corpus/alloytools-models/models/examples/algorithms/stable_ringlead.als[3]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 124
+      "ms": 101,
+      "ms_by_mode": {
+        "count-sb0": 133,
+        "count-sb20": 139,
+        "stage1": 101
+      }
     },
     "corpus/alloytools-models/models/examples/algorithms/stable_ringlead.als[4]": {
       "verdict_bucket": "agree_sat",
-      "ms": 567
+      "ms": 533,
+      "ms_by_mode": {
+        "count-sb0": 11149,
+        "count-sb20": 11227,
+        "stage1": 533
+      }
     },
     "corpus/alloytools-models/models/examples/algorithms/stable_ringlead.als[5]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 207
+      "ms": 174,
+      "ms_by_mode": {
+        "count-sb0": 189,
+        "count-sb20": 199,
+        "stage1": 174
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/chord.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 9
+      "ms": 8,
+      "ms_by_mode": {
+        "count-sb0": 9,
+        "count-sb20": 16,
+        "stage1": 8
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/chord.als[10]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 31
+      "ms": 20,
+      "ms_by_mode": {
+        "count-sb0": 27,
+        "count-sb20": 21,
+        "stage1": 20
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/chord.als[11]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 27
+      "ms": 20,
+      "ms_by_mode": {
+        "count-sb0": 22,
+        "count-sb20": 29,
+        "stage1": 20
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/chord.als[12]": {
       "verdict_bucket": "agree_sat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 1,
+        "count-sb20": 2,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/chord.als[13]": {
       "verdict_bucket": "agree_sat",
-      "ms": 3
+      "ms": 3,
+      "ms_by_mode": {
+        "count-sb0": 2820,
+        "count-sb20": 2958,
+        "stage1": 3
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/chord.als[14]": {
       "verdict_bucket": "agree_sat",
-      "ms": 5
+      "ms": 9,
+      "ms_by_mode": {
+        "count-sb0": 6223,
+        "count-sb20": 6203,
+        "stage1": 9
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/chord.als[15]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 30
+      "ms": 28,
+      "ms_by_mode": {
+        "count-sb0": 29,
+        "count-sb20": 25,
+        "stage1": 28
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/chord.als[16]": {
       "verdict_bucket": "agree_sat",
-      "ms": 7
+      "ms": 4,
+      "ms_by_mode": {
+        "count-sb0": 2572,
+        "count-sb20": 2762,
+        "stage1": 4
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/chord.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 6
+      "ms": 6,
+      "ms_by_mode": {
+        "count-sb0": 19,
+        "count-sb20": 7,
+        "stage1": 6
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/chord.als[2]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 54
+      "ms": 59,
+      "ms_by_mode": {
+        "count-sb0": 93,
+        "count-sb20": 63,
+        "stage1": 59
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/chord.als[3]": {
       "verdict_bucket": "agree_sat",
-      "ms": 1
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 639,
+        "count-sb20": 693,
+        "stage1": 1
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/chord.als[4]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 81
+      "ms": 69,
+      "ms_by_mode": {
+        "count-sb0": 74,
+        "count-sb20": 83,
+        "stage1": 69
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/chord.als[5]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 3
+      "ms": 4,
+      "ms_by_mode": {
+        "count-sb0": 3,
+        "count-sb20": 3,
+        "stage1": 4
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/chord.als[6]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 27
+      "ms": 24,
+      "ms_by_mode": {
+        "count-sb0": 21,
+        "count-sb20": 21,
+        "stage1": 24
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/chord.als[7]": {
       "verdict_bucket": "agree_sat",
-      "ms": 2
+      "ms": 2,
+      "ms_by_mode": {
+        "count-sb0": 754,
+        "count-sb20": 841,
+        "stage1": 2
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/chord.als[8]": {
       "verdict_bucket": "agree_sat",
-      "ms": 14
+      "ms": 7,
+      "ms_by_mode": {
+        "count-sb0": 6869,
+        "count-sb20": 7018,
+        "stage1": 7
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/chord.als[9]": {
       "verdict_bucket": "agree_sat",
-      "ms": 8
+      "ms": 6,
+      "ms_by_mode": {
+        "count-sb0": 5815,
+        "count-sb20": 6106,
+        "stage1": 6
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/chord2.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 316
+      "ms": 230,
+      "ms_by_mode": {
+        "count-sb0": 291,
+        "count-sb20": 313,
+        "stage1": 230
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/chordbugmodel.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 1
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 2,
+        "count-sb20": 2,
+        "stage1": 1
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/chordbugmodel.als[1]": {
       "verdict_bucket": "agree_sat",
-      "ms": 5
+      "ms": 4,
+      "ms_by_mode": {
+        "count-sb0": 3731,
+        "count-sb20": 3939,
+        "stage1": 4
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/chordbugmodel.als[2]": {
       "verdict_bucket": "agree_sat",
-      "ms": 4
+      "ms": 11,
+      "ms_by_mode": {
+        "count-sb0": 3975,
+        "count-sb20": 4039,
+        "stage1": 11
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/chordbugmodel.als[3]": {
       "verdict_bucket": "agree_sat",
-      "ms": 47
+      "ms": 32,
+      "ms_by_mode": {
+        "count-sb0": 14524,
+        "count-sb20": 15481,
+        "stage1": 32
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/chordbugmodel.als[4]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 1243
+      "ms": 1005,
+      "ms_by_mode": {
+        "count-sb0": 1068,
+        "count-sb20": 1113,
+        "stage1": 1005
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/chordbugmodel.als[5]": {
       "verdict_bucket": "agree_sat",
-      "ms": 14
+      "ms": 8,
+      "ms_by_mode": {
+        "count-sb0": 7920,
+        "count-sb20": 7687,
+        "stage1": 8
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/com.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 3
+      "ms": 3,
+      "ms_by_mode": {
+        "count-sb0": 3,
+        "count-sb20": 3,
+        "stage1": 3
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/com.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 5
+      "ms": 5,
+      "ms_by_mode": {
+        "count-sb0": 5,
+        "count-sb20": 5,
+        "stage1": 5
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/com.als[2]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 3
+      "ms": 3,
+      "ms_by_mode": {
+        "count-sb0": 3,
+        "count-sb20": 3,
+        "stage1": 3
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/com.als[3]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 4
+      "ms": 4,
+      "ms_by_mode": {
+        "count-sb0": 4,
+        "count-sb20": 10,
+        "stage1": 4
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/com.als[4]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 3
+      "ms": 3,
+      "ms_by_mode": {
+        "count-sb0": 3,
+        "count-sb20": 5,
+        "stage1": 3
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/firewire.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 26
+      "ms": 15,
+      "ms_by_mode": {
+        "count-sb0": 30,
+        "count-sb20": 17,
+        "stage1": 15
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/firewire.als[1]": {
       "verdict_bucket": "agree_sat",
-      "ms": 2060
+      "ms": 1695,
+      "ms_by_mode": {
+        "count-sb0": 1904,
+        "count-sb20": 1797,
+        "stage1": 1695
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/firewire.als[2]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 13
+      "ms": 9,
+      "ms_by_mode": {
+        "count-sb0": 9,
+        "count-sb20": 10,
+        "stage1": 9
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/firewire.als[3]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 7728
+      "ms": 6173,
+      "ms_by_mode": {
+        "count-sb0": 7375,
+        "count-sb20": 7710,
+        "stage1": 6173
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/firewire.als[4]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 3893
+      "ms": 3036,
+      "ms_by_mode": {
+        "count-sb0": 3671,
+        "count-sb20": 3725,
+        "stage1": 3036
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/firewire.als[5]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 5098
+      "ms": 4832,
+      "ms_by_mode": {
+        "count-sb0": 4614,
+        "count-sb20": 4929,
+        "stage1": 4832
+      }
     },
     "corpus/alloytools-models/models/examples/case_studies/firewire.als[6]": {
       "verdict_bucket": "agree_sat",
-      "ms": 65
+      "ms": 68,
+      "ms_by_mode": {
+        "count-sb0": 63,
+        "count-sb20": 69,
+        "stage1": 68
+      }
     },
     "corpus/alloytools-models/models/examples/puzzles/handshake.als[0]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 1074
+      "ms": 1002,
+      "ms_by_mode": {
+        "count-sb0": 985,
+        "count-sb20": 988,
+        "stage1": 1002
+      }
     },
     "corpus/alloytools-models/models/examples/puzzles/handshake.als[1]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 1129
+      "ms": 1153,
+      "ms_by_mode": {
+        "count-sb0": 1143,
+        "count-sb20": 1199,
+        "stage1": 1153
+      }
     },
     "corpus/alloytools-models/models/examples/puzzles/handshake.als[2]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 1954
+      "ms": 1871,
+      "ms_by_mode": {
+        "count-sb0": 1894,
+        "count-sb20": 1923,
+        "stage1": 1871
+      }
     },
     "corpus/alloytools-models/models/examples/puzzles/handshake.als[3]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 3889
+      "ms": 3315,
+      "ms_by_mode": {
+        "count-sb0": 3932,
+        "count-sb20": 3897,
+        "stage1": 3315
+      }
     },
     "corpus/alloytools-models/models/examples/systems/file_system.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 25
+      "ms": 30,
+      "ms_by_mode": {
+        "count-sb0": 2626,
+        "count-sb20": 2743,
+        "stage1": 30
+      }
     },
     "corpus/alloytools-models/models/examples/systems/file_system.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 4
+      "ms": 4,
+      "ms_by_mode": {
+        "count-sb0": 4,
+        "count-sb20": 4,
+        "stage1": 4
+      }
     },
     "corpus/alloytools-models/models/examples/systems/javatypes_soundness.als[0]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 1526
+      "ms": 1438,
+      "ms_by_mode": {
+        "count-sb0": 1464,
+        "count-sb20": 1553,
+        "stage1": 1438
+      }
     },
     "corpus/alloytools-models/models/examples/systems/javatypes_soundness.als[1]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 285
+      "ms": 299,
+      "ms_by_mode": {
+        "count-sb0": 293,
+        "count-sb20": 286,
+        "stage1": 299
+      }
     },
     "corpus/alloytools-models/models/examples/systems/lists.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 164
+      "ms": 125,
+      "ms_by_mode": {
+        "count-sb0": 154,
+        "count-sb20": 147,
+        "stage1": 125
+      }
     },
     "corpus/alloytools-models/models/examples/systems/lists.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 240
+      "ms": 176,
+      "ms_by_mode": {
+        "count-sb0": 232,
+        "count-sb20": 226,
+        "stage1": 176
+      }
     },
     "corpus/alloytools-models/models/examples/systems/lists.als[2]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 10
+      "ms": 10,
+      "ms_by_mode": {
+        "count-sb0": 11,
+        "count-sb20": 12,
+        "stage1": 10
+      }
     },
     "corpus/alloytools-models/models/examples/systems/lists.als[3]": {
       "verdict_bucket": "agree_sat",
-      "ms": 4
+      "ms": 4,
+      "ms_by_mode": {
+        "count-sb0": 2941,
+        "count-sb20": 2922,
+        "stage1": 4
+      }
     },
     "corpus/alloytools-models/models/examples/systems/marksweepgc.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 4
+      "ms": 10,
+      "ms_by_mode": {
+        "count-sb0": 5,
+        "count-sb20": 5,
+        "stage1": 10
+      }
     },
     "corpus/alloytools-models/models/examples/systems/marksweepgc.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 4
+      "ms": 4,
+      "ms_by_mode": {
+        "count-sb0": 4,
+        "count-sb20": 4,
+        "stage1": 4
+      }
     },
     "corpus/alloytools-models/models/examples/systems/marksweepgc.als[2]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 6
+      "ms": 11,
+      "ms_by_mode": {
+        "count-sb0": 7,
+        "count-sb20": 7,
+        "stage1": 11
+      }
     },
     "corpus/alloytools-models/models/examples/systems/views.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 3467
+      "ms": 3105,
+      "ms_by_mode": {
+        "count-sb0": 3458,
+        "count-sb20": 3381,
+        "stage1": 3105
+      }
     },
     "corpus/alloytools-models/models/examples/temporal/buffer.als[0]": {
       "verdict_bucket": "mettle_defer:lower:temporal",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/examples/temporal/buffer.als[1]": {
       "verdict_bucket": "mettle_defer:lower:temporal",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/examples/temporal/buffer.als[2]": {
       "verdict_bucket": "mettle_defer:lower:temporal",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/examples/temporal/buffer.als[3]": {
       "verdict_bucket": "mettle_defer:lower:temporal",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/examples/temporal/buffer.als[4]": {
       "verdict_bucket": "mettle_defer:lower:temporal",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/examples/temporal/leader.als[0]": {
       "verdict_bucket": "mettle_defer:lower:temporal",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/examples/temporal/leader.als[1]": {
       "verdict_bucket": "mettle_defer:lower:temporal",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/examples/temporal/leader.als[2]": {
       "verdict_bucket": "mettle_defer:lower:temporal",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/examples/temporal/leader.als[3]": {
       "verdict_bucket": "mettle_defer:lower:temporal",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/examples/temporal/leader_events.als[0]": {
       "verdict_bucket": "mettle_defer:lower:temporal",
-      "ms": 0
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 1
+      }
     },
     "corpus/alloytools-models/models/examples/temporal/leader_events.als[1]": {
       "verdict_bucket": "mettle_defer:lower:temporal",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/examples/temporal/leader_events.als[2]": {
       "verdict_bucket": "mettle_defer:lower:temporal",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/examples/temporal/leader_events.als[3]": {
       "verdict_bucket": "mettle_defer:lower:temporal",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/examples/temporal/trash.als[0]": {
       "verdict_bucket": "mettle_defer:lower:temporal",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/examples/temporal/trash.als[1]": {
       "verdict_bucket": "mettle_defer:lower:temporal",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/examples/temporal/trash.als[2]": {
       "verdict_bucket": "mettle_defer:lower:temporal",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/examples/temporal/trash.als[3]": {
       "verdict_bucket": "mettle_defer:lower:temporal",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/examples/temporal/trash.als[4]": {
       "verdict_bucket": "mettle_defer:lower:temporal",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/examples/temporal/trash.als[5]": {
       "verdict_bucket": "mettle_defer:lower:temporal",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/examples/temporal/trash.als[6]": {
       "verdict_bucket": "mettle_defer:lower:temporal",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/examples/temporal/trash.als[7]": {
       "verdict_bucket": "mettle_defer:lower:temporal",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/examples/temporal/trash.als[8]": {
       "verdict_bucket": "mettle_defer:lower:temporal",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/examples/toys/ceilingsAndFloors.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/examples/toys/ceilingsAndFloors.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 1,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/examples/toys/ceilingsAndFloors.als[2]": {
       "verdict_bucket": "agree_sat",
-      "ms": 1
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 1,
+        "count-sb20": 3,
+        "stage1": 1
+      }
     },
     "corpus/alloytools-models/models/examples/toys/ceilingsAndFloors.als[3]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 32
+      "ms": 12,
+      "ms_by_mode": {
+        "count-sb0": 12,
+        "count-sb20": 18,
+        "stage1": 12
+      }
     },
     "corpus/alloytools-models/models/examples/toys/ceilingsAndFloors.als[4]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 1456
+      "ms": 1166,
+      "ms_by_mode": {
+        "count-sb0": 1452,
+        "count-sb20": 1506,
+        "stage1": 1166
+      }
     },
     "corpus/alloytools-models/models/examples/toys/numbering.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 53
+      "ms": 49,
+      "ms_by_mode": {
+        "count-sb0": 49,
+        "count-sb20": 47,
+        "stage1": 49
+      }
     },
     "corpus/alloytools-models/models/examples/toys/numbering.als[1]": {
       "verdict_bucket": "agree_sat",
-      "ms": 16
+      "ms": 14,
+      "ms_by_mode": {
+        "count-sb0": 12904,
+        "count-sb20": 13484,
+        "stage1": 14
+      }
     },
     "corpus/alloytools-models/models/examples/tutorial/farmer.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 3
+      "ms": 10,
+      "ms_by_mode": {
+        "count-sb0": 18,
+        "count-sb20": 6,
+        "stage1": 10
+      }
     },
     "corpus/alloytools-models/models/examples/tutorial/farmer.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 10
+      "ms": 10,
+      "ms_by_mode": {
+        "count-sb0": 14,
+        "count-sb20": 10,
+        "stage1": 10
+      }
     },
     "corpus/alloytools-models/models/util/ordering.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/util/ordering.als[10]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 1
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 1,
+        "count-sb20": 1,
+        "stage1": 1
+      }
     },
     "corpus/alloytools-models/models/util/ordering.als[1]": {
       "verdict_bucket": "agree_sat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/util/ordering.als[2]": {
       "verdict_bucket": "agree_sat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/util/ordering.als[3]": {
       "verdict_bucket": "agree_sat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/util/ordering.als[4]": {
       "verdict_bucket": "agree_sat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/util/ordering.als[5]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/util/ordering.als[6]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/util/ordering.als[7]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/util/ordering.als[8]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/alloytools-models/models/util/ordering.als[9]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 1
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 1,
+        "count-sb20": 1,
+        "stage1": 1
+      }
     },
     "corpus/portus-63/expert-models/2scxlb3tbo5bmvmwplglqils7a5uarmx-talks/scc_mp.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 20719
+      "ms": 15327,
+      "ms_by_mode": {
+        "count-sb0": 21741,
+        "count-sb20": 22477,
+        "stage1": 15327
+      }
     },
     "corpus/portus-63/expert-models/3zltn65gds66b6f4q3lvbtgdkb6snmuu-alloy/fullsub2.als[0]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 82
+      "ms": 78,
+      "ms_by_mode": {
+        "count-sb0": 82,
+        "count-sb20": 86,
+        "stage1": 78
+      }
     },
     "corpus/portus-63/expert-models/3zltn65gds66b6f4q3lvbtgdkb6snmuu-alloy/hc-atd/converge.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 16
+      "ms": 7,
+      "ms_by_mode": {
+        "count-sb0": 7270,
+        "count-sb20": 53,
+        "stage1": 7
+      }
     },
     "corpus/portus-63/expert-models/3zltn65gds66b6f4q3lvbtgdkb6snmuu-alloy/hc-atd/hc7.als[0]": {
       "verdict_bucket": "mettle_defer:lower:lowering",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/portus-63/expert-models/3zltn65gds66b6f4q3lvbtgdkb6snmuu-alloy/hc-jwb/hc4.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 12
+      "ms": 11,
+      "ms_by_mode": {
+        "count-sb0": 1572,
+        "count-sb20": 1488,
+        "stage1": 11
+      }
     },
     "corpus/portus-63/expert-models/3zltn65gds66b6f4q3lvbtgdkb6snmuu-alloy/mesh.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 738
+      "ms": 564,
+      "ms_by_mode": {
+        "count-sb0": 695,
+        "count-sb20": 562,
+        "stage1": 564
+      }
     },
     "corpus/portus-63/expert-models/3zltn65gds66b6f4q3lvbtgdkb6snmuu-alloy/mesh.als[1]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 19486
+      "ms": 16700,
+      "ms_by_mode": {
+        "count-sb0": 20700,
+        "count-sb20": 19111,
+        "stage1": 16700
+      }
     },
     "corpus/portus-63/expert-models/3zltn65gds66b6f4q3lvbtgdkb6snmuu-alloy/question.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 1944
+      "ms": 2022,
+      "ms_by_mode": {
+        "count-sb0": 11088,
+        "count-sb20": 11136,
+        "stage1": 2022
+      }
     },
     "corpus/portus-63/expert-models/3zltn65gds66b6f4q3lvbtgdkb6snmuu-alloy/question.als[1]": {
       "verdict_bucket": "agree_sat",
-      "ms": 1944
+      "ms": 1979,
+      "ms_by_mode": {
+        "count-sb0": 2124,
+        "count-sb20": 2177,
+        "stage1": 1979
+      }
     },
     "corpus/portus-63/expert-models/3zltn65gds66b6f4q3lvbtgdkb6snmuu-alloy/wetdry.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 4462
+      "ms": 4916,
+      "ms_by_mode": {
+        "count-sb0": 9406,
+        "count-sb20": 5200,
+        "stage1": 4916
+      }
     },
     "corpus/portus-63/expert-models/3zltn65gds66b6f4q3lvbtgdkb6snmuu-alloy/wetdry.als[1]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 346
+      "ms": 342,
+      "ms_by_mode": {
+        "count-sb0": 411,
+        "count-sb20": 360,
+        "stage1": 342
+      }
     },
     "corpus/portus-63/expert-models/5x4l2fj5nfbq3cz2dumwdt57g3kig3rd-litmustestgen/c11_perturbed.als[0]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 302
+      "ms": 277,
+      "ms_by_mode": {
+        "count-sb0": 343,
+        "count-sb20": 300,
+        "stage1": 277
+      }
     },
     "corpus/portus-63/expert-models/5x4l2fj5nfbq3cz2dumwdt57g3kig3rd-litmustestgen/c11_perturbed.als[1]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 283
+      "ms": 278,
+      "ms_by_mode": {
+        "count-sb0": 289,
+        "count-sb20": 305,
+        "stage1": 278
+      }
     },
     "corpus/portus-63/expert-models/5x4l2fj5nfbq3cz2dumwdt57g3kig3rd-litmustestgen/c11_perturbed.als[2]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 300
+      "ms": 278,
+      "ms_by_mode": {
+        "count-sb0": 258,
+        "count-sb20": 303,
+        "stage1": 278
+      }
     },
     "corpus/portus-63/expert-models/5x4l2fj5nfbq3cz2dumwdt57g3kig3rd-litmustestgen/c11_perturbed.als[3]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 339
+      "ms": 284,
+      "ms_by_mode": {
+        "count-sb0": 297,
+        "count-sb20": 311,
+        "stage1": 284
+      }
     },
     "corpus/portus-63/expert-models/5x4l2fj5nfbq3cz2dumwdt57g3kig3rd-litmustestgen/c11_perturbed.als[4]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 299
+      "ms": 283,
+      "ms_by_mode": {
+        "count-sb0": 286,
+        "count-sb20": 320,
+        "stage1": 283
+      }
     },
     "corpus/portus-63/expert-models/5x4l2fj5nfbq3cz2dumwdt57g3kig3rd-litmustestgen/c11_perturbed.als[5]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 343
+      "ms": 284,
+      "ms_by_mode": {
+        "count-sb0": 288,
+        "count-sb20": 324,
+        "stage1": 284
+      }
     },
     "corpus/portus-63/expert-models/5x4l2fj5nfbq3cz2dumwdt57g3kig3rd-litmustestgen/c11_perturbed.als[6]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 344
+      "ms": 263,
+      "ms_by_mode": {
+        "count-sb0": 289,
+        "count-sb20": 333,
+        "stage1": 263
+      }
     },
     "corpus/portus-63/expert-models/5x4l2fj5nfbq3cz2dumwdt57g3kig3rd-litmustestgen/c11_perturbed.als[7]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 489
+      "ms": 401,
+      "ms_by_mode": {
+        "count-sb0": 433,
+        "count-sb20": 450,
+        "stage1": 401
+      }
     },
     "corpus/portus-63/expert-models/5x4l2fj5nfbq3cz2dumwdt57g3kig3rd-litmustestgen/c11_perturbed.als[8]": {
       "verdict_bucket": "agree_sat",
-      "ms": 570
+      "ms": 557,
+      "ms_by_mode": {
+        "count-sb0": 18195,
+        "count-sb20": 17998,
+        "stage1": 557
+      }
     },
     "corpus/portus-63/expert-models/5x4l2fj5nfbq3cz2dumwdt57g3kig3rd-litmustestgen/scc_perturbed_scflip.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 257
+      "ms": 177,
+      "ms_by_mode": {
+        "count-sb0": 4830,
+        "count-sb20": 861,
+        "stage1": 177
+      }
     },
     "corpus/portus-63/expert-models/5x4l2fj5nfbq3cz2dumwdt57g3kig3rd-litmustestgen/scc_perturbed_scflip.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 127
+      "ms": 99,
+      "ms_by_mode": {
+        "count-sb0": 141,
+        "count-sb20": 149,
+        "stage1": 99
+      }
     },
     "corpus/portus-63/expert-models/5x4l2fj5nfbq3cz2dumwdt57g3kig3rd-litmustestgen/scc_perturbed_scflip.als[2]": {
       "verdict_bucket": "agree_sat",
-      "ms": 105
+      "ms": 141,
+      "ms_by_mode": {
+        "count-sb0": 1670,
+        "count-sb20": 225,
+        "stage1": 141
+      }
     },
     "corpus/portus-63/expert-models/5x4l2fj5nfbq3cz2dumwdt57g3kig3rd-litmustestgen/scc_perturbed_scflip.als[3]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 629
+      "ms": 526,
+      "ms_by_mode": {
+        "count-sb0": 730,
+        "count-sb20": 586,
+        "stage1": 526
+      }
     },
     "corpus/portus-63/expert-models/5x4l2fj5nfbq3cz2dumwdt57g3kig3rd-litmustestgen/scc_perturbed_scflip.als[4]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 1804
+      "ms": 1354,
+      "ms_by_mode": {
+        "count-sb0": 1671,
+        "count-sb20": 1819,
+        "stage1": 1354
+      }
     },
     "corpus/portus-63/expert-models/5x4l2fj5nfbq3cz2dumwdt57g3kig3rd-litmustestgen/scc_perturbed_scflip.als[5]": {
       "verdict_bucket": "agree_sat",
-      "ms": 3414
+      "ms": 3771,
+      "ms_by_mode": {
+        "count-sb0": 20357,
+        "count-sb20": 13538,
+        "stage1": 3771
+      }
     },
     "corpus/portus-63/expert-models/5x4l2fj5nfbq3cz2dumwdt57g3kig3rd-litmustestgen/scc_perturbed_scflip.als[6]": {
       "verdict_bucket": "agree_sat",
-      "ms": 4343
+      "ms": 3756,
+      "ms_by_mode": {
+        "count-sb0": 23384,
+        "count-sb20": 22771,
+        "stage1": 3756
+      }
     },
     "corpus/portus-63/expert-models/5x4l2fj5nfbq3cz2dumwdt57g3kig3rd-litmustestgen/tso_perturbed.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 620
+      "ms": 705,
+      "ms_by_mode": {
+        "count-sb0": 13843,
+        "count-sb20": 2479,
+        "stage1": 705
+      }
     },
     "corpus/portus-63/expert-models/5x4l2fj5nfbq3cz2dumwdt57g3kig3rd-litmustestgen/tso_perturbed.als[1]": {
       "verdict_bucket": "agree_sat",
-      "ms": 91
+      "ms": 79,
+      "ms_by_mode": {
+        "count-sb0": 12644,
+        "count-sb20": 221,
+        "stage1": 79
+      }
     },
     "corpus/portus-63/expert-models/5x4l2fj5nfbq3cz2dumwdt57g3kig3rd-litmustestgen/tso_perturbed.als[2]": {
       "verdict_bucket": "agree_sat",
-      "ms": 199
+      "ms": 163,
+      "ms_by_mode": {
+        "count-sb0": 13626,
+        "count-sb20": 2171,
+        "stage1": 163
+      }
     },
     "corpus/portus-63/expert-models/5x4l2fj5nfbq3cz2dumwdt57g3kig3rd-litmustestgen/tso_perturbed.als[3]": {
       "verdict_bucket": "agree_sat",
-      "ms": 218
+      "ms": 221,
+      "ms_by_mode": {
+        "count-sb0": 16169,
+        "count-sb20": 13086,
+        "stage1": 221
+      }
     },
     "corpus/portus-63/expert-models/7d25ioxqmue65lp6ntzz735gpbg4fmgq-amazon-snapshot-spec/serializableSnapshotIsolation.als[0]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 42822
+      "ms": 32494,
+      "ms_by_mode": {
+        "count-sb0": 42401,
+        "count-sb20": 40222,
+        "stage1": 32494
+      }
     },
     "corpus/portus-63/expert-models/7d25ioxqmue65lp6ntzz735gpbg4fmgq-amazon-snapshot-spec/textbookSnapshotIsolation.als[0]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 22413
+      "ms": 16803,
+      "ms_by_mode": {
+        "count-sb0": 22235,
+        "count-sb20": 24853,
+        "stage1": 16803
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Algorithms/LC-Lenses/lc-lenses.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 37
+      "ms": 31,
+      "ms_by_mode": {
+        "count-sb0": 27,
+        "count-sb20": 38,
+        "stage1": 31
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Algorithms/LC-Lenses/lc-lenses.als[10]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 4318
+      "ms": 4419,
+      "ms_by_mode": {
+        "count-sb0": 4354,
+        "count-sb20": 3845,
+        "stage1": 4419
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Algorithms/LC-Lenses/lc-lenses.als[11]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 1093
+      "ms": 1004,
+      "ms_by_mode": {
+        "count-sb0": 1058,
+        "count-sb20": 1241,
+        "stage1": 1004
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Algorithms/LC-Lenses/lc-lenses.als[12]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 8500
+      "ms": 7979,
+      "ms_by_mode": {
+        "count-sb0": 8207,
+        "count-sb20": 9084,
+        "stage1": 7979
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Algorithms/LC-Lenses/lc-lenses.als[13]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 8553
+      "ms": 6472,
+      "ms_by_mode": {
+        "count-sb0": 8100,
+        "count-sb20": 8858,
+        "stage1": 6472
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Algorithms/LC-Lenses/lc-lenses.als[14]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 4309
+      "ms": 3279,
+      "ms_by_mode": {
+        "count-sb0": 4169,
+        "count-sb20": 4811,
+        "stage1": 3279
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Algorithms/LC-Lenses/lc-lenses.als[15]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 10053
+      "ms": 7626,
+      "ms_by_mode": {
+        "count-sb0": 9585,
+        "count-sb20": 8194,
+        "stage1": 7626
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Algorithms/LC-Lenses/lc-lenses.als[16]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 8720
+      "ms": 8297,
+      "ms_by_mode": {
+        "count-sb0": 8263,
+        "count-sb20": 7148,
+        "stage1": 8297
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Algorithms/LC-Lenses/lc-lenses.als[17]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 899
+      "ms": 874,
+      "ms_by_mode": {
+        "count-sb0": 981,
+        "count-sb20": 1039,
+        "stage1": 874
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Algorithms/LC-Lenses/lc-lenses.als[18]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 192
+      "ms": 160,
+      "ms_by_mode": {
+        "count-sb0": 207,
+        "count-sb20": 213,
+        "stage1": 160
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Algorithms/LC-Lenses/lc-lenses.als[19]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 299
+      "ms": 264,
+      "ms_by_mode": {
+        "count-sb0": 305,
+        "count-sb20": 358,
+        "stage1": 264
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Algorithms/LC-Lenses/lc-lenses.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 31
+      "ms": 34,
+      "ms_by_mode": {
+        "count-sb0": 40,
+        "count-sb20": 36,
+        "stage1": 34
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Algorithms/LC-Lenses/lc-lenses.als[20]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 1280
+      "ms": 1021,
+      "ms_by_mode": {
+        "count-sb0": 1316,
+        "count-sb20": 1431,
+        "stage1": 1021
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Algorithms/LC-Lenses/lc-lenses.als[21]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 2088
+      "ms": 1608,
+      "ms_by_mode": {
+        "count-sb0": 2120,
+        "count-sb20": 2586,
+        "stage1": 1608
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Algorithms/LC-Lenses/lc-lenses.als[22]": {
       "verdict_bucket": "agree_sat",
-      "ms": 10
+      "ms": 7,
+      "ms_by_mode": {
+        "count-sb0": 4,
+        "count-sb20": 3547,
+        "stage1": 7
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Algorithms/LC-Lenses/lc-lenses.als[23]": {
       "verdict_bucket": "agree_sat",
-      "ms": 4
+      "ms": 4,
+      "ms_by_mode": {
+        "count-sb0": 4,
+        "count-sb20": 3398,
+        "stage1": 4
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Algorithms/LC-Lenses/lc-lenses.als[2]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 5284
+      "ms": 4126,
+      "ms_by_mode": {
+        "count-sb0": 5366,
+        "count-sb20": 6056,
+        "stage1": 4126
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Algorithms/LC-Lenses/lc-lenses.als[3]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 283
+      "ms": 226,
+      "ms_by_mode": {
+        "count-sb0": 268,
+        "count-sb20": 283,
+        "stage1": 226
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Algorithms/LC-Lenses/lc-lenses.als[4]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 295
+      "ms": 269,
+      "ms_by_mode": {
+        "count-sb0": 357,
+        "count-sb20": 336,
+        "stage1": 269
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Algorithms/LC-Lenses/lc-lenses.als[5]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 754
+      "ms": 697,
+      "ms_by_mode": {
+        "count-sb0": 825,
+        "count-sb20": 830,
+        "stage1": 697
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Algorithms/LC-Lenses/lc-lenses.als[6]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 12957
+      "ms": 12179,
+      "ms_by_mode": {
+        "count-sb0": 12849,
+        "count-sb20": 11561,
+        "stage1": 12179
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Algorithms/LC-Lenses/lc-lenses.als[7]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 10838
+      "ms": 11029,
+      "ms_by_mode": {
+        "count-sb0": 10812,
+        "count-sb20": 12464,
+        "stage1": 11029
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Algorithms/LC-Lenses/lc-lenses.als[8]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 3407
+      "ms": 3635,
+      "ms_by_mode": {
+        "count-sb0": 3420,
+        "count-sb20": 3762,
+        "stage1": 3635
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Algorithms/LC-Lenses/lc-lenses.als[9]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 11886
+      "ms": 8562,
+      "ms_by_mode": {
+        "count-sb0": 11669,
+        "count-sb20": 10395,
+        "stage1": 8562
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/ERTMS/ertms_1A.als[0]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 142
+      "ms": 129,
+      "ms_by_mode": {
+        "count-sb0": 136,
+        "count-sb20": 114,
+        "stage1": 129
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/ERTMS/ertms_1A.als[10]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 110
+      "ms": 144,
+      "ms_by_mode": {
+        "count-sb0": 96,
+        "count-sb20": 81,
+        "stage1": 144
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/ERTMS/ertms_1A.als[11]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 96
+      "ms": 110,
+      "ms_by_mode": {
+        "count-sb0": 97,
+        "count-sb20": 103,
+        "stage1": 110
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/ERTMS/ertms_1A.als[12]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 96
+      "ms": 84,
+      "ms_by_mode": {
+        "count-sb0": 98,
+        "count-sb20": 84,
+        "stage1": 84
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/ERTMS/ertms_1A.als[13]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 125
+      "ms": 99,
+      "ms_by_mode": {
+        "count-sb0": 93,
+        "count-sb20": 100,
+        "stage1": 99
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/ERTMS/ertms_1A.als[1]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 134
+      "ms": 131,
+      "ms_by_mode": {
+        "count-sb0": 145,
+        "count-sb20": 118,
+        "stage1": 131
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/ERTMS/ertms_1A.als[2]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 118
+      "ms": 95,
+      "ms_by_mode": {
+        "count-sb0": 128,
+        "count-sb20": 121,
+        "stage1": 95
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/ERTMS/ertms_1A.als[3]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 159
+      "ms": 122,
+      "ms_by_mode": {
+        "count-sb0": 154,
+        "count-sb20": 122,
+        "stage1": 122
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/ERTMS/ertms_1A.als[4]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 131
+      "ms": 119,
+      "ms_by_mode": {
+        "count-sb0": 128,
+        "count-sb20": 135,
+        "stage1": 119
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/ERTMS/ertms_1A.als[5]": {
       "verdict_bucket": "mettle_defer:lower:lowering",
-      "ms": 4
+      "ms": 3,
+      "ms_by_mode": {
+        "count-sb0": 3,
+        "count-sb20": 3,
+        "stage1": 3
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/ERTMS/ertms_1A.als[6]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 128
+      "ms": 110,
+      "ms_by_mode": {
+        "count-sb0": 119,
+        "count-sb20": 102,
+        "stage1": 110
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/ERTMS/ertms_1A.als[7]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 87
+      "ms": 101,
+      "ms_by_mode": {
+        "count-sb0": 88,
+        "count-sb20": 106,
+        "stage1": 101
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/ERTMS/ertms_1A.als[8]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 111
+      "ms": 80,
+      "ms_by_mode": {
+        "count-sb0": 105,
+        "count-sb20": 84,
+        "stage1": 80
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/ERTMS/ertms_1A.als[9]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 95
+      "ms": 92,
+      "ms_by_mode": {
+        "count-sb0": 97,
+        "count-sb20": 102,
+        "stage1": 92
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/ETL_SCD/etl_scd.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 6
+      "ms": 6,
+      "ms_by_mode": {
+        "count-sb0": 7,
+        "count-sb20": 6,
+        "stage1": 6
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/ETL_SCD/etl_scd.als[1]": {
       "verdict_bucket": "agree_sat",
-      "ms": 10
+      "ms": 10,
+      "ms_by_mode": {
+        "count-sb0": 11,
+        "count-sb20": 11,
+        "stage1": 10
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/ETL_SCD/etl_scd.als[2]": {
       "verdict_bucket": "agree_sat",
-      "ms": 820
+      "ms": 771,
+      "ms_by_mode": {
+        "count-sb0": 829,
+        "count-sb20": 787,
+        "stage1": 771
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/ETL_SCD/etl_scd.als[3]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 12582
+      "ms": 7944,
+      "ms_by_mode": {
+        "count-sb0": 11917,
+        "count-sb20": 10504,
+        "stage1": 7944
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/ETL_SCD/etl_scd.als[4]": {
       "verdict_bucket": "agree_sat",
-      "ms": 223
+      "ms": 228,
+      "ms_by_mode": {
+        "count-sb0": 211,
+        "count-sb20": 195,
+        "stage1": 228
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/ETL_SCD/etl_scd.als[5]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 114
+      "ms": 119,
+      "ms_by_mode": {
+        "count-sb0": 121,
+        "count-sb20": 138,
+        "stage1": 119
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/ETL_SCD/etl_scd.als[6]": {
       "verdict_bucket": "agree_sat",
-      "ms": 210
+      "ms": 189,
+      "ms_by_mode": {
+        "count-sb0": 248,
+        "count-sb20": 235,
+        "stage1": 189
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/ETL_SCD/etl_scd.als[7]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 103
+      "ms": 84,
+      "ms_by_mode": {
+        "count-sb0": 93,
+        "count-sb20": 95,
+        "stage1": 84
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/OLAPUsagePrefs/OLAPUsagePrefs.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 104
+      "ms": 148,
+      "ms_by_mode": {
+        "count-sb0": 97,
+        "count-sb20": 116,
+        "stage1": 148
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/OLAPUsagePrefs/OLAPUsagePrefs.als[1]": {
       "verdict_bucket": "agree_sat",
-      "ms": 230
+      "ms": 212,
+      "ms_by_mode": {
+        "count-sb0": 213,
+        "count-sb20": 225,
+        "stage1": 212
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/OLAPUsagePrefs/OLAPUsagePrefs.als[2]": {
       "verdict_bucket": "agree_sat",
-      "ms": 440
+      "ms": 402,
+      "ms_by_mode": {
+        "count-sb0": 455,
+        "count-sb20": 552,
+        "stage1": 402
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/OLAPUsagePrefs/OLAPUsagePrefs.als[3]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 36
+      "ms": 28,
+      "ms_by_mode": {
+        "count-sb0": 42,
+        "count-sb20": 39,
+        "stage1": 28
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/OLAPUsagePrefs/OLAPUsagePrefs.als[4]": {
       "verdict_bucket": "agree_sat",
-      "ms": 178
+      "ms": 183,
+      "ms_by_mode": {
+        "count-sb0": 203,
+        "count-sb20": 248,
+        "stage1": 183
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/PTCRISync/ptcris_v0_6_0_draft.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 213
+      "ms": 208,
+      "ms_by_mode": {
+        "count-sb0": 235,
+        "count-sb20": 274,
+        "stage1": 208
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/PTCRISync/ptcris_v0_6_0_draft.als[10]": {
       "verdict_bucket": "agree_sat",
-      "ms": 334
+      "ms": 311,
+      "ms_by_mode": {
+        "count-sb0": 329,
+        "count-sb20": 341,
+        "stage1": 311
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/PTCRISync/ptcris_v0_6_0_draft.als[11]": {
       "verdict_bucket": "agree_sat",
-      "ms": 206
+      "ms": 185,
+      "ms_by_mode": {
+        "count-sb0": 175,
+        "count-sb20": 170,
+        "stage1": 185
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/PTCRISync/ptcris_v0_6_0_draft.als[12]": {
       "verdict_bucket": "agree_sat",
-      "ms": 137
+      "ms": 121,
+      "ms_by_mode": {
+        "count-sb0": 117,
+        "count-sb20": 128,
+        "stage1": 121
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/PTCRISync/ptcris_v0_6_0_draft.als[13]": {
       "verdict_bucket": "agree_sat",
-      "ms": 157
+      "ms": 121,
+      "ms_by_mode": {
+        "count-sb0": 124,
+        "count-sb20": 122,
+        "stage1": 121
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/PTCRISync/ptcris_v0_6_0_draft.als[14]": {
       "verdict_bucket": "agree_sat",
-      "ms": 146
+      "ms": 128,
+      "ms_by_mode": {
+        "count-sb0": 149,
+        "count-sb20": 147,
+        "stage1": 128
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/PTCRISync/ptcris_v0_6_0_draft.als[15]": {
       "verdict_bucket": "agree_sat",
-      "ms": 130
+      "ms": 123,
+      "ms_by_mode": {
+        "count-sb0": 155,
+        "count-sb20": 136,
+        "stage1": 123
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/PTCRISync/ptcris_v0_6_0_draft.als[16]": {
       "verdict_bucket": "agree_sat",
-      "ms": 150
+      "ms": 159,
+      "ms_by_mode": {
+        "count-sb0": 217,
+        "count-sb20": 214,
+        "stage1": 159
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/PTCRISync/ptcris_v0_6_0_draft.als[17]": {
       "verdict_bucket": "agree_sat",
-      "ms": 276
+      "ms": 296,
+      "ms_by_mode": {
+        "count-sb0": 312,
+        "count-sb20": 247,
+        "stage1": 296
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/PTCRISync/ptcris_v0_6_0_draft.als[18]": {
       "verdict_bucket": "agree_sat",
-      "ms": 130
+      "ms": 125,
+      "ms_by_mode": {
+        "count-sb0": 158,
+        "count-sb20": 162,
+        "stage1": 125
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/PTCRISync/ptcris_v0_6_0_draft.als[19]": {
       "verdict_bucket": "agree_sat",
-      "ms": 853
+      "ms": 766,
+      "ms_by_mode": {
+        "count-sb0": 807,
+        "count-sb20": 828,
+        "stage1": 766
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/PTCRISync/ptcris_v0_6_0_draft.als[1]": {
       "verdict_bucket": "agree_sat",
-      "ms": 244
+      "ms": 190,
+      "ms_by_mode": {
+        "count-sb0": 212,
+        "count-sb20": 218,
+        "stage1": 190
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/PTCRISync/ptcris_v0_6_0_draft.als[2]": {
       "verdict_bucket": "agree_sat",
-      "ms": 134
+      "ms": 127,
+      "ms_by_mode": {
+        "count-sb0": 127,
+        "count-sb20": 143,
+        "stage1": 127
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/PTCRISync/ptcris_v0_6_0_draft.als[3]": {
       "verdict_bucket": "agree_sat",
-      "ms": 181
+      "ms": 166,
+      "ms_by_mode": {
+        "count-sb0": 152,
+        "count-sb20": 193,
+        "stage1": 166
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/PTCRISync/ptcris_v0_6_0_draft.als[4]": {
       "verdict_bucket": "agree_sat",
-      "ms": 518
+      "ms": 541,
+      "ms_by_mode": {
+        "count-sb0": 472,
+        "count-sb20": 557,
+        "stage1": 541
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/PTCRISync/ptcris_v0_6_0_draft.als[5]": {
       "verdict_bucket": "agree_sat",
-      "ms": 162
+      "ms": 162,
+      "ms_by_mode": {
+        "count-sb0": 174,
+        "count-sb20": 202,
+        "stage1": 162
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/PTCRISync/ptcris_v0_6_0_draft.als[6]": {
       "verdict_bucket": "agree_sat",
-      "ms": 259
+      "ms": 227,
+      "ms_by_mode": {
+        "count-sb0": 264,
+        "count-sb20": 276,
+        "stage1": 227
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/PTCRISync/ptcris_v0_6_0_draft.als[7]": {
       "verdict_bucket": "agree_sat",
-      "ms": 151
+      "ms": 131,
+      "ms_by_mode": {
+        "count-sb0": 148,
+        "count-sb20": 142,
+        "stage1": 131
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/PTCRISync/ptcris_v0_6_0_draft.als[8]": {
       "verdict_bucket": "agree_sat",
-      "ms": 129
+      "ms": 197,
+      "ms_by_mode": {
+        "count-sb0": 151,
+        "count-sb20": 133,
+        "stage1": 197
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/PTCRISync/ptcris_v0_6_0_draft.als[9]": {
       "verdict_bucket": "agree_sat",
-      "ms": 258
+      "ms": 364,
+      "ms_by_mode": {
+        "count-sb0": 270,
+        "count-sb20": 271,
+        "stage1": 364
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Puzzles/FarmerCrossing/farmer_pt.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 3
+      "ms": 3,
+      "ms_by_mode": {
+        "count-sb0": 7,
+        "count-sb20": 6,
+        "stage1": 3
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/CD2DBS_keys/dbs.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 3
+      "ms": 2,
+      "ms_by_mode": {
+        "count-sb0": 1629,
+        "count-sb20": 295,
+        "stage1": 2
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[0]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 11030
+      "ms": 9555,
+      "ms_by_mode": {
+        "count-sb0": 11301,
+        "count-sb20": 12807,
+        "stage1": 9555
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[10]": {
       "verdict_bucket": "agree_sat",
-      "ms": 302
+      "ms": 226,
+      "ms_by_mode": {
+        "count-sb0": 297,
+        "count-sb20": 380,
+        "stage1": 226
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[11]": {
       "verdict_bucket": "agree_sat",
-      "ms": 266
+      "ms": 216,
+      "ms_by_mode": {
+        "count-sb0": 266,
+        "count-sb20": 305,
+        "stage1": 216
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[12]": {
       "verdict_bucket": "agree_sat",
-      "ms": 181
+      "ms": 152,
+      "ms_by_mode": {
+        "count-sb0": 178,
+        "count-sb20": 202,
+        "stage1": 152
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[13]": {
       "verdict_bucket": "agree_sat",
-      "ms": 164
+      "ms": 123,
+      "ms_by_mode": {
+        "count-sb0": 160,
+        "count-sb20": 192,
+        "stage1": 123
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[14]": {
       "verdict_bucket": "agree_sat",
-      "ms": 170
+      "ms": 135,
+      "ms_by_mode": {
+        "count-sb0": 162,
+        "count-sb20": 173,
+        "stage1": 135
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[15]": {
       "verdict_bucket": "agree_sat",
-      "ms": 249
+      "ms": 197,
+      "ms_by_mode": {
+        "count-sb0": 258,
+        "count-sb20": 250,
+        "stage1": 197
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[16]": {
       "verdict_bucket": "agree_sat",
-      "ms": 180
+      "ms": 160,
+      "ms_by_mode": {
+        "count-sb0": 186,
+        "count-sb20": 199,
+        "stage1": 160
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[17]": {
       "verdict_bucket": "agree_sat",
-      "ms": 211
+      "ms": 142,
+      "ms_by_mode": {
+        "count-sb0": 166,
+        "count-sb20": 216,
+        "stage1": 142
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[18]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 11250
+      "ms": 6943,
+      "ms_by_mode": {
+        "count-sb0": 11435,
+        "count-sb20": 12286,
+        "stage1": 6943
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[19]": {
       "verdict_bucket": "agree_sat",
-      "ms": 178
+      "ms": 125,
+      "ms_by_mode": {
+        "count-sb0": 169,
+        "count-sb20": 215,
+        "stage1": 125
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[1]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 11331
+      "ms": 6638,
+      "ms_by_mode": {
+        "count-sb0": 10953,
+        "count-sb20": 12601,
+        "stage1": 6638
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[20]": {
       "verdict_bucket": "agree_sat",
-      "ms": 1125
+      "ms": 954,
+      "ms_by_mode": {
+        "count-sb0": 1138,
+        "count-sb20": 1197,
+        "stage1": 954
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[21]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 12415
+      "ms": 9288,
+      "ms_by_mode": {
+        "count-sb0": 12942,
+        "count-sb20": 13905,
+        "stage1": 9288
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[22]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 9975
+      "ms": 6654,
+      "ms_by_mode": {
+        "count-sb0": 10169,
+        "count-sb20": 8794,
+        "stage1": 6654
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[23]": {
       "verdict_bucket": "agree_sat",
-      "ms": 2542
+      "ms": 1861,
+      "ms_by_mode": {
+        "count-sb0": 2546,
+        "count-sb20": 2954,
+        "stage1": 1861
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[24]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 11168
+      "ms": 9580,
+      "ms_by_mode": {
+        "count-sb0": 11324,
+        "count-sb20": 12124,
+        "stage1": 9580
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[25]": {
       "verdict_bucket": "agree_sat",
-      "ms": 163
+      "ms": 143,
+      "ms_by_mode": {
+        "count-sb0": 183,
+        "count-sb20": 154,
+        "stage1": 143
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[26]": {
       "verdict_bucket": "agree_sat",
-      "ms": 193
+      "ms": 128,
+      "ms_by_mode": {
+        "count-sb0": 180,
+        "count-sb20": 172,
+        "stage1": 128
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[27]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 9024
+      "ms": 6183,
+      "ms_by_mode": {
+        "count-sb0": 9368,
+        "count-sb20": 8111,
+        "stage1": 6183
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[28]": {
       "verdict_bucket": "agree_sat",
-      "ms": 454
+      "ms": 379,
+      "ms_by_mode": {
+        "count-sb0": 465,
+        "count-sb20": 425,
+        "stage1": 379
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[29]": {
       "verdict_bucket": "agree_sat",
-      "ms": 156
+      "ms": 131,
+      "ms_by_mode": {
+        "count-sb0": 173,
+        "count-sb20": 147,
+        "stage1": 131
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[2]": {
       "verdict_bucket": "agree_sat",
-      "ms": 243
+      "ms": 216,
+      "ms_by_mode": {
+        "count-sb0": 262,
+        "count-sb20": 197,
+        "stage1": 216
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[30]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 7990
+      "ms": 6459,
+      "ms_by_mode": {
+        "count-sb0": 7681,
+        "count-sb20": 6543,
+        "stage1": 6459
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[31]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 8355
+      "ms": 5360,
+      "ms_by_mode": {
+        "count-sb0": 7990,
+        "count-sb20": 6823,
+        "stage1": 5360
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[32]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 9556
+      "ms": 8589,
+      "ms_by_mode": {
+        "count-sb0": 9867,
+        "count-sb20": 8823,
+        "stage1": 8589
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[33]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 9523
+      "ms": 9428,
+      "ms_by_mode": {
+        "count-sb0": 8299,
+        "count-sb20": 9145,
+        "stage1": 9428
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[34]": {
       "verdict_bucket": "agree_sat",
-      "ms": 158
+      "ms": 134,
+      "ms_by_mode": {
+        "count-sb0": 159,
+        "count-sb20": 178,
+        "stage1": 134
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[35]": {
       "verdict_bucket": "agree_sat",
-      "ms": 236
+      "ms": 156,
+      "ms_by_mode": {
+        "count-sb0": 255,
+        "count-sb20": 272,
+        "stage1": 156
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[3]": {
       "verdict_bucket": "agree_sat",
-      "ms": 212
+      "ms": 190,
+      "ms_by_mode": {
+        "count-sb0": 214,
+        "count-sb20": 211,
+        "stage1": 190
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[4]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 10520
+      "ms": 9144,
+      "ms_by_mode": {
+        "count-sb0": 11104,
+        "count-sb20": 11656,
+        "stage1": 9144
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[5]": {
       "verdict_bucket": "agree_sat",
-      "ms": 153
+      "ms": 133,
+      "ms_by_mode": {
+        "count-sb0": 162,
+        "count-sb20": 133,
+        "stage1": 133
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[6]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 12507
+      "ms": 6900,
+      "ms_by_mode": {
+        "count-sb0": 12612,
+        "count-sb20": 10908,
+        "stage1": 6900
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[7]": {
       "verdict_bucket": "agree_sat",
-      "ms": 1752
+      "ms": 1450,
+      "ms_by_mode": {
+        "count-sb0": 1682,
+        "count-sb20": 1488,
+        "stage1": 1450
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[8]": {
       "verdict_bucket": "agree_sat",
-      "ms": 188
+      "ms": 134,
+      "ms_by_mode": {
+        "count-sb0": 197,
+        "count-sb20": 153,
+        "stage1": 134
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als[9]": {
       "verdict_bucket": "agree_sat",
-      "ms": 307
+      "ms": 236,
+      "ms_by_mode": {
+        "count-sb0": 285,
+        "count-sb20": 337,
+        "stage1": 236
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/trace.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/FM2CF/fm2cfs.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 2
+      "ms": 2,
+      "ms_by_mode": {
+        "count-sb0": 422,
+        "count-sb20": 5,
+        "stage1": 2
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/FM2CF/fm2cfs.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 1
+      "ms": 2,
+      "ms_by_mode": {
+        "count-sb0": 1,
+        "count-sb20": 1,
+        "stage1": 2
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/FM2CF/fm2cfs.als[2]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 1
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 1,
+        "count-sb20": 1,
+        "stage1": 1
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/FM2CF/fm2cfs.als[3]": {
       "verdict_bucket": "agree_sat",
-      "ms": 1
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 627,
+        "count-sb20": 666,
+        "stage1": 1
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/FM2CF/fm2cfs.als[4]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 1
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 1,
+        "count-sb20": 1,
+        "stage1": 1
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/FM2CF/fm2cfs.als[5]": {
       "verdict_bucket": "agree_sat",
-      "ms": 1
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 7,
+        "count-sb20": 1,
+        "stage1": 1
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/FM2CF/fm2cfs.als[6]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 737
+      "ms": 672,
+      "ms_by_mode": {
+        "count-sb0": 751,
+        "count-sb20": 808,
+        "stage1": 672
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/FM2CF/fm2cfs.als[7]": {
       "verdict_bucket": "agree_sat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 1,
+        "count-sb20": 1,
+        "stage1": 0
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/FM2CF/fm2cfs.als[8]": {
       "verdict_bucket": "agree_sat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/FM2CF/fm2cfs.als[9]": {
       "verdict_bucket": "agree_sat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/HotelLocking/HotelExact.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 53
+      "ms": 42,
+      "ms_by_mode": {
+        "count-sb0": 65,
+        "count-sb20": 52,
+        "stage1": 42
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/HotelLocking/HotelExact.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 82
+      "ms": 74,
+      "ms_by_mode": {
+        "count-sb0": 82,
+        "count-sb20": 92,
+        "stage1": 74
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/HotelLocking/HotelVar.als[0]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 22603
+      "ms": 27511,
+      "ms_by_mode": {
+        "count-sb0": 23163,
+        "count-sb20": 25633,
+        "stage1": 27511
+      }
     },
     "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/HotelLocking/HotelVar.als[1]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 47235
+      "ms": 46012,
+      "ms_by_mode": {
+        "count-sb0": 44669,
+        "count-sb20": 46833,
+        "stage1": 46012
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[0]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 229
+      "ms": 237,
+      "ms_by_mode": {
+        "count-sb0": 275,
+        "count-sb20": 211,
+        "stage1": 237
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[10]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 192
+      "ms": 197,
+      "ms_by_mode": {
+        "count-sb0": 199,
+        "count-sb20": 209,
+        "stage1": 197
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[11]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 198
+      "ms": 211,
+      "ms_by_mode": {
+        "count-sb0": 176,
+        "count-sb20": 231,
+        "stage1": 211
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[12]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 204
+      "ms": 224,
+      "ms_by_mode": {
+        "count-sb0": 226,
+        "count-sb20": 208,
+        "stage1": 224
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[13]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 11493
+      "ms": 11383,
+      "ms_by_mode": {
+        "count-sb0": 9545,
+        "count-sb20": 10343,
+        "stage1": 11383
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[14]": {
       "verdict_bucket": "jar_nonverdict",
-      "ms": 13310
+      "ms": 13433,
+      "ms_by_mode": {
+        "count-sb0": 12842,
+        "count-sb20": 12756,
+        "stage1": 13433
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[15]": {
       "verdict_bucket": "jar_nonverdict",
-      "ms": 69113
+      "ms": 77802,
+      "ms_by_mode": {
+        "count-sb0": 69586,
+        "count-sb20": 69008,
+        "stage1": 77802
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[16]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 222
+      "ms": 219,
+      "ms_by_mode": {
+        "count-sb0": 241,
+        "count-sb20": 177,
+        "stage1": 219
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[17]": {
       "verdict_bucket": "jar_nonverdict",
-      "ms": 54931
+      "ms": 58997,
+      "ms_by_mode": {
+        "count-sb0": 55173,
+        "count-sb20": 54831,
+        "stage1": 58997
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[18]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 194
+      "ms": 221,
+      "ms_by_mode": {
+        "count-sb0": 218,
+        "count-sb20": 239,
+        "stage1": 221
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[19]": {
       "verdict_bucket": "jar_nonverdict",
-      "ms": 596
+      "ms": 735,
+      "ms_by_mode": {
+        "count-sb0": 533,
+        "count-sb20": 641,
+        "stage1": 735
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[1]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 228
+      "ms": 261,
+      "ms_by_mode": {
+        "count-sb0": 241,
+        "count-sb20": 283,
+        "stage1": 261
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[20]": {
       "verdict_bucket": "jar_nonverdict",
-      "ms": 1847
+      "ms": 1718,
+      "ms_by_mode": {
+        "count-sb0": 2191,
+        "count-sb20": 1772,
+        "stage1": 1718
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[21]": {
       "verdict_bucket": "jar_nonverdict",
-      "ms": 2336
+      "ms": 2273,
+      "ms_by_mode": {
+        "count-sb0": 1642,
+        "count-sb20": 2403,
+        "stage1": 2273
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[22]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 237
+      "ms": 199,
+      "ms_by_mode": {
+        "count-sb0": 225,
+        "count-sb20": 195,
+        "stage1": 199
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[23]": {
       "verdict_bucket": "jar_nonverdict",
-      "ms": 201474
+      "ms": 216011,
+      "ms_by_mode": {
+        "count-sb0": 199929,
+        "count-sb20": 199581,
+        "stage1": 216011
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[24]": {
       "verdict_bucket": "jar_nonverdict",
-      "ms": 986
+      "ms": 1219,
+      "ms_by_mode": {
+        "count-sb0": 1084,
+        "count-sb20": 1257,
+        "stage1": 1219
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[25]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 224
+      "ms": 208,
+      "ms_by_mode": {
+        "count-sb0": 194,
+        "count-sb20": 192,
+        "stage1": 208
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[26]": {
       "verdict_bucket": "jar_nonverdict",
-      "ms": 193554
+      "ms": 207671,
+      "ms_by_mode": {
+        "count-sb0": 192412,
+        "count-sb20": 191214,
+        "stage1": 207671
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[27]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 193
+      "ms": 205,
+      "ms_by_mode": {
+        "count-sb0": 262,
+        "count-sb20": 238,
+        "stage1": 205
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[28]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 180
+      "ms": 215,
+      "ms_by_mode": {
+        "count-sb0": 218,
+        "count-sb20": 222,
+        "stage1": 215
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[29]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 174
+      "ms": 193,
+      "ms_by_mode": {
+        "count-sb0": 203,
+        "count-sb20": 204,
+        "stage1": 193
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[2]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 220
+      "ms": 230,
+      "ms_by_mode": {
+        "count-sb0": 251,
+        "count-sb20": 232,
+        "stage1": 230
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[30]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 174
+      "ms": 174,
+      "ms_by_mode": {
+        "count-sb0": 199,
+        "count-sb20": 195,
+        "stage1": 174
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[31]": {
       "verdict_bucket": "jar_nonverdict",
-      "ms": 27840
+      "ms": 28309,
+      "ms_by_mode": {
+        "count-sb0": 27155,
+        "count-sb20": 26530,
+        "stage1": 28309
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[32]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 185
+      "ms": 213,
+      "ms_by_mode": {
+        "count-sb0": 217,
+        "count-sb20": 207,
+        "stage1": 213
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[33]": {
       "verdict_bucket": "jar_nonverdict",
-      "ms": 28153
+      "ms": 28193,
+      "ms_by_mode": {
+        "count-sb0": 27383,
+        "count-sb20": 27106,
+        "stage1": 28193
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[34]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 209
+      "ms": 232,
+      "ms_by_mode": {
+        "count-sb0": 177,
+        "count-sb20": 182,
+        "stage1": 232
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[35]": {
       "verdict_bucket": "jar_nonverdict",
-      "ms": 27360
+      "ms": 28029,
+      "ms_by_mode": {
+        "count-sb0": 26970,
+        "count-sb20": 26181,
+        "stage1": 28029
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[36]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 234
+      "ms": 221,
+      "ms_by_mode": {
+        "count-sb0": 216,
+        "count-sb20": 214,
+        "stage1": 221
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[37]": {
       "verdict_bucket": "jar_nonverdict",
-      "ms": 27124
+      "ms": 28660,
+      "ms_by_mode": {
+        "count-sb0": 27176,
+        "count-sb20": 25913,
+        "stage1": 28660
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[38]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 190
+      "ms": 211,
+      "ms_by_mode": {
+        "count-sb0": 172,
+        "count-sb20": 213,
+        "stage1": 211
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[3]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 211
+      "ms": 230,
+      "ms_by_mode": {
+        "count-sb0": 246,
+        "count-sb20": 246,
+        "stage1": 230
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[4]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 214
+      "ms": 235,
+      "ms_by_mode": {
+        "count-sb0": 272,
+        "count-sb20": 242,
+        "stage1": 235
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[5]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 208
+      "ms": 255,
+      "ms_by_mode": {
+        "count-sb0": 240,
+        "count-sb20": 250,
+        "stage1": 255
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[6]": {
       "verdict_bucket": "jar_nonverdict",
-      "ms": 5806
+      "ms": 6278,
+      "ms_by_mode": {
+        "count-sb0": 5894,
+        "count-sb20": 6051,
+        "stage1": 6278
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[7]": {
       "verdict_bucket": "jar_nonverdict",
-      "ms": 683
+      "ms": 542,
+      "ms_by_mode": {
+        "count-sb0": 802,
+        "count-sb20": 795,
+        "stage1": 542
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[8]": {
       "verdict_bucket": "jar_nonverdict",
-      "ms": 5806
+      "ms": 5831,
+      "ms_by_mode": {
+        "count-sb0": 5733,
+        "count-sb20": 5902,
+        "stage1": 5831
+      }
     },
     "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als[9]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 191
+      "ms": 202,
+      "ms_by_mode": {
+        "count-sb0": 178,
+        "count-sb20": 177,
+        "stage1": 202
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/discovery/INSLabel.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 17
+      "ms": 32,
+      "ms_by_mode": {
+        "count-sb0": 17,
+        "count-sb20": 17,
+        "stage1": 32
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/discovery/INSLabel.als[1]": {
       "verdict_bucket": "mettle_defer:lower:lowering",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/distributed-hashtable/chord2.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 197
+      "ms": 239,
+      "ms_by_mode": {
+        "count-sb0": 214,
+        "count-sb20": 236,
+        "stage1": 239
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/distributed-hashtable/chordbugmodel.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 1
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 2,
+        "count-sb20": 2,
+        "stage1": 1
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/distributed-hashtable/chordbugmodel.als[1]": {
       "verdict_bucket": "agree_sat",
-      "ms": 4
+      "ms": 4,
+      "ms_by_mode": {
+        "count-sb0": 2565,
+        "count-sb20": 2849,
+        "stage1": 4
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/distributed-hashtable/chordbugmodel.als[2]": {
       "verdict_bucket": "agree_sat",
-      "ms": 4
+      "ms": 4,
+      "ms_by_mode": {
+        "count-sb0": 2728,
+        "count-sb20": 3097,
+        "stage1": 4
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/distributed-hashtable/chordbugmodel.als[3]": {
       "verdict_bucket": "agree_sat",
-      "ms": 31
+      "ms": 33,
+      "ms_by_mode": {
+        "count-sb0": 10399,
+        "count-sb20": 12484,
+        "stage1": 33
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/distributed-hashtable/chordbugmodel.als[4]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 704
+      "ms": 1102,
+      "ms_by_mode": {
+        "count-sb0": 952,
+        "count-sb20": 826,
+        "stage1": 1102
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/distributed-hashtable/chordbugmodel.als[5]": {
       "verdict_bucket": "agree_sat",
-      "ms": 8
+      "ms": 13,
+      "ms_by_mode": {
+        "count-sb0": 7049,
+        "count-sb20": 6687,
+        "stage1": 13
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/gc/marksweepgc.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 5
+      "ms": 4,
+      "ms_by_mode": {
+        "count-sb0": 4,
+        "count-sb20": 5,
+        "stage1": 4
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/gc/marksweepgc.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 3
+      "ms": 4,
+      "ms_by_mode": {
+        "count-sb0": 4,
+        "count-sb20": 4,
+        "stage1": 4
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/gc/marksweepgc.als[2]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 6
+      "ms": 6,
+      "ms_by_mode": {
+        "count-sb0": 6,
+        "count-sb20": 6,
+        "stage1": 6
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/mapping/view-backing.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 2283
+      "ms": 3538,
+      "ms_by_mode": {
+        "count-sb0": 3108,
+        "count-sb20": 2741,
+        "stage1": 3538
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/multicasting/iolus.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 2867
+      "ms": 4205,
+      "ms_by_mode": {
+        "count-sb0": 2996,
+        "count-sb20": 3618,
+        "stage1": 4205
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/mutex/dijkstra-2-process.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 0
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 268,
+        "count-sb20": 260,
+        "stage1": 1
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/mutex/dijkstra-2-process.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 3
+      "ms": 3,
+      "ms_by_mode": {
+        "count-sb0": 3,
+        "count-sb20": 3,
+        "stage1": 3
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/mutex/dijkstra-2-process.als[2]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 83
+      "ms": 88,
+      "ms_by_mode": {
+        "count-sb0": 100,
+        "count-sb20": 92,
+        "stage1": 88
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/mutex/dijkstra-K-state.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 3
+      "ms": 3,
+      "ms_by_mode": {
+        "count-sb0": 395,
+        "count-sb20": 383,
+        "stage1": 3
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/mutex/dijkstra-K-state.als[1]": {
       "verdict_bucket": "agree_sat",
-      "ms": 7
+      "ms": 7,
+      "ms_by_mode": {
+        "count-sb0": 4533,
+        "count-sb20": 4246,
+        "stage1": 7
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/mutex/dijkstra-K-state.als[2]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 1646
+      "ms": 2547,
+      "ms_by_mode": {
+        "count-sb0": 2400,
+        "count-sb20": 2186,
+        "stage1": 2547
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/mutex/peterson.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 16
+      "ms": 15,
+      "ms_by_mode": {
+        "count-sb0": 15,
+        "count-sb20": 15,
+        "stage1": 15
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/mutex/peterson.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 29
+      "ms": 30,
+      "ms_by_mode": {
+        "count-sb0": 25,
+        "count-sb20": 35,
+        "stage1": 30
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/mutex/peterson.als[2]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 7
+      "ms": 6,
+      "ms_by_mode": {
+        "count-sb0": 6,
+        "count-sb20": 11,
+        "stage1": 6
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/algorithms/mutex/peterson.als[3]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 8
+      "ms": 7,
+      "ms_by_mode": {
+        "count-sb0": 7,
+        "count-sb20": 8,
+        "stage1": 7
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/ietf-rfcs/rfc7617-BasicAuth/basic-auth.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 5
+      "ms": 5,
+      "ms_by_mode": {
+        "count-sb0": 2200,
+        "count-sb20": 4105,
+        "stage1": 5
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/logic/syllogism/syllogism.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/logic/syllogism/syllogism.als[1]": {
       "verdict_bucket": "agree_sat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/models/file-system/file_system.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 24
+      "ms": 24,
+      "ms_by_mode": {
+        "count-sb0": 2385,
+        "count-sb20": 2311,
+        "stage1": 24
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/models/file-system/file_system.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 3
+      "ms": 4,
+      "ms_by_mode": {
+        "count-sb0": 4,
+        "count-sb20": 4,
+        "stage1": 4
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/models/java/java-map.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 406
+      "ms": 472,
+      "ms_by_mode": {
+        "count-sb0": 522,
+        "count-sb20": 461,
+        "stage1": 472
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/models/java/javatypes.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 1
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 623,
+        "count-sb20": 569,
+        "stage1": 1
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/models/java/javatypes_soundness.als[0]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 1024
+      "ms": 1371,
+      "ms_by_mode": {
+        "count-sb0": 1198,
+        "count-sb20": 1179,
+        "stage1": 1371
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/models/java/javatypes_soundness.als[1]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 275
+      "ms": 293,
+      "ms_by_mode": {
+        "count-sb0": 273,
+        "count-sb20": 295,
+        "stage1": 293
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/models/logic/philosophers.als[0]": {
       "verdict_bucket": "mettle_defer:lower:lowering",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/models/logic/philosophers.als[1]": {
       "verdict_bucket": "mettle_defer:lower:lowering",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/models/microsoft-com/com.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 3
+      "ms": 3,
+      "ms_by_mode": {
+        "count-sb0": 6,
+        "count-sb20": 7,
+        "stage1": 3
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/models/microsoft-com/com.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 5
+      "ms": 5,
+      "ms_by_mode": {
+        "count-sb0": 5,
+        "count-sb20": 5,
+        "stage1": 5
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/models/microsoft-com/com.als[2]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 3
+      "ms": 3,
+      "ms_by_mode": {
+        "count-sb0": 3,
+        "count-sb20": 3,
+        "stage1": 3
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/models/microsoft-com/com.als[3]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 4
+      "ms": 4,
+      "ms_by_mode": {
+        "count-sb0": 4,
+        "count-sb20": 4,
+        "stage1": 4
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/models/microsoft-com/com.als[4]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 3
+      "ms": 3,
+      "ms_by_mode": {
+        "count-sb0": 3,
+        "count-sb20": 3,
+        "stage1": 3
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/paper-examples/jackson-cacm-2019/origin-tracking.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 1
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 87,
+        "count-sb20": 7,
+        "stage1": 1
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/paper-examples/jackson-cacm-2019/origin-tracking.als[1]": {
       "verdict_bucket": "agree_sat",
-      "ms": 14
+      "ms": 13,
+      "ms_by_mode": {
+        "count-sb0": 2307,
+        "count-sb20": 101,
+        "stage1": 13
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/puzzles/coloring/color-australia.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 1
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 1,
+        "count-sb20": 1,
+        "stage1": 1
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/puzzles/einstein/einstein-wikipedia.als[0]": {
       "verdict_bucket": "mettle_defer:lower:lowering",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/puzzles/farmer-chicken-fox/farmer.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 3
+      "ms": 3,
+      "ms_by_mode": {
+        "count-sb0": 6,
+        "count-sb20": 6,
+        "stage1": 3
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/puzzles/farmer-chicken-fox/farmer.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 10
+      "ms": 10,
+      "ms_by_mode": {
+        "count-sb0": 10,
+        "count-sb20": 10,
+        "stage1": 10
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/puzzles/halmos-handshake/handshake.als[0]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 829
+      "ms": 893,
+      "ms_by_mode": {
+        "count-sb0": 884,
+        "count-sb20": 837,
+        "stage1": 893
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/puzzles/halmos-handshake/handshake.als[1]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 1024
+      "ms": 1213,
+      "ms_by_mode": {
+        "count-sb0": 897,
+        "count-sb20": 1029,
+        "stage1": 1213
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/puzzles/halmos-handshake/handshake.als[2]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 1682
+      "ms": 1895,
+      "ms_by_mode": {
+        "count-sb0": 1740,
+        "count-sb20": 1827,
+        "stage1": 1895
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/puzzles/halmos-handshake/handshake.als[3]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 3131
+      "ms": 3385,
+      "ms_by_mode": {
+        "count-sb0": 3467,
+        "count-sb20": 3400,
+        "stage1": 3385
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/puzzles/money.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 392
+      "ms": 459,
+      "ms_by_mode": {
+        "count-sb0": 933,
+        "count-sb20": 845,
+        "stage1": 459
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/puzzles/tower-hanoi/hanoi.als[0]": {
       "verdict_bucket": "mettle_defer:over_budget",
-      "ms": 1837
+      "ms": 1981,
+      "ms_by_mode": {
+        "count-sb0": 1774,
+        "count-sb20": 1793,
+        "stage1": 1981
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/puzzles/tower-hanoi/hanoi.als[1]": {
       "verdict_bucket": "agree_sat",
-      "ms": 15
+      "ms": 9,
+      "ms_by_mode": {
+        "count-sb0": 17,
+        "count-sb20": 16,
+        "stage1": 9
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/simple-models/4-bit-adder/4-bit-adder.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 25
+      "ms": 20,
+      "ms_by_mode": {
+        "count-sb0": 49,
+        "count-sb20": 48,
+        "stage1": 20
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/simple-models/books/birthday.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 1
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 27,
+        "count-sb20": 27,
+        "stage1": 0
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/simple-models/games/life.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 14
+      "ms": 11,
+      "ms_by_mode": {
+        "count-sb0": 11,
+        "count-sb20": 11,
+        "stage1": 11
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/simple-models/games/life.als[1]": {
       "verdict_bucket": "agree_sat",
-      "ms": 8540
+      "ms": 9432,
+      "ms_by_mode": {
+        "count-sb0": 8038,
+        "count-sb20": 9501,
+        "stage1": 9432
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/simple-models/games/life.als[2]": {
       "verdict_bucket": "agree_sat",
-      "ms": 19
+      "ms": 18,
+      "ms_by_mode": {
+        "count-sb0": 19,
+        "count-sb20": 18,
+        "stage1": 18
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/simple-models/genealogy/genealogy.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 3
+      "ms": 3,
+      "ms_by_mode": {
+        "count-sb0": 220,
+        "count-sb20": 210,
+        "stage1": 3
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/simple-models/no-solution/trivial.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/simple-models/state-machine/flip-flop.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 1
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 2,
+        "count-sb20": 2,
+        "stage1": 1
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/simple-models/state-machine/reset-flipflop-with-enable.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 1
+      "ms": 1,
+      "ms_by_mode": {
+        "count-sb0": 28,
+        "count-sb20": 24,
+        "stage1": 1
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/utilities/time/overlapping-ranges.als[0]": {
       "verdict_bucket": "mettle_defer:lower:lowering",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/portus-63/expert-models/gumxtrzzbkrtwi7jtwyu7eibi3fwhgmf-models/utilities/trace/trace.als[0]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 0
+      "ms": 0,
+      "ms_by_mode": {
+        "count-sb0": 0,
+        "count-sb20": 0,
+        "stage1": 0
+      }
     },
     "corpus/portus-63/expert-models/lkicptlz3eklrbu7ppmltlkebwrvzhdq-zigbee-alloy-svn-to-git/trunk/base/event.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 5
+      "ms": 5,
+      "ms_by_mode": {
+        "count-sb0": 6093,
+        "count-sb20": 7250,
+        "stage1": 5
+      }
     },
     "corpus/portus-63/expert-models/lkicptlz3eklrbu7ppmltlkebwrvzhdq-zigbee-alloy-svn-to-git/trunk/base/random_event.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 6
+      "ms": 10,
+      "ms_by_mode": {
+        "count-sb0": 7631,
+        "count-sb20": 8028,
+        "stage1": 10
+      }
     },
     "corpus/portus-63/expert-models/oujlbmnutprdhddstyudppn7t35n43os-CANBus/CANBus.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 3
+      "ms": 6,
+      "ms_by_mode": {
+        "count-sb0": 1553,
+        "count-sb20": 1908,
+        "stage1": 6
+      }
     },
     "corpus/portus-63/expert-models/oujlbmnutprdhddstyudppn7t35n43os-CANBus/CANBus.als[1]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 13
+      "ms": 13,
+      "ms_by_mode": {
+        "count-sb0": 20,
+        "count-sb20": 13,
+        "stage1": 13
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/tso_transistency_perturbed.als[0]": {
       "verdict_bucket": "agree_sat",
-      "ms": 976
+      "ms": 1195,
+      "ms_by_mode": {
+        "count-sb0": 1044,
+        "count-sb20": 3961,
+        "stage1": 1195
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/tso_transistency_perturbed.als[1]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 91
+      "ms": 114,
+      "ms_by_mode": {
+        "count-sb0": 121,
+        "count-sb20": 105,
+        "stage1": 114
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/tso_transistency_perturbed.als[2]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 118
+      "ms": 125,
+      "ms_by_mode": {
+        "count-sb0": 133,
+        "count-sb20": 122,
+        "stage1": 125
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/tso_transistency_perturbed.als[3]": {
       "verdict_bucket": "agree_sat",
-      "ms": 963
+      "ms": 1084,
+      "ms_by_mode": {
+        "count-sb0": 998,
+        "count-sb20": 3581,
+        "stage1": 1084
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/tso_transistency_perturbed.als[4]": {
       "verdict_bucket": "agree_sat",
-      "ms": 1025
+      "ms": 1155,
+      "ms_by_mode": {
+        "count-sb0": 1117,
+        "count-sb20": 2920,
+        "stage1": 1155
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[0]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 147
+      "ms": 132,
+      "ms_by_mode": {
+        "count-sb0": 147,
+        "count-sb20": 147,
+        "stage1": 132
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[10]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 163
+      "ms": 120,
+      "ms_by_mode": {
+        "count-sb0": 129,
+        "count-sb20": 142,
+        "stage1": 120
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[11]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 136
+      "ms": 133,
+      "ms_by_mode": {
+        "count-sb0": 137,
+        "count-sb20": 155,
+        "stage1": 133
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[12]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 119
+      "ms": 148,
+      "ms_by_mode": {
+        "count-sb0": 142,
+        "count-sb20": 153,
+        "stage1": 148
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[13]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 165
+      "ms": 176,
+      "ms_by_mode": {
+        "count-sb0": 164,
+        "count-sb20": 204,
+        "stage1": 176
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[14]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 103
+      "ms": 110,
+      "ms_by_mode": {
+        "count-sb0": 108,
+        "count-sb20": 121,
+        "stage1": 110
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[15]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 83
+      "ms": 90,
+      "ms_by_mode": {
+        "count-sb0": 111,
+        "count-sb20": 82,
+        "stage1": 90
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[16]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 90
+      "ms": 99,
+      "ms_by_mode": {
+        "count-sb0": 105,
+        "count-sb20": 84,
+        "stage1": 99
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[17]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 88
+      "ms": 94,
+      "ms_by_mode": {
+        "count-sb0": 94,
+        "count-sb20": 95,
+        "stage1": 94
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[18]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 83
+      "ms": 75,
+      "ms_by_mode": {
+        "count-sb0": 96,
+        "count-sb20": 88,
+        "stage1": 75
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[19]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 89
+      "ms": 109,
+      "ms_by_mode": {
+        "count-sb0": 110,
+        "count-sb20": 91,
+        "stage1": 109
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[1]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 117
+      "ms": 115,
+      "ms_by_mode": {
+        "count-sb0": 156,
+        "count-sb20": 102,
+        "stage1": 115
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[20]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 80
+      "ms": 90,
+      "ms_by_mode": {
+        "count-sb0": 87,
+        "count-sb20": 80,
+        "stage1": 90
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[21]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 82
+      "ms": 91,
+      "ms_by_mode": {
+        "count-sb0": 113,
+        "count-sb20": 100,
+        "stage1": 91
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[22]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 140
+      "ms": 137,
+      "ms_by_mode": {
+        "count-sb0": 135,
+        "count-sb20": 120,
+        "stage1": 137
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[23]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 92
+      "ms": 83,
+      "ms_by_mode": {
+        "count-sb0": 74,
+        "count-sb20": 81,
+        "stage1": 83
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[24]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 129
+      "ms": 115,
+      "ms_by_mode": {
+        "count-sb0": 73,
+        "count-sb20": 82,
+        "stage1": 115
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[25]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 79
+      "ms": 80,
+      "ms_by_mode": {
+        "count-sb0": 75,
+        "count-sb20": 80,
+        "stage1": 80
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[26]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 76
+      "ms": 72,
+      "ms_by_mode": {
+        "count-sb0": 82,
+        "count-sb20": 73,
+        "stage1": 72
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[27]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 169
+      "ms": 179,
+      "ms_by_mode": {
+        "count-sb0": 166,
+        "count-sb20": 178,
+        "stage1": 179
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[28]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 98
+      "ms": 90,
+      "ms_by_mode": {
+        "count-sb0": 131,
+        "count-sb20": 96,
+        "stage1": 90
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[29]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 120
+      "ms": 140,
+      "ms_by_mode": {
+        "count-sb0": 146,
+        "count-sb20": 121,
+        "stage1": 140
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[2]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 136
+      "ms": 134,
+      "ms_by_mode": {
+        "count-sb0": 127,
+        "count-sb20": 132,
+        "stage1": 134
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[30]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 138
+      "ms": 134,
+      "ms_by_mode": {
+        "count-sb0": 177,
+        "count-sb20": 157,
+        "stage1": 134
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[31]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 200
+      "ms": 208,
+      "ms_by_mode": {
+        "count-sb0": 191,
+        "count-sb20": 207,
+        "stage1": 208
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[32]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 119
+      "ms": 247,
+      "ms_by_mode": {
+        "count-sb0": 133,
+        "count-sb20": 128,
+        "stage1": 247
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[33]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 82
+      "ms": 75,
+      "ms_by_mode": {
+        "count-sb0": 91,
+        "count-sb20": 91,
+        "stage1": 75
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[34]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 74
+      "ms": 72,
+      "ms_by_mode": {
+        "count-sb0": 73,
+        "count-sb20": 80,
+        "stage1": 72
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[35]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 77
+      "ms": 79,
+      "ms_by_mode": {
+        "count-sb0": 83,
+        "count-sb20": 64,
+        "stage1": 79
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[3]": {
       "verdict_bucket": "agree_sat",
-      "ms": 1048
+      "ms": 957,
+      "ms_by_mode": {
+        "count-sb0": 1053,
+        "count-sb20": 1052,
+        "stage1": 957
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[4]": {
       "verdict_bucket": "agree_sat",
-      "ms": 1089
+      "ms": 1036,
+      "ms_by_mode": {
+        "count-sb0": 1203,
+        "count-sb20": 1204,
+        "stage1": 1036
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[5]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 133
+      "ms": 131,
+      "ms_by_mode": {
+        "count-sb0": 148,
+        "count-sb20": 138,
+        "stage1": 131
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[6]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 95
+      "ms": 88,
+      "ms_by_mode": {
+        "count-sb0": 110,
+        "count-sb20": 99,
+        "stage1": 88
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[7]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 98
+      "ms": 90,
+      "ms_by_mode": {
+        "count-sb0": 90,
+        "count-sb20": 93,
+        "stage1": 90
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[8]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 89
+      "ms": 129,
+      "ms_by_mode": {
+        "count-sb0": 100,
+        "count-sb20": 123,
+        "stage1": 129
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimality_check.als[9]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 136
+      "ms": 145,
+      "ms_by_mode": {
+        "count-sb0": 133,
+        "count-sb20": 124,
+        "stage1": 145
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[0]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 153
+      "ms": 155,
+      "ms_by_mode": {
+        "count-sb0": 143,
+        "count-sb20": 151,
+        "stage1": 155
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[10]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 131
+      "ms": 141,
+      "ms_by_mode": {
+        "count-sb0": 136,
+        "count-sb20": 133,
+        "stage1": 141
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[11]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 127
+      "ms": 117,
+      "ms_by_mode": {
+        "count-sb0": 121,
+        "count-sb20": 126,
+        "stage1": 117
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[12]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 131
+      "ms": 126,
+      "ms_by_mode": {
+        "count-sb0": 136,
+        "count-sb20": 130,
+        "stage1": 126
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[13]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 174
+      "ms": 150,
+      "ms_by_mode": {
+        "count-sb0": 169,
+        "count-sb20": 162,
+        "stage1": 150
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[14]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 104
+      "ms": 182,
+      "ms_by_mode": {
+        "count-sb0": 112,
+        "count-sb20": 108,
+        "stage1": 182
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[15]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 89
+      "ms": 118,
+      "ms_by_mode": {
+        "count-sb0": 73,
+        "count-sb20": 90,
+        "stage1": 118
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[16]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 82
+      "ms": 91,
+      "ms_by_mode": {
+        "count-sb0": 96,
+        "count-sb20": 89,
+        "stage1": 91
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[17]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 81
+      "ms": 87,
+      "ms_by_mode": {
+        "count-sb0": 75,
+        "count-sb20": 90,
+        "stage1": 87
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[18]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 81
+      "ms": 89,
+      "ms_by_mode": {
+        "count-sb0": 102,
+        "count-sb20": 82,
+        "stage1": 89
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[19]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 76
+      "ms": 83,
+      "ms_by_mode": {
+        "count-sb0": 118,
+        "count-sb20": 97,
+        "stage1": 83
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[1]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 101
+      "ms": 99,
+      "ms_by_mode": {
+        "count-sb0": 96,
+        "count-sb20": 88,
+        "stage1": 99
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[20]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 94
+      "ms": 90,
+      "ms_by_mode": {
+        "count-sb0": 88,
+        "count-sb20": 95,
+        "stage1": 90
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[21]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 97
+      "ms": 93,
+      "ms_by_mode": {
+        "count-sb0": 110,
+        "count-sb20": 74,
+        "stage1": 93
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[22]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 120
+      "ms": 141,
+      "ms_by_mode": {
+        "count-sb0": 147,
+        "count-sb20": 134,
+        "stage1": 141
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[23]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 90
+      "ms": 102,
+      "ms_by_mode": {
+        "count-sb0": 95,
+        "count-sb20": 109,
+        "stage1": 102
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[24]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 89
+      "ms": 97,
+      "ms_by_mode": {
+        "count-sb0": 105,
+        "count-sb20": 103,
+        "stage1": 97
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[25]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 70
+      "ms": 71,
+      "ms_by_mode": {
+        "count-sb0": 80,
+        "count-sb20": 82,
+        "stage1": 71
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[26]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 71
+      "ms": 73,
+      "ms_by_mode": {
+        "count-sb0": 66,
+        "count-sb20": 98,
+        "stage1": 73
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[27]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 179
+      "ms": 161,
+      "ms_by_mode": {
+        "count-sb0": 168,
+        "count-sb20": 180,
+        "stage1": 161
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[28]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 98
+      "ms": 97,
+      "ms_by_mode": {
+        "count-sb0": 83,
+        "count-sb20": 91,
+        "stage1": 97
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[29]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 148
+      "ms": 122,
+      "ms_by_mode": {
+        "count-sb0": 133,
+        "count-sb20": 126,
+        "stage1": 122
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[2]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 127
+      "ms": 117,
+      "ms_by_mode": {
+        "count-sb0": 133,
+        "count-sb20": 127,
+        "stage1": 117
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[30]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 151
+      "ms": 146,
+      "ms_by_mode": {
+        "count-sb0": 152,
+        "count-sb20": 156,
+        "stage1": 146
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[31]": {
       "verdict_bucket": "agree_unsat",
-      "ms": 214
+      "ms": 193,
+      "ms_by_mode": {
+        "count-sb0": 205,
+        "count-sb20": 209,
+        "stage1": 193
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[32]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 138
+      "ms": 139,
+      "ms_by_mode": {
+        "count-sb0": 140,
+        "count-sb20": 140,
+        "stage1": 139
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[33]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 96
+      "ms": 88,
+      "ms_by_mode": {
+        "count-sb0": 98,
+        "count-sb20": 93,
+        "stage1": 88
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[34]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 67
+      "ms": 86,
+      "ms_by_mode": {
+        "count-sb0": 66,
+        "count-sb20": 73,
+        "stage1": 86
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[35]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 67
+      "ms": 73,
+      "ms_by_mode": {
+        "count-sb0": 71,
+        "count-sb20": 88,
+        "stage1": 73
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[3]": {
       "verdict_bucket": "agree_sat",
-      "ms": 797
+      "ms": 814,
+      "ms_by_mode": {
+        "count-sb0": 768,
+        "count-sb20": 745,
+        "stage1": 814
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[4]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 137
+      "ms": 159,
+      "ms_by_mode": {
+        "count-sb0": 159,
+        "count-sb20": 150,
+        "stage1": 159
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[5]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 126
+      "ms": 140,
+      "ms_by_mode": {
+        "count-sb0": 124,
+        "count-sb20": 137,
+        "stage1": 140
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[6]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 105
+      "ms": 147,
+      "ms_by_mode": {
+        "count-sb0": 95,
+        "count-sb20": 111,
+        "stage1": 147
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[7]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 125
+      "ms": 96,
+      "ms_by_mode": {
+        "count-sb0": 105,
+        "count-sb20": 97,
+        "stage1": 96
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[8]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 96
+      "ms": 99,
+      "ms_by_mode": {
+        "count-sb0": 101,
+        "count-sb20": 95,
+        "stage1": 99
+      }
     },
     "corpus/portus-63/expert-models/x7t75qqe5fr6uzitot5sdu63o7drnur5-TransForm/util/tso_transistency_perturbed_minimize.als[9]": {
       "verdict_bucket": "mettle_defer:capacity",
-      "ms": 134
+      "ms": 142,
+      "ms_by_mode": {
+        "count-sb0": 136,
+        "count-sb20": 136,
+        "stage1": 142
+      }
     }
   }
 }
