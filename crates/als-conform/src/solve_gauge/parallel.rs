@@ -17,6 +17,13 @@
 //! finish and fold), and the trigger string is returned. A fail-fast partial run
 //! is therefore not byte-stable across job counts; a full run is (every item is
 //! dispatched and folded in position order regardless of `jobs`).
+//!
+//! **Scheduling vs. folding (mt-057 item 2).** [`lpt_order`] computes a
+//! longest-processing-time-first dispatch permutation from recorded costs, and
+//! [`parallel_fold_ordered`] dispatches in that order while returning results
+//! indexed by the item's **original** position. Execution order therefore has no
+//! way to reach the caller's fold, which is what makes reordering provably
+//! byte-neutral (STYLE D1/D5).
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
@@ -111,6 +118,73 @@ where
     (results, trig)
 }
 
+/// The longest-processing-time-first dispatch permutation over `items`.
+///
+/// Returns positions into `items`, most expensive first, so the tail starts
+/// instead of finishing last (classic LPT list scheduling). An item with **no
+/// recorded cost sorts first**, ahead of every measured item: an unmeasured item
+/// is one whose runtime we cannot bound at all — usually new or just-edited —
+/// so treating it as `+inf` is the choice that minimizes the risk of it becoming
+/// the straggler. Ties (including all-unknown) break on the original position,
+/// so the permutation is a total order and identical run to run.
+pub(crate) fn lpt_order<T>(items: &[T], cost: impl Fn(&T) -> Option<u64>) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..items.len()).collect();
+    // `None` → `u64::MAX` puts unknowns first under the descending sort.
+    let key = |i: &usize| cost(&items[*i]).unwrap_or(u64::MAX);
+    order.sort_by(|a, b| key(b).cmp(&key(a)).then_with(|| a.cmp(b)));
+    order
+}
+
+/// [`parallel_fold`], but dispatching `items` in `order` while returning results
+/// indexed by each item's **original** position.
+///
+/// This is the whole reason LPT cannot move a byte: the caller still folds
+/// `results[0..n]` in position order, exactly as if nothing had been reordered.
+/// `on_result` likewise receives original positions.
+#[allow(clippy::too_many_arguments, reason = "one cohesive fan-out primitive")]
+pub(crate) fn parallel_fold_ordered<T, R>(
+    items: &[T],
+    order: &[usize],
+    jobs: usize,
+    fail_fast: bool,
+    progress: &mut dyn FnMut(&str),
+    label: impl Fn(&T) -> String,
+    on_result: &mut dyn FnMut(usize, &R),
+    work: impl Fn(&T, &mut dyn FnMut(&str)) -> R + Sync,
+    trigger: impl Fn(&R) -> Option<String>,
+) -> (Vec<Option<R>>, Option<String>)
+where
+    T: Sync,
+    R: Send,
+{
+    debug_assert_eq!(
+        order.len(),
+        items.len(),
+        "dispatch order must be a permutation of the items"
+    );
+    let scheduled: Vec<&T> = order.iter().map(|&i| &items[i]).collect();
+    let mut on_scheduled = |slot: usize, r: &R| on_result(order[slot], r);
+    let (by_slot, trig) = parallel_fold(
+        &scheduled,
+        jobs,
+        fail_fast,
+        progress,
+        |t: &&T| label(t),
+        &mut on_scheduled,
+        |t: &&T, send: &mut dyn FnMut(&str)| work(t, send),
+        trigger,
+    );
+
+    // Invert the permutation: slot `j` carried the item at original position
+    // `order[j]`.
+    let mut by_position: Vec<Option<R>> = Vec::with_capacity(items.len());
+    by_position.resize_with(items.len(), || None);
+    for (slot, r) in by_slot.into_iter().enumerate() {
+        by_position[order[slot]] = r;
+    }
+    (by_position, trig)
+}
+
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -166,5 +240,79 @@ mod tests {
         assert_eq!(trig.as_deref(), Some("hit 3"));
         // Dispatch stops after the trigger fires: not every item runs (partial).
         assert!(results.iter().filter(|r| r.is_some()).count() < 2000);
+    }
+
+    #[test]
+    fn lpt_puts_unknowns_first_then_descending_cost() {
+        // (name, recorded cost): "a"/"d" tie at 10, "b"/"e" are both unknown.
+        let items = [
+            ("a", Some(10)),
+            ("b", None),
+            ("c", Some(500)),
+            ("d", Some(10)),
+            ("e", None),
+        ];
+        // Unknowns (b, e) first in original order, then 500, then the 10-tie in
+        // original order.
+        assert_eq!(lpt_order(&items, |t| t.1), vec![1, 4, 2, 0, 3]);
+    }
+
+    #[test]
+    fn lpt_order_is_a_permutation_and_stable() {
+        let items: Vec<u64> = (0..64).collect();
+        // Deliberately degenerate costs: all equal → the original order.
+        assert_eq!(lpt_order(&items, |_| Some(7)), (0..64).collect::<Vec<_>>());
+        // And identical across calls with a mixed cost function.
+        let cost = |t: &u64| (!t.is_multiple_of(3)).then_some((*t * 37) % 101);
+        assert_eq!(lpt_order(&items, cost), lpt_order(&items, cost));
+        let mut sorted = lpt_order(&items, cost);
+        sorted.sort_unstable();
+        assert_eq!(sorted, (0..64).collect::<Vec<_>>());
+    }
+
+    /// The determinism gate for mt-057 item 2: reordering dispatch must not move
+    /// a single folded byte, at any job count.
+    #[test]
+    fn dispatch_order_never_changes_the_folded_result() {
+        let items: Vec<u64> = (0..64).collect();
+        let run = |order: &[usize], jobs: usize| {
+            let mut seen: Vec<usize> = Vec::new();
+            let mut on_result = |i: usize, _: &String| seen.push(i);
+            let (results, trig) = parallel_fold_ordered(
+                &items,
+                order,
+                jobs,
+                false,
+                &mut |_| {},
+                ToString::to_string,
+                &mut on_result,
+                |t: &u64, _send: &mut dyn FnMut(&str)| format!("item-{t}"),
+                |_| None,
+            );
+            assert!(trig.is_none());
+            // Every original position is reported back exactly once.
+            let mut sorted = seen;
+            sorted.sort_unstable();
+            assert_eq!(sorted, (0..64).collect::<Vec<_>>());
+            results
+                .into_iter()
+                .map(Option::unwrap)
+                .collect::<Vec<String>>()
+        };
+
+        let identity: Vec<usize> = (0..64).collect();
+        let expected = run(&identity, 1);
+        assert_eq!(expected[0], "item-0");
+        assert_eq!(expected[63], "item-63");
+
+        // A reversed schedule, an LPT schedule, and a pathological one all fold
+        // to the same position-ordered vector, at 1, 4 and 8 workers.
+        let reversed: Vec<usize> = (0..64).rev().collect();
+        let lpt = lpt_order(&items, |t| (!t.is_multiple_of(5)).then_some(64 - *t));
+        for order in [&identity, &reversed, &lpt] {
+            for jobs in [1, 4, 8] {
+                assert_eq!(run(order, jobs), expected, "order/jobs must not matter");
+            }
+        }
     }
 }

@@ -41,5 +41,6 @@ pub use model::{CommandResult, FileOutcome, FileResult, Outcome, ShimErrorKind};
 pub use scorecard::{Scorecard, Totals};
 pub use shim::{ensure_shim_compiled, run_oracle_on_file, run_oracle_on_files};
 pub use solve_gauge::refresh::refresh_counts;
+pub use solve_gauge::sweep_baseline::{SweepBaselineFile, SweepConfig, SweepDelta, SweepEntry};
 pub use solve_gauge::{run_gauge, GaugeConfig, PerCommand, SolveGaugeReport};
 pub use status::StatusFile;

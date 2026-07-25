@@ -10,10 +10,13 @@
 //!   existential that mettle now skolemizes at depth 0 (mt-047), so its SB-0 count
 //!   matches the jar too (561 = 561) → `count_match` (was `skip_fo_skolem`).
 
-use std::path::PathBuf;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use als_conform::{refresh_counts, run_gauge, GaugeConfig};
+use als_conform::{
+    refresh_counts, run_gauge, GaugeConfig, SweepBaselineFile, SweepConfig, SweepEntry,
+};
 
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -49,6 +52,9 @@ fn test1_config() -> GaugeConfig {
         only: Vec::new(),
         from_report: None,
         from_buckets: Vec::new(),
+        delta: false,
+        capture_sweep: None,
+        capture_commit: None,
     }
 }
 
@@ -135,4 +141,312 @@ fn refresh_counts_resume_smoke() {
     assert_eq!(first, second, "resume must not change a complete baseline");
 
     std::fs::remove_file(&out).ok();
+}
+
+// ---------------------------------------------------------------------------
+// mt-057: the sweep-baseline artifact. These need no jar — stage 1 only, with
+// an empty baselines dir (every command is `no_baseline`), over the crate's own
+// `fixtures/` corpus.
+// ---------------------------------------------------------------------------
+
+fn scratch_dir(tag: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("als-sweep-it-{tag}-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(&dir).expect("scratch dir");
+    dir
+}
+
+/// Stage-1-only config over the crate fixtures, with `baselines_dir` pointed at
+/// a scratch directory the test owns.
+fn fixtures_config(baselines_dir: &Path, jobs: usize) -> GaugeConfig {
+    let root = workspace_root();
+    GaugeConfig {
+        roots: vec![root.join("crates/als-conform/fixtures")],
+        workspace_root: root,
+        baselines_dir: baselines_dir.to_path_buf(),
+        conflict_budget: 10_000,
+        encode_budget: 4_000_000,
+        primary_var_cap: 20_000,
+        allow_overflow: false,
+        symmetry: 20,
+        count_symmetry: 0,
+        count: false,
+        count_cap: 10_000,
+        enum_budget: 250_000_000,
+        jar_path: jar_path(),
+        shim_source: PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/shim/OracleShim.java")),
+        jar_timeout: Duration::from_mins(5),
+        jobs,
+        live_jar: false,
+        fail_fast: false,
+        only: Vec::new(),
+        from_report: None,
+        from_buckets: Vec::new(),
+        delta: false,
+        capture_sweep: None,
+        capture_commit: None,
+    }
+}
+
+/// The header a `fixtures_config` run pins, so a hand-built artifact loads.
+fn fixtures_header() -> SweepConfig {
+    SweepConfig {
+        symmetry: 20,
+        conflict_budget: 10_000,
+        encode_budget: 4_000_000,
+        primary_var_cap: 20_000,
+        no_overflow: true,
+        solver: "sat4j".to_owned(),
+        count_enabled: false,
+        count_symmetry: 0,
+        count_cap: 10_000,
+        enum_budget: 250_000_000,
+        capture_commit: None,
+    }
+}
+
+fn write_artifact(dir: &Path, entries: BTreeMap<String, SweepEntry>) {
+    SweepBaselineFile {
+        config: fixtures_header(),
+        entries,
+    }
+    .write_atomic(&dir.join("fixtures-sweep-sb20.json"))
+    .expect("artifact written");
+}
+
+/// The central mt-057 contract: **the artifact never changes what the gauge
+/// reports.** Even an artifact that claims a command is a hopeless capacity
+/// defer buys it nothing — the command is still swept and still lands in its
+/// real bucket. This is what makes the canonical sweep hash in
+/// `docs/MIGRATION.md` reproduce with an artifact committed, and it is the
+/// property an earlier revision of this bead traded away for 6% and got back.
+#[test]
+fn an_artifact_never_changes_the_report() {
+    let dir = scratch_dir("inert");
+
+    // No artifact yet — the canonical report.
+    let canonical = run_gauge(&fixtures_config(&dir, 1), &mut |_| {}).expect("canonical run");
+    assert!(canonical.commands >= 2, "fixtures have commands to sweep");
+    let canonical_text = canonical.render_text();
+    let canonical_json = canonical.to_json().expect("json");
+
+    // Record every command as a capacity defer — the strongest claim the
+    // artifact can make, and the one the deleted skip lane acted on.
+    let entries: BTreeMap<String, SweepEntry> = canonical
+        .per_command
+        .iter()
+        .enumerate()
+        .map(|(i, pc)| {
+            (
+                pc.key.clone(),
+                SweepEntry {
+                    verdict_bucket: "mettle_defer:capacity".to_owned(),
+                    count_bucket: None,
+                    ms: 1_000 * (i as u64 + 1),
+                },
+            )
+        })
+        .collect();
+    write_artifact(&dir, entries);
+
+    let with_artifact = run_gauge(&fixtures_config(&dir, 1), &mut |_| {}).expect("run w/ artifact");
+    assert_eq!(
+        with_artifact.commands, canonical.commands,
+        "no command disappears"
+    );
+    assert_eq!(
+        with_artifact.render_text(),
+        canonical_text,
+        "an artifact must not move a byte of the report"
+    );
+    assert_eq!(
+        with_artifact.to_json().expect("json"),
+        canonical_json,
+        "nor a byte of the JSON"
+    );
+    assert!(
+        !with_artifact
+            .verdict_buckets
+            .keys()
+            .any(|b| b.starts_with("skip_known")),
+        "no skip bucket exists any more: {:?}",
+        with_artifact.verdict_buckets
+    );
+    // STYLE I1: the partition holds.
+    let sum: usize = with_artifact.verdict_buckets.values().sum();
+    assert_eq!(sum, with_artifact.commands);
+
+    // `--full` / `--recheck-capacity` survive only as no-op aliases, so a run
+    // that passes them is the same run.
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// mt-057: LPT reordering is driven by the recorded times, and the report stays
+/// byte-identical at any `--jobs`.
+#[test]
+fn lpt_scheduling_never_moves_a_byte_at_any_job_count() {
+    let dir = scratch_dir("lpt");
+    let seed = run_gauge(&fixtures_config(&dir, 1), &mut |_| {}).expect("seed run");
+
+    // Deliberately inverted costs, so LPT schedules the queue backwards.
+    let n = seed.per_command.len() as u64;
+    let entries: BTreeMap<String, SweepEntry> = seed
+        .per_command
+        .iter()
+        .enumerate()
+        .map(|(i, pc)| {
+            (
+                pc.key.clone(),
+                SweepEntry {
+                    verdict_bucket: pc.verdict_bucket.clone(),
+                    count_bucket: None,
+                    ms: (n - i as u64) * 10_000,
+                },
+            )
+        })
+        .collect();
+    write_artifact(&dir, entries);
+
+    let baseline_text = seed.render_text();
+    for jobs in [1, 2, 4] {
+        let cfg = fixtures_config(&dir, jobs);
+        let r = run_gauge(&cfg, &mut |_| {}).expect("lpt run");
+        assert_eq!(
+            r.render_text(),
+            baseline_text,
+            "LPT dispatch at --jobs {jobs} must not move a byte"
+        );
+        assert_eq!(
+            r.to_json().expect("json"),
+            seed.to_json().expect("json"),
+            "the JSON report must be byte-identical too"
+        );
+    }
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// mt-057 (3): capture writes the artifact; re-running against it reports a
+/// clean delta; a fast-lane capture is refused rather than written as a lie.
+#[test]
+fn capture_then_delta_reports_no_change() {
+    let dir = scratch_dir("delta");
+    let out = dir.join("fixtures-sweep-sb20.json");
+
+    let mut capture_cfg = fixtures_config(&dir, 2);
+    capture_cfg.capture_sweep = Some(out.clone());
+    let captured = run_gauge(&capture_cfg, &mut |_| {}).expect("capture run");
+    assert!(out.is_file(), "the artifact was written");
+
+    let text = std::fs::read_to_string(&out).expect("artifact readable");
+    let file: SweepBaselineFile = serde_json::from_str(&text).expect("artifact parses");
+    assert_eq!(file.entries.len(), captured.commands);
+    assert_eq!(file.config.symmetry, 20);
+    assert!(!file.config.count_enabled);
+
+    // Re-run with --delta against what we just captured: nothing moved.
+    let mut delta_cfg = fixtures_config(&dir, 1);
+    delta_cfg.delta = true;
+    let rerun = run_gauge(&delta_cfg, &mut |_| {}).expect("delta run");
+    let delta = rerun.delta.as_ref().expect("delta computed");
+    assert!(
+        delta.is_clean(),
+        "an unchanged tree must report no change: {delta:?}"
+    );
+    assert_eq!(delta.unchanged, rerun.commands);
+    assert!(rerun.render_text().contains("NO CHANGE vs the recorded"));
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A capture from a run that did not observe every command is refused, whatever
+/// narrowed it. The artifact is committed, so a narrow capture is not merely
+/// slow next time — it is indistinguishable from a deliberate one forever after.
+#[test]
+fn capture_is_refused_for_every_kind_of_incomplete_run() {
+    let dir = scratch_dir("refuse");
+    let out = dir.join("must-not-exist-sweep-sb20.json");
+
+    // A prior report to point --from-report at (its contents do not matter; the
+    // refusal fires before any of it is used).
+    let prior = dir.join("prior.json");
+    std::fs::write(&prior, r#"{"per_command":[]}"#).expect("prior report");
+
+    let mut narrowed = fixtures_config(&dir, 1);
+    narrowed.capture_sweep = Some(out.clone());
+
+    // --only, --from-report and --from-buckets each bar a capture on their own.
+    let mut only = narrowed.clone();
+    only.only = vec!["test1".to_owned()];
+    let mut from_report = narrowed.clone();
+    from_report.from_report = Some(prior);
+    let mut from_buckets = narrowed.clone();
+    from_buckets.from_buckets = vec!["DISAGREE".to_owned()];
+    // And so does a fail-fast run that stopped early — asserted here only for
+    // the filters, since a clean fixtures sweep never trips fail-fast.
+    for (label, cfg) in [
+        ("--only", &only),
+        ("--from-report", &from_report),
+        ("--from-buckets", &from_buckets),
+    ] {
+        let err = run_gauge(cfg, &mut |_| {}).expect_err("capture must be refused");
+        match err {
+            als_conform::ConformError::SweepCaptureRefused { reason } => {
+                assert!(
+                    reason.contains("filtered"),
+                    "{label}: unexpected reason {reason}"
+                );
+            }
+            other => panic!("{label}: expected a refusal, got {other:?}"),
+        }
+        assert!(!out.exists(), "{label}: nothing may be written");
+    }
+
+    // The same config without a filter writes normally — the refusal is about
+    // the filter, not about capture being broken.
+    let ok = run_gauge(&narrowed, &mut |_| {}).expect("unfiltered capture");
+    assert!(out.is_file());
+    assert!(ok.commands > 0);
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A stale artifact must never silently license a skip or a delta — but it must
+/// also not fail a run that was never going to consult it.
+#[test]
+fn stale_artifact_is_fatal_only_when_it_could_reach_the_answer() {
+    let dir = scratch_dir("stale");
+    let mut header = fixtures_header();
+    header.conflict_budget = 999_999; // captured at a far larger budget
+    SweepBaselineFile {
+        config: header,
+        entries: BTreeMap::new(),
+    }
+    .write_atomic(&dir.join("stale-sweep-sb20.json"))
+    .expect("artifact written");
+
+    // --delta is the sole consumer whose answer depends on artifact content.
+    let mut delta_cfg = fixtures_config(&dir, 1);
+    delta_cfg.delta = true;
+    let err = run_gauge(&delta_cfg, &mut |_| {}).expect_err("must hard-error under --delta");
+    match err {
+        als_conform::ConformError::SweepBaselineConfigMismatch { field, .. } => {
+            assert_eq!(field, "conflict_budget");
+        }
+        other => panic!("expected a config mismatch, got {other:?}"),
+    }
+
+    // Any other run can only have used it for scheduling hints: warn, carry on.
+    let mut warnings = Vec::new();
+    let report = run_gauge(&fixtures_config(&dir, 1), &mut |line: &str| {
+        warnings.push(line.to_owned());
+    })
+    .expect("a plain run must not be failed by an artifact it cannot use");
+    assert!(report.commands > 0);
+    assert!(
+        warnings.iter().any(|w| w.contains("conflict_budget")),
+        "the mismatch must still be surfaced: {warnings:?}"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
 }

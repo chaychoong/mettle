@@ -50,6 +50,13 @@ fn print_usage() {
          Stage 1 (always): mettle verdict vs baselines/*-verdict.json.\n\
          Stage 2 (--count): model count vs cached baselines/*-count-sb<N>.json (or --live-jar).\n\
          \n\
+         Every run is COMPLETE: every command is swept, always. Work is parallelized per\n\
+         COMMAND (not per file), so one pathological file no longer serializes the sweep.\n\
+         \n\
+         A baselines/*-sweep-sb<N>.json artifact (mt-057) costs no coverage: it supplies the\n\
+         per-command costs the longest-first schedule sorts on, and the buckets --delta diffs\n\
+         against. It never decides what runs.\n\
+         \n\
          Determinism: the stdout report and --json-out are byte-identical at ANY --jobs\n\
          count for a FULL run. A --fail-fast PARTIAL report is not byte-stable across jobs.\n\
          \n\
@@ -58,6 +65,10 @@ fn print_usage() {
          \x20\x20--live-jar             stage 2 runs one live JVM per file (needs the jar)\n\
          \x20\x20--jobs N               parallel workers (default: all CPUs; 1 = sequential)\n\
          \x20\x20--fail-fast            stop at the first DISAGREE/panic/self-check/COUNT_MISMATCH (exit 1)\n\
+         \x20\x20--full                 accepted and ignored: every run is complete (alias --recheck-capacity)\n\
+         \x20\x20--delta                also report what moved vs the sweep baseline artifact\n\
+         \x20\x20--capture-sweep OUT    write/refresh the sweep baseline from this run (forces a\n\
+         \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20non-fail-fast run; refused with --only/--from-report/--from-buckets)\n\
          \x20\x20--only SUBSTR          keep only files whose relpath contains SUBSTR (repeatable)\n\
          \x20\x20--from-report PATH     delta mode: a prior --json-out report to filter against\n\
          \x20\x20--from-buckets B1,B2   re-run only files with a command in these buckets (+ files absent from PATH)\n\
@@ -132,6 +143,9 @@ fn parse_args() -> Option<Cli> {
         only: Vec::new(),
         from_report: None,
         from_buckets: Vec::new(),
+        delta: false,
+        capture_sweep: None,
+        capture_commit: None,
     };
     let mut json_out: Option<PathBuf> = None;
     let mut status_file: Option<PathBuf> = None;
@@ -146,6 +160,11 @@ fn parse_args() -> Option<Cli> {
             "--live-jar" => cfg.live_jar = true,
             "--jobs" => cfg.jobs = it.next()?.parse::<usize>().ok()?.max(1),
             "--fail-fast" => cfg.fail_fast = true,
+            // Accepted and ignored: every run is complete (mt-057). Kept so
+            // recorded commands and muscle memory from the skip-lane era work.
+            "--full" | "--recheck-capacity" => {}
+            "--delta" => cfg.delta = true,
+            "--capture-sweep" => cfg.capture_sweep = Some(PathBuf::from(it.next()?)),
             "--only" => cfg.only.push(it.next()?),
             "--from-report" => cfg.from_report = Some(PathBuf::from(it.next()?)),
             "--from-buckets" => {
@@ -190,6 +209,14 @@ fn parse_args() -> Option<Cli> {
     } else {
         roots
     };
+
+    // A capture must record every command's *real* bucket, so it forces the
+    // unabridged sweep and forbids stopping early. The library refuses a
+    // partial/fast-lane capture as well (belt and braces).
+    if cfg.capture_sweep.is_some() {
+        cfg.fail_fast = false;
+        cfg.capture_commit = head_commit();
+    }
     Some(Cli {
         cfg,
         json_out,
@@ -198,6 +225,22 @@ fn parse_args() -> Option<Cli> {
         refresh_out,
         resume,
     })
+}
+
+/// The current `HEAD` commit, stamped into a captured sweep artifact for triage
+/// (`None` outside a checkout or without `git`). Advisory metadata only — the
+/// loader never validates it, so a best-effort read is enough.
+fn head_commit() -> Option<String> {
+    let out = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(workspace_root())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let sha = String::from_utf8(out.stdout).ok()?.trim().to_owned();
+    (!sha.is_empty()).then_some(sha)
 }
 
 /// A one-line summary of the invocation, for the status header.
@@ -223,6 +266,21 @@ fn main() -> ExitCode {
         print_usage();
         return ExitCode::from(2);
     };
+
+    // Refuse a filtered capture *before* paying for the sweep. The library
+    // refuses it too (that is the real guard); this only saves the wait.
+    if cli.cfg.capture_sweep.is_some()
+        && (!cli.cfg.only.is_empty()
+            || cli.cfg.from_report.is_some()
+            || !cli.cfg.from_buckets.is_empty())
+    {
+        eprintln!(
+            "solve-gauge: --capture-sweep cannot be combined with --only/--from-report/--from-buckets\n\
+             A filtered run does not observe every command, and the artifact is committed — a narrow\n\
+             capture is indistinguishable from a deliberate one. Capture the whole corpus instead."
+        );
+        return ExitCode::from(2);
+    }
 
     if cli.refresh_out.is_some() {
         run_refresh(&cli)

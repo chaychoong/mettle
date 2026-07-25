@@ -42,6 +42,14 @@ change lands after it, per that section's note.
    | Recorded | 2026-07-25 (post-mt-055: the skolemization-blocking rule moves one command between the `capacity` and `over_budget` defer buckets, so the report text changes even though every verdict is identical; supersedes the same-day post-mt-050 `e7a6c1a8…` hash) |
    | Commands / verdict | 564 commands, **agree 343** (195 SAT / 148 UNSAT), DISAGREE 0 |
 
+   **Every run is complete (mt-057).** A committed `baselines/*-sweep-sb20.json`
+   artifact changes nothing about a run's *output* — it only supplies the
+   per-command costs the longest-first schedule sorts on, and the buckets
+   `--delta` diffs against. It never decides what runs, so the hash below
+   reproduces with or without one present (verified both ways, and at
+   `--jobs 4` and `--jobs 10`). `--full` / `--recheck-capacity` are accepted as
+   no-op aliases so older recorded commands still work.
+
    **This hash is only valid as of the commit it was recorded at.** Any code change
    landing after 2026-07-21 (encoder, evaluator, solver, gauge, budgets, corpus
    pins — anything that can move a verdict or reorder output) invalidates it. If

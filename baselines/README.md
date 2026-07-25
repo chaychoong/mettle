@@ -68,6 +68,55 @@ commands, one per corpus/config, ~2h40m total on the 2-core VM:
     solve-gauge --refresh-counts baselines/<corpus>-count-sb<N>.json \
       --count-symmetry <N> --resume <corpus-root>
 
+## Sweep baselines: `*-sweep-sb<N>.json` (mt-057)
+
+Unlike everything else here, this artifact records **mettle's own** last known
+sweep, not the jar's answers: per command (`relpath[idx]`) the verdict bucket,
+the counting bucket when stage 2 ran, and an advisory wall time in
+milliseconds. `N` is the **stage-1** symmetry cap. One artifact drives both
+mt-057 uses, so they can never disagree with each other:
+
+1. **Longest-processing-time-first scheduling.** The recorded per-command times
+   sort the work queue descending, so the tail starts first. Times are
+   *scheduling hints only*: they never enter the report, and reordering provably
+   cannot move a byte because results fold in item position (file-sorted,
+   index-ascending), never completion order.
+2. **Deltas (`--delta`).** Diffs the run against the artifact and reports what
+   moved (`changed` / `new commands` / `gone commands`) instead of re-deriving
+   the previous state.
+
+**Neither costs any coverage, so neither needs an opt-in, and the artifact never
+decides what the gauge runs — every run sweeps every command.** An earlier
+revision of mt-057 did let it skip commands recorded as capacity/over-budget
+defers. That was deleted: once command-level parallelism landed, the skip lane
+was worth **6%** (3m23s vs 3m35s on the full corpus), which does not buy a lane
+that can hide a previously-capped command becoming solvable *and wrong*, or a
+new panic on the largest models. `--full` / `--recheck-capacity` survive as
+accepted no-op aliases so older recorded commands keep working.
+
+Capture / refresh it with the gauge itself; `--capture-sweep` forces a
+non-fail-fast run and stamps the artifact with the current commit:
+
+    solve-gauge --capture-sweep baselines/mettle-sweep-sb20.json --count
+
+A capture is **refused** — nothing is written — if the run did not observe every
+command: fail-fast stopped it, or `--only` / `--from-report` / `--from-buckets`
+narrowed it. There is no opt-out. The file is committed, so a narrowed capture
+outlives the session and no later reader can tell it from a deliberately-narrow
+one. Naming a corpus root is *not* a filter — that is how a per-corpus artifact
+is captured, and the filename records which.
+
+**Anti-rot.** The `config` header pins `symmetry`, `conflict_budget`,
+`encode_budget`, `primary_var_cap`, `no_overflow`, `solver` — plus
+`count_symmetry`/`count_cap`/`enum_budget` when the run counts. A mismatch is a
+**hard error** whenever the artifact's content can reach the answer, which is
+now exactly one consumer: **`--delta`**, whose entire output is a comparison
+against these buckets, so diffing across budgets would be a fabricated delta.
+Any other run uses the artifact for scheduling hints alone — nothing it says can
+reach the report — so there a mismatch is downgraded to "ignored, with a
+warning". Otherwise every deep-budget sweep, and the jar smoke test, would fail
+on an artifact they were never going to consult.
+
 ## portus-63-slow-verdict.json (2026-07-25, mt-050)
 
 Verdict supplement for 8 of the 10 portus files that were file-level 60s

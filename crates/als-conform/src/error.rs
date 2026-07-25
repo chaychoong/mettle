@@ -64,4 +64,26 @@ pub enum ConformError {
         expected: String,
         found: String,
     },
+    /// A loaded **sweep** baseline's `config` header disagrees with the run on a
+    /// field that would make its buckets incomparable (symmetry, the
+    /// conflict/encode/primary-var budgets, overflow, solver, or — for a
+    /// counting run — the counting budgets). A hard tool error, never a silent
+    /// skip (mt-057): skipping a "known-capped" command on the authority of a
+    /// baseline captured at different budgets is a fabricated skip.
+    #[error(
+        "sweep baseline {file}: config field `{field}` mismatch (baseline={found}, run={expected})"
+    )]
+    SweepBaselineConfigMismatch {
+        file: String,
+        field: &'static str,
+        expected: String,
+        found: String,
+    },
+    /// `--capture-sweep` was asked to record an artifact from a run that did not
+    /// observe every command — a fail-fast `partial` run, or one narrowed by
+    /// `--only` / `--from-report` / `--from-buckets`. Refused loudly rather than
+    /// written as a lie: the artifact is committed, so a narrow one outlives the
+    /// session and reads exactly like a deliberate one.
+    #[error("refusing to capture a sweep baseline: {reason}")]
+    SweepCaptureRefused { reason: &'static str },
 }

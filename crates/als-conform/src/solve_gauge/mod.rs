@@ -10,9 +10,17 @@
 //! lesson: deterministic budgets, `catch_unwind` per command). Compare mettle's
 //! SAT/UNSAT against the cached jar verdict ([`baseline`]) and bucket each
 //! command into exactly one verdict-stage bucket (asserted: the buckets sum to
-//! the command count). Stage 1 is **parallelized at file granularity** under
-//! `--jobs` ([`parallel`]); the report is folded in sorted-file order so it is
-//! byte-identical at any job count (STYLE D1/D5).
+//! the command count).
+//!
+//! Stage 1 runs in two phases under `--jobs` ([`parallel`]). **Phase A** resolves
+//! every file once, in parallel. **Phase B** takes the *command* as the unit of
+//! work, fanning every command of every file across the pool over a shared
+//! `Arc<ResolvedFile>`. Command granularity is what keeps one pathological file
+//! from being the whole schedule: `correctChord.als` sums to ~556s across 39
+//! commands, so a file-granular sweep bounds at 556s of serial chain no matter
+//! how many cores there are, while a command-granular one bounds at its single
+//! longest command (~190s). The report is folded in item order — file-sorted,
+//! index-ascending — so it stays byte-identical at any job count (STYLE D1/D5).
 //!
 //! **Stage 2 (`--count`).** For every mettle-SAT command outside the documented
 //! count-divergence families ([`detect`]), compare mettle's SB count against the
@@ -20,14 +28,28 @@
 //! `--live-jar` restores the per-file live-JVM path. Everything else is a **typed
 //! skip**, never a fabricated mismatch.
 //!
+//! **The sweep artifact (mt-057).** A committed [`sweep_baseline`]
+//! (`baselines/*-sweep-sb<N>.json`) records every command's bucket plus an
+//! advisory wall time, and does two things that cost **no coverage**: it
+//! supplies the per-command costs the LPT schedule sorts on, and `--delta`
+//! reports what moved instead of absolute numbers. It never gates what the
+//! gauge runs — every run sweeps every command.
+//!
 //! This module never prints and never exits (STYLE E3); the bin renders
 //! [`SolveGaugeReport`] and sets the process exit code.
+//!
+//! **Over STYLE S2's ~500-line soft cap** (justification, per S2): the gauge's
+//! two stages, its parallel driver, and its report renderer share one
+//! `GaugeConfig`/`SolveGaugeReport` pair and one fold order, so splitting them
+//! trades a long file for a wide cross-module surface of `pub(crate)` internals.
+//! A split is filed as its own bead rather than done piecemeal here.
 
 pub mod baseline;
 pub mod count_baseline;
 pub mod detect;
 pub(crate) mod parallel;
 pub mod refresh;
+pub mod sweep_baseline;
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -52,7 +74,8 @@ use crate::shim::{ensure_shim_compiled, run_oracle_on_file};
 use baseline::{load_baselines, JarVerdict};
 use count_baseline::{load_count_baselines, CountBaseline};
 use detect::{lower_defer_class, ordered_abstract_partition};
-use parallel::parallel_fold;
+use parallel::{lpt_order, parallel_fold, parallel_fold_ordered};
+use sweep_baseline::{command_key, load_sweep_baselines, SweepConfig, SweepDelta};
 
 /// Default corpus roots (mirrors [`crate::DEFAULT_CORPUS_ROOTS`] but relative to
 /// the workspace root the gauge is handed).
@@ -121,6 +144,15 @@ pub struct GaugeConfig {
     pub from_report: Option<PathBuf>,
     /// mt-054 (c): the verdict/count buckets that select a file for a delta re-run.
     pub from_buckets: Vec<String>,
+    /// mt-057 (3): diff this run against the sweep baseline and report what
+    /// moved (an *extra* section; the canonical report text is untouched).
+    pub delta: bool,
+    /// mt-057 (3): capture mode — write/refresh the sweep baseline artifact at
+    /// this path from this run's results. Implies an unabridged run.
+    pub capture_sweep: Option<PathBuf>,
+    /// mt-057 (3): the commit to stamp a captured artifact with, for triage.
+    /// Advisory metadata only — never validated at load.
+    pub capture_commit: Option<String>,
 }
 
 /// One command's entry in the deterministic per-command report array (mt-054 (c),
@@ -175,6 +207,9 @@ pub struct SolveGaugeReport {
     /// mt-054 (c): what tripped fail-fast (for the `PARTIAL (...)` marker).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fail_fast_trigger: Option<String>,
+    /// mt-057 (3): what moved relative to the sweep baseline (`--delta`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delta: Option<SweepDelta>,
 }
 
 impl SolveGaugeReport {
@@ -196,6 +231,7 @@ impl SolveGaugeReport {
             per_command: Vec::new(),
             partial: false,
             fail_fast_trigger: None,
+            delta: None,
         }
     }
 }
@@ -297,12 +333,34 @@ struct CmdRecord {
     count: CountDisp,
 }
 
-/// One file's fully-computed gauge result (no shared state touched).
-struct FileGaugeResult {
-    commands: Vec<CmdRecord>,
-    /// Per-command wall times for the stderr slowest-10 table (nondeterministic;
-    /// never enters the report).
-    timings: Vec<(f64, String)>,
+/// One file's parse + module-load + resolve result, computed once in phase A and
+/// then shared **read-only** across every command worker in phase B.
+///
+/// This is what makes command-level parallelism affordable: the per-file work
+/// commands used to share by running serially in one worker is still paid
+/// exactly once, and the commands fan out over an `Arc` of it.
+struct ResolvedFile {
+    rel: String,
+    canon: PathBuf,
+    graph: ModuleGraph,
+    world: ResolvedWorld,
+    /// The root module's command indices, ascending — the only ones the gauge
+    /// sweeps (an imported module's commands are not this file's).
+    command_indices: Vec<usize>,
+}
+
+/// One unit of phase-B work: a command, plus the shared resolve of its file.
+struct CmdItem {
+    file: std::sync::Arc<ResolvedFile>,
+    idx: usize,
+}
+
+/// One command's fully-computed gauge result (no shared state touched).
+struct CmdGaugeResult {
+    record: CmdRecord,
+    /// Wall seconds — the stderr slowest-10 table and the next run's LPT
+    /// schedule. Nondeterministic; never enters the report (STYLE D1/D4).
+    secs: f64,
 }
 
 /// Runs the full gauge and returns the deterministic report.
@@ -349,6 +407,16 @@ pub fn run_gauge(
         .map(|cb| cb.loaded.clone())
         .unwrap_or_default();
 
+    // mt-057: the artifact supplies LPT scheduling costs and, under `--delta`,
+    // the buckets to diff against. It is validated *strictly* — a header
+    // mismatch is a hard error — exactly when its content can reach the answer,
+    // which is `--delta` alone; otherwise a stale one is ignored with a warning
+    // rather than failing an unrelated run.
+    let sweep = load_sweep_baselines(&cfg.baselines_dir, &sweep_config(cfg), cfg.delta)?;
+    for w in &sweep.warnings {
+        progress(w);
+    }
+
     let files = select_files(cfg)?;
 
     let mut report = SolveGaugeReport::new(cfg, &baseline, count_files);
@@ -358,32 +426,56 @@ pub fn run_gauge(
     let prev_hook = panic::take_hook();
     panic::set_hook(Box::new(|_| {}));
 
-    progress(&format!("stage 1: mettle sweep over {} files", files.len()));
+    // Phase A: resolve every file once, in parallel. Cheap relative to solving,
+    // and it is what lets phase B treat the *command* as the work unit without
+    // re-paying parse/resolve per command.
+    let resolved = resolve_phase(&files, cfg, progress);
+    let items = command_items(&resolved);
+
+    // Phase B: one work item per command. `correctChord`'s 39 commands no longer
+    // form a serial chain inside a single worker — the sweep bounds at its single
+    // longest command instead of the sum of a file's commands.
+    progress(&format!(
+        "stage 1: mettle sweep over {} commands in {} files",
+        items.len(),
+        files.len()
+    ));
     let cb_ref = count_baseline.as_ref();
-    let work = |path: &PathBuf, send: &mut dyn FnMut(&str)| {
-        compute_file(path, cfg, &baseline, cb_ref, send)
+    let work = |item: &CmdItem, send: &mut dyn FnMut(&str)| {
+        compute_command(item, cfg, &baseline, cb_ref, send)
     };
-    let mut noop = |_: usize, _: &FileGaugeResult| {};
-    let (results, stage1_trig) = parallel_fold(
-        &files,
+    let mut noop = |_: usize, _: &CmdGaugeResult| {};
+    // mt-057 (2): dispatch longest-first so the tail starts instead of finishing
+    // last. Results still come back indexed by their position in `items`, which
+    // is (file-sorted, index-ascending) — so this cannot move a byte (STYLE D5).
+    let order = lpt_order(&items, |it| sweep.command_millis(&it.file.rel, it.idx));
+    let (results, stage1_trig) = parallel_fold_ordered(
+        &items,
+        &order,
         cfg.jobs,
         cfg.fail_fast,
         progress,
-        |p| workspace_relpath(p, &cfg.workspace_root),
+        |it| command_key(&it.file.rel, it.idx),
         &mut noop,
         work,
-        file_trigger,
+        command_trigger,
     );
 
     panic::set_hook(prev_hook);
 
-    // Fold in sorted-file order (never completion order — STYLE D5).
+    // Fold in item order (never completion order — STYLE D5). `items` is built
+    // file-sorted / index-ascending, so this is the same order the pre-mt-057
+    // per-file fold produced.
     let mut jar_todo: BTreeMap<PathBuf, Vec<JarTodo>> = BTreeMap::new();
     let mut timings: Vec<(f64, String)> = Vec::new();
-    for fr in results.iter().flatten() {
-        fold_file(fr, &mut report, &mut jar_todo, &mut timings);
+    for r in results.iter().flatten() {
+        fold_command(r, &mut report, &mut jar_todo, &mut timings);
     }
 
+    // Wall times stay on this side of the wall: they seed the next run's LPT
+    // schedule through the artifact, and the stderr slowest-10 table. They never
+    // enter the report (STYLE D1/D4).
+    let millis = millis_by_command(&timings);
     emit_slowest(&mut timings, progress);
 
     // Negative space (STYLE I1): every processed command lands in exactly one
@@ -407,7 +499,103 @@ pub fn run_gauge(
 
     report.partial = trigger.is_some();
     report.fail_fast_trigger = trigger;
+
+    // Both of these come last: the delta and the artifact must see the count
+    // buckets the live-jar stage patched in.
+    if cfg.delta && !sweep.is_empty() {
+        report.delta = Some(sweep.delta(&report));
+    }
+    if let Some(out) = &cfg.capture_sweep {
+        write_sweep_capture(cfg, &report, &millis, out, progress)?;
+    }
     Ok(report)
+}
+
+/// The run's pinned sweep-baseline header — the fields that decide what a bucket
+/// *means*, so a mismatch invalidates the artifact.
+fn sweep_config(cfg: &GaugeConfig) -> SweepConfig {
+    SweepConfig {
+        symmetry: cfg.symmetry,
+        conflict_budget: cfg.conflict_budget,
+        encode_budget: cfg.encode_budget,
+        primary_var_cap: cfg.primary_var_cap,
+        no_overflow: !cfg.allow_overflow,
+        solver: JAR_SOLVER.to_owned(),
+        count_enabled: cfg.count,
+        count_symmetry: cfg.count_symmetry,
+        count_cap: cfg.count_cap,
+        enum_budget: cfg.enum_budget,
+        capture_commit: cfg.capture_commit.clone(),
+    }
+}
+
+/// `relpath[idx] → rounded milliseconds`, from the collected wall times.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "float→int casts saturate in Rust; the guard keeps the value finite and non-negative"
+)]
+fn millis_by_command(timings: &[(f64, String)]) -> BTreeMap<String, u64> {
+    timings
+        .iter()
+        .map(|(secs, key)| {
+            let ms = (secs * 1000.0).round();
+            (key.clone(), if ms > 0.0 { ms as u64 } else { 0 })
+        })
+        .collect()
+}
+
+/// Writes the sweep-baseline artifact for a finished run, refusing any run that
+/// cannot honestly serve as a baseline.
+///
+/// Two ways a run fails that bar, the same failure at bottom — it did not
+/// observe every command, so what it records is silence, not fact: fail-fast
+/// stopped it, or a `--only` / `--from-report` filter narrowed it. The
+/// artifact is *committed*, so a
+/// narrowed capture outlives the session and the next reader cannot tell a
+/// deliberately-narrow file from an accidentally-narrowed one. There is no
+/// opt-out: capture the whole corpus or don't capture.
+///
+/// # Errors
+/// [`ConformError::SweepCaptureRefused`] for a partial or filtered run; I/O or
+/// serialization failure from the write itself.
+fn write_sweep_capture(
+    cfg: &GaugeConfig,
+    report: &SolveGaugeReport,
+    millis: &BTreeMap<String, u64>,
+    out: &Path,
+    progress: &mut dyn FnMut(&str),
+) -> Result<(), ConformError> {
+    if report.partial {
+        return Err(ConformError::SweepCaptureRefused {
+            reason: "the run stopped early (--fail-fast), so most commands have no recorded bucket",
+        });
+    }
+    if is_filtered(cfg) {
+        return Err(ConformError::SweepCaptureRefused {
+            reason: "the run was filtered (--only / --from-report), which would overwrite the committed artifact with a narrow one; capture unfiltered",
+        });
+    }
+    let file = sweep_baseline::capture(sweep_config(cfg), report, millis);
+    file.write_atomic(out)?;
+    progress(&format!(
+        "capture-sweep: {} commands recorded → {}",
+        file.entries.len(),
+        out.display()
+    ));
+    Ok(())
+}
+
+/// Whether any filter can reduce the command set below "everything under
+/// `roots`" — the [`select_files`] switches, in one place so the two stay in
+/// step. `from_buckets` is inert without `from_report`, but it is counted
+/// anyway: over-refusing a capture costs a re-run, under-refusing commits a lie.
+///
+/// Narrowed `roots` are deliberately **not** a filter: naming a corpus is how
+/// per-corpus artifacts get captured (the count baselines work the same way),
+/// and the artifact's own filename records which corpus it covers.
+fn is_filtered(cfg: &GaugeConfig) -> bool {
+    !cfg.only.is_empty() || cfg.from_report.is_some() || !cfg.from_buckets.is_empty()
 }
 
 /// Applies the `--only` and `--from-report` filters to the collected file set.
@@ -482,22 +670,21 @@ fn emit_slowest(timings: &mut [(f64, String)], progress: &mut dyn FnMut(&str)) {
     }
 }
 
-/// The first fail-fast trigger in a file's command records, in command order.
-fn file_trigger(fr: &FileGaugeResult) -> Option<String> {
-    for c in &fr.commands {
-        if c.disagreement.is_some() {
-            return Some(format!("DISAGREE {}[{}]", c.rel, c.idx));
-        }
-        if c.panic_line.is_some() {
-            return Some(format!("panic {}[{}]", c.rel, c.idx));
-        }
-        if c.self_check_fail.is_some() {
-            return Some(format!("self-check failure {}[{}]", c.rel, c.idx));
-        }
-        if let CountDisp::Resolved { bucket, .. } = &c.count {
-            if bucket == "COUNT_MISMATCH" {
-                return Some(format!("COUNT_MISMATCH {}[{}]", c.rel, c.idx));
-            }
+/// The fail-fast trigger one command's result implies, if any.
+fn command_trigger(r: &CmdGaugeResult) -> Option<String> {
+    let c = &r.record;
+    if c.disagreement.is_some() {
+        return Some(format!("DISAGREE {}[{}]", c.rel, c.idx));
+    }
+    if c.panic_line.is_some() {
+        return Some(format!("panic {}[{}]", c.rel, c.idx));
+    }
+    if c.self_check_fail.is_some() {
+        return Some(format!("self-check failure {}[{}]", c.rel, c.idx));
+    }
+    if let CountDisp::Resolved { bucket, .. } = &c.count {
+        if bucket == "COUNT_MISMATCH" {
+            return Some(format!("COUNT_MISMATCH {}[{}]", c.rel, c.idx));
         }
     }
     None
@@ -506,152 +693,234 @@ fn file_trigger(fr: &FileGaugeResult) -> Option<String> {
 /// A live-jar todo: `(relpath, command index, mettle count, per_command index)`.
 type JarTodo = (String, usize, u64, usize);
 
-/// Folds one file's [`FileGaugeResult`] into the report (all shared-state
-/// mutation lives here, on the coordinator thread, in sorted-file order).
-fn fold_file(
-    fr: &FileGaugeResult,
+/// Folds one command's result into the report (all shared-state mutation lives
+/// here, on the coordinator thread, in item order).
+fn fold_command(
+    r: &CmdGaugeResult,
     report: &mut SolveGaugeReport,
     jar_todo: &mut BTreeMap<PathBuf, Vec<JarTodo>>,
     timings: &mut Vec<(f64, String)>,
 ) {
-    timings.extend(fr.timings.iter().cloned());
-    for c in &fr.commands {
-        report.commands += 1;
-        *report
-            .verdict_buckets
-            .entry(c.verdict_bucket.clone())
-            .or_default() += 1;
-        if let Some(d) = &c.disagreement {
-            report.disagreements.push(d.clone());
-        }
-        if let Some(sc) = &c.self_check_fail {
-            report.self_check_failures.push(sc.clone());
-        }
-        if let Some(p) = &c.panic_line {
-            report.panics.push(p.clone());
-        }
-        let pos = report.per_command.len();
-        let mut count_bucket = None;
-        match &c.count {
-            CountDisp::None => {}
-            CountDisp::Resolved { bucket, mismatch } => {
-                *report.count_buckets.entry(bucket.clone()).or_default() += 1;
-                if let Some(m) = mismatch {
-                    report.count_mismatches.push(m.clone());
-                }
-                count_bucket = Some(bucket.clone());
+    let c = &r.record;
+    timings.push((r.secs, command_key(&c.rel, c.idx)));
+    report.commands += 1;
+    *report
+        .verdict_buckets
+        .entry(c.verdict_bucket.clone())
+        .or_default() += 1;
+    if let Some(d) = &c.disagreement {
+        report.disagreements.push(d.clone());
+    }
+    if let Some(sc) = &c.self_check_fail {
+        report.self_check_failures.push(sc.clone());
+    }
+    if let Some(p) = &c.panic_line {
+        report.panics.push(p.clone());
+    }
+    let pos = report.per_command.len();
+    let mut count_bucket = None;
+    match &c.count {
+        CountDisp::None => {}
+        CountDisp::Resolved { bucket, mismatch } => {
+            *report.count_buckets.entry(bucket.clone()).or_default() += 1;
+            if let Some(m) = mismatch {
+                report.count_mismatches.push(m.clone());
             }
-            CountDisp::PendingJar(n) => {
-                jar_todo
-                    .entry(c.canon.clone())
-                    .or_default()
-                    .push((c.rel.clone(), c.idx, *n, pos));
-            }
+            count_bucket = Some(bucket.clone());
         }
-        report.per_command.push(PerCommand {
-            key: format!("{}[{}]", c.rel, c.idx),
-            verdict_bucket: c.verdict_bucket.clone(),
-            count_bucket,
-        });
+        CountDisp::PendingJar(n) => {
+            jar_todo
+                .entry(c.canon.clone())
+                .or_default()
+                .push((c.rel.clone(), c.idx, *n, pos));
+        }
+    }
+    report.per_command.push(PerCommand {
+        key: command_key(&c.rel, c.idx),
+        verdict_bucket: c.verdict_bucket.clone(),
+        count_bucket,
+    });
+}
+
+/// **Phase A** — parse, module-load and resolve every file, in parallel, once.
+///
+/// A file that fails to canonicalize / load / resolve yields `None` and simply
+/// contributes no commands, exactly as the pre-mt-057 per-file sweep did.
+/// Emits a resolve-cost summary through `progress` so the phase's share of the
+/// run stays observable rather than assumed.
+fn resolve_phase(
+    files: &[PathBuf],
+    cfg: &GaugeConfig,
+    progress: &mut dyn FnMut(&str),
+) -> Vec<Option<std::sync::Arc<ResolvedFile>>> {
+    progress(&format!("phase A: resolving {} files", files.len()));
+    let work = |path: &PathBuf, _send: &mut dyn FnMut(&str)| {
+        let started = std::time::Instant::now();
+        let file = resolve_file(path, &cfg.workspace_root);
+        (
+            file.map(std::sync::Arc::new),
+            started.elapsed().as_secs_f64(),
+        )
+    };
+    let mut noop = |_: usize, _: &(Option<std::sync::Arc<ResolvedFile>>, f64)| {};
+    // No LPT here: resolve cost is not recorded in the artifact, and this phase
+    // is cheap enough that a schedule would be noise.
+    let (results, _) = parallel_fold(
+        files,
+        cfg.jobs,
+        false,
+        progress,
+        |p| workspace_relpath(p, &cfg.workspace_root),
+        &mut noop,
+        work,
+        |_| None,
+    );
+
+    let mut costs: Vec<(f64, String)> = Vec::new();
+    let mut resolved = Vec::with_capacity(files.len());
+    for (r, path) in results.into_iter().zip(files) {
+        let (file, secs) = r.unwrap_or((None, 0.0));
+        costs.push((secs, workspace_relpath(path, &cfg.workspace_root)));
+        resolved.push(file);
+    }
+    report_resolve_cost(&mut costs, progress);
+    resolved
+}
+
+/// Summarizes phase A's cost on stderr: the total and the five worst files, so
+/// "is the hoist paying for itself" is measured rather than assumed.
+fn report_resolve_cost(costs: &mut [(f64, String)], progress: &mut dyn FnMut(&str)) {
+    let total: f64 = costs.iter().map(|(s, _)| s).sum();
+    costs.sort_by(|a, b| {
+        b.0.partial_cmp(&a.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.1.cmp(&b.1))
+    });
+    progress(&format!("phase A: {total:.1}s of resolve work (summed)"));
+    for (secs, name) in costs.iter().take(5) {
+        progress(&format!("  {secs:8.2}s  {name}"));
     }
 }
 
-/// Loads and sweeps one `.als` file, returning a self-contained result. Runs on
-/// a worker thread; touches no shared report state. Every command emits a start
-/// heartbeat and, when slow, an elapsed line through `send` (stderr — the report
-/// stays deterministic; wall-clock lives only here).
-fn compute_file(
-    path: &Path,
-    cfg: &GaugeConfig,
-    baseline: &baseline::Baseline,
-    count_baseline: Option<&CountBaseline>,
-    send: &mut dyn FnMut(&str),
-) -> FileGaugeResult {
-    let mut result = FileGaugeResult {
-        commands: Vec::new(),
-        timings: Vec::new(),
-    };
+/// Loads and resolves one `.als` file into the shared, read-only form phase B
+/// fans out over. Returns `None` for any file the pipeline cannot get as far as
+/// a resolved world for.
+fn resolve_file(path: &Path, workspace_root: &Path) -> Option<ResolvedFile> {
     let loader = FilesystemLoader::new();
-    let Ok(canon) = std::fs::canonicalize(path) else {
-        return result;
-    };
+    let canon = std::fs::canonicalize(path).ok()?;
     let root_str = canon.to_string_lossy().replace('\\', "/");
-    let Ok(graph) = ModuleGraph::load(&root_str, &loader) else {
-        return result;
-    };
-    let Ok(resolved) = als_types::resolve(&graph) else {
-        return result;
-    };
-    let world = resolved.world;
+    let graph = ModuleGraph::load(&root_str, &loader).ok()?;
+    let world = als_types::resolve(&graph).ok()?.world;
     let root_file = graph.modules[graph.root].file;
-    let rel = workspace_relpath(path, &cfg.workspace_root);
-
-    for (idx, _) in world
+    let command_indices = world
         .commands
         .iter()
         .enumerate()
         .filter(|(_, c)| c.span.file == root_file)
-    {
-        let Ok(scoped) = compute_universe(&world, &graph, &world.commands[idx]) else {
-            result.commands.push(CmdRecord {
-                rel: rel.clone(),
+        .map(|(idx, _)| idx)
+        .collect();
+    Some(ResolvedFile {
+        rel: workspace_relpath(path, workspace_root),
+        canon,
+        graph,
+        world,
+        command_indices,
+    })
+}
+
+/// Flattens phase A into the phase-B work queue, in **file-sorted,
+/// index-ascending** order — the order the report folds in, so a command's
+/// position in this vector is its position in `per_command`.
+///
+/// A fast-lane-skipped command stays in the queue and returns its typed skip
+/// immediately. Dropping it here would be marginally cheaper and would delete it
+/// from `verdict_buckets` and `per_command` — the skip must stay *counted*
+/// (STYLE I1: the buckets partition the commands), so it keeps its slot.
+fn command_items(resolved: &[Option<std::sync::Arc<ResolvedFile>>]) -> Vec<CmdItem> {
+    let mut items = Vec::new();
+    for file in resolved.iter().flatten() {
+        for &idx in &file.command_indices {
+            items.push(CmdItem {
+                file: std::sync::Arc::clone(file),
                 idx,
-                canon: canon.clone(),
+            });
+        }
+    }
+    items
+}
+
+/// **Phase B** — builds, solves and (if `--count`) counts one command, on a
+/// worker thread, touching no shared report state. Emits a start heartbeat and,
+/// when slow, an elapsed line through `send` (stderr — the report stays
+/// deterministic; wall-clock lives only here).
+fn compute_command(
+    item: &CmdItem,
+    cfg: &GaugeConfig,
+    baseline: &baseline::Baseline,
+    count_baseline: Option<&CountBaseline>,
+    send: &mut dyn FnMut(&str),
+) -> CmdGaugeResult {
+    let file = &item.file;
+    let (rel, idx) = (file.rel.as_str(), item.idx);
+    let Ok(scoped) = compute_universe(&file.world, &file.graph, &file.world.commands[idx]) else {
+        return CmdGaugeResult {
+            record: CmdRecord {
+                rel: rel.to_owned(),
+                idx,
+                canon: file.canon.clone(),
                 verdict_bucket: "mettle_defer:scope".to_owned(),
                 disagreement: None,
                 self_check_fail: None,
                 panic_line: None,
                 count: CountDisp::None,
-            });
-            continue;
+            },
+            secs: 0.0,
         };
+    };
 
-        send(&format!("  {rel}[{idx}] …"));
-        let started = std::time::Instant::now();
-        let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
-            classify_command(&world, &graph, &scoped, baseline, cfg, &rel, idx)
-        }));
-        let secs = started.elapsed().as_secs_f64();
-        if secs > 5.0 {
-            send(&format!("  {rel}[{idx}] took {secs:.1}s"));
-        }
-        result.timings.push((secs, format!("{rel}[{idx}]")));
-
-        let record = match outcome {
-            Ok(cmd) => {
-                let count = resolve_count(cmd.count, cfg.live_jar, count_baseline, &rel, idx);
-                CmdRecord {
-                    rel: rel.clone(),
-                    idx,
-                    canon: canon.clone(),
-                    verdict_bucket: cmd.verdict_bucket,
-                    disagreement: cmd.disagreement,
-                    self_check_fail: cmd.self_check_fail.map(|sc| format!("{rel}[{idx}]: {sc}")),
-                    panic_line: None,
-                    count,
-                }
-            }
-            Err(payload) => {
-                let msg = payload
-                    .downcast_ref::<&str>()
-                    .map(|s| (*s).to_owned())
-                    .or_else(|| payload.downcast_ref::<String>().cloned())
-                    .unwrap_or_else(|| "non-string panic payload".to_owned());
-                CmdRecord {
-                    rel: rel.clone(),
-                    idx,
-                    canon: canon.clone(),
-                    verdict_bucket: "panic".to_owned(),
-                    disagreement: None,
-                    self_check_fail: None,
-                    panic_line: Some(format!("{rel}[{idx}]: {msg}")),
-                    count: CountDisp::None,
-                }
-            }
-        };
-        result.commands.push(record);
+    send(&format!("  {rel}[{idx}] …"));
+    let started = std::time::Instant::now();
+    let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+        classify_command(&file.world, &file.graph, &scoped, baseline, cfg, rel, idx)
+    }));
+    let secs = started.elapsed().as_secs_f64();
+    if secs > 5.0 {
+        send(&format!("  {rel}[{idx}] took {secs:.1}s"));
     }
-    result
+
+    let record = match outcome {
+        Ok(cmd) => {
+            let count = resolve_count(cmd.count, cfg.live_jar, count_baseline, rel, idx);
+            CmdRecord {
+                rel: rel.to_owned(),
+                idx,
+                canon: file.canon.clone(),
+                verdict_bucket: cmd.verdict_bucket,
+                disagreement: cmd.disagreement,
+                self_check_fail: cmd.self_check_fail.map(|sc| format!("{rel}[{idx}]: {sc}")),
+                panic_line: None,
+                count,
+            }
+        }
+        Err(payload) => {
+            let msg = payload
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_owned())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "non-string panic payload".to_owned());
+            CmdRecord {
+                rel: rel.to_owned(),
+                idx,
+                canon: file.canon.clone(),
+                verdict_bucket: "panic".to_owned(),
+                disagreement: None,
+                self_check_fail: None,
+                panic_line: Some(format!("{rel}[{idx}]: {msg}")),
+                count: CountDisp::None,
+            }
+        }
+    };
+    CmdGaugeResult { record, secs }
 }
 
 /// Resolves a mettle-side [`CountOutcome`] into its report disposition: a typed
@@ -1017,7 +1286,37 @@ impl SolveGaugeReport {
             render_list(&mut out, "COUNT_MISMATCH", &self.count_mismatches);
         }
 
+        self.render_delta(&mut out);
         out
+    }
+
+    /// The `--delta` section: what moved relative to the sweep baseline.
+    fn render_delta(&self, out: &mut String) {
+        let Some(delta) = &self.delta else {
+            return;
+        };
+        let _ = writeln!(
+            out,
+            "\n=== delta vs {} ===",
+            if delta.baseline_files.is_empty() {
+                "<none>".to_owned()
+            } else {
+                delta.baseline_files.join(", ")
+            }
+        );
+        let _ = writeln!(out, "unchanged         : {}", delta.unchanged);
+        if !delta.count_compared {
+            let _ = writeln!(
+                out,
+                "count buckets     : not compared (one side ran without --count)"
+            );
+        }
+        render_list(out, "changed", &delta.changed);
+        render_list(out, "new commands", &delta.new_commands);
+        render_list(out, "gone commands", &delta.gone_commands);
+        if delta.is_clean() {
+            let _ = writeln!(out, "\nNO CHANGE vs the recorded baseline.");
+        }
     }
 
     /// Renders the report as stable pretty JSON.
@@ -1087,9 +1386,49 @@ mod tests {
         assert!(!selected2.contains("a.als"));
     }
 
+    /// Every filter that can shrink the command set bars a capture; nothing else
+    /// does. Kept in lockstep with `select_files`.
+    #[test]
+    fn is_filtered_covers_every_command_set_filter() {
+        let base = bare_config();
+        assert!(!is_filtered(&base));
+
+        let mut only = bare_config();
+        only.only = vec!["portus".to_owned()];
+        assert!(is_filtered(&only));
+
+        let mut from_report = bare_config();
+        from_report.from_report = Some(PathBuf::from("prior.json"));
+        assert!(is_filtered(&from_report));
+
+        // Inert on its own, still counted: over-refusing costs a re-run.
+        let mut from_buckets = bare_config();
+        from_buckets.from_buckets = vec!["DISAGREE".to_owned()];
+        assert!(is_filtered(&from_buckets));
+
+        // Naming a corpus is not a filter — that is how a per-corpus artifact
+        // is captured.
+        let mut roots = bare_config();
+        roots.roots = vec![PathBuf::from("corpus/portus-63")];
+        assert!(!is_filtered(&roots));
+    }
+
     #[test]
     fn exit_status_reflects_partial() {
-        let cfg = GaugeConfig {
+        let cfg = bare_config();
+        let mut report = SolveGaugeReport::new(&cfg, &baseline::Baseline::default(), vec![]);
+        assert_eq!(report.exit_status(), 0);
+        report.partial = true;
+        report.fail_fast_trigger = Some("DISAGREE x[0]".to_owned());
+        assert_eq!(report.exit_status(), 1);
+        assert!(report
+            .render_text()
+            .contains("PARTIAL (fail-fast after DISAGREE x[0])"));
+    }
+
+    /// A zeroed config; tests set only the fields they exercise.
+    fn bare_config() -> GaugeConfig {
+        GaugeConfig {
             roots: vec![],
             workspace_root: PathBuf::new(),
             baselines_dir: PathBuf::new(),
@@ -1111,14 +1450,9 @@ mod tests {
             only: vec![],
             from_report: None,
             from_buckets: vec![],
-        };
-        let mut report = SolveGaugeReport::new(&cfg, &baseline::Baseline::default(), vec![]);
-        assert_eq!(report.exit_status(), 0);
-        report.partial = true;
-        report.fail_fast_trigger = Some("DISAGREE x[0]".to_owned());
-        assert_eq!(report.exit_status(), 1);
-        assert!(report
-            .render_text()
-            .contains("PARTIAL (fail-fast after DISAGREE x[0])"));
+            delta: false,
+            capture_sweep: None,
+            capture_commit: None,
+        }
     }
 }
