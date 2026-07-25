@@ -20,5 +20,6 @@ Each ADR captures one non-trivial decision, its context, and its consequences. A
 | [0012](0012-rung4-integers-strings-counting.md) | Rung-4 architecture: integers, strings, seq, FO skolemization, symmetry posture + the Rung-4 exit gate | Accepted — gate blessed 2026-07-25 (§7 records how), Rung 4 closed |
 | [0013](0013-verification-instrument-never-trades-coverage.md) | The verification instrument never trades coverage for speed (owner-decided; the mt-057 fast lane built, measured at 6%, and deleted) | Accepted |
 | [0014](0014-rung5-repl-slice-before-rung6.md) | A thin Rung-5 slice (evaluator REPL only) before Rung 6, then temporal, then the rest of Rung 5 | Accepted (owner-delegated call, 2026-07-25) |
+| [0015](0015-rung6-temporal-architecture.md) | Rung-6 temporal architecture: bounded lasso solving as per-length unrolling on the existing CDCL; unbounded (electrod) out of scope | Proposed |
 
 Template for new ADRs: **Context → Decision → Consequences → Alternatives considered**, with `Status:` and `Date:` headers, and a `Supersedes` / `Superseded by` line when relevant.

@@ -1,24 +1,32 @@
-# Alloy 6 temporal semantics — pinned contract, wave 1 (mt-063)
+# Alloy 6 temporal semantics — pinned contract, wave 2 (mt-064)
 
-**Status: wave 1 of N, in progress.** This document pins the reference
+**Status: wave 2 of N, in progress.** This document pins the reference
 Alloy 6.2.0 jar's **temporal** behavior — the `var` surface, the `steps`
-scope grammar, verdict semantics, and the Pardinus translation architecture
-— as the authority Rung 6 (temporal solving, `docs/ROADMAP.md`) implements
-from. Per this repo's method: **behavior is pinned by the oracle jar,
-probed and recorded with evidence; a claim without a probe run or a source
-citation is not pinned**, and an unresolved question is recorded as open
-in ["Unpinned / next waves"](#unpinned--next-waves), never guessed.
+scope grammar, verdict semantics, the Pardinus translation architecture,
+trace/XML rendering, enumeration operators, the evaluator's per-state
+story, and counting under temporal scopes — as the authority Rung 6
+(temporal solving, `docs/ROADMAP.md`) implements from. Per this repo's
+method: **behavior is pinned by the oracle jar, probed and recorded with
+evidence; a claim without a probe run or a source citation is not
+pinned**, and an unresolved question is recorded as open in
+["Unpinned / next waves"](#unpinned--next-waves), never guessed.
 
-This is wave 1 only. It pins (a) the temporal surface and discriminator,
-(b) `steps` scope semantics exactly, (c) verdict semantics (minimality,
-bound-relativity of UNSAT, the bounded/unbounded solver boundary), and
-(d) the Pardinus translation architecture at reconnaissance depth (enough
-to write a Rust architecture ADR from). It does **not** pin instance/trace
-rendering or XML shape, enumeration operators (`next_state`, path
-enumeration), REPL per-state evaluation beyond what
-[alloy6-evaluator.md §4](alloy6-evaluator.md#4-the-temporal-edge-deferred-to-rung-6-d)
-already noted, or counting under temporal scopes — all deferred to later
-waves, listed explicitly below.
+**Wave 1** (§(a)-(e) below) pinned the temporal surface and discriminator,
+`steps` scope semantics exactly, verdict semantics (minimality,
+bound-relativity of UNSAT, the bounded/unbounded solver boundary), and the
+Pardinus translation architecture at reconnaissance depth. **Wave 2**
+(§(f)-(j) below) closes most of what wave 1 deferred: (f) trace instance
+rendering and the temporal XML shape, (g) the enumeration operators
+(`next()`'s `fork(p)` variants and their GUI wiring), (h) the evaluator's
+per-state story (state validity bounds, temporal operators as direct
+eval input — closing
+[alloy6-evaluator.md §4](alloy6-evaluator.md#4-the-temporal-edge-deferred-to-rung-6-d)'s
+deferred questions), (i) counting under temporal scopes (reproducing a
+real corpus count baseline live and pinning the enumeration operator it
+implies), and (j) two wave-1 loose ends (the electrod solver id,
+`minprefix=-1`-vs-explicit-`1` equivalence). What remains open after both
+waves is listed in "Unpinned / next waves" — it is materially smaller than
+after wave 1.
 
 Provenance — same pinned oracle build as every other reference doc in this
 directory: `oracle/org.alloytools.alloy.dist.jar` (6.2.0, build commit
@@ -26,11 +34,13 @@ directory: `oracle/org.alloytools.alloy.dist.jar` (6.2.0, build commit
 machine under **JDK 21** (Zulu, via the nix dev shell, the pinned harness
 JDK — `/nix/var/nix/profiles/default/bin/nix ... develop -c`), platform
 darwin/arm64 (confirmed by the jar's own `NativeCode` diagnostic log
-lines). All facts below are tagged with a probe id (`T-NN`, jar-verified
-2026-07-26) and/or a source/bytecode citation. Full harness, exact
-commands, and verbatim jar output for every `T-NN` id:
-`scratchpad/probe/mt063/NOTES.md` (gitignored; rerun with
-`scratchpad/probe/mt063/rerun_all.sh` and `rerun_corpus.sh`).
+lines). All facts below are tagged with a probe id (`T-NN`, wave 1 ids
+jar-verified 2026-07-26, wave 2 ids `T-13`-`T-28` jar-verified 2026-07-26)
+and/or a source/bytecode citation. Full harness, exact commands, and
+verbatim jar output: wave 1 — `scratchpad/probe/mt063/NOTES.md` (gitignored;
+rerun with `scratchpad/probe/mt063/rerun_all.sh` and `rerun_corpus.sh`);
+wave 2 — `scratchpad/probe/mt064/NOTES.md` (gitignored; rerun with
+`scratchpad/probe/mt064/rerun_all.sh`).
 
 The temporal solving engine bundled in the jar is **Pardinus** (a temporal
 fork of Kodkod, package `kodkod.*` — same top-level package as static
@@ -422,6 +432,274 @@ repo's standing defaults; full per-command wall times in
 
 ---
 
+## Wave 2 (mt-064)
+
+Harness, fixtures, predictions-before-run, and full verbatim jar output for
+every `T-13`-`T-28` id below: `scratchpad/probe/mt064/NOTES.md` (gitignored;
+rerun with `scratchpad/probe/mt064/rerun_all.sh`, plus two cheap one-off
+commands for T-26/T-27 documented inline there). Harness code:
+`scratchpad/probe/mt064/TraceProbe.java` (new — `trace`/`enumnext`/`fork`/
+`evalstates` modes against the live, in-process `A4Solution`, the same
+`A4Options`/`TranslateAlloyToKodkod` entry point as mt063's `TemporalProbe`),
+`scratchpad/probe/mt064/EvalProbe.java` (an unmodified copy of mt061's
+`Probe.java`, class renamed only — the pinned GUI evaluator XML-round-trip
+path, reused to cross-check the temporal eval findings against the *real*
+console path, not just direct in-process eval), `ListSolvers.java` (new —
+enumerates `SATFactory.getAllSolvers()` rather than guessing solver-id
+strings).
+
+## (f) Trace instance rendering + XML
+
+**One `<instance>` XML element per trace state, not one element for the
+whole trace.** Jar-verified (**T-13**, a forced 3-state trace; **T-14**, the
+static/1-state contrast): `A4Solution.writeXML` emits `tracelength`
+independent `<instance ...>` blocks inside the single `<alloy>` root, each
+carrying the *same* file-level metadata attributes (`bitwidth`, `maxseq`,
+`mintrace`, `maxtrace`, `command`, `filename`, `tracelength`) — only the
+per-`<sig>` `<atom>` content of `var`-marked sigs (`<sig ... var="yes">`)
+differs between the blocks. Non-`var` sigs (including all four builtins —
+`univ`, `Int`, `seq/Int`, `String` — and any non-`var` user sig) are
+re-emitted, byte-identical, in every block; there is no factoring-out of
+rigid content across states in the XML (nor in `A4Solution.toString(int
+state)`'s equivalent text rendering — see below).
+
+**The loop is encoded as `looplength`, not as a loop-state index.** There is
+no `loop="N"` attribute. Instead every `<instance>` carries `looplength="K"`
+where **`K = tracelength - loopState`** (T-13: `tracelength="3"
+looplength="1"` for a trace with `getLoopState()==2`; T-14: `tracelength="1"
+looplength="1"` for the degenerate static case, `getLoopState()==0`). A
+reader must recover the loop state as `tracelength - looplength`. A static
+(non-temporal) command's XML has this exact same shape, degenerated to a
+single `<instance>` block (`tracelength="1" looplength="1"`) — consistent
+with wave 1 §(a)'s "every solved instance is internally a `TemporalInstance`"
+finding, and with `mintrace`/`maxtrace`'s `-1` static sentinel being written
+into the XML verbatim rather than normalized away (T-14).
+
+**The plain-text rendering (`A4Solution.toString(int state)`,
+`scratchpad/src794/A4Solution.java:1767-1816`) is source-pinned exactly, and
+now also jar-verified (T-13/T-14) to match its own source precisely** — no
+surprises needed probing for once, since the method body is plain,
+readable Java: called with `state < 0` on a `TemporalInstance`, it emits a
+`"---Trace---"` header followed by one `"------State N-------"` (or
+`"------State N (loop)-------"` for the loop state) block per state, each
+listing every sig (`label=<eval>`) and field (`label<:field=<eval>`) at
+that state, plus every skolem. Called with `state >= 0`, it clamps/wraps
+`state` via the identical `Math.max(0, state)` / loop-modulo logic this
+wave's §(h) independently reconfirms for `eval()` itself (see below) and
+renders only that one state's block (prefixed `"---Instance---"` for a
+non-temporal solve, no prefix for a temporal one). This is the string
+`mettle exec`'s temporal rendering will be judged against by inspection
+(the conformance scorecard itself doesn't diff instance text — see
+[alloy6-evaluator.md §5](alloy6-evaluator.md#5-design-implications-for-mettles-repl-mt-062)'s
+same point about tuple order — but a human running `mettle exec` side by
+side with the reference GUI will compare this shape).
+
+Not re-verified this wave: the `<source filename=... content=...>` /
+top-level `<instance filename="...">`-for-reparse protocol
+[alloy6-evaluator.md §0](alloy6-evaluator.md#0-the-evaluators-actual-code-path)
+already pinned for the non-temporal case — T-13/T-14 both passed
+`sourceFiles=null` to `writeXML` to keep the harness's own stdout minimal,
+so those elements don't appear in the captured XML here. No reason to
+expect they interact differently with a multi-`<instance>` temporal file
+(the reparse logic wave 1's evaluator doc found just takes the *first*
+`<instance>` element's `filename` attribute, which is present and identical
+in every block per the finding above), but this specific combination
+wasn't independently re-run with `sourceFiles` populated.
+
+## (g) Enumeration operators
+
+**The dispatch, source-pinned exactly**
+(`scratchpad/src794/A4Solution.java:1829-1855`, doc comment at `:448-449`):
+`A4Solution.next()` is exactly `fork(-3)`. `fork(p)` requires
+`isIncremental()` (the solver used `solveAll`, true for this repo's standing
+default `sat4j`) and dispatches on `p`: `-1` → `kEnumerator.nextC()` ("next
+config"), `-2` → `kEnumerator.nextP()` ("next path"), `p >= 0` →
+`kEnumerator.nextS(p, 1, rels)` ("fork at state `p`", `rels` = the model's
+`var`-marked relations), anything else (including the canonical `-3`) →
+`kEnumerator.next()` ("standard next").
+
+**The GUI wiring, bytecode-traced** (`javap -p -c`,
+`edu/mit/csail/sdg/alloy4viz/VizGUI.class`, extracted in mt061's
+`jarextract/` and reused here — five toolbar buttons, each calling the
+enumerator `Computer`'s `compute(new String[]{xmlFileName, "<p>"})`, the
+same two-element-`Object[]`/`Computer` protocol
+[alloy6-evaluator.md §0](alloy6-evaluator.md#0-the-evaluators-actual-code-path)
+pinned for the *separate* evaluator `Computer`):
+
+| Toolbar label | Tooltip | Method | `p` sent |
+|---|---|---|---|
+| "New" | "Show a new solution" | `doNext()` | `"-3"` |
+| "New Config" | "Show a new configuration" | `doConfig()` | `"-1"` |
+| "New Trace" | "Show a new trace" | `doPath()` | `"-2"` |
+| "New Init" | "Show a new initial state" | `doInit()` | `"0"` |
+| "New Fork" | "Show a new fork" | `doFork()` | `current + 1` (`current` = `VizGUI`'s currently-displayed-state field) |
+
+So **"New Init" is `fork(0)` and "New Fork" is `fork(current+1)`** — both
+route through the identical `p >= 0` dispatch branch; only the state index
+differs. (`doNavLeft()`/`doNavRight()`, the `<`/`>` state-stepper arrows, are
+an unrelated, solver-free mechanism — see §(h).)
+
+**What `fork(p)` for `p >= 0` operationally holds fixed — settled
+empirically, not from the bytecode alone** (a `TemporalPardinusSolver
+$SolutionIterator` lambda predicate filtering on `IterationStep.start`
+*suggested* a prefix-holding mechanism exists, but reading its exact cut
+point off raw stack-order bytecode is exactly the kind of inference this
+repo's method distrusts without a probe to confirm the direction — see
+`scratchpad/probe/mt064/NOTES.md`'s T-20 write-up for the full reasoning).
+**T-20/T-21** (comparing `fork(p)`'s `toString(-1)` state-blocks against the
+original, state by state, on two different fixtures): **`fork(p)` holds
+states `0..p-1` byte-identical to the original and forces state `p` onward
+to a new value.** `fork(0)` ("New Init") therefore changes state 0 itself —
+matching its "new initial state" label. `fork(current+1)` ("New Fork") holds
+every state the user has already looked at (`0..current`) fixed and only
+diverges strictly after it — matching "a new fork" (branching off from
+where you currently are). `fork(-3)`/`fork(-2)` ("next"/"next path") held
+nothing fixed in both fixtures tested (state 0 already differs). `fork(-1)`
+("next config") behaved consistently with "config = the assignment of the
+model's *static* (non-`var`) relations" (matching a `!isVariable()` filter
+independently visible in the same bytecode) but its *failure* mode when no
+alternate config exists differed across the two fixtures tested — UNSAT in
+one, the byte-identical original solution returned again in the other (see
+"Unpinned" below; does not affect the `p >= 0` prefix-holding pin, which is
+consistent and clean across both fixtures).
+
+**Plain `next()`/`fork(-3)` gives genuinely distinct successive traces**
+(**T-16**, six pairwise-distinct traces from one starting solution) and
+**is not confined to the first-found (minimal) trace length — it exhausts
+the raw solution space at each length before advancing to the next length
+in the command's `[mintrace,maxtrace]` steps range** (**T-19**, the wave's
+single most load-bearing enumeration finding: a `1..3 steps` command's
+`next()` sequence gives both raw length-2 solutions first, then genuinely
+advances to length-3 solutions, never reporting UNSAT prematurely just
+because the minimal length was exhausted). This directly explains §(i)'s
+counting behavior below. (T-17's `MinLen.als` cell *seemed* to contradict
+this — only one solution before UNSAT, even at `symmetry=0` — but T-19's
+cleaner fixture shows this was a `MinLen.als`-specific anomaly, not
+evidence that enumeration is length-confined in general; see "Unpinned"
+below.)
+
+## (h) The evaluator's per-state story
+
+Closes [alloy6-evaluator.md §4](alloy6-evaluator.md#4-the-temporal-edge-deferred-to-rung-6-d)/§7's
+deferred questions, with both direct in-process `eval()` calls and a
+cross-check through the real GUI XML-round-trip path (T-25).
+
+**`setCurrentState`'s call sites: client-side state-stepping only, no
+solver call.** `edu/mit/csail/sdg/alloy4/OurConsole.setCurrentState(int)`
+is called from exactly two places in `VizGUI`'s bytecode: once whenever a
+new instance is loaded into the evaluator panel (`current` reset to
+whatever the just-solved/just-displayed state is), and once by
+`VizGUI.doNavRight()`/`doNavLeft()` — the `<`/`>` toolbar arrows — which
+just increment/decrement `VizGUI`'s own `current` field and call
+`updateDisplay()`; no `A4Solution` enumeration method (`next`/`fork`) is
+invoked by stepping through a trace, only by the five buttons in §(g).
+`doNavLeft()` clamps at 0 (`current > 0 ? current-- : no-op`, never goes
+negative). `doNavRight()` computes `normalize(current+1, traceLength,
+loopLength)` where `normalize(i,len,loop)` is *the same modulo-through-the-loop
+formula* independently visible in `A4Solution.toString(int
+state)`'s inline logic (`scratchpad/src794/A4Solution.java:1794-1795`) —
+the GUI's forward-stepping arrow and the text-rendering path share the
+identical wraparound arithmetic, not just a coincidentally similar one.
+
+**`A4Solution.eval(expr, state)`'s validity bounds for `state`, jar-verified
+(T-22/T-23), identically across both the lenient `Sig`/`Field` eval path and
+the strict `Formula`/`Expression` path, and identically through the real GUI
+XML-round-trip path (T-25):**
+- `state` in `[0, traceLength)`: the value at that literal state.
+- `state >= traceLength`: **wraps through the loop** —
+  `((state - loopState) % (traceLength - loopState)) + loopState`, the same
+  `TemporalInstance.normalizedIndex` formula wave 1 §(d) cited from source.
+- `state < 0`: **silently clamps to state 0 — never throws.** This
+  contradicts a naive reading of `TemporalInstance.normalizedIndex`'s own
+  bytecode (its guard `state < prefixLength` is trivially true for any
+  negative number, which would pass a negative index straight through to
+  `List.get` and should throw `IndexOutOfBoundsException`) — the actual,
+  jar-verified behavior is a clean clamp with no exception, in every one of
+  T-22/T-23/T-25's cells. The exact clamp site was not chased into Kodkod's
+  `Evaluator` class (not extracted this wave); behaviorally it is
+  indistinguishable from applying the same `Math.max(0, state)`
+  `A4Solution.toString(int state)`'s own source applies before its
+  loop-wrap arithmetic (`scratchpad/src794/A4Solution.java:1792`) —
+  **pinned as observed behavior, mechanism not claimed.**
+
+**Every one of the 11 temporal operators is legal direct evaluator input,
+with no special-casing and no rejection, and each evaluates relative to the
+given `state`** (**T-24**, `always`/`eventually`/`historically`/`until`/
+`after`/`'` all tried against a fixture whose exact per-state trace was
+independently pinned in §(f)'s T-13, so every result is hand-verifiable
+against the trace, not just internally consistent). `'`/prime specifically
+evaluates the wrapped expression *at `state + 1`* — itself subject to the
+identical loop-wrap/clamp rules above (so priming at the last state before
+a loop correctly wraps into the loop, and priming is well-defined at every
+valid `state` input, never a special "last state" edge case). No divergence
+was found between direct in-process `eval()` and the real GUI's
+XML-round-trip evaluator path for any of this (T-25) — mettle's REPL
+(mt-062) can safely implement the simpler in-process shape (matching
+[alloy6-evaluator.md §5](alloy6-evaluator.md#5-design-implications-for-mettles-repl-mt-062)'s
+existing recommendation) for the temporal edge too, with no fidelity loss.
+
+## (i) Counting under temporal
+
+**The counting gauge's jar-side baseline generator
+(`crates/als-conform/shim/OracleShim.java`'s `countInstances`) enumerates a
+temporal command by repeated plain `A4Solution.next()` — exactly `fork(-3)`,
+"standard next" per §(g) — with no special-casing for temporal vs. static
+commands at that layer.** Source-cited from the actual generator code, not
+inferred.
+
+**Reproduced live (T-26):** `leader.als` cmd1 (`run example {eventually some
+elected} for 3 but exactly 3 Node, 6 steps`) and cmd3 (`check liveness for
+3`) both reproduce the count-baseline's `{"count":1}` exactly (`enumCap=3`
+still only finds 1, proving the true count is 1, not an early-stop
+artifact); cmd2 (`check safety ...`) reproduces `"unsat"` exactly; cmd0
+(`run{} for 4 but exactly 4 Node, 10 steps`) hits its enumeration cap, same
+shape as the baseline's cap-hit `10001` (at a much smaller cap, `3`, chosen
+per this task's "pick the smallest counting-feasible fixture" allowance —
+cmd0's real count is expensive to compute exhaustively and wasn't
+attempted). Full command completed in ~100s wall (well under the 120s hard
+timeout), covering all four commands in one JVM launch.
+
+**Because §(g)'s T-19 showed `next()` spans the entire `[mintrace,maxtrace]`
+steps range rather than staying at the minimal trace length, a temporal
+command's count is the number of distinct full traces across every length
+in its steps range, not just the minimal length — this is exactly why a
+wide range (`10 steps` = `[1,10]`) blows the count up combinatorially
+(cmd0's cap hit) while a tight, heavily-constrained range with a strong
+formula can have a real count as small as 1 (cmd1/cmd3).** The counting
+gauge's temporal arm needs no special per-length or per-config model beyond
+what §(g) already pins: it is the same next()-until-UNSAT loop used for
+static commands, and its result already naturally spans the steps range by
+construction.
+
+## (j) Wave-1 loose ends closed
+
+**The correct `SATFactory` id for the bundled electrod binary is
+`electrod.elo`** (**T-27** — found by enumerating `SATFactory
+.getAllSolvers()` directly instead of guessing more name strings; wave 1's
+five guesses, `electrod`/`ElectrodNuXmv`/`ElectrodNuSMV`/`nuXmv`/`NuXmv`,
+were all simply wrong spellings). It reports `unbounded=true,
+isPresent=true` on this machine (darwin/arm64); the two nuXmv/NuSMV-backed
+electrod variants are `unbounded=true` but `isPresent=false` here (their
+backing model checkers aren't bundled/found on this platform). Selecting
+`electrod.elo` and re-solving T-08b's `UnboundedSteps1.als` (`for 1..
+steps`) no longer throws `ErrorAPI("Bounded engines do not support complete
+model checking.")` — it solves structurally, though it reports UNSAT for a
+fixture that looks trivially SAT by inspection, accompanied by a jar log
+warning ("Temporal formula: will be reduced to possibly unsound static
+version.") — a genuine, un-investigated curiosity, explicitly not chased
+(unbounded/electrod solving remains out of mettle's North-Star scope; see
+"Unpinned" below).
+
+**`minprefix=-1` (the implicit "no `steps` lower bound given" sentinel) and
+an explicit `minprefix=1` resolve to byte-identical solved results**
+(**T-28**: `for 1..10 steps` vs. bare `for 10 steps` on the same model give
+identical `getMinTrace()/getMaxTrace()/getTraceLength()/getLoopState()`) —
+`ScopeComputer` genuinely normalizes them to the same thing, confirming
+wave 1 §(b)'s default-steps claim holds exactly, not just approximately, at
+the explicit/implicit boundary.
+
+---
+
 ## Probe evidence table
 
 Full commands, predictions-before-run, and verbatim jar output for every
@@ -446,63 +724,100 @@ id: `scratchpad/probe/mt063/NOTES.md`. Rerun:
 | T-11 | `RunLen1.als` | `run ... for 1 steps` (not `check`) solves cleanly — isolates T-10a's bug to `check` specifically |
 | T-12 | `ExpectTemporal.als` | `expect` mismatch on a temporal `run` doesn't throw at the `execute_command` layer — same as static commands |
 
+**Wave 2** (`scratchpad/probe/mt064/NOTES.md`; rerun `scratchpad/probe/mt064/rerun_all.sh` plus T-26/T-27's inline one-offs):
+
+| id | Fixture | What it pins |
+|---|---|---|
+| T-13 | `TraceDemo.als` (mt064) | Trace `toString(-1)` shape + XML: one `<instance>` per state, `looplength = tracelength - loopState`, rigid sigs re-emitted per state |
+| T-14 | `Neither.als` (mt063, static contrast) | Static command's XML is the same degenerate 1-`<instance>` shape; `mintrace=-1`/`maxtrace=-1` sentinel written verbatim |
+| T-15 | `EnumDemo.als` (mt064) | Base trace shape for the enumeration probes below |
+| T-16 | `EnumDemo.als` | Plain `next()` gives 6 pairwise-distinct successive traces |
+| T-17/T-17b | `MinLen.als` (mt063) | Only 1 solution before UNSAT at both `symmetry=20` and `symmetry=0` — anomaly, see "Unpinned" |
+| T-18 | `RangeEnum.als` (mt064) | Minimal SAT length 2 for a genuine `1..3 steps` range |
+| T-19 | `RangeEnum.als` | **Decisive**: `next()` exhausts length-2 solutions then advances to length-3 — enumeration spans the whole steps range |
+| T-20 | `EnumDemo.als` | `fork(p)`'s operational classification: `p>=0` holds states `0..p-1` fixed; `fork(-1)`→UNSAT (no alt config) |
+| T-21 | `TraceDemo.als` (unique-trace contrast) | Same classification confirmed; `fork(-1)` here returns the identical solution instead of UNSAT (fixture-dependent, see "Unpinned") |
+| T-22 | `TraceDemo.als` | `eval(Sig,state)` bounds: wraps through the loop for `state>=traceLength`, clamps to 0 for `state<0`, never throws |
+| T-23 | `TraceDemo.als` | Same bounds reconfirmed via the strict `Formula`/`Expression` eval path (`some B`, `A+B`) |
+| T-24 | `TraceDemo.als` | All 11 temporal operators legal as direct eval input, results relative to the given state, hand-verified against T-13's trace |
+| T-25 | `TraceDemo.als` (`EvalProbe`, GUI XML round-trip) | T-22-T-24 reconfirmed through the real console path — no divergence |
+| T-26 | `leader.als` (corpus, via `OracleShim`) | Reproduces the SB-0 count baseline live (`count:1` for cmd1/cmd3, `unsat` for cmd2, cap-hit for cmd0) |
+| T-27 | `ListSolvers.java` + `UnboundedSteps1.als` (mt063) | Correct electrod `SATFactory` id is `electrod.elo`; solves structurally but reports an unexplained UNSAT with a "possibly unsound" warning |
+| T-28 | ad hoc (`r1`/`r2`) | `minprefix=-1` (implicit) and explicit `minprefix=1` resolve identically |
+
 ---
 
 ## Unpinned / next waves
 
-Honest gaps, not silently glossed over:
+Honest gaps, not silently glossed over. Wave 2 closed instance/XML
+rendering, the enumeration-operator classification, the REPL per-state
+story, and counting under temporal scopes (all four of wave 1's headline
+deferrals) — what's left is materially smaller and mostly Pardinus-internal
+curiosities plus two carried-forward items:
 
-- **Instance/trace rendering and XML shape for temporal instances.**
-  `A4SolutionWriter`/`A4SolutionReader`'s handling of a multi-state
-  `TemporalInstance` (how `loop`/`unrolls`/per-state tuples serialize to
-  XML) was not examined at all this wave — needed before mettle can render
-  a temporal counterexample/instance the way Sterling does.
-- **Enumeration operators under time** (`next()`'s temporal variants —
-  `A4Solution`'s constructor comment at `:448-449` mentions "-3 standard
-  next, -2 next path, -1 next config, >=0 fork at state" — none of these
-  were probed). `TemporalBoundsExpander.extend(...)`'s role in incremental
-  enumeration was identified structurally but not exercised.
-- **REPL per-state evaluation**, beyond what
-  [alloy6-evaluator.md §4](alloy6-evaluator.md#4-the-temporal-edge-deferred-to-rung-6-d)
-  already found (evaluating the same expression at different `state`
-  values gives fact-consistent, different answers) — how `OurConsole
-  .current`/`setCurrentState(int)` gets driven as a user steps through a
-  trace in the GUI, and what `mintrace`/`maxtrace`/loop-state bounds mean
-  for *valid* `state` arguments to `eval`, remain open.
-- **Counting under temporal scopes** — how the conformance-scorecard
-  instance-counting gauge (ADR referenced from `docs/adr/`) should treat a
-  `steps` range (count per-length? count only the minimal length? count
-  across enumeration?) is unaddressed; this wave only ever looked at the
-  *first* solve, never enumerated multiple temporal instances.
-- **The correct solver name to actually invoke the bundled `electrod`
-  binary and observe genuine unbounded solving.** Five plausible
-  `SATFactory` names were tried and rejected (`electrod`, `ElectrodNuXmv`,
-  `ElectrodNuSMV`, `nuXmv`, `NuXmv`); the actual name (if directly
-  reachable through `A4Options.solver` at all, rather than only through a
-  GUI preference/menu path not modeled by `A4Options`) is unresolved.
-  Explicitly Rung-6-out-of-scope per this repo's North Star (mettle
-  targets the default bounded solving path first) — recorded as open, not
-  guessed.
+- **Two Pardinus-internal enumeration curiosities, observed but not
+  explained (both explicitly not chased further, matching this repo's
+  precedent of not reverse-engineering solver-internal search-strategy
+  discretion byte-for-byte):**
+  - `MinLen.als` (T-17/T-17b) reports only one raw solution before UNSAT at
+    both `symmetry=20` and `symmetry=0`, despite its `sig A{}`'s default
+    scope apparently allowing multiple non-isomorphic cardinalities that
+    should each be independently satisfying. Wave 2's cleaner `RangeEnum.als`
+    fixture (T-19) independently established that `next()`'s enumeration is
+    *not* generally length-confined, so this is read as a fixture-specific
+    anomaly rather than evidence against T-19's finding — but the anomaly
+    itself is unexplained.
+  - `fork(-1)` ("next config") returns UNSAT when no alternate static
+    config exists on one fixture (`EnumDemo.als`, T-20) but returns the
+    byte-identical original solution again on another (`TraceDemo.als`,
+    T-21). Both are plausible readings of "no alternate config"; which
+    one a given model gets was not traced to a specific code path.
+  - `TemporalBoundsExpander.extend(...)`'s exact role in incremental
+    enumeration (identified structurally in wave 1 §(d), still not
+    exercised) likely bears on both of the above — a future wave chasing
+    either curiosity should start there.
+- **`electrod.elo`'s solving semantics, beyond "it's the right id and it
+  runs" (T-27).** It reports UNSAT (with a jar-logged "Temporal formula:
+  will be reduced to possibly unsound static version." warning) for a
+  fixture that looks trivially SAT by inspection. Not investigated —
+  explicitly out of scope until unbounded/electrod solving itself becomes
+  in-scope for mettle (still Rung-6-out-of-scope per the North Star: the
+  bounded default path is the priority). The *id* (`electrod.elo`) is
+  pinned; its correctness is not.
 - **The `check ... for 1 steps` `NullPointerException` jar bug's root
-  cause inside Pardinus** — the exact repro is pinned (T-10a/T-11), the
-  internal mechanism is not. A Ledger decision (reproduce the failure vs.
-  diverge, with the divergence recorded in `LIMITATIONS.md`) is owed
-  before Rung 6 implements `check` verdict handling at trace-length-1
-  bounds.
-- **Integers/Strings-stay-rigid**, and **the SB-per-state / skolem-skip
-  findings in §(d)**, are source-cited (specific, unambiguous citations)
-  but not independently probe-confirmed by inspecting generated SAT
-  clauses or a live cross-state `Int` comparison. Low risk (the citations
-  are specific `if`-gates, not inferences from surrounding code shape) but
-  flagged per this repo's "probe or cite, never both-absent" standard.
-- **The exact bytecode of `TemporalTranslator.expand`/`translate`** was
-  not disassembled body-for-body (see "Deliberately not chased this wave"
-  in §(d)) — the external behavior it produces is independently pinned by
-  probes, but a future wave wanting the literal encoding shape (e.g. to
-  cross-check a specific edge case in mettle's own encoder) would need to
-  go back to that bytecode.
+  cause inside Pardinus** — unchanged from wave 1. The exact repro is
+  pinned (T-10a/T-11), the internal mechanism is not. A Ledger decision
+  (reproduce the failure vs. diverge, with the divergence recorded in
+  `LIMITATIONS.md`) is still owed before Rung 6 implements `check` verdict
+  handling at trace-length-1 bounds.
+- **Integers/Strings-stay-rigid** is now live-reconfirmed per-state (T-13:
+  `Int`/`String`/`seq/Int`/`univ` byte-identical across all three states of
+  a forced multi-state trace) — the specific claim in §(d)'s "Static-vs-
+  variable relation partitioning" is no longer probe-absent. **The SB-per-state
+  / skolem-skip findings in §(d)** remain source-cited only, not
+  independently probe-confirmed by inspecting generated SAT clauses —
+  unchanged from wave 1, still flagged.
+- **The exact bytecode of `TemporalTranslator.expand`/`translate`** —
+  unchanged from wave 1, still not disassembled body-for-body. The external
+  behavior it produces is independently pinned by two waves of probes now;
+  a future wave wanting the literal encoding shape would still need to go
+  back to that bytecode.
+- **The `sourceFiles`-populated XML round trip for a genuinely multi-state
+  instance** (the `<source filename=... content=...>` protocol
+  [alloy6-evaluator.md §0](alloy6-evaluator.md#0-the-evaluators-actual-code-path)
+  pinned for the non-temporal case) was not independently re-run this wave
+  — T-13/T-14 both passed `sourceFiles=null` to keep harness output minimal.
+  No reason to expect it interacts differently with multiple `<instance>`
+  blocks (the reparse logic already only reads the *first* one's
+  `filename` attribute, present and identical in every block per T-13), but
+  this specific combination is untested.
+- **The exact site inside Kodkod's `Evaluator` class where a negative
+  `state` argument gets clamped to 0** (§(h), T-22) was not chased into
+  bytecode — `Evaluator` itself was not extracted this wave. The *behavior*
+  is solidly pinned (three independent code paths, T-22/T-23/T-25, all
+  agree); the mechanism inside Kodkod is not claimed.
 - **This document does not yet appear in `docs/README.md`'s reference
-  index** — the task's constraints for this probe pass excluded editing
-  any `docs/` file other than this new one; linking it in
-  `docs/README.md` (next to `alloy6-evaluator.md`/`alloy6-translation.md`)
+  index** — unchanged from wave 1; the task's constraints for both probe
+  passes excluded editing any `docs/` file other than this one. Linking it
+  in `docs/README.md` (next to `alloy6-evaluator.md`/`alloy6-translation.md`)
   is a small follow-up the tech lead should do when merging this wave.
