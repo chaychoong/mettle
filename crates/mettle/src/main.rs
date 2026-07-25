@@ -27,6 +27,7 @@
 
 mod diagnostics;
 mod exec;
+mod repl;
 
 use std::io::{self, Write as _};
 use std::process::ExitCode;
@@ -74,6 +75,7 @@ fn print_usage() {
          \x20\x20\x20\x20\x20mettle check <file.als> [--strict]\n\
          \x20\x20\x20\x20\x20mettle exec <file.als> [--command <name|index>] [--allow-overflow]\n\
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20[--conflicts N] [--encode-budget N]\n\
+         \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20[--repl] [--eval <EXPR>]\n\
          \n\
          Subcommands:\n\
          \x20\x20parse <file.als>       parse a module and print it back as canonical Alloy 6\n\
@@ -90,7 +92,9 @@ fn print_usage() {
          \x20\x20--command <sel>        run one command only: by 0-based index, label, or target name\n\
          \x20\x20--allow-overflow       wrap on integer overflow instead of excluding the instance\n\
          \x20\x20--conflicts N          cap SAT search effort (default: unlimited)\n\
-         \x20\x20--encode-budget N      cap encode effort (default: unlimited)"
+         \x20\x20--encode-budget N      cap encode effort (default: unlimited)\n\
+         \x20\x20--eval <EXPR>          evaluate EXPR against the command's instance (repeatable)\n\
+         \x20\x20--repl                 evaluate expressions interactively against the instance"
     );
 }
 

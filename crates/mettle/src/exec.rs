@@ -17,13 +17,16 @@ use std::process::ExitCode;
 use als_core::ir::Ir;
 use als_core::solve::Instance;
 use als_core::{
-    compute_bounds, compute_universe, lower_command, solve_goal, SolveOptions, SolveVerdict,
+    compute_bounds, compute_universe, lower_command, solve_goal, BoundsResult, LoweredGoal,
+    ScopedUniverse, SolveOptions, SolveVerdict,
 };
 use als_syntax::ast::{CmdKind, Expect, ExprId, Para, ParaName};
 use als_types::{
-    resolve, CmdTargetResolved, FilesystemLoader, ModuleGraph, ModuleId, Resolved, ResolvedCommand,
-    ResolvedWorld,
+    resolve_session, CmdTargetResolved, FilesystemLoader, ModuleGraph, ModuleId, ResolvedCommand,
+    ResolvedSession, ResolvedWorld,
 };
+
+use crate::repl::{self, ReplContext, SolvedCommand};
 
 /// Parsed `mettle exec` invocation, or a bare help request.
 enum ParsedArgs<'a> {
@@ -33,6 +36,10 @@ enum ParsedArgs<'a> {
         path: &'a str,
         command_sel: Option<&'a str>,
         opts: SolveOptions,
+        /// `--eval <EXPR>`, in the order written.
+        eval: Vec<&'a str>,
+        /// `--repl`.
+        repl: bool,
     },
 }
 
@@ -46,6 +53,8 @@ fn parse_args(args: &[String]) -> Result<ParsedArgs<'_>, ExitCode> {
     let mut allow_overflow = false;
     let mut conflicts: Option<u64> = None;
     let mut encode_budget: Option<u64> = None;
+    let mut eval: Vec<&str> = Vec::new();
+    let mut repl = false;
 
     let mut i = 0;
     while i < args.len() {
@@ -55,6 +64,16 @@ fn parse_args(args: &[String]) -> Result<ParsedArgs<'_>, ExitCode> {
                 return Ok(ParsedArgs::Help);
             }
             "--allow-overflow" => allow_overflow = true,
+            "--repl" => repl = true,
+            "--eval" => {
+                i += 1;
+                let Some(v) = args.get(i) else {
+                    eprintln!("mettle exec: --eval requires an expression");
+                    crate::print_usage();
+                    return Err(ExitCode::from(2));
+                };
+                eval.push(v.as_str());
+            }
             "--command" => {
                 i += 1;
                 let Some(v) = args.get(i) else {
@@ -123,21 +142,26 @@ fn parse_args(args: &[String]) -> Result<ParsedArgs<'_>, ExitCode> {
             encode_budget,
             ..SolveOptions::default()
         },
+        eval,
+        repl,
     })
 }
 
 pub(crate) fn run_exec(args: &[String]) -> Result<(), ExitCode> {
-    let (path, command_sel, opts) = match parse_args(args)? {
+    let (path, command_sel, opts, eval, repl) = match parse_args(args)? {
         ParsedArgs::Help => return Ok(()),
         ParsedArgs::Run {
             path,
             command_sel,
             opts,
-        } => (path, command_sel, opts),
+            eval,
+            repl,
+        } => (path, command_sel, opts, eval, repl),
     };
 
-    let (graph, resolved) = load_and_resolve(path)?;
-    let world = &resolved.world;
+    let graph = load(path)?;
+    let session = resolve_graph(&graph)?;
+    let world = session.world();
 
     // Only root-module commands execute (opened-module commands are never
     // executed, matching the jar) — `(world index, command)` pairs, source
@@ -165,6 +189,10 @@ pub(crate) fn run_exec(args: &[String]) -> Result<(), ExitCode> {
         },
     };
 
+    if repl || !eval.is_empty() {
+        return run_evaluator(&session, &graph, &root_cmds, &selected, &opts, &eval, repl);
+    }
+
     let mut out = String::new();
     let mut any_failure = false;
     for &pos in &selected {
@@ -181,11 +209,104 @@ pub(crate) fn run_exec(args: &[String]) -> Result<(), ExitCode> {
     }
 }
 
-/// Reads, loads (`open`s and all), and resolves `path` — the same
-/// error-rendering path `run_check` uses (E3/E5): a lex/parse/resolve
-/// failure is never this command's business to reinterpret, it's the same
-/// caret diagnostic `mettle check` would print.
-fn load_and_resolve(path: &str) -> Result<(ModuleGraph, Resolved), ExitCode> {
+/// `--repl` / `--eval` (mt-062): solve **one** command, print its verdict and
+/// instance exactly as a plain run would, then evaluate against that instance.
+///
+/// Attaching to exactly one command is the whole point — the evaluator answers
+/// questions *about an instance*, and a file with several commands has several.
+/// Any command that yields an instance works, a `check`'s counterexample
+/// included.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one call site; every argument is already-parsed state that would \
+              only be re-bundled into a single-use struct"
+)]
+fn run_evaluator(
+    session: &ResolvedSession<'_>,
+    graph: &ModuleGraph,
+    root_cmds: &[(usize, &ResolvedCommand)],
+    selected: &[usize],
+    opts: &SolveOptions,
+    eval: &[&str],
+    repl: bool,
+) -> Result<(), ExitCode> {
+    let world = session.world();
+    let [pos] = selected else {
+        eprintln!(
+            "mettle exec: --repl/--eval evaluate against one command's instance, \
+             but this file has {} commands",
+            root_cmds.len()
+        );
+        eprintln!("select one with `--command <index|label|target>`:");
+        for (pos, (_, cmd)) in root_cmds.iter().enumerate() {
+            eprintln!("  {}", command_header(world, graph, pos, cmd));
+        }
+        return Err(ExitCode::from(2));
+    };
+    let (idx, cmd) = root_cmds[*pos];
+
+    let mut out = String::new();
+    let _ = writeln!(out, "{}", command_header(world, graph, *pos, cmd));
+    let run = match run_pipeline(world, graph, cmd, idx, opts) {
+        Ok(run) => run,
+        Err(e) => {
+            let _ = writeln!(out, "CANNOT EXECUTE: {e}\n");
+            crate::write_stdout(out)?;
+            return Err(ExitCode::from(1));
+        }
+    };
+    let failed = render_verdict(cmd, &run, &mut out);
+    crate::write_stdout(out)?;
+
+    let SolveVerdict::Sat(instance) = run.verdict else {
+        // The reference never even points its evaluator at a command with no
+        // instance (its writer refuses first); mettle can be asked directly, so
+        // it says so, in the reference's own words (contract §2, §5).
+        eprintln!("mettle exec: this command has no instance, so eval is not allowed.");
+        return Err(ExitCode::from(1));
+    };
+
+    let mut ctx = ReplContext::new(
+        session,
+        graph,
+        graph.root,
+        SolvedCommand {
+            ir: run.ir,
+            bounds: run.bounds,
+            scoped: run.scoped,
+            goal: run.goal,
+            instance,
+            opts: run.opts,
+        },
+    );
+
+    let mut any_failure = failed;
+    if !eval.is_empty() {
+        let mut results = String::new();
+        any_failure |= repl::eval_each(&mut ctx, eval, &mut results);
+        crate::write_stdout(results)?;
+    }
+    if repl {
+        if let Err(e) = repl::run_loop(&mut ctx) {
+            if e.kind() == std::io::ErrorKind::BrokenPipe {
+                return Err(ExitCode::from(141));
+            }
+            eprintln!("mettle exec: {e}");
+            return Err(ExitCode::from(2));
+        }
+    }
+    if any_failure {
+        Err(ExitCode::from(1))
+    } else {
+        Ok(())
+    }
+}
+
+/// Reads and loads (`open`s and all) `path` — the same error-rendering path
+/// `run_check` uses (E3/E5): a lex/parse failure is never this command's
+/// business to reinterpret, it's the same caret diagnostic `mettle check`
+/// would print.
+fn load(path: &str) -> Result<ModuleGraph, ExitCode> {
     let source = match std::fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) => {
@@ -195,16 +316,25 @@ fn load_and_resolve(path: &str) -> Result<(ModuleGraph, Resolved), ExitCode> {
     };
 
     let loader = FilesystemLoader::new();
-    let graph = match ModuleGraph::load_with_source(path, source.clone(), &loader) {
-        Ok(graph) => graph,
+    match ModuleGraph::load_with_source(path, source.clone(), &loader) {
+        Ok(graph) => Ok(graph),
         Err(err) => {
             crate::render_load_error(path, &source, &err);
-            return Err(ExitCode::from(1));
+            Err(ExitCode::from(1))
         }
-    };
+    }
+}
 
-    let resolved = match resolve(&graph) {
-        Ok(resolved) => resolved,
+/// Resolves a loaded graph, rendering the reject (or the warnings) as
+/// `mettle check` does.
+///
+/// Uses [`resolve_session`] rather than `resolve` so the resolver's symbol
+/// tables outlive the pass — that is what lets `--repl`/`--eval` type-check an
+/// expression typed at the prompt (mt-062). The pipeline it runs, and so the
+/// verdict and warnings, are the same either way.
+fn resolve_graph(graph: &ModuleGraph) -> Result<ResolvedSession<'_>, ExitCode> {
+    let session = match resolve_session(graph) {
+        Ok(session) => session,
         Err(err) => {
             let file = graph.files.file(err.span().file);
             eprint!(
@@ -216,7 +346,7 @@ fn load_and_resolve(path: &str) -> Result<(ModuleGraph, Resolved), ExitCode> {
     };
     // Warnings are informational only (never affect a verdict) and print to
     // stderr exactly as `mettle check` prints them.
-    for warning in &resolved.warnings {
+    for warning in session.warnings() {
         let file = graph.files.file(warning.span().file);
         eprint!(
             "{}",
@@ -229,7 +359,7 @@ fn load_and_resolve(path: &str) -> Result<(ModuleGraph, Resolved), ExitCode> {
             )
         );
     }
-    Ok((graph, resolved))
+    Ok(session)
 }
 
 /// Applies the `expect 1 ⇒ symmetry 0` override (translation-ref §3/§16.4) for a
@@ -247,6 +377,51 @@ fn effective_opts(opts: &SolveOptions, cmd: &ResolvedCommand) -> SolveOptions {
     }
 }
 
+/// Everything one command's pipeline produced, kept rather than dropped: the
+/// verdict *and* the `Ir`/universe/bounds/goal an evaluator needs to ask
+/// further questions of the instance (mt-062).
+struct CommandRun {
+    ir: Ir,
+    scoped: ScopedUniverse,
+    bounds: BoundsResult,
+    goal: LoweredGoal,
+    verdict: SolveVerdict,
+    /// The options the solve actually used (after the `expect 1` override).
+    opts: SolveOptions,
+}
+
+/// Drives `compute_universe` → `compute_bounds` → `lower_command` →
+/// `solve_goal` for one command. Every typed defer surfaces as the `Err` its
+/// phase raised; the caller decides how to say so.
+fn run_pipeline(
+    world: &ResolvedWorld,
+    graph: &ModuleGraph,
+    cmd: &ResolvedCommand,
+    idx: usize,
+    opts: &SolveOptions,
+) -> Result<CommandRun, als_core::TranslateError> {
+    let scoped = compute_universe(world, graph, cmd)?;
+    let mut ir = Ir::default();
+    let bounds = compute_bounds(world, &scoped, &mut ir);
+    let goal = lower_command(world, graph, &scoped, &bounds, &mut ir, idx)?;
+
+    // `expect 1` forces symmetry breaking off (translation-ref §3/§16.4): the
+    // jar's `A4Solution` does `sym = expected==1 ? 0 : opt.symmetry`, so a command
+    // annotated `expect 1` is solved with no SBP (changing the enumerated count).
+    // mettle mirrors that at the command boundary, where the resolved `expect` is
+    // available, leaving the shared `opts` untouched.
+    let opts = effective_opts(opts, cmd);
+    let verdict = solve_goal(&ir, &scoped, &goal, &bounds, &opts)?;
+    Ok(CommandRun {
+        ir,
+        scoped,
+        bounds,
+        goal,
+        verdict,
+        opts,
+    })
+}
+
 /// Runs one command's full pipeline, appending its rendered block to `out`.
 /// Returns whether this command counts as a failure for the process exit
 /// code (a `CANNOT EXECUTE`, an `UNKNOWN`, or an `expect` mismatch).
@@ -260,50 +435,28 @@ fn run_one_command(
     out: &mut String,
 ) -> bool {
     let _ = writeln!(out, "{}", command_header(world, graph, pos, cmd));
-
-    let scoped = match compute_universe(world, graph, cmd) {
-        Ok(s) => s,
+    match run_pipeline(world, graph, cmd, idx, opts) {
+        Ok(run) => render_verdict(cmd, &run, out),
         Err(e) => {
             let _ = writeln!(out, "CANNOT EXECUTE: {e}\n");
-            return true;
+            true
         }
-    };
+    }
+}
 
-    let mut ir = Ir::default();
-    let bounds = compute_bounds(world, &scoped, &mut ir);
-    let goal = match lower_command(world, graph, &scoped, &bounds, &mut ir, idx) {
-        Ok(g) => g,
-        Err(e) => {
-            let _ = writeln!(out, "CANNOT EXECUTE: {e}\n");
-            return true;
-        }
-    };
-
-    // `expect 1` forces symmetry breaking off (translation-ref §3/§16.4): the
-    // jar's `A4Solution` does `sym = expected==1 ? 0 : opt.symmetry`, so a command
-    // annotated `expect 1` is solved with no SBP (changing the enumerated count).
-    // mettle mirrors that at the command boundary, where the resolved `expect` is
-    // available, leaving the shared `opts` untouched.
-    let opts = &effective_opts(opts, cmd);
-
-    let verdict = match solve_goal(&ir, &scoped, &goal, &bounds, opts) {
-        Ok(v) => v,
-        Err(e) => {
-            let _ = writeln!(out, "CANNOT EXECUTE: {e}\n");
-            return true;
-        }
-    };
-
+/// Renders one solved command's verdict block (and any `expect` check),
+/// returning whether it counts as a failure.
+fn render_verdict(cmd: &ResolvedCommand, run: &CommandRun, out: &mut String) -> bool {
     // Polarity (als-core/src/solve.rs module docs): a `check`'s goal is
     // already negated at lowering, so `Sat` there *is* a counterexample.
-    let (is_sat, mut failed) = match &verdict {
+    let (is_sat, mut failed) = match &run.verdict {
         SolveVerdict::Sat(inst) => {
             let label = match cmd.kind {
                 CmdKind::Run => "SAT",
                 CmdKind::Check => "COUNTEREXAMPLE",
             };
             let _ = writeln!(out, "{label}");
-            out.push_str(&render_instance(&ir, inst));
+            out.push_str(&render_instance(&run.ir, inst));
             (Some(true), false)
         }
         SolveVerdict::Unsat => {

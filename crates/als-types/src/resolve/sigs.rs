@@ -14,6 +14,7 @@ use super::Resolver;
 
 /// The parent clause of a user sig, captured at registration and resolved in
 /// the hierarchy pass.
+#[derive(Debug)]
 pub(super) enum ParentSpec {
     /// Top-level sig (implicit parent `univ`).
     Top,
@@ -31,6 +32,7 @@ pub(super) enum ParentSpec {
 }
 
 /// A per-user-sig source record threaded from registration into later passes.
+#[derive(Debug)]
 pub(super) struct SigSrc {
     pub id: SigId,
     pub module: ModuleId,

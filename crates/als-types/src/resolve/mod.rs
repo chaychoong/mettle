@@ -63,6 +63,102 @@ pub fn resolve(graph: &ModuleGraph) -> Result<Resolved, ResolveError> {
     r.finish()
 }
 
+/// An accepted resolution that **keeps** the resolver's symbol tables alive, so
+/// standalone expression fragments can be resolved against it afterwards — the
+/// evaluator REPL (mt-062, `docs/reference/alloy6-evaluator.md` §5).
+///
+/// [`resolve`] drops those tables ([`Resolver::finish`] keeps only the world);
+/// they are scratch state, not a query surface, and `ModuleSyms::param_sigs` in
+/// particular cannot be rebuilt from a [`ResolvedWorld`] afterwards. So the REPL
+/// gets its own entry point rather than a reconstruction: [`resolve_session`]
+/// runs the very same [`Resolver::run`] pipeline and reaches the very same
+/// accept/reject verdict — it only declines to throw the tables away.
+#[derive(Debug)]
+pub struct ResolvedSession<'g> {
+    resolver: Resolver<'g>,
+    warnings: Vec<ResolveWarning>,
+}
+
+/// Resolves a module graph like [`resolve`], retaining the symbol tables for
+/// later fragment resolution ([`ResolvedSession::resolve_fragment`]).
+///
+/// # Errors
+/// The same first-by-source-position [`ResolveError`] [`resolve`] returns.
+pub fn resolve_session(graph: &ModuleGraph) -> Result<ResolvedSession<'_>, ResolveError> {
+    let mut r = Resolver::new(graph);
+    r.run();
+    let warnings = r.take_verdict()?;
+    Ok(ResolvedSession {
+        resolver: r,
+        warnings,
+    })
+}
+
+/// What a fragment's resolution produced: the choices the lowerer reads, and
+/// the (never-fatal) warnings.
+#[derive(Debug)]
+pub struct FragmentResolved {
+    /// Resolution choices for the fragment's `ExprId`s, keyed by the module the
+    /// fragment resolved *as*. A table of its own — the fragment's ids index a
+    /// separate arena and would otherwise collide with that module's.
+    pub choices: crate::choice::ChoiceTable,
+    /// Warnings raised while type-checking the fragment.
+    pub warnings: Vec<ResolveWarning>,
+}
+
+impl ResolvedSession<'_> {
+    /// The resolved, type-checked world.
+    #[must_use]
+    pub fn world(&self) -> &ResolvedWorld {
+        &self.resolver.world
+    }
+
+    /// Warnings from resolving the graph, ordered by source position.
+    #[must_use]
+    pub fn warnings(&self) -> &[ResolveWarning] {
+        &self.warnings
+    }
+
+    /// Type-checks one standalone expression `expr`, living in the arena
+    /// `fragment`, **as if written in** `module` — with `globals` (the solved
+    /// instance's atom and skolem names, evaluator contract §0 step 6) bound
+    /// like enclosing lexical variables, which is exactly what makes `A$0` and
+    /// `$foo_x` resolve at all.
+    ///
+    /// # Errors
+    /// The first-by-source-position [`ResolveError`] the fragment raised.
+    pub fn resolve_fragment(
+        &self,
+        module: ModuleId,
+        fragment: &Ast,
+        expr: ExprId,
+        globals: &[(String, Type)],
+    ) -> Result<FragmentResolved, ResolveError> {
+        let mut cx = expr::Cx::new_fragment(&self.resolver, module, fragment);
+        // Pushed outermost: an inner `let`/quantifier binding of the same name
+        // still shadows them (`env_get` scans from the end), matching how a
+        // module global is shadowed by a local in the reference.
+        cx.env.extend(globals.iter().cloned());
+        cx.run_fragment(expr);
+        if let Some(err) = first_by_position(std::mem::take(&mut cx.errors)) {
+            return Err(err);
+        }
+        let mut warnings = std::mem::take(&mut cx.warnings);
+        warnings.sort_by_key(|w| (w.span().file.index(), w.span().start));
+        Ok(FragmentResolved {
+            choices: std::mem::take(&mut cx.choices),
+            warnings,
+        })
+    }
+}
+
+/// The first error by source position (ADR-0008 decision 7).
+fn first_by_position(errors: Vec<ResolveError>) -> Option<ResolveError> {
+    errors
+        .into_iter()
+        .min_by_key(|e| (e.span().file.index(), e.span().start))
+}
+
 /// Strips a leading `this/` qualifier from a name's segments (resolution-doc
 /// §2.4 `Util.tailThis`): `this/plus` resolves as bare `plus`.
 pub(super) fn strip_this(segs: Vec<String>) -> Vec<String> {
@@ -93,6 +189,7 @@ struct ModuleSyms {
 
 /// The resolver's working state: the graph, the world being built, per-module
 /// symbol tables, reachability, and the diagnostic sinks.
+#[derive(Debug)]
 struct Resolver<'g> {
     graph: &'g ModuleGraph,
     world: ResolvedWorld,
@@ -513,21 +610,25 @@ impl<'g> Resolver<'g> {
         self.warnings.push(w);
     }
 
+    /// The verdict: the first error by source position (ADR-0008 decision 7),
+    /// or the span-ordered warnings, **taken out of** the resolver so what
+    /// remains is the accepted world and its symbol tables.
+    fn take_verdict(&mut self) -> Result<Vec<ResolveWarning>, ResolveError> {
+        if let Some(err) = first_by_position(std::mem::take(&mut self.errors)) {
+            return Err(err);
+        }
+        let mut warnings = std::mem::take(&mut self.warnings);
+        warnings.sort_by_key(|w| (w.span().file.index(), w.span().start));
+        Ok(warnings)
+    }
+
     /// Picks the first error by source position (ADR-0008 decision 7), or
     /// returns the accepted world + span-ordered warnings.
     fn finish(mut self) -> Result<Resolved, ResolveError> {
-        if let Some(err) = self
-            .errors
-            .into_iter()
-            .min_by_key(|e| (e.span().file.index(), e.span().start))
-        {
-            return Err(err);
-        }
-        self.warnings
-            .sort_by_key(|w| (w.span().file.index(), w.span().start));
+        let warnings = self.take_verdict()?;
         Ok(Resolved {
             world: self.world,
-            warnings: self.warnings,
+            warnings,
         })
     }
 }

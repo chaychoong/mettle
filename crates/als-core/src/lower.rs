@@ -180,8 +180,112 @@ pub fn lower_command(
         skolem_names: BTreeSet::new(),
         var_bound: BTreeMap::new(),
         bitwidth: scoped.bitwidth,
+        strings_closed: true,
     };
     lowerer.lower(command_index)
+}
+
+/// A lowered evaluator fragment (mt-062): which of the three IR sorts the input
+/// turned out to be, and its root node. The sort is what decides the rendered
+/// shape — `true`/`false`, a bare numeral, or a tuple set
+/// (`docs/reference/alloy6-evaluator.md` §3).
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum LoweredFragment {
+    /// A formula: renders `true`/`false`.
+    Formula(FormulaId),
+    /// A genuinely `int`-typed expression (`#e`, `sum x: B | e`): renders as a
+    /// bare numeral. `plus[3,4]` and friends are **not** here — they are
+    /// `Int`-*set*-typed and render `{7}` (evaluator contract §1).
+    Int(IntExprId),
+    /// A relational expression: renders `{tuple, …}`.
+    Rel(RelExprId),
+}
+
+/// One evaluator fragment to lower against an already-solved command.
+#[derive(Copy, Clone, Debug)]
+pub struct FragmentInput<'a> {
+    /// The module the fragment was resolved *as* (its names are in scope).
+    pub module: ModuleId,
+    /// The arena the fragment's ids index into (not a loaded file's).
+    pub ast: &'a Ast,
+    /// The fragment's own resolution choices.
+    pub choices: &'a ChoiceTable,
+    /// The expression to lower.
+    pub expr: ExprId,
+    /// The solved command's bitwidth (inherited, evaluator contract §2).
+    pub bitwidth: u32,
+    /// Names bound to already-lowered values — the solved instance's atom and
+    /// skolem names (evaluator contract §0 step 6), which the resolver bound
+    /// like lexical variables and the lowerer therefore looks up like ones.
+    pub globals: &'a [(String, RelExprId)],
+}
+
+/// Lowers one standalone evaluator fragment into `ir`, alongside (and after)
+/// the command whose instance it will be evaluated against.
+///
+/// The `Ir` arenas are append-only, so this never disturbs the already-solved
+/// command's nodes; nothing here is re-encoded, only evaluated.
+/// **Skolemization is blocked outright** — the instance is already fixed, so a
+/// skolem would be a free relation nothing ever assigned; blocking also turns a
+/// higher-order decl into the typed [`TranslateError::HigherOrder`] the
+/// reference's evaluator reports as "Higher-order quantification is not allowed
+/// in the evaluator." (evaluator contract §0 step 10).
+///
+/// # Errors
+/// A [`TranslateError`] for anything outside the lowerable slice — a temporal
+/// operator, a higher-order decl, or a construct the command pipeline defers
+/// the same way.
+pub fn lower_fragment<'a>(
+    world: &'a ResolvedWorld,
+    graph: &'a ModuleGraph,
+    bounds: &'a BoundsResult,
+    ir: &'a mut Ir,
+    input: &FragmentInput<'a>,
+) -> Result<LoweredFragment, TranslateError> {
+    let mut lowerer = Lowerer {
+        world,
+        graph,
+        bounds,
+        ir,
+        binders: input
+            .globals
+            .iter()
+            .map(|(name, value)| (name.clone(), Binding::Expr(*value)))
+            .collect(),
+        inline_stack: Vec::new(),
+        temporal: None,
+        pol: Pol {
+            positive: true,
+            blocked: true,
+        },
+        cmd_label: String::new(),
+        skolem_bounds: Vec::new(),
+        has_higher_order_skolem: false,
+        skolem_names: BTreeSet::new(),
+        var_bound: BTreeMap::new(),
+        bitwidth: input.bitwidth,
+        strings_closed: false,
+    };
+    let ctx = Ctx {
+        module: input.module,
+        choices: input.choices,
+        ast: Some(input.ast),
+    };
+    // The same three-way split `lower_command` applies inside a command body,
+    // here applied to the fragment's root: the input *is* the expression.
+    let value = match lowerer.sort_of(ctx, input.expr) {
+        Sort::Formula => LoweredFragment::Formula(lowerer.lower_formula(ctx, input.expr)?),
+        Sort::Int => LoweredFragment::Int(lowerer.lower_int(ctx, input.expr)?),
+        Sort::Rel => LoweredFragment::Rel(lowerer.lower_rel(ctx, input.expr)?),
+    };
+    if let Some((op, span)) = lowerer.temporal {
+        return Err(TranslateError::TemporalUnsupported { op, span });
+    }
+    debug_assert!(
+        lowerer.skolem_bounds.is_empty(),
+        "a blocked-polarity fragment minted a skolem relation"
+    );
+    Ok(value)
 }
 
 /// The skolem-name label for a command (translation-ref §2.3/§10.6/§15, probes
@@ -271,6 +375,12 @@ enum Binding {
 struct Ctx<'a> {
     module: ModuleId,
     choices: &'a ChoiceTable,
+    /// The arena this context's `ExprId`s index into, when it is **not** the
+    /// module's own loaded AST: an evaluator fragment parsed standalone
+    /// (mt-062, [`lower_fragment`]). The fragment still lowers *as*
+    /// [`Self::module`] — that is whose names its choices were recorded
+    /// against — so only the arena is redirected.
+    ast: Option<&'a Ast>,
 }
 
 /// The three sorts an expression can lower to (translation-ref §2), decided
@@ -378,6 +488,11 @@ struct Lowerer<'a> {
     /// The command's bitwidth (signed range `−2^{bw-1}..2^{bw-1}−1`), for
     /// `fun/min`/`fun/max` lowering (translation-ref §12).
     bitwidth: u32,
+    /// Whether every string literal reachable from here is guaranteed to have a
+    /// denotation — true when lowering a command (the bounds phase collected
+    /// them all), false for an evaluator fragment (mt-062), whose input may
+    /// name a literal the solved command never referenced.
+    strings_closed: bool,
 }
 
 impl<'a> Lowerer<'a> {
@@ -1057,7 +1172,7 @@ impl<'a> Lowerer<'a> {
         bound: ExprId,
         span: Span,
     ) -> Result<Vec<FormulaId>, TranslateError> {
-        let ast = self.ast(ctx.module);
+        let ast = self.ast_of(ctx);
         match &ast.exprs[bound].kind {
             // Multiplicity markers on a unary/relation bound.
             ExprKind::Unary { op, expr } if is_mult_marker(*op) => {
@@ -1366,24 +1481,18 @@ impl<'a> Lowerer<'a> {
         span: Span,
         col: &mut u32,
     ) -> Result<Vec<FormulaId>, TranslateError> {
-        let other_is_arrow = matches!(
-            &self.ast(ctx.module).exprs[other].kind,
-            ExprKind::Arrow { .. }
-        );
+        let other_is_arrow = matches!(&self.ast_of(ctx).exprs[other].kind, ExprKind::Arrow { .. });
         if mult_test_of(other_mult).is_none() && !other_is_arrow {
             return Ok(vec![]);
         }
 
-        if matches!(
-            &self.ast(ctx.module).exprs[iter].kind,
-            ExprKind::Arrow { .. }
-        ) {
+        if matches!(&self.ast_of(ctx).exprs[iter].kind, ExprKind::Arrow { .. }) {
             let ExprKind::Arrow {
                 lhs: inner_lhs,
                 lhs_mult: inner_lhs_mult,
                 rhs_mult: inner_rhs_mult,
                 rhs: inner_rhs,
-            } = self.ast(ctx.module).exprs[iter].kind.clone()
+            } = self.ast_of(ctx).exprs[iter].kind.clone()
             else {
                 unreachable!("just matched ExprKind::Arrow above");
             };
@@ -1476,7 +1585,7 @@ impl<'a> Lowerer<'a> {
             lhs_mult,
             rhs_mult,
             rhs,
-        } = self.ast(ctx.module).exprs[other].kind.clone()
+        } = self.ast_of(ctx).exprs[other].kind.clone()
         {
             out.extend(
                 self.arrow_value_constraint(ctx, joined, lhs, lhs_mult, rhs_mult, rhs, span, col)?,
@@ -1499,7 +1608,7 @@ impl<'a> Lowerer<'a> {
         span: Span,
         col: &mut u32,
     ) -> Result<(Vec<crate::ir::VarId>, RelExprId), TranslateError> {
-        if let ExprKind::Arrow { lhs, rhs, .. } = self.ast(ctx.module).exprs[expr].kind.clone() {
+        if let ExprKind::Arrow { lhs, rhs, .. } = self.ast_of(ctx).exprs[expr].kind.clone() {
             let (mut lvars, lrel) = self.arrow_leaf_vars(ctx, lhs, span, col)?;
             let (rvars, rrel) = self.arrow_leaf_vars(ctx, rhs, span, col)?;
             lvars.extend(rvars);
@@ -1616,7 +1725,7 @@ impl<'a> Lowerer<'a> {
 
     #[allow(clippy::too_many_lines)]
     fn lower_formula(&mut self, ctx: Ctx, e: ExprId) -> Result<FormulaId, TranslateError> {
-        let node = self.ast(ctx.module).exprs[e].clone();
+        let node = self.ast_of(ctx).exprs[e].clone();
         let span = node.span;
         match node.kind {
             ExprKind::Block(exprs) => {
@@ -2001,7 +2110,7 @@ impl<'a> Lowerer<'a> {
                         lhs_mult,
                         rhs_mult,
                         rhs: arhs,
-                    } = self.ast(ctx.module).exprs[rhs].kind.clone()
+                    } = self.ast_of(ctx).exprs[rhs].kind.clone()
                     else {
                         unreachable!("bound_is_higher_order is true only for ExprKind::Arrow");
                     };
@@ -2072,7 +2181,7 @@ impl<'a> Lowerer<'a> {
 
     #[allow(clippy::too_many_lines)]
     fn lower_rel(&mut self, ctx: Ctx, e: ExprId) -> Result<RelExprId, TranslateError> {
-        let node = self.ast(ctx.module).exprs[e].clone();
+        let node = self.ast_of(ctx).exprs[e].clone();
         let span = node.span;
         // An int-sorted expression in relation position implicitly casts to its
         // `Int` atom (`Int[·]`, translation-ref §2.1's `IntToAtom` row) — the
@@ -2119,13 +2228,20 @@ impl<'a> Lowerer<'a> {
                 // `strings::collect_referenced_literals` and given a denotation
                 // in the bounds phase; a miss is an internal invariant
                 // violation, never a silent empty relation (negative space).
+                // An evaluator fragment (mt-062) is the one caller for which
+                // that closure does NOT hold — a literal typed at the prompt
+                // was never seen by the solved command, so it has no atom in
+                // that command's universe. There it is an ordinary user error
+                // (the reference: "String literal \"…\" does not exist in
+                // this instance.", evaluator contract §3/E-49), not an
+                // invariant violation.
                 debug_assert!(
-                    self.bounds.string_denote.contains_key(&s),
+                    !self.strings_closed || self.bounds.string_denote.contains_key(&s),
                     "string literal {s:?} in the goal was not collected into the universe"
                 );
                 self.bounds.string_denote.get(&s).copied().ok_or_else(|| {
                     TranslateError::LoweringUnsupported {
-                        what: format!("string literal {s:?} has no denotation"),
+                        what: format!("string literal {s:?} does not exist in this instance"),
                         span,
                     }
                 })
@@ -2393,7 +2509,7 @@ impl<'a> Lowerer<'a> {
         e: ExprId,
         span: Span,
     ) -> Result<RelExprId, TranslateError> {
-        match self.ast(ctx.module).exprs[e].kind.clone() {
+        match self.ast_of(ctx).exprs[e].kind.clone() {
             ExprKind::Binary {
                 op: BinOp::Join,
                 lhs,
@@ -2621,7 +2737,7 @@ impl<'a> Lowerer<'a> {
 
     #[allow(clippy::too_many_lines)] // one arm per integer-position `ExprKind`
     fn lower_int(&mut self, ctx: Ctx, e: ExprId) -> Result<IntExprId, TranslateError> {
-        let node = self.ast(ctx.module).exprs[e].clone();
+        let node = self.ast_of(ctx).exprs[e].clone();
         let span = node.span;
         // An expression that resolves to a *relation* of `Int` atoms in an
         // integer position is implicitly cast (`int[·]`, the reference's
@@ -2758,11 +2874,9 @@ impl<'a> Lowerer<'a> {
         let mut var_bounds: Vec<(crate::ir::VarId, RelExprId)> = Vec::new();
         let mut pushed = 0;
         for &d in decls {
-            let decl = self.ast(ctx.module).decls[d].clone();
+            let decl = self.ast_of(ctx).decls[d].clone();
             if decl.is_bound_disj {
-                return Err(bound_disj_unpinned(
-                    self.ast(ctx.module).exprs[decl.bound].span,
-                ));
+                return Err(bound_disj_unpinned(self.ast_of(ctx).exprs[decl.bound].span));
             }
             let bound = self.lower_decl_bound_set(ctx, &decl)?;
             for name in &decl.names {
@@ -2934,14 +3048,12 @@ impl<'a> Lowerer<'a> {
         let mut out = BoundDecls::default();
         let mut disj_parts: Vec<FormulaId> = Vec::new();
         for &d in decls {
-            let decl = self.ast(ctx.module).decls[d].clone();
+            let decl = self.ast_of(ctx).decls[d].clone();
             if decl.is_bound_disj {
-                return Err(bound_disj_unpinned(
-                    self.ast(ctx.module).exprs[decl.bound].span,
-                ));
+                return Err(bound_disj_unpinned(self.ast_of(ctx).exprs[decl.bound].span));
             }
             if self.decl_is_higher_order(ctx, decl.bound) {
-                let bound_span = self.ast(ctx.module).exprs[decl.bound].span;
+                let bound_span = self.ast_of(ctx).exprs[decl.bound].span;
                 if !matches!(regime, SkolemRegime::Allowed) {
                     return Err(TranslateError::HigherOrder { span: bound_span });
                 }
@@ -3029,7 +3141,7 @@ impl<'a> Lowerer<'a> {
     /// non-`one` unary multiplicity marker, or a multiplicity-marked arrow. A
     /// plain product `A -> B` (no marks) is first-order (one pair per binding).
     fn decl_is_higher_order(&self, ctx: Ctx, bound: ExprId) -> bool {
-        if let ExprKind::Unary { op, .. } = &self.ast(ctx.module).exprs[bound].kind {
+        if let ExprKind::Unary { op, .. } = &self.ast_of(ctx).exprs[bound].kind {
             if is_mult_marker(*op) && !matches!(op, UnOp::OneOf) {
                 return true;
             }
@@ -3159,7 +3271,7 @@ impl<'a> Lowerer<'a> {
         span: Span,
     ) -> Result<Vec<FormulaId>, TranslateError> {
         let bound = decl.bound;
-        match self.ast(ctx.module).exprs[bound].kind.clone() {
+        match self.ast_of(ctx).exprs[bound].kind.clone() {
             ExprKind::Unary { op, expr } if is_mult_marker(op) => {
                 // `exactly A` means `x = A`, not `x in A`; defer rather than
                 // emit a weaker membership (never a wrong verdict, STYLE E5).
@@ -3352,7 +3464,7 @@ impl<'a> Lowerer<'a> {
     /// whole relation the var ranges over, which is second-order. Walks the arrow
     /// tree so a mark on any column is caught.
     fn bound_is_higher_order(&self, ctx: Ctx, e: ExprId) -> bool {
-        match &self.ast(ctx.module).exprs[e].kind {
+        match &self.ast_of(ctx).exprs[e].kind {
             ExprKind::Arrow {
                 lhs,
                 lhs_mult,
@@ -3372,7 +3484,7 @@ impl<'a> Lowerer<'a> {
     /// multiplicity/`seq` marker (the marker constrains the bound, handled at the
     /// quantifier/field level, not the bound value).
     fn lower_decl_bound_set(&mut self, ctx: Ctx, decl: &Decl) -> Result<RelExprId, TranslateError> {
-        let ast = self.ast(ctx.module);
+        let ast = self.ast_of(ctx);
         let bound = match &ast.exprs[decl.bound].kind {
             ExprKind::Unary { op, expr } if is_mult_marker(*op) => *expr,
             _ => decl.bound,
@@ -3387,7 +3499,7 @@ impl<'a> Lowerer<'a> {
     /// must go through `lower_rel` and hit its typed defer instead of being
     /// silently weakened.
     fn lower_rel_stripped(&mut self, ctx: Ctx, e: ExprId) -> Result<RelExprId, TranslateError> {
-        if let ExprKind::Arrow { lhs, rhs, .. } = self.ast(ctx.module).exprs[e].kind {
+        if let ExprKind::Arrow { lhs, rhs, .. } = self.ast_of(ctx).exprs[e].kind {
             let span = self.span_of(ctx, e);
             let l = self.lower_rel_stripped(ctx, lhs)?;
             let r = self.lower_rel_stripped(ctx, rhs)?;
@@ -3544,6 +3656,7 @@ impl<'a> Lowerer<'a> {
         let ctx = Ctx {
             module: mc.body_module,
             choices: &mc.body_choices,
+            ast: None,
         };
         let body = self.world.macros[mc.macro_id].body;
         let r = self.lower_formula(ctx, body);
@@ -3562,6 +3675,7 @@ impl<'a> Lowerer<'a> {
         let ctx = Ctx {
             module: mc.body_module,
             choices: &mc.body_choices,
+            ast: None,
         };
         let body = self.world.macros[mc.macro_id].body;
         let r = self.lower_rel(ctx, body);
@@ -3696,7 +3810,7 @@ impl<'a> Lowerer<'a> {
     /// choices — used only to route `=`/`in` (int special case) and small-int
     /// promotion; never a re-derivation of the type checker.
     fn sort_of(&self, ctx: Ctx, e: ExprId) -> Sort {
-        match &self.ast(ctx.module).exprs[e].kind {
+        match &self.ast_of(ctx).exprs[e].kind {
             ExprKind::Num(_) => Sort::Int,
             ExprKind::Str(_) | ExprKind::Const(_) | ExprKind::This => Sort::Rel,
             ExprKind::Unary { op, expr } => match op {
@@ -3812,6 +3926,7 @@ impl<'a> Lowerer<'a> {
         let ctx = Ctx {
             module: mc.body_module,
             choices: &mc.body_choices,
+            ast: None,
         };
         self.sort_of(ctx, self.world.macros[mc.macro_id].body)
     }
@@ -3822,6 +3937,19 @@ impl<'a> Lowerer<'a> {
         Ctx {
             module,
             choices: &self.world.choices,
+            ast: None,
+        }
+    }
+
+    /// The arena a context's `ExprId`s index into: its module's loaded AST, or
+    /// the standalone fragment's own ([`Ctx::ast`]).
+    fn ast_of<'b>(&self, ctx: Ctx<'b>) -> &'b Ast
+    where
+        'a: 'b,
+    {
+        match ctx.ast {
+            Some(ast) => ast,
+            None => self.ast(ctx.module),
         }
     }
 
@@ -3835,7 +3963,7 @@ impl<'a> Lowerer<'a> {
     }
 
     fn span_of(&self, ctx: Ctx, e: ExprId) -> Span {
-        self.ast(ctx.module).exprs[e].span
+        self.ast_of(ctx).exprs[e].span
     }
 
     fn sig_denote(&mut self, sig: SigId, span: Span) -> Result<RelExprId, TranslateError> {
@@ -4041,7 +4169,7 @@ impl<'a> Lowerer<'a> {
         ctx: Ctx,
         e: ExprId,
     ) -> Option<(als_types::CallableChoice, Vec<ExprId>)> {
-        match &self.ast(ctx.module).exprs[e].kind {
+        match &self.ast_of(ctx).exprs[e].kind {
             ExprKind::Name(qn) => {
                 let [seg] = qn.segments.as_slice() else {
                     return None;
@@ -4049,7 +4177,7 @@ impl<'a> Lowerer<'a> {
                 self.lookup_callable(&seg.text).map(|c| (c, Vec::new()))
             }
             ExprKind::BoxJoin { target, args } => {
-                let ExprKind::Name(qn) = &self.ast(ctx.module).exprs[*target].kind else {
+                let ExprKind::Name(qn) = &self.ast_of(ctx).exprs[*target].kind else {
                     return None;
                 };
                 let [seg] = qn.segments.as_slice() else {
@@ -4284,7 +4412,7 @@ impl<'a> Lowerer<'a> {
 
     /// The single argument of a one-arg builtin box join (`int[e]`/`Int[e]`).
     fn first_box_arg(&self, ctx: Ctx, e: ExprId, span: Span) -> Result<ExprId, TranslateError> {
-        match &self.ast(ctx.module).exprs[e].kind {
+        match &self.ast_of(ctx).exprs[e].kind {
             ExprKind::BoxJoin { args, .. } if !args.is_empty() => Ok(args[0]),
             _ => Err(TranslateError::LoweringUnsupported {
                 what: "builtin cast with no argument".to_owned(),
@@ -4294,7 +4422,7 @@ impl<'a> Lowerer<'a> {
     }
 
     fn box_args(&self, ctx: Ctx, e: ExprId, span: Span) -> Result<Vec<ExprId>, TranslateError> {
-        match &self.ast(ctx.module).exprs[e].kind {
+        match &self.ast_of(ctx).exprs[e].kind {
             ExprKind::BoxJoin { args, .. } => Ok(args.clone()),
             _ => Err(TranslateError::LoweringUnsupported {
                 what: "builtin form of unexpected shape".to_owned(),
@@ -4314,7 +4442,7 @@ impl<'a> Lowerer<'a> {
     /// restriction padding and implicit `one`). Best-effort: known for a plain
     /// sig/field name; `None` for compounds (callers defer).
     fn rel_arity(&self, e: ExprId, ctx: Ctx) -> Option<usize> {
-        match &self.ast(ctx.module).exprs[e].kind {
+        match &self.ast_of(ctx).exprs[e].kind {
             ExprKind::Name(_) | ExprKind::AtName(_) => match self.choice(ctx, e)? {
                 ExprChoice::Name(NameChoice::Sig(_)) => Some(1),
                 ExprChoice::Name(NameChoice::Field {

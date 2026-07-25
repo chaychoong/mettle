@@ -64,6 +64,15 @@ impl FileTable {
         &self.files[id]
     }
 
+    /// Looks up a loaded file by id, or `None` when the id belongs to no
+    /// loaded file. Every id minted by [`Self::intern`] is loaded, so this
+    /// differs from [`Self::file`] only for a **synthetic** id — the evaluator
+    /// fragment's (mt-062), which is deliberately outside this table.
+    #[must_use]
+    pub fn try_file(&self, id: FileId) -> Option<&LoadedFile> {
+        (id.index() < self.files.len()).then(|| &self.files[id])
+    }
+
     /// Number of distinct files loaded.
     #[must_use]
     pub fn len(&self) -> usize {

@@ -24,7 +24,7 @@ pub use arena::{Arena, ArenaId};
 pub use ast::Ast;
 pub use cook::cook;
 pub use lexer::{lex, LexError};
-pub use parser::{parse, ParseError};
+pub use parser::{parse, parse_fragment, Fragment, FragmentError, ParseError, FRAGMENT_OFFSET};
 pub use print::{dump, Pretty};
 pub use span::{FileId, Span};
 pub use token::{Token, TokenKind};

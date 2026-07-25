@@ -238,6 +238,11 @@ pub(super) struct Cx<'a, 'g> {
     /// Resolution choices recorded for the lowerer (mt-031), keyed by this
     /// context's [`Self::module`] and each node's `ExprId`.
     pub choices: ChoiceTable,
+    /// The arena this context's `ExprId`s index into, when it is **not** the
+    /// module's own loaded AST: an evaluator fragment parsed standalone
+    /// (mt-062). The fragment still resolves *as* [`Self::module`] — that is
+    /// what puts the module's names in scope — so only the arena is redirected.
+    ast_override: Option<&'g als_syntax::ast::Ast>,
     /// Remaining macro-substitution budget (resolution-doc §3.7, starts at 20).
     unroll: u32,
 }
@@ -254,7 +259,23 @@ impl<'a, 'g> Cx<'a, 'g> {
             errors: Vec::new(),
             warnings: Vec::new(),
             choices: ChoiceTable::new(),
+            ast_override: None,
             unroll: 20,
+        }
+    }
+
+    /// A context resolving a standalone expression `fragment` **as** `module`
+    /// (mt-062): the module's names are in scope, but `ExprId`s index the
+    /// fragment's own arena. A nested context (a macro replay) is built by
+    /// [`Self::new`] and so reads its own module's loaded AST, as it must.
+    pub(super) fn new_fragment(
+        r: &'a Resolver<'g>,
+        module: ModuleId,
+        fragment: &'g als_syntax::ast::Ast,
+    ) -> Self {
+        Cx {
+            ast_override: Some(fragment),
+            ..Cx::new(r, module)
         }
     }
 
@@ -440,7 +461,10 @@ impl<'a, 'g> Cx<'a, 'g> {
     }
 
     fn ast(&self) -> &'g als_syntax::ast::Ast {
-        self.r.ast(self.module)
+        match self.ast_override {
+            Some(ast) => ast,
+            None => self.r.ast(self.module),
+        }
     }
 
     fn expr(&self, e: ExprId) -> &'g Expr {
@@ -497,6 +521,34 @@ impl<'a, 'g> Cx<'a, 'g> {
     /// denotes.
     pub(super) fn run_bound(&mut self, e: ExprId) -> Type {
         self.run_set(e)
+    }
+
+    /// `resolve_as_int`: type-check `e` as a primitive-`int`-valued expression
+    /// (`#e`, `sum x: A | …`). The model path only ever reaches this position
+    /// from inside a comparison; the evaluator fragment (mt-062) reaches it at
+    /// the top level, where the input *is* the int expression.
+    pub(super) fn run_int(&mut self, e: ExprId) {
+        let p = self.small_int();
+        let mut r = self.resolve(e, &p);
+        self.typecheck(&mut r, &p, self.expr(e).span);
+    }
+
+    /// Type-checks a standalone evaluator fragment in whichever of the three
+    /// positions its own bottom-up type puts it (mt-062): the reference has one
+    /// grammar slot and lets `A4Solution.eval` dispatch on the translated
+    /// result's Kodkod sort, so nothing about the *input* says which position it
+    /// is — the type does. The lowerer re-derives the same three-way split from
+    /// the recorded choices (that split is what decides the rendered shape,
+    /// evaluator contract §3); both read the one type system, so they agree.
+    pub(super) fn run_fragment(&mut self, e: ExprId) {
+        let t = self.infer(e);
+        if t.is_bool {
+            self.run_formula(e);
+        } else if t.is_small_int {
+            self.run_int(e);
+        } else {
+            self.run_set(e);
+        }
     }
 
     // ================= bottom-up bounding types (pure `infer`) =================
@@ -3141,7 +3193,12 @@ impl<'a, 'g> Cx<'a, 'g> {
         if start < end {
             return false;
         }
-        let src = &self.r.graph.files.file(file).source;
+        // An evaluator fragment (mt-062) carries a synthetic file id that no
+        // loaded file backs; it has no source line to compare, so no
+        // same-line redundancy warning fires there.
+        let Some(src) = self.r.graph.files.try_file(file).map(|f| &f.source) else {
+            return false;
+        };
         let (lo, hi) = (end as usize, start as usize);
         if hi > src.len() {
             return false;

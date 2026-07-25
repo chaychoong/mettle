@@ -1593,3 +1593,91 @@ fn prefix_tier_gate_accepts_valid_shapes() {
         ExprKind::Unary { op: UnOp::Card, .. }
     ));
 }
+
+// ---------------------------- REPL fragments ----------------------------
+
+fn fragment_of(src: &str) -> super::Fragment {
+    match super::parse_fragment(src, FileId::from_index(3)) {
+        Ok(f) => f,
+        Err(e) => panic!("expected fragment {src:?} to parse, got {e:?}"),
+    }
+}
+
+/// The one grammar slot: a formula, a bare relational expression, a
+/// comprehension, a `let`, a quantifier and arithmetic all parse through it,
+/// each yielding the expression the user actually typed (not the wrapper).
+#[test]
+fn fragments_share_one_grammar_slot() {
+    for (src, want) in [
+        ("some A", "a multiplicity test"),
+        ("A$0", "an atom name"),
+        ("{x: A | some x}", "a comprehension"),
+        ("let x = A | x", "a let"),
+        ("all x: A | x = x", "a quantifier"),
+        ("plus[3,4]", "a box-join call"),
+        ("A$0.f", "a join off an atom name"),
+    ] {
+        let f = fragment_of(src);
+        // The wrapper's block is never what comes back — a single-expression
+        // body unwraps to that expression.
+        assert!(
+            !matches!(f.ast.exprs[f.expr].kind, ExprKind::Block(_)),
+            "{want} ({src:?}) came back wrapped"
+        );
+    }
+    assert!(matches!(
+        fragment_of("some A").ast.exprs[fragment_of("some A").expr].kind,
+        ExprKind::Unary { op: UnOp::Some, .. }
+    ));
+}
+
+/// Fragment spans live in the wrapped source, offset by exactly
+/// [`super::FRAGMENT_OFFSET`], so a caller can map them back onto the raw input.
+#[test]
+fn fragment_spans_are_offset_by_the_wrapper() {
+    let f = fragment_of("some A");
+    let span = f.ast.exprs[f.expr].span;
+    assert_eq!(span.start, super::FRAGMENT_OFFSET);
+    assert_eq!(
+        span.end,
+        super::FRAGMENT_OFFSET + u32::try_from("some A".len()).unwrap()
+    );
+    assert_eq!(span.file, FileId::from_index(3));
+}
+
+/// A declaration or a command typed at the prompt is rejected as an ordinary
+/// parse error — the parser simply cannot start a pred-body production with
+/// those tokens. No bespoke "that's a declaration" check exists, exactly as in
+/// the reference (evaluator contract §1, E-15/E-16/E-17).
+#[test]
+fn declarations_and_commands_are_ordinary_parse_errors() {
+    for src in ["sig Foo {}", "run {}", "+++", "fact { some A }"] {
+        assert!(
+            matches!(
+                super::parse_fragment(src, FileId::from_index(0)),
+                Err(super::FragmentError::Parse(_))
+            ),
+            "{src:?} should be a parse error"
+        );
+    }
+}
+
+/// Input holding no expression at all (a comment-only line) is not one Alloy
+/// expression — the reference's own `m.funcs.size() == 0` branch.
+#[test]
+fn a_comment_only_fragment_holds_no_expression() {
+    assert!(matches!(
+        super::parse_fragment("-- just a comment", FileId::from_index(0)),
+        Err(super::FragmentError::NotAnExpression)
+    ));
+}
+
+/// Several formulas on separate lines conjoin, as a pred body does.
+#[test]
+fn a_multi_part_fragment_stays_a_block() {
+    let f = fragment_of("some A\nsome B");
+    let ExprKind::Block(parts) = &f.ast.exprs[f.expr].kind else {
+        panic!("expected a block");
+    };
+    assert_eq!(parts.len(), 2);
+}

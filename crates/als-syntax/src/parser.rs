@@ -185,6 +185,96 @@ pub fn parse_tokens(tokens: Vec<Token>, source: &str) -> Result<Ast, ParseError>
     Parser::new(tokens, source).parse_file()
 }
 
+// ------------------------------ REPL fragments ------------------------------
+// One grammar slot for evaluator input (mt-062; the contract's §0 step 8 / §5).
+// The reference wraps console input as a `run` body and runs it through the
+// ordinary pred-body grammar, which is *why* formulas, comprehensions, `let`,
+// arithmetic and bare relational expressions all share one input slot — and why
+// a declaration or a command typed at the prompt is rejected as an ordinary
+// "unexpected token" parse error rather than by a bespoke check. mettle
+// replicates the shape, not the reference's string plumbing.
+
+/// The wrapper text prepended to fragment input.
+const FRAGMENT_PREFIX: &str = "run {\n";
+/// The wrapper text appended to fragment input. The leading newline keeps a
+/// trailing `--`/`//` line comment from swallowing the closing brace.
+const FRAGMENT_SUFFIX: &str = "\n}\n";
+
+/// Byte offset of the user's input within the source [`parse_fragment`] really
+/// parses. Every [`Span`] in a returned [`Fragment`] (and in a returned
+/// [`ParseError`]) is in that wrapped coordinate space, so a caller rendering a
+/// diagnostic against the raw input subtracts this first.
+pub const FRAGMENT_OFFSET: u32 = 6;
+const _: () = assert!(FRAGMENT_PREFIX.len() == FRAGMENT_OFFSET as usize);
+
+/// One parsed evaluator fragment: the throwaway single-command module the input
+/// was wrapped into, and the expression the user actually typed.
+#[derive(Debug)]
+pub struct Fragment {
+    /// The wrapper module's AST — the arena every id below indexes into.
+    pub ast: Ast,
+    /// The user's expression.
+    pub expr: ExprId,
+}
+
+/// Why fragment input was not a single Alloy expression.
+#[derive(Clone, PartialEq, Eq, Debug, Error)]
+pub enum FragmentError {
+    /// The input did not parse (lexically or syntactically) — the reference's
+    /// generic parser error for `sig Foo {}`, `run {}`, `+++`, or a
+    /// comment-only line alike.
+    #[error(transparent)]
+    Parse(#[from] ParseError),
+    /// The input parsed, but closed the wrapper and started paragraphs of its
+    /// own, so it is not one expression (the reference's "The input does not
+    /// correspond to an Alloy expression.").
+    #[error("the input does not correspond to an Alloy expression")]
+    NotAnExpression,
+}
+
+/// Parses evaluator input through the ordinary pred-body grammar by wrapping it
+/// as `run { <input> }`.
+///
+/// # Errors
+/// A [`FragmentError`] when the wrapped source does not parse, or parses into
+/// something other than a single command block.
+pub fn parse_fragment(input: &str, file: FileId) -> Result<Fragment, FragmentError> {
+    let source = format!("{FRAGMENT_PREFIX}{input}{FRAGMENT_SUFFIX}");
+    let ast = parse(&source, file)?;
+    let expr = fragment_expr(&ast).ok_or(FragmentError::NotAnExpression)?;
+    Ok(Fragment { ast, expr })
+}
+
+/// The one expression a wrapped fragment's AST holds: the command block's sole
+/// element, or — for input that is several formulas — the block itself, which
+/// resolves and lowers as their conjunction.
+fn fragment_expr(ast: &Ast) -> Option<ExprId> {
+    if ast.header.is_some() || !ast.opens.is_empty() {
+        return None;
+    }
+    let [only] = ast.paragraphs.as_slice() else {
+        return None;
+    };
+    let Para::Cmd(cmd) = &ast.paras[*only] else {
+        return None;
+    };
+    let CmdTarget::Block(block) = cmd.target else {
+        return None;
+    };
+    match &ast.exprs[block].kind {
+        ExprKind::Block(parts) => match parts.as_slice() {
+            [one] => Some(*one),
+            // An empty block means the input held no expression at all — a
+            // comment-only line, which the caller has already established is
+            // not blank. Several parts conjoin as written.
+            [] => None,
+            _ => Some(block),
+        },
+        // A `run` target is always parsed as a block expression.
+        _ => None,
+    }
+}
+
 /// Recursive-descent + Pratt parser over a cooked token slice.
 struct Parser<'src> {
     tokens: Vec<Token>,

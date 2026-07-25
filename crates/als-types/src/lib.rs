@@ -36,7 +36,7 @@ pub use error::ResolveError;
 pub use file::{FileTable, LoadedFile};
 pub use graph::{ArgRef, ModuleGraph, ModuleId, ModuleInstance, OpenEdge, ParamBinding};
 pub use loader::{FilesystemLoader, MapLoader, ModuleLoader};
-pub use resolve::{resolve, Resolved};
+pub use resolve::{resolve, resolve_session, FragmentResolved, Resolved, ResolvedSession};
 pub use ty::{Product, Type};
 pub use warning::{jar_stem_class, ResolveWarning};
 pub use world::{
