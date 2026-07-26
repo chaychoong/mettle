@@ -10,6 +10,11 @@
 //! `String`, higher-order, or any other Rung-3 gap) is never hidden: it prints
 //! as `CANNOT EXECUTE: <message>` and fails the run, exactly like an honest
 //! defer should (STYLE E5 — never a wrong verdict).
+//!
+//! A **temporal** command takes the parallel Rung-6 path (mt-067/mt-068): the
+//! same phases, but `solve_temporal_command` sweeps the `steps` range and the
+//! verdict renders as a state-by-state lasso trace ([`render_trace`]), with
+//! `--repl`/`--eval` evaluating at a state of it (`crate::repl`).
 
 use std::fmt::Write as _;
 use std::process::ExitCode;
@@ -19,7 +24,7 @@ use als_core::solve::Instance;
 use als_core::{
     compute_bounds, compute_universe, lower_command, solve_goal, solve_temporal_command,
     BoundsResult, LoweredGoal, ScopedUniverse, SolveOptions, SolveVerdict, TemporalSolveConfig,
-    TemporalVerdict,
+    TemporalTrace, TemporalVerdict,
 };
 use als_syntax::ast::{CmdKind, Expect, ExprId, Para, ParaName};
 use als_types::{
@@ -27,7 +32,7 @@ use als_types::{
     ResolvedCommand, ResolvedSession, ResolvedWorld, StepsMax,
 };
 
-use crate::repl::{self, ReplContext, SolvedCommand};
+use crate::repl::{self, ReplContext, SolvedCommand, SolvedTrace};
 
 /// Parsed `mettle exec` invocation, or a bare help request.
 enum ParsedArgs<'a> {
@@ -41,13 +46,44 @@ enum ParsedArgs<'a> {
         eval: Vec<&'a str>,
         /// `--repl`.
         repl: bool,
+        /// `--state N`: the trace state `--eval`/`--repl` start at (mt-068).
+        /// Kept signed and unnormalized — the pinned rule wraps and clamps it
+        /// against the *solved* trace rather than rejecting anything (§(h)) —
+        /// and optional, so that naming a state where there is no trace to name
+        /// one in can be said out loud instead of silently meaning zero.
+        state: Option<i64>,
     },
 }
 
+/// The value of an option that takes one, advancing the loop's cursor past it.
+/// A missing value is a usage error, the same shape for every such flag.
+fn option_value<'a>(
+    args: &'a [String],
+    i: &mut usize,
+    flag: &str,
+    expected: &str,
+) -> Result<&'a str, ExitCode> {
+    *i += 1;
+    let Some(value) = args.get(*i) else {
+        eprintln!("mettle exec: {flag} requires {expected}");
+        crate::print_usage();
+        return Err(ExitCode::from(2));
+    };
+    Ok(value.as_str())
+}
+
+/// An option's numeric value, or the usage error naming what it wanted.
+fn number<T: std::str::FromStr>(value: &str, flag: &str, expected: &str) -> Result<T, ExitCode> {
+    value.parse::<T>().map_err(|_| {
+        eprintln!("mettle exec: {flag} expects {expected}, got `{value}`");
+        ExitCode::from(2)
+    })
+}
+
 /// `mettle exec <file.als> [--command <sel>] [--allow-overflow] [--conflicts N]
-/// [--encode-budget N]` — hand-rolled arg parsing (no clap), the same idiom
-/// `run_parse`/`run_check` use. Unlike those, several options take a value, so
-/// this loop walks `args` by index rather than a plain `for`.
+/// [--encode-budget N] [--state N]` — hand-rolled arg parsing (no clap), the
+/// same idiom `run_parse`/`run_check` use. Unlike those, several options take a
+/// value, so this loop walks `args` by index rather than a plain `for`.
 fn parse_args(args: &[String]) -> Result<ParsedArgs<'_>, ExitCode> {
     let mut path: Option<&str> = None;
     let mut command_sel: Option<&str> = None;
@@ -56,6 +92,7 @@ fn parse_args(args: &[String]) -> Result<ParsedArgs<'_>, ExitCode> {
     let mut encode_budget: Option<u64> = None;
     let mut eval: Vec<&str> = Vec::new();
     let mut repl = false;
+    let mut state: Option<i64> = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -66,51 +103,19 @@ fn parse_args(args: &[String]) -> Result<ParsedArgs<'_>, ExitCode> {
             }
             "--allow-overflow" => allow_overflow = true,
             "--repl" => repl = true,
-            "--eval" => {
-                i += 1;
-                let Some(v) = args.get(i) else {
-                    eprintln!("mettle exec: --eval requires an expression");
-                    crate::print_usage();
-                    return Err(ExitCode::from(2));
-                };
-                eval.push(v.as_str());
+            "--eval" => eval.push(option_value(args, &mut i, "--eval", "an expression")?),
+            "--state" => {
+                let v = option_value(args, &mut i, "--state", "a state index")?;
+                state = Some(number(v, "--state", "an integer")?);
             }
-            "--command" => {
-                i += 1;
-                let Some(v) = args.get(i) else {
-                    eprintln!("mettle exec: --command requires a value");
-                    crate::print_usage();
-                    return Err(ExitCode::from(2));
-                };
-                command_sel = Some(v.as_str());
-            }
+            "--command" => command_sel = Some(option_value(args, &mut i, "--command", "a value")?),
             "--conflicts" => {
-                i += 1;
-                let Some(v) = args.get(i) else {
-                    eprintln!("mettle exec: --conflicts requires a value");
-                    crate::print_usage();
-                    return Err(ExitCode::from(2));
-                };
-                let Ok(n) = v.parse::<u64>() else {
-                    eprintln!("mettle exec: --conflicts expects a non-negative integer, got `{v}`");
-                    return Err(ExitCode::from(2));
-                };
-                conflicts = Some(n);
+                let v = option_value(args, &mut i, "--conflicts", "a value")?;
+                conflicts = Some(number(v, "--conflicts", "a non-negative integer")?);
             }
             "--encode-budget" => {
-                i += 1;
-                let Some(v) = args.get(i) else {
-                    eprintln!("mettle exec: --encode-budget requires a value");
-                    crate::print_usage();
-                    return Err(ExitCode::from(2));
-                };
-                let Ok(n) = v.parse::<u64>() else {
-                    eprintln!(
-                        "mettle exec: --encode-budget expects a non-negative integer, got `{v}`"
-                    );
-                    return Err(ExitCode::from(2));
-                };
-                encode_budget = Some(n);
+                let v = option_value(args, &mut i, "--encode-budget", "a value")?;
+                encode_budget = Some(number(v, "--encode-budget", "a non-negative integer")?);
             }
             other if other.starts_with('-') => {
                 eprintln!("mettle exec: unknown option `{other}`");
@@ -145,11 +150,12 @@ fn parse_args(args: &[String]) -> Result<ParsedArgs<'_>, ExitCode> {
         },
         eval,
         repl,
+        state,
     })
 }
 
 pub(crate) fn run_exec(args: &[String]) -> Result<(), ExitCode> {
-    let (path, command_sel, opts, eval, repl) = match parse_args(args)? {
+    let (path, command_sel, opts, eval, repl, state) = match parse_args(args)? {
         ParsedArgs::Help => return Ok(()),
         ParsedArgs::Run {
             path,
@@ -157,7 +163,8 @@ pub(crate) fn run_exec(args: &[String]) -> Result<(), ExitCode> {
             opts,
             eval,
             repl,
-        } => (path, command_sel, opts, eval, repl),
+            state,
+        } => (path, command_sel, opts, eval, repl, state),
     };
 
     let graph = load(path)?;
@@ -191,7 +198,21 @@ pub(crate) fn run_exec(args: &[String]) -> Result<(), ExitCode> {
     };
 
     if repl || !eval.is_empty() {
-        return run_evaluator(&session, &graph, &root_cmds, &selected, &opts, &eval, repl);
+        return run_evaluator(
+            &session,
+            &graph,
+            &root_cmds,
+            &selected,
+            &opts,
+            &EvalRequest { eval, repl, state },
+        );
+    }
+    // A state index only means something to an evaluator: silently accepting it
+    // for a plain run would look like it had changed what gets printed.
+    if state.is_some() {
+        eprintln!("mettle exec: --state applies to --repl/--eval; a plain run prints every state");
+        crate::print_usage();
+        return Err(ExitCode::from(2));
     }
 
     let mut out = String::new();
@@ -210,26 +231,32 @@ pub(crate) fn run_exec(args: &[String]) -> Result<(), ExitCode> {
     }
 }
 
-/// `--repl` / `--eval` (mt-062): solve **one** command, print its verdict and
-/// instance exactly as a plain run would, then evaluate against that instance.
+/// What `--repl`/`--eval`/`--state` asked for, as one bundle (the three travel
+/// together everywhere below).
+struct EvalRequest<'a> {
+    /// `--eval <EXPR>`, in the order written.
+    eval: Vec<&'a str>,
+    /// `--repl`.
+    repl: bool,
+    /// `--state N`, unnormalized (see [`ParsedArgs::Run::state`]).
+    state: Option<i64>,
+}
+
+/// `--repl` / `--eval` (mt-062, per-state since mt-068): solve **one** command,
+/// print its verdict and instance/trace exactly as a plain run would, then
+/// evaluate against it.
 ///
 /// Attaching to exactly one command is the whole point — the evaluator answers
 /// questions *about an instance*, and a file with several commands has several.
-/// Any command that yields an instance works, a `check`'s counterexample
-/// included.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one call site; every argument is already-parsed state that would \
-              only be re-bundled into a single-use struct"
-)]
+/// Any command that yields an instance works, a `check`'s counterexample and a
+/// temporal command's lasso trace included.
 fn run_evaluator(
     session: &ResolvedSession<'_>,
     graph: &ModuleGraph,
     root_cmds: &[(usize, &ResolvedCommand)],
     selected: &[usize],
     opts: &SolveOptions,
-    eval: &[&str],
-    repl: bool,
+    request: &EvalRequest<'_>,
 ) -> Result<(), ExitCode> {
     let world = session.world();
     let [pos] = selected else {
@@ -246,60 +273,56 @@ fn run_evaluator(
     };
     let (idx, cmd) = root_cmds[*pos];
 
-    // The evaluator answers questions about an instance *at a state*, and the
-    // pinned per-state semantics (wrap through the loop for `state >= k`, clamp
-    // negatives to 0 — alloy6-temporal.md §(h)) are mt-068's bead. Rather than
-    // silently answer at some unstated state, say so (STYLE E5).
-    if is_temporal_model(world, graph, cmd) {
-        eprintln!(
-            "mettle exec: --repl/--eval over a temporal command needs the per-state \
-             evaluator (Rung 6, mt-068); run without --repl for the verdict and trace."
-        );
-        return Err(ExitCode::from(1));
+    // Rung-6 dispatch, the same discriminator the plain run uses: a temporal
+    // command is solved as a lasso and evaluated at a state (§(h)).
+    let temporal = is_temporal_model(world, graph, cmd);
+    if !temporal && request.state.is_some() {
+        // The reference *would* answer here (a static solve is internally a
+        // one-state trace), but nothing pinned that combination, and quietly
+        // reading `--state 3` as state 0 is exactly the silent surprise this
+        // CLI does not do. Same wording the prompt's `:state` uses.
+        eprintln!("mettle exec: this command is not temporal, so its instance has a single state.");
+        return Err(ExitCode::from(2));
     }
 
     let mut out = String::new();
     let _ = writeln!(out, "{}", command_header(world, graph, *pos, cmd));
-    let run = match run_pipeline(world, graph, cmd, idx, opts) {
-        Ok(run) => run,
-        Err(e) => {
-            let _ = writeln!(out, "CANNOT EXECUTE: {e}\n");
+    let solved = if temporal {
+        solve_for_temporal_eval(
+            world,
+            graph,
+            cmd,
+            idx,
+            opts,
+            request.state.unwrap_or(0),
+            &mut out,
+        )
+    } else {
+        solve_for_eval(world, graph, cmd, idx, opts, &mut out)
+    };
+    let (solved, failed) = match solved {
+        Ok(solved) => solved,
+        Err(failure) => {
             crate::write_stdout(out)?;
+            if let Some(message) = failure.message {
+                eprintln!("mettle exec: {message}");
+            }
             return Err(ExitCode::from(1));
         }
     };
-    let failed = render_verdict(cmd, &run, &mut out);
     crate::write_stdout(out)?;
 
-    let SolveVerdict::Sat(instance) = run.verdict else {
-        // The reference never even points its evaluator at a command with no
-        // instance (its writer refuses first); mettle can be asked directly, so
-        // it says so, in the reference's own words (contract §2, §5).
-        eprintln!("mettle exec: this command has no instance, so eval is not allowed.");
-        return Err(ExitCode::from(1));
-    };
-
-    let mut ctx = ReplContext::new(
-        session,
-        graph,
-        graph.root,
-        SolvedCommand {
-            ir: run.ir,
-            bounds: run.bounds,
-            scoped: run.scoped,
-            goal: run.goal,
-            instance,
-            opts: run.opts,
-        },
-    );
-
+    let mut ctx = ReplContext::new(session, graph, graph.root, solved);
     let mut any_failure = failed;
-    if !eval.is_empty() {
+    if !request.eval.is_empty() {
         let mut results = String::new();
-        any_failure |= repl::eval_each(&mut ctx, eval, &mut results);
+        any_failure |= repl::eval_each(&mut ctx, &request.eval, &mut results);
         crate::write_stdout(results)?;
     }
-    if repl {
+    if request.repl {
+        if let Some(banner) = ctx.trace_banner() {
+            crate::write_stdout(format!("{banner}\n"))?;
+        }
         if let Err(e) = repl::run_loop(&mut ctx) {
             if e.kind() == std::io::ErrorKind::BrokenPipe {
                 return Err(ExitCode::from(141));
@@ -313,6 +336,104 @@ fn run_evaluator(
     } else {
         Ok(())
     }
+}
+
+/// Why a command reached no evaluable instance. The verdict block is already in
+/// the caller's `out` either way; `message` is the extra stderr line a
+/// no-instance verdict earns (a `CANNOT EXECUTE` has already said everything).
+struct NoInstance {
+    message: Option<&'static str>,
+}
+
+/// The reference never even points its evaluator at a command with no instance
+/// (its writer refuses first); mettle can be asked directly, so it says so, in
+/// the reference's own words (evaluator contract §2, §5).
+const NO_INSTANCE: &str = "this command has no instance, so eval is not allowed.";
+
+/// Solves a **static** command for the evaluator, rendering its verdict block
+/// into `out`. `Ok`'s flag is whether the verdict itself counts as a failure
+/// (an `expect` mismatch).
+fn solve_for_eval(
+    world: &ResolvedWorld,
+    graph: &ModuleGraph,
+    cmd: &ResolvedCommand,
+    idx: usize,
+    opts: &SolveOptions,
+    out: &mut String,
+) -> Result<(SolvedCommand, bool), NoInstance> {
+    let run = match run_pipeline(world, graph, cmd, idx, opts) {
+        Ok(run) => run,
+        Err(e) => {
+            let _ = writeln!(out, "CANNOT EXECUTE: {e}\n");
+            return Err(NoInstance { message: None });
+        }
+    };
+    let failed = render_verdict(cmd, &run, out);
+    let SolveVerdict::Sat(instance) = run.verdict else {
+        return Err(NoInstance {
+            message: Some(NO_INSTANCE),
+        });
+    };
+    Ok((
+        SolvedCommand {
+            ir: run.ir,
+            bounds: run.bounds,
+            scoped: run.scoped,
+            goal: run.goal,
+            instance,
+            opts: run.opts,
+            trace: None,
+        },
+        failed,
+    ))
+}
+
+/// Solves a **temporal** command for the evaluator (mt-068): the same lasso
+/// sweep a plain run does, rendered the same way, plus the per-state evaluation
+/// context sitting at `state` (normalized against the solved trace — §(h): a
+/// state index is never an error).
+fn solve_for_temporal_eval(
+    world: &ResolvedWorld,
+    graph: &ModuleGraph,
+    cmd: &ResolvedCommand,
+    idx: usize,
+    opts: &SolveOptions,
+    state: i64,
+    out: &mut String,
+) -> Result<(SolvedCommand, bool), NoInstance> {
+    let run = match run_temporal_pipeline(world, graph, cmd, idx, opts) {
+        Ok(run) => run,
+        Err(e) => {
+            let _ = writeln!(out, "CANNOT EXECUTE: {e}\n");
+            return Err(NoInstance { message: None });
+        }
+    };
+    let failed = render_temporal_verdict(cmd, &run, out);
+    let TemporalVerdict::Sat(trace) = run.verdict else {
+        return Err(NoInstance {
+            message: Some(NO_INSTANCE),
+        });
+    };
+    let artifacts = trace.artifacts;
+    Ok((
+        SolvedCommand {
+            ir: run.ir,
+            bounds: run.bounds,
+            scoped: run.scoped,
+            goal: artifacts.goal,
+            instance: artifacts.instance,
+            opts: run.opts,
+            trace: Some(SolvedTrace {
+                unrolled: artifacts.unrolled,
+                loop_state: trace.loop_state,
+                // Clamped, not wrapped: `--state 5` on a 2-state trace means
+                // the *sixth* time step, which its past operators can tell from
+                // state 1's first visit (§(h), probe P-068-1).
+                state: state.max(0),
+            }),
+        },
+        failed,
+    ))
 }
 
 /// Reads and loads (`open`s and all) `path` — the same error-rendering path
@@ -462,20 +583,8 @@ fn run_one_command(
     }
 }
 
-/// Executes one **temporal** command: sweep its `steps` range, first SAT wins
-/// (`als_core::temporal_solve`), and report the verdict with a one-line trace
-/// summary.
-///
-/// **Rendering seam (mt-068).** The reference prints a temporal instance as one
-/// `"------State N-------"` block per state, with the loop state marked
-/// (`A4Solution.toString(-1)`, pinned byte-level in alloy6-temporal.md §(f)).
-/// That full rendering — and the REPL's per-state index with its pinned
-/// wrap/clamp semantics — is mt-068's bead. Until then this prints the verdict
-/// plus the trace's shape (length and loop target), which is everything a
-/// verdict-level reader needs and nothing that would have to be un-printed
-/// later. [`als_core::TemporalTrace::states`] already carries the full
-/// per-state values, keyed by the same relation ids
-/// [`render_instance`] renders.
+/// Executes one **temporal** command: solve, render, blank line — the temporal
+/// twin of the static [`run_pipeline`] + [`render_verdict`] pair.
 fn run_temporal_command(
     world: &ResolvedWorld,
     graph: &ModuleGraph,
@@ -484,42 +593,75 @@ fn run_temporal_command(
     opts: &SolveOptions,
     out: &mut String,
 ) -> bool {
-    let scoped = match compute_universe(world, graph, cmd) {
-        Ok(s) => s,
+    match run_temporal_pipeline(world, graph, cmd, idx, opts) {
+        Ok(run) => render_temporal_verdict(cmd, &run, out),
         Err(e) => {
             let _ = writeln!(out, "CANNOT EXECUTE: {e}\n");
-            return true;
+            true
         }
-    };
-    let mut ir = als_core::ir::Ir::default();
+    }
+}
+
+/// Everything one temporal command's pipeline produced — the [`CommandRun`]
+/// twin, kept for the same reason (the evaluator asks the trace further
+/// questions, mt-068).
+///
+/// **No solve budgets are applied here, deliberately.** `exec` is the drop-in
+/// surface: the reference jar runs a command until it answers, so mettle does
+/// too, and a wide `steps` range on a big model can genuinely grind. Budgets
+/// belong to the conformance gauge, which owns a sweep's cost
+/// ([`TemporalSolveConfig::primary_var_cap`] and the `--conflicts` /
+/// `--encode-budget` flags are the opt-ins).
+struct TemporalRun {
+    ir: Ir,
+    scoped: ScopedUniverse,
+    bounds: BoundsResult,
+    verdict: TemporalVerdict,
+    /// The options the sweep actually used (after the `expect 1` override).
+    opts: SolveOptions,
+}
+
+/// Sweeps one temporal command's `steps` range, first SAT wins
+/// (`als_core::temporal_solve`), keeping the artifacts rather than dropping them.
+fn run_temporal_pipeline(
+    world: &ResolvedWorld,
+    graph: &ModuleGraph,
+    cmd: &ResolvedCommand,
+    idx: usize,
+    opts: &SolveOptions,
+) -> Result<TemporalRun, als_core::TranslateError> {
+    let scoped = compute_universe(world, graph, cmd)?;
+    let mut ir = Ir::default();
     let bounds = compute_bounds(world, &scoped, &mut ir);
+    let opts = effective_opts(opts, cmd);
     let cfg = TemporalSolveConfig {
-        opts: effective_opts(opts, cmd),
+        opts,
         primary_var_cap: None,
         self_check: false,
     };
-    let verdict = match solve_temporal_command(world, graph, &scoped, &bounds, &mut ir, idx, &cfg) {
-        Ok(v) => v,
-        Err(e) => {
-            let _ = writeln!(out, "CANNOT EXECUTE: {e}\n");
-            return true;
-        }
-    };
+    let verdict = solve_temporal_command(world, graph, &scoped, &bounds, &mut ir, idx, &cfg)?;
+    Ok(TemporalRun {
+        ir,
+        scoped,
+        bounds,
+        verdict,
+        opts,
+    })
+}
 
-    let bound = steps_bound_text(cmd);
-    let (is_sat, mut failed) = match verdict {
+/// Renders one solved temporal command's verdict block (and any `expect`
+/// check), returning whether it counts as a failure. Ends with the blank
+/// separator line [`render_verdict`] ends with — one command, one block, either
+/// way.
+fn render_temporal_verdict(cmd: &ResolvedCommand, run: &TemporalRun, out: &mut String) -> bool {
+    let (is_sat, mut failed) = match &run.verdict {
         TemporalVerdict::Sat(trace) => {
             let label = match cmd.kind {
                 CmdKind::Run => "SAT",
                 CmdKind::Check => "COUNTEREXAMPLE",
             };
             let _ = writeln!(out, "{label}");
-            let _ = writeln!(
-                out,
-                "trace: {} states, loop -> state {}",
-                trace.k(),
-                trace.loop_state
-            );
+            out.push_str(&render_trace(&run.ir, trace));
             (Some(true), false)
         }
         // UNSAT is bound-relative and says so: "no counterexample within this
@@ -530,7 +672,7 @@ fn run_temporal_command(
                 CmdKind::Run => "UNSAT (no instance",
                 CmdKind::Check => "VALID (no counterexample",
             };
-            let _ = writeln!(out, "{label} within {bound})");
+            let _ = writeln!(out, "{label} within {})", steps_bound_text(cmd));
             (Some(false), false)
         }
         TemporalVerdict::Unknown { k } => {
@@ -775,6 +917,46 @@ fn scope_text(world: &ResolvedWorld, cmd: &ResolvedCommand) -> String {
     } else {
         format!(" for {}", parts.join(", "))
     }
+}
+
+/// Renders a solved lasso [`TemporalTrace`] in the reference's own trace shape
+/// (`A4Solution.toString(state)` with `state < 0`, source-pinned at
+/// `scratchpad/src794/A4Solution.java:1767-1816` and jar-verified by probes
+/// T-13/T-14; alloy6-temporal.md §(f)):
+///
+/// ```text
+/// ---Trace---
+/// ------State 0 (loop)-------
+/// <every relation, at state 0>
+/// ------State 1-------
+/// <every relation, at state 1>
+/// ```
+///
+/// The `(loop)` marker sits on the back-loop target — the state the trace
+/// returns to — and **rigid content is re-emitted in full in every block**, with
+/// no factoring-out: that is what the reference does (every non-`var` sig,
+/// builtins included, appears byte-identically in each state), and
+/// [`als_core::TemporalTrace::states`] already carries statics and skolems
+/// verbatim per state, so it falls out of rendering each state's instance whole.
+///
+/// The block structure is the reference's exactly; the **lines inside** a block
+/// are mettle's established instance rendering ([`render_instance`], unchanged
+/// since mt-036) rather than the reference's `label=…` / `label<:field=…` /
+/// `skolem …=…` line syntax, and tuple order is mettle's live solve order. Both
+/// are the LEDGER-012 posture — shapes match, mettle's own naming and ordering
+/// stand, and neither is scorecard-visible (ADR-0002 never diffs instance text).
+fn render_trace(ir: &Ir, trace: &TemporalTrace) -> String {
+    let mut out = String::from("---Trace---\n");
+    for (state, instance) in trace.states.iter().enumerate() {
+        let loop_marker = if state == trace.loop_state {
+            " (loop)"
+        } else {
+            ""
+        };
+        let _ = writeln!(out, "------State {state}{loop_marker}-------");
+        out.push_str(&render_instance(ir, instance));
+    }
+    out
 }
 
 /// Renders a decoded [`Instance`]: one line per relation in `RelId` order

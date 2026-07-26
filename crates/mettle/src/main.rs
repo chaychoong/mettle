@@ -75,7 +75,7 @@ fn print_usage() {
          \x20\x20\x20\x20\x20mettle check <file.als> [--strict]\n\
          \x20\x20\x20\x20\x20mettle exec <file.als> [--command <name|index>] [--allow-overflow]\n\
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20[--conflicts N] [--encode-budget N]\n\
-         \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20[--repl] [--eval <EXPR>]\n\
+         \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20[--repl] [--eval <EXPR>] [--state N]\n\
          \n\
          Subcommands:\n\
          \x20\x20parse <file.als>       parse a module and print it back as canonical Alloy 6\n\
@@ -94,7 +94,9 @@ fn print_usage() {
          \x20\x20--conflicts N          cap SAT search effort (default: unlimited)\n\
          \x20\x20--encode-budget N      cap encode effort (default: unlimited)\n\
          \x20\x20--eval <EXPR>          evaluate EXPR against the command's instance (repeatable)\n\
-         \x20\x20--repl                 evaluate expressions interactively against the instance"
+         \x20\x20--repl                 evaluate expressions interactively against the instance\n\
+         \x20\x20--state N              evaluate at trace state N (temporal commands; N wraps\n\
+         \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20through the loop, negatives clamp to 0; `:state N` moves in --repl)"
     );
 }
 

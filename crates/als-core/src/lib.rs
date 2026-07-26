@@ -27,8 +27,8 @@ pub use bounds_builder::{compute_bounds, BoundsResult};
 pub use error::TranslateError;
 pub use eval::{self_check, self_check_temporal, Evaluator, SelfCheckDetail, SelfCheckFailure};
 pub use lower::{
-    lower_command, lower_command_keeping_temporal, lower_fragment, FragmentInput, GoalConjunct,
-    LoweredFragment, LoweredGoal, Provenance,
+    lower_command, lower_command_keeping_temporal, lower_fragment, lower_fragment_keeping_temporal,
+    FragmentInput, GoalConjunct, LoweredFragment, LoweredGoal, Provenance,
 };
 pub use scope::{compute_universe, MintedAtoms, ScopeTable, ScopedSig, ScopedUniverse};
 pub use solve::{
@@ -37,7 +37,8 @@ pub use solve::{
     TemporalSolution,
 };
 pub use temporal::{unroll, LassoSelector, UnrolledBounds};
-pub use temporal_lower::lower_temporal_command;
+pub use temporal_lower::{eliminate_fragment_at_state, lower_temporal_command};
 pub use temporal_solve::{
-    solve_temporal_command, TemporalSolveConfig, TemporalTrace, TemporalVerdict,
+    normalize_state, solve_temporal_command, TemporalSolveConfig, TemporalTrace, TemporalVerdict,
+    TraceArtifacts,
 };

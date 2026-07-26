@@ -293,6 +293,45 @@ pub fn lower_fragment<'a>(
     ir: &'a mut Ir,
     input: &FragmentInput<'a>,
 ) -> Result<LoweredFragment, TranslateError> {
+    lower_fragment_with(world, graph, bounds, ir, input, TemporalPosture::Defer)
+}
+
+/// [`lower_fragment`] **keeping** the fragment's temporal IR nodes instead of
+/// deferring on them (mt-068) — the evaluator's twin of
+/// [`lower_command_keeping_temporal`].
+///
+/// Every one of the 11 temporal operators is legal evaluator input against a
+/// solved trace (alloy6-temporal.md §(h), probe T-24), so a temporal command's
+/// REPL lowers through here and then eliminates the kept nodes at the current
+/// state with
+/// [`eliminate_fragment_at_state`](crate::temporal_lower::eliminate_fragment_at_state).
+/// A *static* command's REPL keeps [`lower_fragment`]'s typed defer: there is no
+/// trace to evaluate `after` against.
+///
+/// # Errors
+/// Every [`TranslateError`] [`lower_fragment`] returns **except**
+/// [`TranslateError::TemporalUnsupported`], which is the whole point.
+pub fn lower_fragment_keeping_temporal<'a>(
+    world: &'a ResolvedWorld,
+    graph: &'a ModuleGraph,
+    bounds: &'a BoundsResult,
+    ir: &'a mut Ir,
+    input: &FragmentInput<'a>,
+) -> Result<LoweredFragment, TranslateError> {
+    lower_fragment_with(world, graph, bounds, ir, input, TemporalPosture::Keep)
+}
+
+/// The one fragment-lowering implementation the two postures share, so they
+/// cannot drift (the same reason `lower_command`/`lower_command_keeping_temporal`
+/// share theirs).
+fn lower_fragment_with<'a>(
+    world: &'a ResolvedWorld,
+    graph: &'a ModuleGraph,
+    bounds: &'a BoundsResult,
+    ir: &'a mut Ir,
+    input: &FragmentInput<'a>,
+    posture: TemporalPosture,
+) -> Result<LoweredFragment, TranslateError> {
     let mut lowerer = Lowerer {
         world,
         graph,
@@ -329,7 +368,7 @@ pub fn lower_fragment<'a>(
         Sort::Int => LoweredFragment::Int(lowerer.lower_int(ctx, input.expr)?),
         Sort::Rel => LoweredFragment::Rel(lowerer.lower_rel(ctx, input.expr)?),
     };
-    if let Some((op, span)) = lowerer.temporal {
+    if let (TemporalPosture::Defer, Some((op, span))) = (posture, lowerer.temporal) {
         return Err(TranslateError::TemporalUnsupported { op, span });
     }
     debug_assert!(

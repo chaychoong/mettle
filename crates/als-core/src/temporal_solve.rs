@@ -61,6 +61,7 @@ use crate::bounds_builder::BoundsResult;
 use crate::error::TranslateError;
 use crate::eval::SelfCheckFailure;
 use crate::ir::Ir;
+use crate::lower::LoweredGoal;
 use crate::scope::ScopedUniverse;
 use crate::solve::{solve_temporal_goal_checked, Instance, SolveOptions, TemporalSolution};
 use crate::temporal::{unroll, UnrolledBounds};
@@ -104,6 +105,35 @@ pub struct TemporalTrace {
     /// set: a failure means the solved trace does not satisfy its own lowered
     /// goal — a mettle bug, never a user error (ADR-0011 decision 5).
     pub self_check: Option<SelfCheckFailure>,
+    /// What a post-solve **per-state evaluator** needs beyond the rendered
+    /// states (mt-068) — kept because the winning length's artifacts are alive
+    /// here anyway and cannot be rebuilt afterwards without re-solving (a second
+    /// `lower_temporal_command` would mint *different* skolem relations, which
+    /// nothing ever assigned).
+    ///
+    /// Boxed so that a [`TemporalVerdict`] stays cheap to move and match on: the
+    /// evaluation view is several hundred bytes that only the REPL ever reads.
+    pub artifacts: Box<TraceArtifacts>,
+}
+
+/// The winning trace length's solve artifacts, kept for the REPL (mt-068).
+///
+/// [`TemporalTrace::states`] is the *rendering* view (original relation ids, one
+/// instance per state); this is the *evaluation* view — the flat instance and
+/// the unrolled bounds the lowered fragments actually resolve against.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct TraceArtifacts {
+    /// The winning length's unrolled view: the bridge from an original variable
+    /// relation to its per-state copies, plus those copies' bounds.
+    pub unrolled: UnrolledBounds,
+    /// The **flat** solved instance — per-state copies as ordinary relations,
+    /// exactly as the encoder and the self-check saw them.
+    pub instance: Instance,
+    /// The goal lowered at the winning length. Only its skolem bounds and
+    /// builtin-`Int` relation ids matter downstream (an evaluator context binds
+    /// the same relations the solve did), but keeping the whole goal costs
+    /// nothing and keeps the shape identical to the static path's.
+    pub goal: LoweredGoal,
 }
 
 impl TemporalTrace {
@@ -112,6 +142,55 @@ impl TemporalTrace {
     pub fn k(&self) -> usize {
         self.states.len()
     }
+
+    /// Normalizes an evaluator's `state` argument onto this trace
+    /// ([`normalize_state`] against this trace's own length and loop target).
+    #[must_use]
+    pub fn normalize_state(&self, state: i64) -> usize {
+        normalize_state(state, self.k(), self.loop_state)
+    }
+}
+
+/// The pinned evaluator state-index rule (alloy6-temporal.md §(h), probes
+/// T-22/T-23/T-25): **never an error**.
+///
+/// - `state ∈ [0, k)` is that literal state;
+/// - `state >= k` **wraps through the loop**:
+///   `((state − l) % (k − l)) + l`, `TemporalInstance.normalizedIndex`'s own
+///   formula, which `A4Solution.toString(int state)` applies inline too
+///   (`scratchpad/src794/A4Solution.java:1794-1795`);
+/// - `state < 0` **clamps to 0** — jar-verified behavior on every eval path
+///   probed (a naive read of the bytecode says it should throw; it does not).
+///
+/// Written as the jar writes it (`Math.max(0, state)` then the `state > l`
+/// guard) rather than as the equivalent "if `state >= k`" so the two stay
+/// visibly the same rule.
+///
+/// # Panics
+/// Panics if `k == 0` or `loop_state >= k` — a solved lasso always has at least
+/// one state and an in-range back-loop target (STYLE I5: internal invariants,
+/// while `state` itself is user input and is therefore normalized, not asserted).
+#[must_use]
+pub fn normalize_state(state: i64, k: usize, loop_state: usize) -> usize {
+    assert!(k >= 1, "a trace has at least one state, got k={k}");
+    assert!(
+        loop_state < k,
+        "loop target outside the trace: loop_state={loop_state} k={k}"
+    );
+    // `max(0)` is the clamp; the conversion cannot fail on any 64-bit target
+    // (and saturating rather than erroring keeps the "never an error" rule on a
+    // hypothetical 32-bit one, where such an index wraps into the loop anyway).
+    let clamped = usize::try_from(state.max(0)).unwrap_or(usize::MAX);
+    let normalized = if clamped > loop_state {
+        ((clamped - loop_state) % (k - loop_state)) + loop_state
+    } else {
+        clamped
+    };
+    debug_assert!(
+        normalized < k,
+        "normalized state escaped the trace: {normalized} not in [0,{k})"
+    );
+    normalized
 }
 
 /// A temporal command's outcome (see the module docs for what each *means*).
@@ -232,11 +311,17 @@ pub fn solve_temporal_command(
                 loop_state,
                 self_check,
             } => {
+                let states = split_states(&unrolled, &instance);
                 return Ok(TemporalVerdict::Sat(TemporalTrace {
-                    states: split_states(&unrolled, &instance),
+                    states,
                     loop_state,
                     self_check,
-                }))
+                    artifacts: Box::new(TraceArtifacts {
+                        unrolled,
+                        instance,
+                        goal,
+                    }),
+                }));
             }
         }
     }
@@ -295,4 +380,79 @@ fn split_states(unrolled: &UnrolledBounds, flat: &Instance) -> Vec<Instance> {
 fn steps_span(world: &ResolvedWorld, command_index: usize) -> als_syntax::Span {
     let command = &world.commands[command_index];
     command.steps.map_or(command.span, |s| s.span)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_state;
+
+    /// alloy6-temporal.md §(h) / probe T-22: on the wave-2 fixture's own trace
+    /// (`traceLength=3, loopState=2` — the T-13 shape), every index `>= 3`
+    /// wraps onto state 2, which is *not* what a plain `% k` would give.
+    #[test]
+    fn indices_past_the_end_wrap_through_the_loop() {
+        let t13 = |state| normalize_state(state, 3, 2);
+        assert_eq!((t13(0), t13(1), t13(2)), (0, 1, 2));
+        assert_eq!((t13(3), t13(4), t13(10)), (2, 2, 2));
+        assert_ne!(
+            t13(3),
+            3 % 3,
+            "the loop, not the trace length, is the period"
+        );
+
+        // A two-state loop inside a three-state trace: the period is `k - l`.
+        let span2 = |state| normalize_state(state, 3, 1);
+        assert_eq!(
+            (span2(3), span2(4), span2(5), span2(6)),
+            (1, 2, 1, 2),
+            "((state - l) % (k - l)) + l"
+        );
+
+        // Loop at state 0: the wrap degenerates to the plain modulo.
+        let from_zero = |state| normalize_state(state, 2, 0);
+        assert_eq!((from_zero(2), from_zero(3), from_zero(4)), (0, 1, 0));
+
+        // The degenerate single-state trace absorbs everything.
+        for state in [0, 1, 7, i64::MAX] {
+            assert_eq!(normalize_state(state, 1, 0), 0);
+        }
+    }
+
+    /// §(h) / probes T-23/T-25: a negative index **clamps to 0 and never
+    /// errors** — jar-verified behavior on every eval path probed, including the
+    /// one a naive reading of the bytecode says should throw.
+    #[test]
+    fn negative_indices_clamp_to_the_initial_state() {
+        for state in [-1, -2, -5, -100, i64::MIN] {
+            assert_eq!(normalize_state(state, 3, 2), 0);
+            assert_eq!(normalize_state(state, 2, 0), 0);
+            assert_eq!(normalize_state(state, 1, 0), 0);
+        }
+    }
+
+    /// Whatever the input, the answer is a real state of the trace — the
+    /// property the REPL's "a state index is never an error" rests on.
+    #[test]
+    fn every_index_lands_inside_the_trace() {
+        for k in 1..5usize {
+            for loop_state in 0..k {
+                for state in -6..12 {
+                    assert!(normalize_state(state, k, loop_state) < k);
+                }
+                assert!(normalize_state(i64::MAX, k, loop_state) < k);
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "a trace has at least one state")]
+    fn a_zero_length_trace_is_a_caller_bug() {
+        let _ = normalize_state(0, 0, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "loop target outside the trace")]
+    fn a_loop_target_outside_the_trace_is_a_caller_bug() {
+        let _ = normalize_state(0, 2, 2);
+    }
 }

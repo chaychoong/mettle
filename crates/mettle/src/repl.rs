@@ -28,6 +28,17 @@
 //! for `univ`/`Int`; the sets are equal, and the contract itself recommends not
 //! replicating the round-trip. Pinned as LEDGER-012, disclosed in LIMITATIONS.
 //!
+//! **A temporal command's session sits at a state** (mt-068,
+//! `docs/reference/alloy6-temporal.md` §(h)). Its instance is the solved lasso,
+//! so evaluation happens *at* a current state — `--state N` to start there,
+//! `:state N` to move — and all 11 temporal operators are legal input, each
+//! relative to that state (probe T-24). A state index is never an error: past
+//! the end it wraps through the loop, below zero it clamps
+//! ([`als_core::normalize_state`]). The operators are eliminated by the same
+//! LTL-on-lasso machinery the solve used
+//! ([`als_core::eliminate_fragment_at_state`]), against the *solved* loop
+//! target, so the prompt cannot disagree with the trace it is looking at.
+//!
 //! **Overflow in eval position always wraps silently** (§2/§7): `noOverflow` is
 //! a no-op there, so evaluation runs with `allow_overflow` on regardless of how
 //! the command was solved. That also keeps the forbid-mode polarity guard —
@@ -43,9 +54,11 @@ use std::io::{self, BufRead as _, Write as _};
 
 use als_core::bounds::{AtomId, Bounds, RelBound, Tuple, TupleSet, Universe};
 use als_core::ir::{Ir, Mutability, RelExpr, RelExprId, RelExprKind, RelId, Relation};
+use als_core::temporal::UnrolledBounds;
 use als_core::{
-    lower_fragment, BoundsResult, Evaluator, FragmentInput, Instance, LoweredFragment, LoweredGoal,
-    ScopedUniverse, SolveOptions, TranslateError,
+    eliminate_fragment_at_state, lower_fragment, lower_fragment_keeping_temporal, normalize_state,
+    BoundsResult, Evaluator, FragmentInput, Instance, LoweredFragment, LoweredGoal, ScopedUniverse,
+    SolveOptions, TranslateError,
 };
 use als_syntax::ast::{Ast, ExprKind};
 use als_syntax::{parse_fragment, ArenaId as _, FileId, FragmentError, Span, FRAGMENT_OFFSET};
@@ -56,6 +69,16 @@ const REPL_PATH: &str = "<repl>";
 
 /// The prompt, exactly as the reference console's (contract §0).
 const PROMPT: &str = "> ";
+
+/// The meta-command that moves a temporal session's current state (mt-068).
+///
+/// Colon-prefixed like `:q`, and deliberately not a bare word: `state` is a
+/// perfectly ordinary sig name in temporal models, and the prompt's namespace
+/// belongs to the model. It is the mettle-side equivalent of the reference
+/// GUI's `<`/`>` state arrows (alloy6-temporal.md §(h): those are client-side
+/// stepping, no solver call), not of its enumeration buttons — mettle ships no
+/// trace enumeration, and nothing here implies it does.
+const STATE_COMMAND: &str = ":state";
 
 /// What one evaluated fragment produced — the three shapes the reference's
 /// evaluator distinguishes (contract §3), before any rendering.
@@ -125,6 +148,68 @@ pub(crate) struct ReplContext<'a> {
     global_types: Vec<(String, Type)>,
     /// The same globals as the lowerer needs them (name → lowered value).
     global_values: Vec<(String, RelExprId)>,
+    /// The solved lasso and where in it evaluation currently sits — `None` for a
+    /// static command, whose instance is a single state (mt-068).
+    trace: Option<SolvedTrace>,
+}
+
+/// The solved lasso a temporal command's evaluator sits on (mt-068).
+///
+/// Everything per-state evaluation needs: the bridge from a `var` relation to
+/// its per-state copies (whose values the flat instance already carries), the
+/// solved back-loop target, and the current state.
+pub(crate) struct SolvedTrace {
+    /// The winning trace length's unrolled view
+    /// ([`als_core::TraceArtifacts::unrolled`]).
+    pub(crate) unrolled: UnrolledBounds,
+    /// The solved back-loop target, `< k`.
+    pub(crate) loop_state: usize,
+    /// The **time index** expressions currently evaluate at, clamped at 0 but
+    /// deliberately not wrapped: an index past the end is a later pass through
+    /// the loop, which its present-tense values cannot tell apart but its *past*
+    /// operators can (alloy6-temporal.md §(h), probe P-068-1).
+    pub(crate) state: i64,
+}
+
+impl SolvedTrace {
+    /// The trace length `k`.
+    fn k(&self) -> usize {
+        self.unrolled.k
+    }
+
+    /// The trace state the current time index sits at — the pinned wrap/clamp
+    /// rule (§(h), probes T-22/T-23/T-25), and what the session reports.
+    fn trace_state(&self) -> usize {
+        normalize_state(self.state, self.k(), self.loop_state)
+    }
+
+    /// Moves to `requested`, returning the line describing where that landed.
+    /// Never fails — that *is* the rule: no state index is an error.
+    fn move_to(&mut self, requested: i64) -> String {
+        self.state = requested.max(0);
+        if requested < 0 {
+            // Worth saying out loud: "never an error" is a rule users have to
+            // be told once, or a typo looks like it worked.
+            return format!("evaluating at state 0 ({requested} clamps to 0)");
+        }
+        self.position()
+    }
+
+    /// Where the session is, said in full when the time index and the trace
+    /// state are not the same number (a clamped or wrapped-around index).
+    fn position(&self) -> String {
+        let state = self.state;
+        let trace_state = self.trace_state();
+        if state < self.k_as_i64() {
+            format!("evaluating at state {state}")
+        } else {
+            format!("evaluating at state {state} (trace state {trace_state}, a later pass through the loop)")
+        }
+    }
+
+    fn k_as_i64(&self) -> i64 {
+        i64::try_from(self.k()).unwrap_or(i64::MAX)
+    }
 }
 
 impl<'a> ReplContext<'a> {
@@ -142,10 +227,17 @@ impl<'a> ReplContext<'a> {
             goal,
             instance,
             opts,
+            trace,
         } = solved;
 
         let fragment_file = FileId::from_index(graph.files.len());
-        let mut eval_bounds = bounds.bounds.clone();
+        // A temporal command's expressions resolve to the *per-state copies*
+        // once `eliminate_fragment_at_state` has run, so the evaluator's bounds
+        // are the unrolled ones — exactly the augmented bounds the solve itself
+        // encoded against (`als_core::solve::translate`).
+        let mut eval_bounds = trace
+            .as_ref()
+            .map_or_else(|| bounds.bounds.clone(), |t| t.unrolled.bounds.clone());
         for (rel, bound) in &goal.skolem_bounds {
             eval_bounds.bind(*rel, bound.clone());
         }
@@ -185,12 +277,27 @@ impl<'a> ReplContext<'a> {
             fragment_file,
             global_types: globals.types,
             global_values: globals.values,
+            trace,
         }
     }
 
     /// The universe results render against.
     pub(crate) fn universe(&self) -> &Universe {
         &self.instance.universe
+    }
+
+    /// The one line a temporal session opens with: what the trace looks like,
+    /// where evaluation starts, and how to move — users need the length and the
+    /// loop target to read what a wrapped state index means (§(h)). `None` for a
+    /// static command, which has nothing to say.
+    pub(crate) fn trace_banner(&self) -> Option<String> {
+        let trace = self.trace.as_ref()?;
+        Some(format!(
+            "trace: {} states, loop -> state {}; {} (`{STATE_COMMAND} N` to move)",
+            trace.k(),
+            trace.loop_state,
+            trace.position(),
+        ))
     }
 }
 
@@ -294,8 +401,13 @@ pub(crate) struct SolvedCommand {
     pub(crate) bounds: BoundsResult,
     pub(crate) scoped: ScopedUniverse,
     pub(crate) goal: LoweredGoal,
+    /// The decoded instance to evaluate against: the command's own for a static
+    /// solve, the **flat** per-state-copy instance
+    /// ([`als_core::TraceArtifacts::instance`]) for a temporal one.
     pub(crate) instance: Instance,
     pub(crate) opts: SolveOptions,
+    /// The solved lasso, for a temporal command (mt-068); `None` = static.
+    pub(crate) trace: Option<SolvedTrace>,
 }
 
 /// Evaluates one line of evaluator input against the solved instance: parse
@@ -322,21 +434,47 @@ pub(crate) fn eval_input(ctx: &mut ReplContext<'_>, input: &str) -> Result<ReplV
     // Disjoint field borrows: lowering needs `&mut ir` while reading the
     // world/bounds, so the pieces are named individually rather than through
     // `&self` methods.
-    let lowered = lower_fragment(
-        ctx.session.world(),
-        ctx.graph,
-        &ctx.bounds,
-        &mut ctx.ir,
-        &FragmentInput {
-            module: ctx.module,
-            ast: &fragment.ast,
-            choices: &resolved.choices,
-            expr: fragment.expr,
-            bitwidth: ctx.scoped.bitwidth,
-            globals: &ctx.global_values,
-        },
-    )
+    let input = FragmentInput {
+        module: ctx.module,
+        ast: &fragment.ast,
+        choices: &resolved.choices,
+        expr: fragment.expr,
+        bitwidth: ctx.scoped.bitwidth,
+        globals: &ctx.global_values,
+    };
+    // Against a trace, every temporal operator is legal input (§(h), probe
+    // T-24): keep the temporal nodes, then eliminate them at the current state
+    // over the *solved* loop target — the same LTL-on-lasso machinery the solve
+    // used, never a second semantics. A static command has no trace to step
+    // through, so it keeps mt-062's typed defer.
+    let lowered = if ctx.trace.is_some() {
+        lower_fragment_keeping_temporal(
+            ctx.session.world(),
+            ctx.graph,
+            &ctx.bounds,
+            &mut ctx.ir,
+            &input,
+        )
+    } else {
+        lower_fragment(
+            ctx.session.world(),
+            ctx.graph,
+            &ctx.bounds,
+            &mut ctx.ir,
+            &input,
+        )
+    }
     .map_err(ReplError::Translate)?;
+    let lowered = match &ctx.trace {
+        Some(trace) => eliminate_fragment_at_state(
+            &mut ctx.ir,
+            &trace.unrolled,
+            trace.loop_state,
+            trace.state,
+            lowered,
+        ),
+        None => lowered,
+    };
 
     let mut evaluator = Evaluator::new(
         &ctx.ir,
@@ -473,12 +611,39 @@ pub(crate) fn eval_each(ctx: &mut ReplContext<'_>, exprs: &[&str], out: &mut Str
     failed
 }
 
+/// Answers the `:state [N]` meta-command against the session's trace (mt-068).
+///
+/// With an argument it moves (wrapping/clamping per §(h)); without one it just
+/// says where the session is. Both are client-side — nothing here re-solves or
+/// enumerates, exactly like the reference GUI's `<`/`>` arrows.
+fn state_command(ctx: &mut ReplContext<'_>, arg: &str) -> String {
+    let Some(trace) = ctx.trace.as_mut() else {
+        return crate::diagnostics::render_spanless(
+            "error",
+            Some(REPL_PATH),
+            "this command is not temporal, so its instance has a single state.",
+        );
+    };
+    if arg.is_empty() {
+        return format!("{}\n", trace.position());
+    }
+    let Ok(requested) = arg.parse::<i64>() else {
+        return crate::diagnostics::render_spanless(
+            "error",
+            Some(REPL_PATH),
+            &format!("`{STATE_COMMAND}` expects an integer state index, got `{arg}`."),
+        );
+    };
+    format!("{}\n", trace.move_to(requested))
+}
+
 /// The interactive loop: prompt, read a line, print one result line, repeat.
 ///
 /// Hand-rolled on purpose — a line reader is the whole requirement, and no
 /// readline dependency is justified by it (STYLE P1). Blank input reprompts
 /// silently (the reference's console never even calls the evaluator for it);
-/// `:q` or EOF exits. History and editing are deliberately absent.
+/// `:q` or EOF exits, and `:state N` moves a temporal session through its trace
+/// (mt-068). History and editing are deliberately absent.
 ///
 /// # Errors
 /// An [`io::Error`] only from stdin/stdout themselves.
@@ -503,6 +668,13 @@ pub(crate) fn run_loop(ctx: &mut ReplContext<'_>) -> io::Result<()> {
         }
         if input == ":q" {
             return Ok(());
+        }
+        if let Some(arg) = input
+            .strip_prefix(STATE_COMMAND)
+            .filter(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace))
+        {
+            print!("{}", state_command(ctx, arg.trim()));
+            continue;
         }
         match eval_input(ctx, input) {
             Ok(value) => println!("{}", render_value(&value, ctx.universe())),

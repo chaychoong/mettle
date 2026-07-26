@@ -365,6 +365,22 @@ fn the_loop_target_is_recovered_from_the_solved_model() {
     assert!(t.loop_state < t.k());
 }
 
+/// A solved trace normalizes an evaluator's state index by the pinned rule
+/// (alloy6-temporal.md §(h), probes T-22/T-23): past the end it wraps through
+/// the loop, below zero it clamps, and it is never an error.
+#[test]
+fn a_solved_trace_normalizes_an_evaluator_state_index() {
+    let t = trace(
+        &format!("{ALTERNATE}run {{ some univ }} for 2 but exactly 2 steps\n"),
+        0,
+    );
+    assert_eq!((t.k(), t.loop_state), (2, 0));
+    let at = |state| t.normalize_state(state);
+    assert_eq!((at(0), at(1)), (0, 1));
+    assert_eq!((at(2), at(3), at(10)), (0, 1, 0), "wraps through the loop");
+    assert_eq!((at(-1), at(-9), at(i64::MIN)), (0, 0, 0), "clamps at zero");
+}
+
 /// A one-state trace can only self-loop (P-C1/P-C2: the only state's successor
 /// is itself).
 #[test]

@@ -2,11 +2,15 @@
 //! (`env!("CARGO_BIN_EXE_mettle")`, the `check.rs` idiom) against
 //! `tests/fixtures/exec/commands.als` — one small model whose four commands
 //! cover every verdict shape: SAT `run`, VALID `check`, a `check` with a
-//! COUNTEREXAMPLE, and `expect` both matching and mismatching. A second
-//! Three more fixtures cover the Rung-6 surface (mt-067): `temporal.als` now
-//! *solves* (verdict + trace shape), `temporal_check.als` covers the
-//! bound-relative `check` and the two typed temporal defers, and
-//! `static_steps.als` the `steps`-on-a-static-model reject.
+//! COUNTEREXAMPLE, and `expect` both matching and mismatching.
+//!
+//! Five more fixtures cover the Rung-6 surface: `temporal.als` solves to the
+//! degenerate one-state trace, `trace.als` (mt-064's own probe model) and
+//! `trace_alt.als` pin the state-by-state **trace rendering** of mt-068 —
+//! including where the `(loop)` marker sits and that rigid content repeats in
+//! every block — `temporal_check.als` covers the bound-relative `check` and the
+//! two typed temporal defers, and `static_steps.als` the
+//! `steps`-on-a-static-model reject.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -108,19 +112,121 @@ fn default_run_executes_every_command_and_propagates_the_one_failure() {
     assert!(text.contains("expect 0: MISMATCH (got SAT)"), "{text}");
 }
 
-/// (e) A temporal model (`var sig` + `'`) **solves** since mt-067: the `steps`
-/// range is swept ascending, first SAT wins, and the verdict is followed by the
-/// trace's shape. Full state-by-state rendering is mt-068.
+/// (e) A temporal model (`var sig` + `'`) **solves** since mt-067, and since
+/// mt-068 renders as a trace: the degenerate case is one state that loops onto
+/// itself, and it still gets the full `---Trace---` framing (the reference's
+/// `toString(-1)` has no special case for `traceLength == 1` either —
+/// alloy6-temporal.md §(f), probe T-14).
 #[test]
-fn temporal_model_solves_and_reports_its_trace() {
+fn temporal_model_solves_and_renders_its_trace() {
     let file = fixture("temporal.als");
     let out = run_exec(&file, &[]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     let text = stdout(&out);
     assert!(text.contains("[0] run p"), "{text}");
-    assert!(text.contains("SAT"), "{text}");
     // `A' = A` is satisfied by the minimal, self-looping single-state trace.
-    assert!(text.contains("trace: 1 states, loop -> state 0"), "{text}");
+    assert_eq!(
+        trace_shape(&text),
+        vec![
+            "SAT",
+            "---Trace---",
+            "------State 0 (loop)-------",
+            "  this/A = {}"
+        ],
+        "{text}"
+    );
+}
+
+/// The verdict line, the state headers, and the user-sig lines of a rendered
+/// trace — everything but the builtin relations, which are identical in every
+/// block of every model and would bury the shape being asserted.
+fn trace_shape(text: &str) -> Vec<&str> {
+    text.lines()
+        .filter(|line| {
+            line.starts_with("---")
+                || line.starts_with("------State")
+                || line.starts_with("  this/")
+                || matches!(*line, "SAT" | "COUNTEREXAMPLE")
+        })
+        .collect()
+}
+
+/// (e5) The pinned trace shape (alloy6-temporal.md §(f), source-pinned at
+/// `A4Solution.java:1767-1816` and jar-captured as probe T-13): a `---Trace---`
+/// header, then one `------State N-------` block per state with `(loop)` on the
+/// back-loop target, each block listing **every** relation at that state.
+///
+/// The fixture is T-13's own model, so the *values* below are the jar's
+/// captured trace, reproduced here without a jar: state0 = (no A, no B),
+/// state1 = (A, no B), state2 = (no A, B), looping on state 2.
+#[test]
+fn a_forced_trace_renders_state_by_state_with_the_loop_marked() {
+    let out = run_exec(&fixture("trace.als"), &[]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert_eq!(
+        trace_shape(&text),
+        vec![
+            "COUNTEREXAMPLE",
+            "---Trace---",
+            "------State 0-------",
+            "  this/Counter = {Counter$0}",
+            "  this/A = {}",
+            "  this/B = {}",
+            "------State 1-------",
+            "  this/Counter = {Counter$0}",
+            "  this/A = {Counter$0}",
+            "  this/B = {}",
+            "------State 2 (loop)-------",
+            "  this/Counter = {Counter$0}",
+            "  this/A = {}",
+            "  this/B = {Counter$0}",
+        ],
+        "{text}"
+    );
+}
+
+/// (e6) The `(loop)` marker sits on the state the trace returns to, wherever
+/// that is: `trace.als` above loops onto its *last* state, this fixture's
+/// alternation forces a loop back to state **0**.
+#[test]
+fn the_loop_marker_follows_the_back_loop_target() {
+    let out = run_exec(&fixture("trace_alt.als"), &[]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("------State 0 (loop)-------"), "{text}");
+    assert!(text.contains("------State 1-------"), "{text}");
+    assert!(!text.contains("------State 1 (loop)"), "{text}");
+    assert_eq!(
+        text.matches("(loop)").count(),
+        1,
+        "exactly one state is the loop target: {text}"
+    );
+}
+
+/// (e7) Rigid content is **re-emitted in full in every state block**, never
+/// factored out (alloy6-temporal.md §(f), probe T-13: non-`var` sigs and all
+/// four builtins appear byte-identically in each block).
+#[test]
+fn rigid_relations_are_re_emitted_in_every_state_block() {
+    let out = run_exec(&fixture("trace_alt.als"), &[]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    let blocks: Vec<&str> = text.split("------State ").skip(1).collect();
+    assert_eq!(blocks.len(), 2, "{text}");
+    for rigid in [
+        "  this/Rigid = {Rigid$0, Rigid$1}\n",
+        "  Int/zero = {0}\n",
+        "  seq/Int = {0, 1, 2, 3}\n",
+    ] {
+        assert!(
+            blocks.iter().all(|block| block.contains(rigid)),
+            "`{rigid}` missing from a state block: {text}"
+        );
+    }
+    // ...while the `var` sig genuinely differs between them.
+    assert!(blocks[0].contains("  this/A = {}\n"), "{text}");
+    assert!(blocks[1].contains("  this/A = {A$0}\n"), "{text}");
 }
 
 /// (e2) A temporal `check` that finds nothing says so **bound-relatively** —
@@ -173,6 +279,33 @@ fn steps_on_a_static_model_cannot_execute() {
         stdout(&out).contains("You cannot set a scope on \"steps\" in static models."),
         "{}",
         stdout(&out)
+    );
+}
+
+/// (e8) `--state` names a place in a *trace*, so asking for one where there is
+/// none is a usage error rather than a silent "you got state 0" (mt-068).
+#[test]
+fn a_state_index_without_a_trace_is_a_usage_error() {
+    // A plain run prints every state already.
+    let out = run_exec(&fixture("trace.als"), &["--state", "1"]);
+    assert_eq!(out.status.code(), Some(2), "stdout: {}", stdout(&out));
+    assert!(
+        stderr(&out).contains("--state applies to --repl/--eval"),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(stdout(&out), "");
+
+    // A static command's instance is a single state.
+    let out = run_exec(
+        &fixture("commands.als"),
+        &["--command", "0", "--state", "1", "--eval", "A"],
+    );
+    assert_eq!(out.status.code(), Some(2), "stdout: {}", stdout(&out));
+    assert!(
+        stderr(&out).contains("not temporal, so its instance has a single state"),
+        "{}",
+        stderr(&out)
     );
 }
 

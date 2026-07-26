@@ -11,6 +11,10 @@
 //! [`RelExprKind::Prime`] node and no reference to an un-unrolled variable
 //! relation; both are asserted before returning (STYLE I1/I3).
 //!
+//! [`eliminate_fragment_at_state`] is that same machinery run **after** a solve,
+//! for the REPL's per-state evaluator (mt-068): a solved trace fixes the loop
+//! target, so it takes one concrete branch instead of the `k`-way split below.
+//!
 //! # The trace model, and why the loop index is split at the top
 //!
 //! Every SAT temporal instance is a **lasso**: `k` physical states plus a
@@ -154,7 +158,9 @@ use crate::ir::{
     CompDecl, Formula, FormulaId, FormulaKind, IntExpr, IntExprId, IntExprKind, Ir, MultTest,
     RelBinOp, RelCmpOp, RelExpr, RelExprId, RelExprKind, TemporalBinOp, TemporalUnOp,
 };
-use crate::lower::{lower_command_keeping_temporal, GoalConjunct, LoweredGoal, Provenance};
+use crate::lower::{
+    lower_command_keeping_temporal, GoalConjunct, LoweredFragment, LoweredGoal, Provenance,
+};
 use crate::scope::ScopedUniverse;
 use crate::temporal::UnrolledBounds;
 
@@ -277,6 +283,122 @@ pub fn lower_temporal_command(
         conjuncts,
         ..temporal
     })
+}
+
+// ====================== post-solve fragment evaluation ======================
+
+/// Eliminates one already-lowered evaluator **fragment**'s temporal nodes at
+/// **logical time `state`** of an *already solved* lasso (mt-068;
+/// alloy6-temporal.md §(h): all 11 temporal operators are legal evaluator input,
+/// each evaluated relative to the given state — probes T-24 and P-068-1).
+///
+/// The post-solve twin of [`lower_temporal_command`], deliberately over the same
+/// machinery rather than a second LTL semantics: the solve already fixed the
+/// back-loop target, so there is no [`FormulaKind::LoopIs`] case split — one
+/// concrete [`Timeline`], one branch, every index literal.
+///
+/// # What `state` means
+///
+/// It is a **time index on the infinite trace**, not an index into
+/// `states[..]` — the reference's `eval(expr, state)` takes the same thing, and
+/// `state` is never an error (§(h)):
+///
+/// - negatives clamp to 0;
+/// - `state ∈ [0, k)` is that state on the trace's first pass;
+/// - `state >= k` is a **later pass through the loop**. Its present-tense value
+///   is the wrapped physical state ([`normalize_state`](crate::normalize_state)),
+///   its future is the same from any pass — and its **past** is the real one,
+///   containing the earlier passes. Probe **P-068-1** pins this decisively:
+///   on a trace looping back to state 0, `once some A` is `false` at state 0 but
+///   `true` at state 2, and `before some A` alternates with the *index's* parity
+///   rather than with the physical state (`scratchpad/probe/mt068/NOTES.md`).
+///
+/// The timeline is unrolled far enough to reach `state`, with the pass **capped
+/// at the fragment's past-nesting depth** — exact, not approximate, by the same
+/// pass-stability argument the module docs make (`d`-deep past values agree from
+/// pass `d` on), and what keeps an absurd `state` from building an absurd
+/// timeline.
+///
+/// # Panics
+/// Panics if `loop_state` is outside `unrolled.k`, or if a temporal node
+/// survives the elimination — both internal invariants (STYLE I1/I5; `state`
+/// itself is user input, and is therefore normalized rather than asserted).
+pub fn eliminate_fragment_at_state(
+    ir: &mut Ir,
+    unrolled: &UnrolledBounds,
+    loop_state: usize,
+    state: i64,
+    fragment: LoweredFragment,
+) -> LoweredFragment {
+    assert!(
+        loop_state < unrolled.k,
+        "loop target outside the trace: loop_state={loop_state} k={}",
+        unrolled.k
+    );
+
+    let mut depth = PastDepth::default();
+    let unroll_depth = match fragment {
+        LoweredFragment::Formula(f) => depth.formula(ir, f),
+        LoweredFragment::Int(i) => depth.int(ir, i),
+        LoweredFragment::Rel(r) => depth.rel(ir, r),
+    };
+    // The clamp; the conversion cannot fail on a 64-bit target, and saturating
+    // is harmless because `logical_time` caps the pass anyway.
+    let state = usize::try_from(state.max(0)).unwrap_or(usize::MAX);
+    let time = logical_time(state, unrolled.k, loop_state, unroll_depth);
+    let line = Timeline::new(unrolled.k, loop_state, unroll_depth);
+    debug_assert_eq!(
+        line.states[time],
+        crate::temporal_solve::normalize_state(
+            i64::try_from(state).unwrap_or(i64::MAX),
+            unrolled.k,
+            loop_state
+        ),
+        "a logical time must sit at the state the pinned wrap rule names"
+    );
+
+    let mut shared = SharedMemo::default();
+    let mut walker = Walker {
+        ir,
+        unrolled,
+        line: &line,
+        shared: &mut shared,
+        timed: Memo::default(),
+    };
+    let eliminated = match fragment {
+        LoweredFragment::Formula(f) => LoweredFragment::Formula(walker.formula(f, time)),
+        LoweredFragment::Int(i) => LoweredFragment::Int(walker.int(i, time)),
+        LoweredFragment::Rel(r) => LoweredFragment::Rel(walker.rel(r, time)),
+    };
+
+    let (formulas, rels, ints) = match eliminated {
+        LoweredFragment::Formula(f) => (vec![f], Vec::new(), Vec::new()),
+        LoweredFragment::Rel(r) => (Vec::new(), vec![r], Vec::new()),
+        LoweredFragment::Int(i) => (Vec::new(), Vec::new(), vec![i]),
+    };
+    assert_first_order_from(ir, unrolled, formulas, rels, ints);
+    eliminated
+}
+
+/// Where time index `state` sits on [`Timeline::new(k, loop_state, depth)`], with
+/// the pass capped at `depth` (see [`eliminate_fragment_at_state`]).
+///
+/// `depth == 0` — nothing in the fragment can tell one pass from another — puts
+/// every index on the first pass, i.e. exactly at
+/// [`normalize_state`](crate::normalize_state)'s physical state.
+fn logical_time(state: usize, k: usize, loop_state: usize, depth: usize) -> usize {
+    if state < k {
+        return state;
+    }
+    let span = k - loop_state;
+    let within = (state - k) % span;
+    if depth == 0 {
+        return loop_state + within;
+    }
+    // `pass` counts complete traversals past the first one, 1-based; the
+    // timeline holds `depth` of them, and pass `depth` onward all agree.
+    let pass = (state - k) / span + 1;
+    k + (pass.min(depth) - 1) * span + within
 }
 
 // ============================ the conjunct seam ============================
@@ -1211,12 +1333,22 @@ fn conjoin(ir: &mut Ir, parts: Vec<FormulaId>, span: Span) -> FormulaId {
 /// distinguishes a correct temporal lowering from one that silently drops time,
 /// and it is linear in the goal.
 fn assert_first_order(ir: &Ir, unrolled: &UnrolledBounds, goal: FormulaId) {
+    assert_first_order_from(ir, unrolled, vec![goal], Vec::new(), Vec::new());
+}
+
+/// [`assert_first_order`] from roots of any sort — an evaluator fragment's root
+/// is a formula, a relational expression, or an integer expression
+/// ([`eliminate_fragment_at_state`]), so the same walk is seeded three ways.
+fn assert_first_order_from(
+    ir: &Ir,
+    unrolled: &UnrolledBounds,
+    mut formulas: Vec<FormulaId>,
+    mut rels: Vec<RelExprId>,
+    mut ints: Vec<IntExprId>,
+) {
     let mut seen_f: BTreeSet<FormulaId> = BTreeSet::new();
     let mut seen_r: BTreeSet<RelExprId> = BTreeSet::new();
     let mut seen_i: BTreeSet<IntExprId> = BTreeSet::new();
-    let mut formulas = vec![goal];
-    let mut rels: Vec<RelExprId> = Vec::new();
-    let mut ints: Vec<IntExprId> = Vec::new();
     // One worklist loop over the three sorts; each pops whatever is available,
     // so nested formulas (an ITE condition, a comprehension body) re-enter.
     while !formulas.is_empty() || !rels.is_empty() || !ints.is_empty() {
@@ -1354,5 +1486,79 @@ mod tests {
     fn past_path_is_most_recent_first() {
         assert_eq!(Timeline::past_path(0), vec![0]);
         assert_eq!(Timeline::past_path(3), vec![3, 2, 1, 0]);
+    }
+
+    /// A fragment with no past operator cannot tell one pass from another, so
+    /// every time index collapses onto the first pass — which is exactly the
+    /// physical state the pinned wrap rule names.
+    #[test]
+    fn without_past_operators_a_time_index_is_just_its_state() {
+        for (k, l) in [(2, 0), (3, 1), (3, 2), (1, 0)] {
+            for state in 0..12 {
+                assert_eq!(
+                    logical_time(state, k, l, 0),
+                    crate::temporal_solve::normalize_state(
+                        i64::try_from(state).unwrap_or(i64::MAX),
+                        k,
+                        l
+                    ),
+                    "k={k} l={l} state={state}"
+                );
+            }
+        }
+    }
+
+    /// With past operators the index keeps its pass — up to the fragment's own
+    /// past depth, past which every pass agrees (module docs' stability
+    /// argument, and probe P-068-1's states 5..8).
+    #[test]
+    fn a_time_index_keeps_its_pass_up_to_the_past_depth() {
+        // k=2, l=0: the timeline is [0,1] ++ [0,1], loop back at index 2.
+        let line = Timeline::new(2, 0, 1);
+        assert_eq!(line.states, vec![0, 1, 0, 1]);
+        assert_eq!(logical_time(0, 2, 0, 1), 0);
+        assert_eq!(logical_time(1, 2, 0, 1), 1);
+        assert_eq!(logical_time(2, 2, 0, 1), 2);
+        assert_eq!(logical_time(3, 2, 0, 1), 3);
+        // Deeper passes fold onto the last copy, keeping the physical state.
+        for state in [4, 6, 8, 100] {
+            assert_eq!(logical_time(state, 2, 0, 1), 2, "state={state}");
+        }
+        for state in [5, 7, 9, 101] {
+            assert_eq!(logical_time(state, 2, 0, 1), 3, "state={state}");
+        }
+
+        // Two extra copies keep two passes apart before folding.
+        assert_eq!(logical_time(4, 2, 0, 2), 4);
+        assert_eq!(logical_time(6, 2, 0, 2), 4);
+
+        // A loop that is not at state 0: only `l..k` repeats.
+        let line = Timeline::new(3, 2, 1);
+        assert_eq!(line.states, vec![0, 1, 2, 2]);
+        assert_eq!(logical_time(2, 3, 2, 1), 2);
+        assert_eq!(logical_time(3, 3, 2, 1), 3);
+        assert_eq!(logical_time(9, 3, 2, 1), 3);
+
+        // Every result is a real index whose state is the pinned one.
+        for k in 1..5usize {
+            for l in 0..k {
+                for depth in 0..3 {
+                    let line = Timeline::new(k, l, depth);
+                    for state in 0..20 {
+                        let t = logical_time(state, k, l, depth);
+                        assert!(t < line.len(), "k={k} l={l} d={depth} state={state}");
+                        assert_eq!(
+                            line.states[t],
+                            crate::temporal_solve::normalize_state(
+                                i64::try_from(state).unwrap_or(i64::MAX),
+                                k,
+                                l
+                            ),
+                            "k={k} l={l} d={depth} state={state}"
+                        );
+                    }
+                }
+            }
+        }
     }
 }

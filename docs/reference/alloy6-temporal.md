@@ -638,6 +638,46 @@ XML-round-trip evaluator path for any of this (T-25) — mettle's REPL
 [alloy6-evaluator.md §5](alloy6-evaluator.md#5-design-implications-for-mettles-repl-mt-062)'s
 existing recommendation) for the temporal edge too, with no fidelity loss.
 
+### `state` is a time index on the infinite trace, not an index into `states[..]` (mt-068, probe P-068-1)
+
+Wave 2's cells all used a fixture whose loop target is its **last** state, so
+no state there is ever revisited with a different history, and one reading of
+the wrap rule above was left implicit: does `eval(expr, state)` normalize
+`state` into `[0, traceLength)` and then evaluate over *that physical state's
+own prefix*, or does it evaluate at **logical time `state`** on the unrolled
+lasso? mt-068 probed it on a fixture whose loop target is state **0** — so
+state 0 recurs — and the first reading is **refuted**
+(`scratchpad/probe/mt068/NOTES.md`; fixture forced to `traceLength=2,
+loopState=0`, state0 = `no A`, state1 = `some A`):
+
+| expression | state 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|---|
+| `some A` | false | true | false | true | false | | | | |
+| `once some A` | **false** | true | **true** | true | true | true | true | true | true |
+| `historically no A` | true | false | **false** | false | false | | | | |
+| `before some A` | false | false | **true** | false | true | false | true | false | true |
+| `eventually some A` | | | | | | true | true | true | true |
+| `always some A` | | | | | | false | false | false | false |
+
+`once some A` is false at state 0 but true at state 2 — the same physical
+state — and `before some A` alternates with the **index's** parity, not the
+state's. **Pinned: `eval(expr, state)` evaluates at logical time `state` of the
+infinite trace.** Present-tense values look wrapped (T-22's finding is the
+consequence: logical time `t` sits at physical state
+`normalizedIndex(t)`), future operators are pass-invariant (a physical state's
+future is the same on every pass), and past operators see the honest logical
+past `[0, t]`, which past the first pass contains the earlier passes — the same
+true-lasso-history semantics probe **P-D2** (§(l)) found on the *solving* side,
+via the same `TemporalInstance.unrolls` machinery.
+
+The GUI never reaches this: `doNavRight` normalizes into `[0, traceLength)`
+before storing `current` (above), so its `<`/`>` arrows only ever evaluate
+first-pass indices. The behavior is reachable through the API — and therefore
+through a CLI that exposes a state index, which is mettle's surface. mettle
+implements it (`als_core::eliminate_fragment_at_state`), capping the pass at the
+fragment's past-nesting depth, which is exact: `d`-deep past values agree from
+pass `d` on. Reproduced jar-free in `crates/mettle/tests/repl.rs`.
+
 ## (i) Counting under temporal
 
 **The counting gauge's jar-side baseline generator
@@ -863,6 +903,7 @@ id: `scratchpad/probe/mt063/NOTES.md`. Rerun:
 | T-26 | `leader.als` (corpus, via `OracleShim`) | Reproduces the SB-0 count baseline live (`count:1` for cmd1/cmd3, `unsat` for cmd2, cap-hit for cmd0) |
 | T-27 | `ListSolvers.java` + `UnboundedSteps1.als` (mt063) | Correct electrod `SATFactory` id is `electrod.elo`; solves structurally but reports an unexplained UNSAT with a "possibly unsound" warning |
 | T-28 | ad hoc (`r1`/`r2`) | `minprefix=-1` (implicit) and explicit `minprefix=1` resolve identically |
+| **P-068-1** (mt-068) | `scratchpad/probe/mt068/fixtures/LoopPast.als` (loop target = state 0, so state 0 recurs) | **Prediction refuted**: `eval(expr,state)` evaluates at **logical time `state`**, not at the normalized state's first-pass prefix — `once some A` false@0 but true@2; `before some A` alternates with the index's parity (§(h)) |
 
 ---
 

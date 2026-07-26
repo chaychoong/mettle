@@ -24,11 +24,23 @@ fn fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
+/// A fixture the `exec` suite owns — the trace-rendering models double as
+/// per-state evaluation subjects, so they are shared rather than copied.
+fn exec_fixture(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/exec")
+        .join(name)
+}
+
 /// Runs `mettle exec <fixture> [args] --eval <expr>…`, returning the raw
 /// process output.
 fn exec_eval(name: &str, args: &[&str], exprs: &[&str]) -> Output {
+    exec_eval_path(&fixture(name), args, exprs)
+}
+
+fn exec_eval_path(path: &Path, args: &[&str], exprs: &[&str]) -> Output {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_mettle"));
-    cmd.arg("exec").arg(fixture(name)).args(args);
+    cmd.arg("exec").arg(path).args(args);
     for expr in exprs {
         cmd.arg("--eval").arg(expr);
     }
@@ -55,11 +67,17 @@ fn results(out: &Output) -> Vec<String> {
 /// rendered result lines, cell by cell.
 #[track_caller]
 fn assert_cells(name: &str, args: &[&str], cells: &[(&str, &str)]) {
+    assert_cells_at(&fixture(name), args, cells);
+}
+
+#[track_caller]
+fn assert_cells_at(path: &Path, args: &[&str], cells: &[(&str, &str)]) {
     let exprs: Vec<&str> = cells.iter().map(|(e, _)| *e).collect();
-    let out = exec_eval(name, args, &exprs);
+    let out = exec_eval_path(path, args, &exprs);
     assert!(
         out.status.success(),
-        "`{name}` {args:?} failed\nstderr: {}",
+        "`{}` {args:?} failed\nstderr: {}",
+        path.display(),
         stderr(&out)
     );
     let got = results(&out);
@@ -331,13 +349,324 @@ fn several_commands_need_an_explicit_selection() {
     assert!(err.contains("[1] run Narrow"), "{err}");
 }
 
+// =============== (c) the temporal edge — per-state (mt-068) ===============
+//
+// `fixtures/repl/trace.als` is mt-064's own probe model, whose facts force the
+// whole trace (`alloy6-temporal.md` §(f)/§(h), probe T-13 captured it live from
+// the jar: `traceLength=3 loopState=2`):
+//
+//     state 0: A={}          B={}
+//     state 1: A={Counter$0} B={}
+//     state 2: A={}          B={Counter$0}   <- the loop state
+//
+// so every cell below is checkable by hand against the trace, and the ones
+// marked T-22/T-23/T-24 are the jar's own captured answers, reproduced jar-free.
+
+/// A `var` relation's value is the value **at the current state** — mt-068's
+/// whole point, and probe T-22's `eval("B", state)` column.
+#[test]
+fn a_var_relation_evaluates_at_the_current_state() {
+    let trace = fixture("trace.als");
+    // `--state` defaults to 0.
+    assert_cells_at(&trace, &[], &[("A", "{}"), ("B", "{}")]);
+    assert_cells_at(
+        &trace,
+        &["--state", "1"],
+        &[("A", "{Counter$0}"), ("B", "{}")],
+    );
+    assert_cells_at(
+        &trace,
+        &["--state", "2"],
+        &[("A", "{}"), ("B", "{Counter$0}")],
+    );
+    // A rigid relation is the same at every state (statics are re-emitted
+    // verbatim per state — §(f)).
+    for state in ["0", "1", "2"] {
+        assert_cells_at(&trace, &["--state", state], &[("Counter", "{Counter$0}")]);
+    }
+}
+
+/// T-22/T-23/T-25: a state index is **never an error**. Past the end it wraps
+/// through the loop — `((state − l) % (k − l)) + l`, which for this trace
+/// (`k=3, l=2`) sends every index `>= 3` to state 2, *not* to `state % 3` —
+/// and a negative index clamps to state 0.
+#[test]
+fn a_state_index_wraps_through_the_loop_and_clamps_at_zero() {
+    let trace = fixture("trace.als");
+    for state in ["3", "4", "10", "99"] {
+        assert_cells_at(
+            &trace,
+            &["--state", state],
+            &[("B", "{Counter$0}"), ("A", "{}")],
+        );
+    }
+    for state in ["-1", "-2", "-5"] {
+        assert_cells_at(&trace, &["--state", state], &[("B", "{}"), ("A", "{}")]);
+    }
+}
+
+/// T-24: every temporal operator is legal evaluator input, evaluated relative
+/// to the current state. The state-0 and state-1 columns are the jar's captured
+/// answers verbatim; state 2 (the self-looping loop state) extends the same
+/// hand-checkable pattern.
+#[test]
+fn temporal_operators_are_legal_evaluator_input() {
+    let trace = fixture("trace.als");
+    assert_cells_at(
+        &trace,
+        &["--state", "0"],
+        &[
+            ("always no A", "false"),
+            ("eventually some A", "true"),
+            ("B'", "{}"),
+            ("no A until some B", "false"),
+            ("historically no B", "true"),
+            ("after some B", "false"),
+            ("once some A", "false"),
+        ],
+    );
+    assert_cells_at(
+        &trace,
+        &["--state", "1"],
+        &[
+            ("always no A", "false"),
+            ("eventually some A", "true"),
+            ("B'", "{Counter$0}"),
+            ("no A until some B", "false"),
+            ("historically no B", "true"),
+            ("after some B", "true"),
+            // A is nonempty at state 1 itself, and `once` includes the present.
+            ("once some A", "true"),
+        ],
+    );
+    assert_cells_at(
+        &trace,
+        &["--state", "2"],
+        &[
+            // From the loop state the future is state 2 forever.
+            ("always no A", "true"),
+            ("eventually some A", "false"),
+            ("no A until some B", "true"),
+            ("after some B", "true"),
+            // ...while the past is the honest prefix through states 0 and 1.
+            ("historically no B", "false"),
+            ("once some A", "true"),
+        ],
+    );
+}
+
+/// `'` is the expression one step later, and the step at the last state follows
+/// the **back-loop** (§(h)): on the alternation fixture (`k=2`, looping back to
+/// state 0) `A'` at state 1 is `A` at state 0, which is a different value —
+/// not the "last state has no successor" edge case it looks like.
+#[test]
+fn prime_at_the_last_state_wraps_into_the_loop() {
+    let alternating = exec_fixture("trace_alt.als");
+    assert_cells_at(
+        &alternating,
+        &["--state", "1"],
+        &[("A", "{A$0}"), ("A'", "{}"), ("after no A", "true")],
+    );
+    assert_cells_at(
+        &alternating,
+        &["--state", "0"],
+        &[("A", "{}"), ("A'", "{A$0}"), ("A''", "{}")],
+    );
+    // The same rule on a trace whose loop is a self-loop on the last state:
+    // priming there stays put.
+    assert_cells_at(
+        &fixture("trace.als"),
+        &["--state", "2"],
+        &[("B", "{Counter$0}"), ("B'", "{Counter$0}")],
+    );
+}
+
+/// **P-068-1** (this bead's own probe, `scratchpad/probe/mt068/NOTES.md`): a
+/// state index is a **time index on the infinite trace**, so an index past the
+/// end is a later pass through the loop — its present-tense value is the wrapped
+/// state and its future is pass-invariant, but its **past** contains the earlier
+/// passes. On this fixture the trace loops back to state 0, so state 0 is
+/// revisited: `once some A` is false at state 0 and true at state 2, and
+/// `before some A` alternates with the index's parity rather than with the
+/// state's. Every cell below is the jar's captured answer.
+#[test]
+fn past_operators_at_a_revisited_state_see_the_real_history() {
+    let alternating = exec_fixture("trace_alt.als");
+    // (state, `some A`, `once some A`, `historically no A`, `before some A`)
+    let jar = [
+        (0, "false", "false", "true", "false"),
+        (1, "true", "true", "false", "false"),
+        (2, "false", "true", "false", "true"),
+        (3, "true", "true", "false", "false"),
+        (4, "false", "true", "false", "true"),
+        // Past pass 1 every deeper pass agrees — the fixpoint the implementation
+        // caps at, checked rather than assumed.
+        (5, "true", "true", "false", "false"),
+        (6, "false", "true", "false", "true"),
+        (7, "true", "true", "false", "false"),
+        (8, "false", "true", "false", "true"),
+    ];
+    for (state, present, once, historically, before) in jar {
+        assert_cells_at(
+            &alternating,
+            &["--state", &state.to_string()],
+            &[
+                ("some A", present),
+                ("once some A", once),
+                ("historically no A", historically),
+                ("before some A", before),
+                // Future operators are the same from every pass through a state.
+                ("eventually some A", "true"),
+                ("always some A", "false"),
+            ],
+        );
+    }
+    // A negative index clamps, so it is state 0 in every respect — including
+    // having no past at all.
+    assert_cells_at(
+        &alternating,
+        &["--state", "-3"],
+        &[("once some A", "false"), ("before some A", "false")],
+    );
+}
+
+/// The degenerate one-state trace is not a special case anywhere: every index
+/// normalizes to 0, `'` follows the self-loop back to the same state, and
+/// `before` is still false at the start of time (P-A1/A2).
+#[test]
+fn a_one_state_trace_evaluates_like_any_other() {
+    let single = exec_fixture("temporal.als");
+    for state in ["0", "1", "7", "-3"] {
+        assert_cells_at(
+            &single,
+            &["--state", state],
+            &[
+                ("A", "{}"),
+                ("A'", "{}"),
+                ("always no A", "true"),
+                ("before some A", "false"),
+            ],
+        );
+    }
+}
+
+/// A temporal command's skolem is an ordinary evaluator global (E-24) whose
+/// value is **rigid** — the same at every state (§(l), probes P-F1/F2) — while
+/// the `var` sig it constrains is not. Also covers the seam that makes it work:
+/// the REPL binds the relations the *solve* minted, not freshly-lowered ones.
+#[test]
+fn a_temporal_skolem_is_a_rigid_global() {
+    let skolem = fixture("trace_skolem.als");
+    assert_cells_at(
+        &skolem,
+        &["--state", "0"],
+        &[("$witness_n", "{P$0}"), ("A", "{}")],
+    );
+    assert_cells_at(
+        &skolem,
+        &["--state", "1"],
+        &[("$witness_n", "{P$0}"), ("A", "{Q$0}")],
+    );
+    // ...and the wrap keeps both of them consistent past the end of the trace.
+    assert_cells_at(
+        &skolem,
+        &["--state", "3"],
+        &[("$witness_n", "{P$0}"), ("A", "{Q$0}")],
+    );
+}
+
+/// A temporal `--repl` says what the trace is and where it is standing (users
+/// need `k` and the loop target to read a wrapped index), and `:state N` moves —
+/// client-side, exactly like the reference GUI's `<`/`>` arrows. Nothing here
+/// re-solves or enumerates: mettle ships no trace enumeration, and the surface
+/// promises none (§(g) is classification only).
+#[test]
+fn the_repl_reports_its_trace_and_moves_between_states() {
+    let out = repl_session_at(
+        &fixture("trace.als"),
+        &[],
+        "B\n:state 1\nA\n:state 5\nB\n:state -3\n:state\n:q\n",
+    );
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    let (_, session) = text.split_once("\n\n").expect("trace block");
+    assert_eq!(
+        session,
+        "trace: 3 states, loop -> state 2; evaluating at state 0 (`:state N` to move)\n\
+         > {}\n\
+         > evaluating at state 1\n\
+         > {Counter$0}\n\
+         > evaluating at state 5 (trace state 2, a later pass through the loop)\n\
+         > {Counter$0}\n\
+         > evaluating at state 0 (-3 clamps to 0)\n\
+         > evaluating at state 0\n\
+         > ",
+        "{text}"
+    );
+}
+
+/// `--state`/`:state` are about a trace, and a static command has none: the
+/// prompt says so rather than pretending state 7 means something.
+#[test]
+fn the_state_command_is_refused_on_a_static_command() {
+    let out = repl_session("base.als", ":state 2\n:q\n");
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(
+        text.contains("this command is not temporal, so its instance has a single state."),
+        "{text}"
+    );
+    // A static session's banner stays empty — nothing to say about a trace.
+    assert!(!text.contains("trace:"), "{text}");
+}
+
+/// A non-numeric `:state` argument is a usage error at the prompt, not a
+/// silently ignored line.
+#[test]
+fn the_state_command_rejects_a_non_numeric_argument() {
+    let out = repl_session_at(&fixture("trace.als"), &[], ":state two\n:q\n");
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(
+        stdout(&out).contains("`:state` expects an integer state index, got `two`."),
+        "{}",
+        stdout(&out)
+    );
+}
+
+/// STYLE U4, on the temporal path too: same session, byte-identical output.
+#[test]
+fn a_temporal_session_is_deterministic() {
+    let script = "B\n:state 1\nB'\nalways no A\n:state 9\nA\n:q\n";
+    let first = repl_session_at(&fixture("trace.als"), &[], script);
+    let second = repl_session_at(&fixture("trace.als"), &[], script);
+    assert_eq!(stdout(&first), stdout(&second));
+    assert_eq!(stderr(&first), stderr(&second));
+}
+
+/// A *static* command's evaluator still refuses temporal operators, typed and
+/// with a caret: there is no trace to evaluate `after` against, and answering
+/// at "the only state" is not a pinned behavior (unpinned corner, mt-069).
+#[test]
+fn a_static_command_still_defers_temporal_operators() {
+    let err = eval_error("base.als", &[], "after some A");
+    assert!(
+        err.contains("temporal operators are parsed but not yet solvable") && err.contains("after"),
+        "{err}"
+    );
+}
+
 // ============================ the interactive loop ============================
 
 /// Feeds `input` to `mettle exec --repl` on stdin and returns its output.
 fn repl_session(name: &str, input: &str) -> Output {
+    repl_session_at(&fixture(name), &[], input)
+}
+
+fn repl_session_at(path: &Path, args: &[&str], input: &str) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_mettle"))
         .arg("exec")
-        .arg(fixture(name))
+        .arg(path)
+        .args(args)
         .arg("--repl")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
