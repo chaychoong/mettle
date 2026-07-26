@@ -78,8 +78,8 @@ use crate::bounds_builder::BoundsResult;
 use crate::error::TranslateError;
 use crate::ir::{
     CompDecl, Formula, FormulaId, FormulaKind, IntBinOp, IntCmpOp, IntExpr, IntExprId, IntExprKind,
-    Ir, MultTest, QuantKind, RelBinOp, RelCmpOp, RelConst, RelExpr, RelExprId, RelExprKind, RelId,
-    RelUnOp, Relation, TemporalBinOp, TemporalUnOp, Var,
+    Ir, MultTest, Mutability, QuantKind, RelBinOp, RelCmpOp, RelConst, RelExpr, RelExprId,
+    RelExprKind, RelId, RelUnOp, Relation, TemporalBinOp, TemporalUnOp, Var,
 };
 use crate::scope::ScopedUniverse;
 
@@ -3208,7 +3208,16 @@ impl<'a> Lowerer<'a> {
             name = format!("{base}_{k}");
             k += 1;
         }
-        let rel = self.ir.relations.alloc(Relation { name, arity, span });
+        // A skolem constant is static: skolemization is switched off entirely
+        // under any temporal operator (`Skolemizer.java:494-526`,
+        // alloy6-temporal.md §(d)), so a minted skolem always witnesses a
+        // state-independent, top-level existential.
+        let rel = self.ir.relations.alloc(Relation {
+            name,
+            arity,
+            span,
+            mutability: Mutability::Static,
+        });
         let lower = TupleSet::empty(arity);
         self.skolem_bounds.push((rel, RelBound::new(lower, upper)));
         self.mk_rel(RelExprKind::Relation(rel), span)

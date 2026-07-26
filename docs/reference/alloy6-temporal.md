@@ -700,6 +700,62 @@ the explicit/implicit boundary.
 
 ---
 
+## (k) Implementation-time cite-checks (mt-065)
+
+Facts pinned by jar **source/bytecode reading** (not live probes) while
+implementing the static/variable partition and the discriminator; they
+extend §(a)/§(d) at the exact granularity the code needed.
+
+**Relation mutability at bounds construction** (`BoundsComputer.java` — the
+`isVariable` flag passed at every `addRel`): leaf prim sig `:178` and `in`
+subset sig `:241` follow the sig's own flag; the `<Sig>_remainder` relation
+`:194` follows the **parent's own** flag, never its children's — a static
+parent with a `var` child keeps a *static* remainder, and the jar instead
+pins the parent/children union rigid with its own `always (sum' = sum)`
+formula at `:206-207` (mt-066 must emit that formula); a field relation
+`:448` follows the **field's** flag, not its owner sig's; `util/ordering`'s
+`First`/`Next` `:417-418` are ordinary never-`var` fields, so the mt-035
+exact pinning always lands on a static relation. Skolem constants are
+static (skolemization is off under any temporal operator,
+`Skolemizer.java:494-526`).
+
+**Discriminator scoping** (`CompUtil.isTemporalModel`, extending §(a)): the
+`var` half is **whole-world** — the `sigs` argument is the complete
+reachable-sig list (`TranslateAlloyToKodkod.java:153`), so a `var` sig in
+any opened module makes every command temporal; the operator half is
+**per-command** — `cmd.formula = globalFacts.and(commandBody)`
+(`CompModule.java:2030`), where `globalFacts =
+CompModule.getAllReachableFacts()` (`:1905-1913`) holds **free `fact`
+paragraphs only** (a sig's appended fact goes to `Sig.addFact`, `:1884`,
+and never enters the list), and `commandBody` (`:1975-2014`) is the assert
+body for `check a`, the pred/fun's **body substituted directly** for
+`run/check p`, or the inline block. The scan is `Expr.hasTemporal()`: the
+op set is exactly AFTER/BEFORE/PRIME/HISTORICALLY/ALWAYS/ONCE/EVENTUALLY +
+UNTIL/SINCE/TRIGGERED/RELEASES (`Expr$2`, bytecode), and
+`VisitQuery.visit(ExprCall)` iterates the call's **`args` only** — it never
+descends into the callee's body (bytecode,
+`edu/mit/csail/sdg/ast/VisitQuery.class`).
+
+**Source-cited but never live-probed — mt-069 must probe these** (each has
+a mettle-side conformance test asserting the cited behavior, except 4):
+
+1. Non-descent into a *called* pred's body: `pred q { always some A } pred
+   p { q } run p` → **not** temporal.
+2. A sig's appended fact is outside the scanned formula: `sig A {} { always
+   some A } run {}` → **not** temporal.
+3. `;` counts as temporal: not an `ExprBinary$Op` member — the jar desugars
+   `a ; b` to `a and after b` *before* resolution, so the scanned tree
+   holds an AFTER; mettle treats the surface `;` as temporal-bearing.
+4. Macro bodies: mettle scans the surface AST where a used macro is a name;
+   the jar expands macros at typecheck, so an operator inside a *used*
+   macro would be visible to the jar but not to mettle's scan — a genuine
+   divergence risk, no test written, **needs a probe**.
+5. A `Named` command target with >1 recorded overload: mettle scans all
+   overloads; the jar errors on ambiguity, so unreachable in an accepted
+   model.
+6. Skolem-relation mutability in a temporal model: consistent with
+   `Skolemizer.java:494-526`, but no probe pins it directly.
+
 ## Probe evidence table
 
 Full commands, predictions-before-run, and verbatim jar output for every

@@ -59,6 +59,30 @@ pub struct Ir {
     pub vars: Arena<VarId, Var>,
 }
 
+/// Whether a relation's value may differ between the states of a trace — the
+/// static/variable partition Alloy 6's `var` induces (ADR-0015 decision 1).
+///
+/// A closed two-variant enum rather than an `is_var: bool` field: the marker is
+/// a fixed, known-at-compile-time classification (`PORTING_RULES` R2a), and
+/// every construction site then reads `Mutability::Variable` instead of a bare
+/// `true` (R6, no boolean blindness). The question form lives on the predicate
+/// [`Relation::is_var`] instead (STYLE N5).
+///
+/// Inert at mt-065: nothing in the static pipeline branches on it. mt-066's
+/// state-indexed lowering and [`crate::temporal::unroll`] are its first
+/// consumers.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
+pub enum Mutability {
+    /// Rigid across the whole trace: one value shared by every state. Every
+    /// relation of a non-temporal command is `Static`, which is why this is the
+    /// default.
+    #[default]
+    Static,
+    /// `var`-backed: one value **per state**; the k-state unroller mints k
+    /// per-state copies of it (ADR-0015 decision 1).
+    Variable,
+}
+
 /// A free relation: something the solver picks tuples for.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Relation {
@@ -68,6 +92,18 @@ pub struct Relation {
     pub arity: usize,
     /// Span of the declaring source construct.
     pub span: Span,
+    /// Static/variable partition (ADR-0015 decision 1). Set at every allocation
+    /// site from the resolved `var` flags; see [`Mutability`].
+    pub mutability: Mutability,
+}
+
+impl Relation {
+    /// Whether this relation's value may differ between trace states (STYLE
+    /// N5: predicates read as questions).
+    #[must_use]
+    pub fn is_var(&self) -> bool {
+        matches!(self.mutability, Mutability::Variable)
+    }
 }
 
 /// A quantifier/comprehension/`sum`-bound variable.
@@ -444,11 +480,13 @@ mod tests {
             name: "this/Node".to_owned(),
             arity: 1,
             span: span(),
+            mutability: Mutability::Static,
         });
         let next = ir.relations.alloc(Relation {
             name: "this/Node.next".to_owned(),
             arity: 2,
             span: span(),
+            mutability: Mutability::Static,
         });
         let n = ir.vars.alloc(Var {
             name: "n".to_owned(),

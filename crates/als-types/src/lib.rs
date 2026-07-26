@@ -24,6 +24,7 @@ pub mod loader;
 pub mod path;
 mod resolve;
 pub mod stdlib;
+pub mod temporal;
 pub mod ty;
 pub mod warning;
 pub mod world;
@@ -37,6 +38,7 @@ pub use file::{FileTable, LoadedFile};
 pub use graph::{ArgRef, ModuleGraph, ModuleId, ModuleInstance, OpenEdge, ParamBinding};
 pub use loader::{FilesystemLoader, MapLoader, ModuleLoader};
 pub use resolve::{resolve, resolve_session, FragmentResolved, Resolved, ResolvedSession};
+pub use temporal::is_temporal_model;
 pub use ty::{Product, Type};
 pub use warning::{jar_stem_class, ResolveWarning};
 pub use world::{

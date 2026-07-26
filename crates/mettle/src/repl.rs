@@ -42,7 +42,7 @@ use std::fmt::Write as _;
 use std::io::{self, BufRead as _, Write as _};
 
 use als_core::bounds::{AtomId, Bounds, RelBound, Tuple, TupleSet, Universe};
-use als_core::ir::{Ir, RelExpr, RelExprId, RelExprKind, RelId, Relation};
+use als_core::ir::{Ir, Mutability, RelExpr, RelExprId, RelExprKind, RelId, Relation};
 use als_core::{
     lower_fragment, BoundsResult, Evaluator, FragmentInput, Instance, LoweredFragment, LoweredGoal,
     ScopedUniverse, SolveOptions, TranslateError,
@@ -245,6 +245,9 @@ fn register_globals(
                 name: name.clone(),
                 arity: 1,
                 span,
+                // One exact singleton per atom: atoms are rigid, so an atom
+                // binding never varies between states (ADR-0015 decision 1).
+                mutability: Mutability::Static,
             });
             let expr = ir.rel_exprs.alloc(RelExpr {
                 kind: RelExprKind::Relation(rel),

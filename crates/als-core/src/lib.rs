@@ -19,6 +19,7 @@ mod overflow_guard;
 pub mod scope;
 pub mod solve;
 mod strings;
+pub mod temporal;
 
 pub use bounds_builder::{compute_bounds, BoundsResult};
 pub use error::TranslateError;
@@ -29,3 +30,4 @@ pub use lower::{
 };
 pub use scope::{compute_universe, MintedAtoms, ScopeTable, ScopedSig, ScopedUniverse};
 pub use solve::{enumerate, solve_goal, Instance, InstanceEnumerator, SolveOptions, SolveVerdict};
+pub use temporal::{unroll, LassoSelector, UnrolledBounds};

@@ -60,8 +60,8 @@ use als_types::{FieldId, ResolvedWorld, SigId, SigKind};
 
 use crate::bounds::{AtomId, Bounds, RelBound, Tuple, TupleSet, Universe};
 use crate::ir::{
-    Formula, FormulaId, FormulaKind, Ir, MultTest, QuantKind, RelBinOp, RelCmpOp, RelConst,
-    RelExpr, RelExprId, RelExprKind, RelId, Relation, Var,
+    Formula, FormulaId, FormulaKind, Ir, MultTest, Mutability, QuantKind, RelBinOp, RelCmpOp,
+    RelConst, RelExpr, RelExprId, RelExprKind, RelId, Relation, Var,
 };
 use crate::scope::ScopedUniverse;
 
@@ -329,7 +329,11 @@ impl<'a> BoundsBuilder<'a> {
                 AtomId::from_index(idx + 1),
             ]));
         }
-        let next_rel = self.alloc_named("Int/next", 2, span);
+        // `Int`/`seq/Int`/`String` and their derived orderings are never
+        // `var`-declared (they are builtin, `isVariable == null` always), so
+        // integers are rigid across states by construction, not by a special
+        // case (alloy6-temporal.md §(d), live-reconfirmed by probe T-13).
+        let next_rel = self.alloc_named("Int/next", 2, span, Mutability::Static);
         self.bounds.bind(next_rel, RelBound::exact(next_pairs));
         self.int_next = Some(self.mk_rel_expr(RelExprKind::Relation(next_rel), span));
 
@@ -339,7 +343,7 @@ impl<'a> BoundsBuilder<'a> {
         let zero_index = range.start + half;
         let mut zero_set = TupleSet::empty(1);
         zero_set.insert(Tuple::new(vec![AtomId::from_index(zero_index)]));
-        let zero_rel = self.alloc_named("Int/zero", 1, span);
+        let zero_rel = self.alloc_named("Int/zero", 1, span, Mutability::Static);
         self.bounds.bind(zero_rel, RelBound::exact(zero_set));
         self.int_zero = Some(self.mk_rel_expr(RelExprKind::Relation(zero_rel), span));
     }
@@ -352,6 +356,8 @@ impl<'a> BoundsBuilder<'a> {
             name: name.to_owned(),
             arity: 1,
             span,
+            // Builtins are never `var`-declared (alloy6-temporal.md §(d)).
+            mutability: Mutability::Static,
         });
         self.bounds
             .bind(rel, RelBound::exact(unary_tupleset(atoms)));
@@ -371,7 +377,8 @@ impl<'a> BoundsBuilder<'a> {
             }
             let kids = self.kids(id);
             if kids.is_empty() {
-                let rel = self.alloc_named(&sig.qualified_name, 1, sig.span);
+                let rel =
+                    self.alloc_named(&sig.qualified_name, 1, sig.span, self.sig_mutability(id));
                 let bound = RelBound::new(
                     unary_tupleset(&self.lower[&id]),
                     unary_tupleset(&self.upper[&id]),
@@ -380,7 +387,13 @@ impl<'a> BoundsBuilder<'a> {
                 self.leaf_rel.insert(id, rel);
             } else if !sig.is_abstract {
                 let name = format!("{}_remainder", sig.qualified_name);
-                let rel = self.alloc_named(&name, 1, sig.span);
+                // The remainder follows the **parent's own** `var` flag, never
+                // its children's (`BoundsComputer.java:194` passes
+                // `sig.isVariable != null` verbatim): a static parent keeps a
+                // static remainder even when a child is `var`, and pins the
+                // union rigid with its own `always (sum' = sum)` formula
+                // instead (`:206-207`, mt-066's business).
+                let rel = self.alloc_named(&name, 1, sig.span, self.sig_mutability(id));
                 let floating = unary_tupleset(&self.floating(id));
                 // An **exact** non-abstract parent pins its remainder to *all*
                 // its floating atoms (lower == upper), so `#sig` equals its exact
@@ -475,7 +488,12 @@ impl<'a> BoundsBuilder<'a> {
             // An exact `=` subset sig *is* the parents' union — no relation.
             union
         } else {
-            let rel = self.alloc_named(&self.world.sigs[sig].qualified_name.clone(), 1, span);
+            let rel = self.alloc_named(
+                &self.world.sigs[sig].qualified_name.clone(),
+                1,
+                span,
+                self.sig_mutability(sig),
+            );
             let upper = self.upper_atoms(sig);
             self.bounds.bind(
                 rel,
@@ -533,7 +551,16 @@ impl<'a> BoundsBuilder<'a> {
                 "{}.{}",
                 self.world.sigs[field.owner].qualified_name, field.name
             );
-            let rel = self.alloc_named(&name, stored_arity, field.span);
+            // A field relation follows the **field's** own `var` marker, not its
+            // owner sig's (`BoundsComputer.java:448`, and `:417-418` for
+            // `util/ordering`'s `First`/`Next` — whose fields are never `var`,
+            // so the mt-035 exact pinning always lands on a static relation).
+            let mutability = if field.is_var {
+                Mutability::Variable
+            } else {
+                Mutability::Static
+            };
+            let rel = self.alloc_named(&name, stored_arity, field.span, mutability);
             self.bounds
                 .bind(rel, RelBound::new(TupleSet::empty(stored_arity), upper));
             self.field_rel.insert(fid, rel);
@@ -1056,6 +1083,9 @@ impl<'a> BoundsBuilder<'a> {
                 name: format!("\"{content}\""),
                 arity: 1,
                 span,
+                // A string literal's singleton is an exact constant — rigid
+                // across every state (alloy6-temporal.md §(d), probe T-13).
+                mutability: Mutability::Static,
             });
             let mut singleton = TupleSet::empty(1);
             singleton.insert(Tuple::new(vec![atom]));
@@ -1073,13 +1103,35 @@ impl<'a> BoundsBuilder<'a> {
         self.world.sigs[sig].span
     }
 
-    /// Allocates a fresh `arity`-ary relation named `name`.
-    fn alloc_named(&mut self, name: &str, arity: usize, span: Span) -> RelId {
+    /// Allocates a fresh `arity`-ary relation named `name`, classified into the
+    /// static/variable partition (ADR-0015 decision 1). `mutability` is an enum,
+    /// not a `bool`, so every call site names which side it lands on
+    /// (`PORTING_RULES` R6).
+    fn alloc_named(
+        &mut self,
+        name: &str,
+        arity: usize,
+        span: Span,
+        mutability: Mutability,
+    ) -> RelId {
         self.ir.relations.alloc(Relation {
             name: name.to_owned(),
             arity,
             span,
+            mutability,
         })
+    }
+
+    /// The partition side of a sig-backed relation: `var sig` → variable
+    /// (`BoundsComputer.java:178`/`:194`/`:241` all pass `sig.isVariable !=
+    /// null` for the leaf, remainder, and subset relations alike — the
+    /// remainder follows **its own sig's** flag, not its children's).
+    fn sig_mutability(&self, sig: SigId) -> Mutability {
+        if self.world.sigs[sig].is_var {
+            Mutability::Variable
+        } else {
+            Mutability::Static
+        }
     }
 
     fn mk_rel_expr(&mut self, kind: RelExprKind, span: Span) -> RelExprId {
