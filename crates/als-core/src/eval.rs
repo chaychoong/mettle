@@ -99,6 +99,14 @@ pub struct Evaluator<'a> {
     /// quantifier domain (translation-ref §10.7c rule 0).
     int_sig: Option<RelId>,
     seq_int_sig: Option<RelId>,
+    /// The solved lasso back-loop target, when re-evaluating a **temporal**
+    /// goal (mt-067): [`FormulaKind::LoopIs`] holds exactly at this state. The
+    /// encoder resolves that atom through the
+    /// [`LassoSelector`](crate::temporal::LassoSelector) it minted; the loop
+    /// index is a solver variable, not a relation, so a decoded
+    /// [`Instance`] cannot carry it and the driver threads it here instead.
+    /// `None` on every static path, where the atom cannot occur.
+    loop_state: Option<usize>,
 }
 
 impl<'a> Evaluator<'a> {
@@ -129,7 +137,20 @@ impl<'a> Evaluator<'a> {
             behind_implies: false,
             int_sig,
             seq_int_sig,
+            loop_state: None,
         }
+    }
+
+    /// Points this evaluator at a solved **lasso trace**: `LoopIs(l)` then holds
+    /// exactly when `l == loop_state` (mt-067).
+    ///
+    /// Builder-style rather than an extra [`Self::new`] argument: every static
+    /// caller — the REPL, the differential, the corpus nets — would otherwise
+    /// have to pass `None` for something that cannot occur on their path.
+    #[must_use]
+    pub fn with_loop_state(mut self, loop_state: usize) -> Self {
+        self.loop_state = Some(loop_state);
+        self
     }
 
     /// Evaluates `f` as the **top-level accept predicate** for one instance:
@@ -264,14 +285,25 @@ impl<'a> Evaluator<'a> {
                     span: node.span,
                 })
             }
-            // The loop index is a solver variable, not a relation, so a decoded
-            // [`crate::Instance`] carries no value for it — re-evaluating a
-            // temporal goal needs the trace's loop state alongside the instance,
-            // which is the driver's (mt-067) shape to carry.
-            FormulaKind::LoopIs { .. } => Err(TranslateError::TemporalUnsupported {
-                op: "the lasso loop atom has no instance-level value — temporal \
-                     self-check needs the solved loop state (mt-067)",
-                span: node.span,
+            FormulaKind::LoopIs { state } => self.loop_is(*state, node.span),
+        }
+    }
+
+    /// The lasso back-loop atom (mt-067): true exactly at the solved loop
+    /// target.
+    ///
+    /// The loop index is a solver variable, not a relation, so a decoded
+    /// [`Instance`] carries no value for it — the temporal driver threads the
+    /// solved target in through [`Evaluator::with_loop_state`]. Without one the
+    /// atom is unevaluable, which is a caller bug, reported rather than guessed
+    /// at (STYLE E5).
+    fn loop_is(&self, state: usize, span: als_syntax::Span) -> Result<bool, TranslateError> {
+        match self.loop_state {
+            Some(l) => Ok(state == l),
+            None => Err(TranslateError::TemporalUnsupported {
+                op: "the lasso loop atom has no instance-level value — evaluating a \
+                     temporal goal needs `Evaluator::with_loop_state`",
+                span,
             }),
         }
     }
@@ -1134,6 +1166,44 @@ pub fn self_check(
     opts: &SolveOptions,
     bounds: &Bounds,
 ) -> Result<(), SelfCheckFailure> {
+    self_check_inner(ir, scoped, goal, instance, opts, bounds, None)
+}
+
+/// The **temporal** self-check (mt-067): the same re-evaluation, over the
+/// unrolled goal (whose relations are the per-state copies) with the solved
+/// lasso back-loop target supplied, so [`crate::ir::FormulaKind::LoopIs`] has a
+/// value. `instance` is the *flat* decoded instance — the per-state copies as
+/// ordinary relations, exactly what the encoder saw — not the per-state trace
+/// view the driver renders.
+///
+/// # Errors
+/// As [`self_check`].
+pub fn self_check_temporal(
+    ir: &Ir,
+    scoped: &ScopedUniverse,
+    goal: &LoweredGoal,
+    instance: &Instance,
+    opts: &SolveOptions,
+    bounds: &Bounds,
+    loop_state: usize,
+) -> Result<(), SelfCheckFailure> {
+    self_check_inner(ir, scoped, goal, instance, opts, bounds, Some(loop_state))
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the two public entries' shared body: the evaluator's whole context \
+              plus the optional lasso loop target"
+)]
+fn self_check_inner(
+    ir: &Ir,
+    scoped: &ScopedUniverse,
+    goal: &LoweredGoal,
+    instance: &Instance,
+    opts: &SolveOptions,
+    bounds: &Bounds,
+    loop_state: Option<usize>,
+) -> Result<(), SelfCheckFailure> {
     let mut ev = Evaluator::new(
         ir,
         instance,
@@ -1143,6 +1213,9 @@ pub fn self_check(
         goal.seq_int_sig,
         bounds,
     );
+    if let Some(l) = loop_state {
+        ev = ev.with_loop_state(l);
+    }
     match ev.accepts(goal.goal) {
         Ok(true) => Ok(()),
         // The goal is the conjunction of `goal.conjuncts`; a false/excluded goal

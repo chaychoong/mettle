@@ -381,6 +381,27 @@ pub enum ResolveError {
         span: Span,
     },
 
+    /// An open-ended `steps` range that does not start at 1 (`for 3.. steps`).
+    /// The jar rejects it verbatim with this message (probe T-08a,
+    /// `alloy6-temporal.md` §(b)); it catches it in its grammar, mettle in the
+    /// resolver — the first place a `N..` range is known to target `steps`
+    /// rather than a legally-growing sig scope.
+    #[error("Unbounded time scope must start at 1.")]
+    UnboundedStepsMustStartAtOne {
+        /// Span of the offending `steps` scope entry.
+        span: Span,
+    },
+
+    /// A `steps` scope was given a growth increment other than 1
+    /// (`for 1:2 steps`). Legal on a sig scope, rejected on `steps` — the jar
+    /// checks it at command-build time (grammar-ref §4.5, jar-verified). The
+    /// wording is mettle's; the jar's exact text for this case is not pinned.
+    #[error("a `steps` scope increment must be 1")]
+    StepsIncrementMustBeOne {
+        /// Span of the offending `steps` scope entry.
+        span: Span,
+    },
+
     /// A mutable, non-top-level sig was given a scope (`resolveCommand`,
     /// resolution-doc §3.6).
     #[error("mutable sig `{name}` is not top-level and cannot have scopes assigned")]
@@ -450,6 +471,8 @@ impl ResolveError {
             | ResolveError::CommandTargetNotFound { span, .. }
             | ResolveError::CommandTargetAmbiguous { span, .. }
             | ResolveError::ScopeSigNotFound { span, .. }
+            | ResolveError::UnboundedStepsMustStartAtOne { span }
+            | ResolveError::StepsIncrementMustBeOne { span }
             | ResolveError::MutableSigScoped { span, .. }
             | ResolveError::ExactScopeOnVar { span, .. }
             | ResolveError::ExactParamVarSig { span } => *span,

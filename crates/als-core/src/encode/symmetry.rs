@@ -81,11 +81,39 @@ impl SbpPlan {
 /// path, which never mention-gates them (§16.1.1, probes Y6/uf1-SB20/fmrun).
 /// `bounds` is the **post-skolem** augmented bounds (base + skolem relations),
 /// so `relparts` sees the skolems that eat SBP slots first among their arity
-/// (§16.3).
-pub(crate) fn build_plan(ir: &Ir, bounds: &Bounds, int_start: usize) -> SbpPlan {
+/// (§16.3) — *unless* `temporal` is set, which drops them unconditionally (see
+/// [`rel_parts`]).
+///
+/// # Per-state symmetry breaking (mt-067, alloy6-temporal.md §(d))
+///
+/// The jar's `SymmetryBreaker.generateSBP` (`:207-259`) special-cases temporal
+/// bounds twice: it re-applies the lex-leader constraint **independently at
+/// every state** rather than once over the flattened trace, and it skips skolem
+/// relations outright (`if (r.isSkolem() && options.temporal()) continue;`,
+/// `:231-232`). mettle's unrolled representation makes the first one fall out
+/// and needs an explicit gate only for the second:
+///
+/// - **Atoms are rigid**, so there is one partition for the whole trace. Every
+///   per-state copy inherits its original's bound verbatim
+///   ([`crate::temporal::unroll`]), so feeding the unrolled bounds to
+///   [`detect_partition`] adds `k` identical tuplesets per variable relation —
+///   refinement-neutral, i.e. exactly the partition the un-unrolled bounds give.
+/// - **Each per-state copy is an ordinary relation** for SBP purposes: it gets
+///   the same lex-leader treatment a static relation of the same arity would.
+///   The unrolled problem *is* a static problem, so the predicate is as sound
+///   and as verdict-neutral here as on the static path.
+/// - **Skolems are excluded** when `temporal` — the one thing that does not
+///   fall out.
+///
+/// The bit order within the lex chain is mettle's own (relation-major: a
+/// relation's `k` state copies are adjacent, the jar's outer loop is
+/// state-major). Any fixed bit order yields a sound lex-leader, and the SBP is
+/// Tseitin-only, so this is a disclosed perf/enumeration-order choice, never a
+/// verdict one — see [`rel_parts`] for how the `name@s` copies sort.
+pub(crate) fn build_plan(ir: &Ir, bounds: &Bounds, int_start: usize, temporal: bool) -> SbpPlan {
     let usize_n = bounds.universe.len();
     let classes = detect_partition(ir, bounds, int_start, usize_n);
-    let relparts = rel_parts(ir, bounds);
+    let relparts = rel_parts(ir, bounds, temporal);
     SbpPlan { classes, relparts }
 }
 
@@ -230,11 +258,32 @@ fn detect_partition(
 /// ascending, then name ascending byte-wise** (Java `String.compareTo` = UTF-16
 /// code-unit order; ASCII in practice, which byte-wise `str` ordering matches).
 /// `$`-prefixed skolems sort before `this/…` at the same arity, so they eat SBP
-/// slots first — truncation-visible.
-fn rel_parts(ir: &Ir, bounds: &Bounds) -> Vec<RelId> {
+/// slots first — truncation-visible. Under `temporal` they are dropped entirely
+/// (`SymmetryBreaker.java:231-232`, alloy6-temporal.md §(d)), so the slots go to
+/// the real relations instead.
+///
+/// **Where the `name@s` per-state copies land.** [`crate::temporal::unroll`]
+/// names a copy `<original>@<state>`, and `@` (`0x40`) sorts after every digit
+/// (`0x30-0x39`) and before every ASCII letter (`0x41+`), while `/` (`0x2F`) —
+/// the module separator every user relation name carries — sorts before all of
+/// them. So byte-wise `(arity, name)` ordering puts one original's copies in a
+/// contiguous, state-ascending block within its arity group, immediately after
+/// any relation whose name is a strict prefix of the original's. The state
+/// index is written in decimal without padding, so "ascending" is *decimal*
+/// order only while `k <= 10` (states `0..9`); at a wider `steps` bound
+/// (`leader.als`'s `15 steps`) the copies order lexicographically
+/// (`@0, @1, @10, …, @14, @2, …`). That is deliberate rather than fixed with
+/// zero padding: the order is a pure function of the input either way (STYLE
+/// D1), it is invisible to verdicts (the SBP is Tseitin-only and truncation
+/// only weakens it), and padding would make the copy names depend on `k`, so a
+/// relation's name would change between two lengths of the *same* command.
+/// Pinned by `per_state_copies_sort_adjacent_and_state_ascending` in
+/// `tests/temporal_solve_conformance.rs`.
+fn rel_parts(ir: &Ir, bounds: &Bounds, temporal: bool) -> Vec<RelId> {
     let mut parts: Vec<RelId> = bounds
         .iter()
         .filter(|(_, bound)| bound.lower().len() != bound.upper().len())
+        .filter(|&(rel, _)| !(temporal && is_skolem(ir, rel)))
         .map(|(rel, _)| rel)
         .collect();
     parts.sort_by(|&a, &b| {
@@ -245,4 +294,126 @@ fn rel_parts(ir: &Ir, bounds: &Bounds) -> Vec<RelId> {
             .then_with(|| ra.name.as_bytes().cmp(rb.name.as_bytes()))
     });
     parts
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bounds::{RelBound, Tuple, TupleSet, Universe};
+    use crate::ir::{Mutability, Relation};
+    use als_syntax::{FileId, Span};
+
+    fn span() -> Span {
+        Span::new(FileId::from_index(0), 0, 1)
+    }
+
+    fn unary(atoms: &[usize]) -> TupleSet {
+        let mut set = TupleSet::empty(1);
+        for &a in atoms {
+            set.insert(Tuple::new(vec![AtomId::from_index(a)]));
+        }
+        set
+    }
+
+    /// Allocates `name` with a free unary bound (so it contributes SBP bits).
+    fn free(ir: &mut Ir, bounds: &mut Bounds, name: &str) -> RelId {
+        let rel = ir.relations.alloc(Relation {
+            name: name.to_owned(),
+            arity: 1,
+            span: span(),
+            mutability: Mutability::Static,
+        });
+        bounds.bind(rel, RelBound::new(TupleSet::empty(1), unary(&[0, 1])));
+        rel
+    }
+
+    fn names(ir: &Ir, parts: &[RelId]) -> Vec<String> {
+        parts
+            .iter()
+            .map(|&r| ir.relations[r].name.clone())
+            .collect()
+    }
+
+    /// The per-state copies of one original sort **adjacent** and
+    /// **state-ascending** within their arity group: `@` (0x40) sorts after every
+    /// digit and before every ASCII letter, and `/` (0x2F, in every user
+    /// relation name) sorts before both. Pins the ordering claim in
+    /// [`rel_parts`]'s docs (mt-067, alloy6-temporal.md §(d)).
+    #[test]
+    fn per_state_copies_sort_adjacent_and_state_ascending() {
+        let mut ir = Ir::default();
+        let mut bounds = Bounds::new(Universe::new(vec!["A$0".to_owned(), "A$1".to_owned()]));
+        // Deliberately allocated out of order, so only the sort can produce the
+        // expected sequence.
+        for name in [
+            "this/B@1", "this/A@2", "this/A@0", "this/B@0", "this/A@1", "this/AB",
+        ] {
+            let _ = free(&mut ir, &mut bounds, name);
+        }
+        assert_eq!(
+            names(&ir, &rel_parts(&ir, &bounds, true)),
+            vec!["this/A@0", "this/A@1", "this/A@2", "this/AB", "this/B@0", "this/B@1"]
+        );
+    }
+
+    /// Past ten states the decimal index is no longer byte-ascending — recorded
+    /// deliberately rather than papered over with zero padding (see
+    /// [`rel_parts`]'s docs): the order stays a pure function of the input and
+    /// the SBP stays verdict-neutral either way.
+    #[test]
+    fn beyond_ten_states_copies_order_lexicographically() {
+        let mut ir = Ir::default();
+        let mut bounds = Bounds::new(Universe::new(vec!["A$0".to_owned(), "A$1".to_owned()]));
+        for name in ["this/A@2", "this/A@10", "this/A@1"] {
+            let _ = free(&mut ir, &mut bounds, name);
+        }
+        assert_eq!(
+            names(&ir, &rel_parts(&ir, &bounds, true)),
+            vec!["this/A@1", "this/A@10", "this/A@2"]
+        );
+    }
+
+    /// `SymmetryBreaker.java:231-232` — skolem relations are excluded from SBP
+    /// generation **unconditionally** in temporal mode, and only there: the
+    /// static path still lets them eat the first slots of their arity.
+    #[test]
+    fn skolems_are_excluded_from_the_sbp_only_in_temporal_mode() {
+        let mut ir = Ir::default();
+        let mut bounds = Bounds::new(Universe::new(vec!["A$0".to_owned(), "A$1".to_owned()]));
+        for name in ["$cmd_x", "this/A@0", "this/A@1"] {
+            let _ = free(&mut ir, &mut bounds, name);
+        }
+        assert_eq!(
+            names(&ir, &rel_parts(&ir, &bounds, false)),
+            vec!["$cmd_x", "this/A@0", "this/A@1"],
+            "static: skolems sort first and keep their slots"
+        );
+        assert_eq!(
+            names(&ir, &rel_parts(&ir, &bounds, true)),
+            vec!["this/A@0", "this/A@1"],
+            "temporal: skolems are dropped outright"
+        );
+    }
+
+    /// The atom partition is computed once for the whole trace: every per-state
+    /// copy inherits its original's bound, so unrolling adds only duplicate
+    /// tuplesets — refinement-neutral (atoms are rigid, alloy6-temporal.md §(d)).
+    #[test]
+    fn unrolling_does_not_refine_the_atom_partition() {
+        let universe = Universe::new(vec!["A$0".to_owned(), "A$1".to_owned()]);
+        let mut ir = Ir::default();
+
+        let mut base = Bounds::new(universe.clone());
+        let _ = free(&mut ir, &mut base, "this/A");
+        let flat = build_plan(&ir, &base, universe.len(), false);
+
+        let mut unrolled = Bounds::new(universe.clone());
+        for state in 0..3 {
+            let _ = free(&mut ir, &mut unrolled, &format!("this/A@{state}"));
+        }
+        let per_state = build_plan(&ir, &unrolled, universe.len(), true);
+
+        assert_eq!(flat.classes(), per_state.classes());
+        assert_eq!(per_state.relparts().len(), 3);
+    }
 }

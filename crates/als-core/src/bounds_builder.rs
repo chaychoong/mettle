@@ -132,6 +132,7 @@ pub fn compute_bounds(world: &ResolvedWorld, scoped: &ScopedUniverse, ir: &mut I
     builder.alloc_fields();
     builder.pin_ordering();
     builder.emit_prim_constraints();
+    builder.emit_subset_multiplicities();
     builder.finish()
 }
 
@@ -727,6 +728,51 @@ impl<'a> BoundsBuilder<'a> {
             self.emit_disjointness(id);
             self.emit_size(id);
             self.emit_multiplicity(id);
+        }
+    }
+
+    /// Emits the multiplicity constraint of every **subset** (`in`/`=`) sig
+    /// (`BoundsComputer.java:473/477/479`).
+    ///
+    /// A subset sig has no scope, so — unlike a prim sig — *nothing* about its
+    /// bounds can discharge its multiplicity: its lower bound is empty and its
+    /// upper is its parents' whole union. All three markers therefore need a
+    /// formula, `lone` included (for a prim sig `lone` is subsumed by the scope
+    /// cap of 1; there is no such cap here).
+    ///
+    /// Jar-pinned by probe wave mt-067 (`scratchpad/probe/mt067/`, fixtures
+    /// `OneSubsetEmpty`/`SomeSubsetEmpty`/`LoneSubsetTwo`/`OneExactSubset`, each
+    /// predicted-then-run): `one sig A in B {} run { no A }`,
+    /// `some sig A in B {} run { no A }` and `lone sig A in B {} run { #A = 2 }`
+    /// are all UNSAT jar-side, and the control `one sig A in B {} run { one A }`
+    /// is SAT. `OneExactSubset` pins that an **exact** (`=`) subset sig is
+    /// constrained too (`one sig A = B + C {} run { no B and no C }` → UNSAT),
+    /// which is why this runs off the sig's denotation rather than off the
+    /// relation an `in` subset sig happens to own — an `=` subset sig has no
+    /// relation, only the parents' union, and that union is what carries the
+    /// multiplicity.
+    ///
+    /// Under time this lands as an ordinary
+    /// [`Provenance::BoundsConstraint`](crate::lower::Provenance::BoundsConstraint),
+    /// so the temporal lowering wraps it in `always` — the pinned per-state rule
+    /// for a `var` sig's multiplicity (alloy6-temporal.md §(l) item 7, probes
+    /// P-E4/P-E5).
+    fn emit_subset_multiplicities(&mut self) {
+        for (id, _) in self.world.sigs.iter() {
+            let sig = &self.world.sigs[id];
+            if sig.is_builtin || !matches!(sig.kind, SigKind::Subset { .. }) {
+                continue;
+            }
+            let Some(mult) = sig.mult else { continue };
+            let test = match mult {
+                SigMult::One => MultTest::One,
+                SigMult::Some => MultTest::Some,
+                SigMult::Lone => MultTest::Lone,
+            };
+            let denote = self.denote_sig(id);
+            let span = self.sig_span(id);
+            let f = self.mk_formula(mult_test(test, denote), span);
+            self.constraints.push(f);
         }
     }
 

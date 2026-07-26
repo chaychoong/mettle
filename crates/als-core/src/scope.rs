@@ -35,7 +35,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use als_syntax::ast::SigMult;
 use als_syntax::ArenaId;
-use als_types::{ModuleGraph, ResolvedCommand, ResolvedWorld, SigId, SigKind};
+use als_types::{is_temporal_model, ModuleGraph, ResolvedCommand, ResolvedWorld, SigId, SigKind};
 
 use crate::bounds::{AtomId, Universe};
 use crate::error::TranslateError;
@@ -160,17 +160,35 @@ impl ScopedUniverse {
 /// run the abstract-sum → overall → parent fixpoint, then walk the sig
 /// hierarchy in declaration order to mint the ordered atom names.
 ///
+/// The `steps` scope is resolved here too, in the sense that matters at this
+/// phase: an explicit `steps` clause on a **static** command is a reject
+/// (`ScopeComputer.java:479`/`:487`, probe T-03) — trace length is meaningless
+/// without time. The *range* itself ([`ResolvedCommand::steps_range`]) is not
+/// consumed here; it belongs to the temporal driver
+/// ([`crate::temporal_solve`]), which is the analogue of the jar's
+/// `mintrace`/`maxtrace` landing on `A4Solution` rather than on the universe.
+///
 /// # Errors
 /// A [`TranslateError`] for any illegal scope (scope on `univ`/`none`/an enum/a
 /// subset sig, a non-exact `String` scope, a `one`/`lone`/`some` multiplicity
-/// conflict, an unresolvable per-sig scope, or a bitwidth over 30).
+/// conflict, an unresolvable per-sig scope, a bitwidth over 30, or a `steps`
+/// scope on a static command).
 pub fn compute_universe(
     world: &ResolvedWorld,
     graph: &ModuleGraph,
     command: &ResolvedCommand,
 ) -> Result<ScopedUniverse, TranslateError> {
     let mut solver = ScopeSolver::new(world, graph, command);
+    // After the per-sig scope validation, so the source-ordered sig-scope
+    // errors keep winning where a command manages to be wrong twice (the jar's
+    // own `ScopeComputer` resolves the sig scopes before the trace bounds at
+    // `:474-493`).
     solver.seed_explicit()?;
+    if let Some(steps) = command.steps {
+        if !is_temporal_model(world, graph, command) {
+            return Err(TranslateError::StepsScopeInStaticModel { span: steps.span });
+        }
+    }
     solver.force_multiplicities();
     solver.run_fixpoint()?;
     solver.finish()

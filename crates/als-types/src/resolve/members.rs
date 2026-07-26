@@ -3,7 +3,7 @@
 
 use als_syntax::ast::{
     Ast, CmdTarget, Decl, DeclId, ExprId, ExprKind, FunDecl, Para, ParaId, ParaName, PredDecl,
-    ScopeTarget, UnOp,
+    ScopeEnd, ScopeTarget, TypeScope, UnOp,
 };
 use als_syntax::{ArenaId, Span};
 
@@ -13,7 +13,7 @@ use crate::ty::Type;
 use crate::warning::ResolveWarning;
 use crate::world::{
     CmdTargetResolved, CommandScope, FuncId, MacroId, Param, ResolvedCommand, ResolvedField,
-    ResolvedFunc, ResolvedMacro, SigId,
+    ResolvedFunc, ResolvedMacro, SigId, StepsMax, StepsScope,
 };
 
 use super::expr::Cx;
@@ -604,7 +604,7 @@ impl Resolver<'_> {
                         maxstring = Some(entry.start);
                         string_exact = entry.is_exact;
                     }
-                    ScopeTarget::Steps => steps = Some(entry.start),
+                    ScopeTarget::Steps => steps = Some(self.steps_scope(entry)),
                 }
             }
         }
@@ -624,6 +624,54 @@ impl Resolver<'_> {
             additional_exact: Vec::new(),
             target,
         });
+    }
+
+    /// Resolves one `steps` scope entry into the written [`StepsScope`]
+    /// (`alloy6-temporal.md` §(b)), raising the jar's open-range reject.
+    ///
+    /// `for N.. steps` is legal **only** at `N == 1` — the jar rejects any other
+    /// start with `ErrorSyntax("Unbounded time scope must start at 1.")` (probe
+    /// T-08a). The jar catches it in its grammar; mettle's parser reads every
+    /// `N..` range uniformly (a growing sig scope like `for 3.. A` is perfectly
+    /// legal), so the check lands here — the first place that knows the range's
+    /// target is `steps`. Both are file-level rejects, so the accept/reject
+    /// gauge sees the same answer either way.
+    ///
+    /// A growth **increment** on `steps` must be 1 — the jar rejects `1:2 steps`
+    /// at command-build time (grammar-ref §4.5, jar-verified), while the same
+    /// increment on a sig scope (`1:2 A`) is perfectly legal. mettle's parser
+    /// carries the increment uniformly and normalizes a bare `N:I` to an open
+    /// range, so this check lands here too (closing the deferral LIMITATIONS
+    /// recorded at mt-011). The wording is mettle's: the jar's exact message for
+    /// this one is not pinned, and only the accept/reject answer is compared.
+    ///
+    /// Unpinned corner, deliberately resolved the uniform way and recorded
+    /// rather than guessed at: `for exactly N..M steps` (the jar's grammar
+    /// desugars `exactly N` to `N..N`, so a range *and* `exactly` is a shape no
+    /// probe covers) is read as the plain range `N..M`.
+    fn steps_scope(&mut self, entry: &TypeScope) -> StepsScope {
+        if entry.increment.is_some_and(|i| i != 1) {
+            self.error(ResolveError::StepsIncrementMustBeOne { span: entry.span });
+        }
+        let (min, max) = match entry.end {
+            // `for exactly N steps` desugars to `N..N` (probe T-07); a bare
+            // `for N steps` leaves the jar's `minprefix` sentinel unset, so the
+            // range starts at 1, not at `N` (probe T-06).
+            ScopeEnd::Same if entry.is_exact => (Some(entry.start), StepsMax::Bounded(entry.start)),
+            ScopeEnd::Same => (None, StepsMax::Bounded(entry.start)),
+            ScopeEnd::Bounded(m) => (Some(entry.start), StepsMax::Bounded(m)),
+            ScopeEnd::Unbounded => {
+                if entry.start != 1 {
+                    self.error(ResolveError::UnboundedStepsMustStartAtOne { span: entry.span });
+                }
+                (Some(entry.start), StepsMax::Unbounded)
+            }
+        };
+        StepsScope {
+            min,
+            max,
+            span: entry.span,
+        }
     }
 
     /// A `check` target: the reachable assertion's body and its owning module,

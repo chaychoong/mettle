@@ -3,7 +3,10 @@
 //! `tests/fixtures/exec/commands.als` — one small model whose four commands
 //! cover every verdict shape: SAT `run`, VALID `check`, a `check` with a
 //! COUNTEREXAMPLE, and `expect` both matching and mismatching. A second
-//! fixture (`temporal.als`) exercises the honest `CANNOT EXECUTE` defer.
+//! Three more fixtures cover the Rung-6 surface (mt-067): `temporal.als` now
+//! *solves* (verdict + trace shape), `temporal_check.als` covers the
+//! bound-relative `check` and the two typed temporal defers, and
+//! `static_steps.als` the `steps`-on-a-static-model reject.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -105,17 +108,72 @@ fn default_run_executes_every_command_and_propagates_the_one_failure() {
     assert!(text.contains("expect 0: MISMATCH (got SAT)"), "{text}");
 }
 
-/// (e) A temporal model (`var sig` + `'`) is an honest, typed defer: every
-/// command prints `CANNOT EXECUTE` with the `TranslateError`'s message, and
-/// the process exits 1 -- never a wrong verdict (STYLE E5).
+/// (e) A temporal model (`var sig` + `'`) **solves** since mt-067: the `steps`
+/// range is swept ascending, first SAT wins, and the verdict is followed by the
+/// trace's shape. Full state-by-state rendering is mt-068.
 #[test]
-fn temporal_model_cannot_execute() {
+fn temporal_model_solves_and_reports_its_trace() {
     let file = fixture("temporal.als");
     let out = run_exec(&file, &[]);
-    assert_eq!(out.status.code(), Some(1), "stderr: {}", stderr(&out));
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
     let text = stdout(&out);
-    assert!(text.contains("CANNOT EXECUTE"), "{text}");
-    assert!(text.contains("temporal"), "{text}");
+    assert!(text.contains("[0] run p"), "{text}");
+    assert!(text.contains("SAT"), "{text}");
+    // `A' = A` is satisfied by the minimal, self-looping single-state trace.
+    assert!(text.contains("trace: 1 states, loop -> state 0"), "{text}");
+}
+
+/// (e2) A temporal `check` that finds nothing says so **bound-relatively** —
+/// "within N steps", never "the assertion holds" (alloy6-temporal.md §(c)).
+#[test]
+fn a_temporal_check_reports_unsat_within_the_steps_bound() {
+    let file = fixture("temporal_check.als");
+    let out = run_exec(&file, &["--command", "0"]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(
+        text.contains("VALID (no counterexample within 4 steps)"),
+        "{text}"
+    );
+    assert!(
+        text.contains("4 steps"),
+        "the scope line names the bound: {text}"
+    );
+}
+
+/// (e3) The two Rung-6 typed defers still print `CANNOT EXECUTE` and exit 1 —
+/// an unbounded `steps` range (the jar's own engine rejection) and a `check` at
+/// a one-state bound (the pinned jar `NullPointerException`).
+#[test]
+fn temporal_defers_are_typed_and_fail_the_run() {
+    let out = run_exec(&fixture("temporal_check.als"), &["--command", "1"]);
+    assert_eq!(out.status.code(), Some(1), "stderr: {}", stderr(&out));
+    assert!(
+        stdout(&out).contains("Bounded engines do not support complete model checking."),
+        "{}",
+        stdout(&out)
+    );
+
+    let out = run_exec(&fixture("temporal_check.als"), &["--command", "2"]);
+    assert_eq!(out.status.code(), Some(1), "stderr: {}", stderr(&out));
+    assert!(
+        stdout(&out).contains("NullPointerException"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+/// (e4) A `steps` scope on a **static** model is the jar's own reject, verbatim
+/// (probe T-03).
+#[test]
+fn steps_on_a_static_model_cannot_execute() {
+    let out = run_exec(&fixture("static_steps.als"), &[]);
+    assert_eq!(out.status.code(), Some(1), "stderr: {}", stderr(&out));
+    assert!(
+        stdout(&out).contains("You cannot set a scope on \"steps\" in static models."),
+        "{}",
+        stdout(&out)
+    );
 }
 
 /// (f) `--command` selection by index and by name, plus the no-match error

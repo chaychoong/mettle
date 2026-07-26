@@ -103,6 +103,50 @@ pub enum TranslateError {
         span: Span,
     },
 
+    /// An explicit `steps` scope was written on a **static** command. Trace
+    /// length only means something under time, so the reference rejects it
+    /// verbatim with this message (`ScopeComputer.java:479`/`:487`, probe T-03,
+    /// alloy6-temporal.md §(a)). Gated on the pinned discriminator
+    /// ([`als_types::is_temporal_model`]), exactly as the jar gates it.
+    #[error("You cannot set a scope on \"steps\" in static models.")]
+    StepsScopeInStaticModel {
+        /// Span of the offending `steps` scope entry.
+        span: Span,
+    },
+
+    /// A temporal command whose `steps` scope is open above (`for 1.. steps`),
+    /// which asks for **complete** (unbounded) model checking. The reference's
+    /// default bounded engine refuses it outright with this message before any
+    /// solving happens (`ErrorAPI`, probe T-08b, reconfirmed by two `trash.als`
+    /// corpus commands); reaching the unbounded path at all needs the external
+    /// `electrod.elo` solver, which is out of mettle's scope (ADR-0015). mettle
+    /// therefore matches the jar's out-of-the-box behavior: a typed defer with
+    /// the jar's own words, never a verdict.
+    #[error("Bounded engines do not support complete model checking.")]
+    UnboundedSteps {
+        /// Span of the offending `steps` scope entry.
+        span: Span,
+    },
+
+    /// A temporal `check` whose resolved trace bound is a **single state**
+    /// (`check … for 1 steps`, `for exactly 1 steps`, `for 1..1 steps`). The
+    /// reference jar does not answer this: it throws a `NullPointerException`
+    /// wrapped as `ErrorFatal("Unknown exception occurred: …")`, reproducibly,
+    /// for any `check` at `maxtrace == 1` and for no `run` (probes T-10a/T-11,
+    /// alloy6-temporal.md §(c)). mettle cannot conform to a crash, and whether
+    /// to reproduce the failure or deliberately diverge and answer correctly is
+    /// an **open owner fork** in `SEMANTICS_LEDGER.md` ("Temporal semantics
+    /// (Rung 6)"). Until it is decided this is a typed defer naming the bug —
+    /// never a verdict either way (STYLE E5).
+    #[error(
+        "the reference jar throws a NullPointerException for `check` at a 1-state trace bound \
+         (a pinned jar bug); mettle defers pending the ledgered decision"
+    )]
+    TemporalCheckAtOneStep {
+        /// Span of the offending command.
+        span: Span,
+    },
+
     /// The command's goal contains a temporal operator (`always`/`until`/`'`/…
     /// or a `var` relation). Well-typed, but bounded LTL→FOL solving is Rung 6
     /// (ADR-0011): mettle lowers the operators faithfully into the IR but refuses
@@ -171,6 +215,9 @@ impl TranslateError {
             | TranslateError::SomeSigScope { span, .. }
             | TranslateError::MustSpecifyScope { span, .. }
             | TranslateError::BitwidthTooLarge { span, .. }
+            | TranslateError::StepsScopeInStaticModel { span }
+            | TranslateError::UnboundedSteps { span }
+            | TranslateError::TemporalCheckAtOneStep { span }
             | TranslateError::TemporalUnsupported { span, .. }
             | TranslateError::LoweringUnsupported { span, .. }
             | TranslateError::HigherOrder { span }

@@ -11,11 +11,13 @@
 //! length with `for exactly N steps`; here the driver takes `k` directly, which
 //! is the same thing one length at a time (`steps` range handling is mt-067).
 //!
-//! The driver below duplicates a little of what mt-067 will productionize
-//! (resolve → universe → bounds → unroll → lower at `k` → encode with a minted
-//! lasso selector → solve, ascending `k`, first SAT wins — alloy6-temporal.md
-//! §(c)); that is deliberate, so this suite pins the *lowering* without waiting
-//! on the driver bead.
+//! The driver below duplicates a little of what mt-067 productionized (resolve →
+//! universe → bounds → unroll → lower at `k` → encode with a minted lasso
+//! selector → solve, ascending `k`, first SAT wins — alloy6-temporal.md §(c));
+//! that is deliberate, so this suite pins the *lowering* one length at a time,
+//! independently of the driver. The same §(c) cells against the real public
+//! driver (`als_core::solve_temporal_command`, `steps` range and all) live in
+//! `temporal_solve_conformance.rs`.
 
 use als_core::ir::{FormulaKind, Ir, Mutability, RelExprKind};
 use als_core::{
@@ -618,6 +620,13 @@ fn keeping_temporal_matches_the_static_lowering_on_a_static_model() {
 /// The §(c) verdict shape in miniature: ascending `k`, first SAT wins, and the
 /// answer is the **minimal** satisfying length — P-C4 (`after` needs 2 states)
 /// and P-C6 (a prime chain needs 3).
+///
+/// Productionized at mt-067 against the real driver:
+/// `temporal_solve_conformance.rs::the_sweep_returns_the_minimal_satisfying_trace_length`
+/// asserts the same two cells through `solve_temporal_command`, where the range
+/// comes from the command's own `steps` scope rather than from this file's
+/// hand-rolled loop. Both are kept: this one localizes a failure to the
+/// lowering, that one to the driver.
 #[test]
 fn the_minimal_satisfying_trace_length_is_found_first() {
     assert_eq!(

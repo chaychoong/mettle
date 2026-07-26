@@ -21,18 +21,23 @@ pub mod solve;
 mod strings;
 pub mod temporal;
 pub mod temporal_lower;
+pub mod temporal_solve;
 
 pub use bounds_builder::{compute_bounds, BoundsResult};
 pub use error::TranslateError;
-pub use eval::{self_check, Evaluator, SelfCheckDetail, SelfCheckFailure};
+pub use eval::{self_check, self_check_temporal, Evaluator, SelfCheckDetail, SelfCheckFailure};
 pub use lower::{
     lower_command, lower_command_keeping_temporal, lower_fragment, FragmentInput, GoalConjunct,
     LoweredFragment, LoweredGoal, Provenance,
 };
 pub use scope::{compute_universe, MintedAtoms, ScopeTable, ScopedSig, ScopedUniverse};
 pub use solve::{
-    enumerate, solve_goal, solve_temporal_goal, Instance, InstanceEnumerator, SolveOptions,
-    SolveVerdict,
+    enumerate, solve_goal, solve_temporal_goal, solve_temporal_goal_at,
+    solve_temporal_goal_checked, Instance, InstanceEnumerator, SolveOptions, SolveVerdict,
+    TemporalSolution,
 };
 pub use temporal::{unroll, LassoSelector, UnrolledBounds};
 pub use temporal_lower::lower_temporal_command;
+pub use temporal_solve::{
+    solve_temporal_command, TemporalSolveConfig, TemporalTrace, TemporalVerdict,
+};

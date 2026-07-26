@@ -1000,3 +1000,53 @@ fn enum_pipeline(
     let goal = lower_command(&world, &graph, &scoped, &bounds, &mut ir, idx).expect("lower");
     (ir, scoped, goal, bounds)
 }
+
+// ===================== subset-sig multiplicity (mt-067) =====================
+//
+// A **subset** (`in`/`=`) sig has no scope, so nothing about its bounds can
+// discharge a `one`/`some`/`lone` marker — it needs a formula, `lone` included.
+// mettle emitted none until mt-067, which is four wrong verdicts; the gap
+// surfaced through `buffer.als`'s `var one sig read, write in Buffer {}` when
+// the temporal driver first solved that file.
+//
+// Jar-pinned by the mt-067 probe wave (`scratchpad/probe/mt067/NOTES.md`,
+// fixtures of the same names, each predicted before running, at symmetry 20 /
+// noOverflow false / sat4j against `oracle/org.alloytools.alloy.dist.jar`).
+
+/// `OneSubsetEmpty` / `OneSubsetOK`: a `one` subset sig holds exactly one atom.
+#[test]
+fn a_one_subset_sig_holds_exactly_one_atom() {
+    assert_unsat("sig B {}\none sig A in B {}\nrun { no A } for 3\n");
+    assert_sat("sig B {}\none sig A in B {}\nrun { one A } for 3\n");
+}
+
+/// `SomeSubsetEmpty`: a `some` subset sig is never empty.
+#[test]
+fn a_some_subset_sig_is_never_empty() {
+    assert_unsat("sig B {}\nsome sig A in B {}\nrun { no A } for 3\n");
+    assert_sat("sig B {}\nsome sig A in B {}\nrun { some A } for 3\n");
+}
+
+/// `LoneSubsetTwo`: a `lone` subset sig holds at most one atom — and unlike a
+/// prim sig it has no scope cap to discharge that, so it needs its own formula.
+#[test]
+fn a_lone_subset_sig_holds_at_most_one_atom() {
+    assert_unsat("sig B {}\nlone sig A in B {}\nrun { #A = 2 } for 3\n");
+    assert_sat("sig B {}\nlone sig A in B {}\nrun { no A } for 3\n");
+}
+
+/// `OneExactSubset`: an **exact** (`=`) subset sig carries its multiplicity too,
+/// on the parents' union (it owns no relation of its own).
+#[test]
+fn an_exact_subset_sig_constrains_its_parents_union() {
+    assert_unsat("sig B {}\nsig C {}\none sig A = B + C {}\nrun { no B and no C } for 3\n");
+    assert_sat("sig B {}\nsig C {}\none sig A = B + C {}\nrun { one B and no C } for 3\n");
+}
+
+/// An unmarked subset sig is unconstrained, as before — the fix must not
+/// over-constrain the common case.
+#[test]
+fn an_unmarked_subset_sig_stays_free() {
+    assert_sat("sig B {}\nsig A in B {}\nrun { no A } for 3\n");
+    assert_sat("sig B {}\nsig A in B {}\nrun { #A = 2 } for 3\n");
+}

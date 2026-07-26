@@ -238,6 +238,99 @@ pub struct CommandScope {
     pub span: Span,
 }
 
+/// The upper end of a [`StepsScope`] as written — the jar's `Command.maxprefix`
+/// (`alloy6-temporal.md` §(b)).
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum StepsMax {
+    /// `N`, `N..M`, `exactly N` — a concrete upper bound.
+    Bounded(u32),
+    /// `N..` — the jar's `maxprefix = Integer.MAX_VALUE`, which
+    /// `A4Solution.java:409` turns into `setRunUnbounded(true)`. Only `1..` is
+    /// legal (probe T-08a rejects any other start); the bounded engine then
+    /// refuses it outright (probe T-08b), which is where mettle defers.
+    Unbounded,
+}
+
+/// A `steps` scope **as written** (`alloy6-temporal.md` §(b)).
+///
+/// The jar keeps the two halves as `Command.minprefix`/`maxprefix` `int`s with a
+/// `-1` "not given" sentinel and only resolves them into a search range inside
+/// `ScopeComputer` (`:474-493`); mettle keeps the same split, with [`Option`]
+/// standing in for the sentinel and [`Self::resolved`] holding the resolution
+/// arithmetic. Keeping the written form (rather than collapsing to a range at
+/// resolve time) is what lets a diagnostic point at what the user typed and
+/// what `Command.toString` would print.
+///
+/// The five surface shapes map as:
+///
+/// | source | `min` | `max` | resolved range |
+/// |---|---|---|---|
+/// | *(absent)* | — | — | `[1, 10]` ([`DEFAULT_STEPS`]) |
+/// | `for N steps` | `None` | `Bounded(N)` | `[1, N]` (probe T-06) |
+/// | `for exactly N steps` | `Some(N)` | `Bounded(N)` | `[N, N]` (probe T-07) |
+/// | `for N..M steps` | `Some(N)` | `Bounded(M)` | `[N, M]` (probe T-05) |
+/// | `for 1.. steps` | `Some(1)` | `Unbounded` | rejected by the bounded engine (T-08b) |
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct StepsScope {
+    /// `minprefix` — the written range start, or `None` for a bare
+    /// `for N steps` (the jar leaves `minprefix` at its `-1` sentinel there, so
+    /// the range starts at 1, **not** at `N` — probe T-06, the single most
+    /// load-bearing `steps` fact).
+    pub min: Option<u32>,
+    /// `maxprefix` — the written range end.
+    pub max: StepsMax,
+    /// Span of the scope entry, for the caret render.
+    pub span: Span,
+}
+
+/// The resolved trace-search range: `[min, max]`, swept ascending, first SAT
+/// wins (`alloy6-temporal.md` §(c)).
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct StepsRange {
+    /// `mintrace` — always `>= 1`.
+    pub min: u32,
+    /// `maxtrace`.
+    pub max: StepsMax,
+}
+
+/// The range a temporal command with **no** `steps` clause searches:
+/// `ScopeComputer.java:110/115`'s field defaults, jar-verified by T-01/T-02/T-04
+/// and by four `trash.als` corpus commands.
+pub const DEFAULT_STEPS: StepsRange = StepsRange {
+    min: 1,
+    max: StepsMax::Bounded(10),
+};
+
+impl StepsScope {
+    /// Resolves the written scope into the search range, reproducing
+    /// `ScopeComputer.java:474-493` arithmetic literally:
+    ///
+    /// ```text
+    /// maxtrace = maxprefix < 1 ? 10 : maxprefix
+    /// mintrace = minprefix > maxtrace ? maxtrace : (minprefix < 1 ? 1 : minprefix)
+    /// ```
+    ///
+    /// The `-1` sentinel is [`None`] here, so "`minprefix < 1`" is "`None`, or
+    /// `Some(0)`". The clamp branch is what makes an inverted `for 5..3 steps`
+    /// resolve to `[3, 3]` rather than to an empty search.
+    #[must_use]
+    pub fn resolved(&self) -> StepsRange {
+        let max = match self.max {
+            // `maxprefix = Integer.MAX_VALUE` is never `< 1`, so the default
+            // never applies and the range stays unbounded above.
+            StepsMax::Unbounded => StepsMax::Unbounded,
+            StepsMax::Bounded(0) => StepsMax::Bounded(10),
+            StepsMax::Bounded(n) => StepsMax::Bounded(n),
+        };
+        let min = match (self.min, max) {
+            (None | Some(0), _) => 1,
+            (Some(n), StepsMax::Bounded(m)) if n > m => m,
+            (Some(n), _) => n,
+        };
+        StepsRange { min, max }
+    }
+}
+
 /// A resolved command (`run`/`check`, resolution-doc §3.6), carrying the scope
 /// data `als_core::scope::compute_universe` needs (mt-029 widening): the
 /// overall default, per-sig scopes (targets resolved to [`SigId`]s), and the
@@ -267,8 +360,10 @@ pub struct ResolvedCommand {
     pub maxstring: Option<u32>,
     /// Whether the `String` scope was written `exactly`.
     pub string_exact: bool,
-    /// `N steps` — trace length (temporal; captured, Rung 6).
-    pub steps: Option<u32>,
+    /// `N steps` / `N..M steps` / `exactly N steps` / `N.. steps` — the trace
+    /// scope, exactly as written (`None` = no `steps` clause). Resolve it into
+    /// the search range the solver sweeps with [`Self::steps_range`].
+    pub steps: Option<StepsScope>,
     /// Explicit per-sig scopes, in source order.
     pub scopes: Vec<CommandScope>,
     /// Sigs forced to an **exact** scope by something other than an explicit
@@ -281,6 +376,20 @@ pub struct ResolvedCommand {
     /// assert to negate, or the inline block. mt-031 lowers this into the
     /// command formula (translation-ref §2.5(3)).
     pub target: CmdTargetResolved,
+}
+
+impl ResolvedCommand {
+    /// The trace-search range this command sweeps: its written [`StepsScope`]
+    /// resolved, or [`DEFAULT_STEPS`] when none was written.
+    ///
+    /// Meaningful only for a **temporal** command
+    /// ([`is_temporal_model`](crate::is_temporal_model)); a `steps` scope on a
+    /// static command is a jar-pinned reject (probe T-03), raised at
+    /// scope-computation time.
+    #[must_use]
+    pub fn steps_range(&self) -> StepsRange {
+        self.steps.map_or(DEFAULT_STEPS, |s| s.resolved())
+    }
 }
 
 /// A resolved command target (translation-ref §2.5(3), mt-031 widening).

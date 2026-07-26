@@ -155,6 +155,8 @@ fn variant_name(e: &ResolveError) -> &'static str {
         ResolveError::CommandTargetNotFound { .. } => "CommandTargetNotFound",
         ResolveError::CommandTargetAmbiguous { .. } => "CommandTargetAmbiguous",
         ResolveError::ScopeSigNotFound { .. } => "ScopeSigNotFound",
+        ResolveError::UnboundedStepsMustStartAtOne { .. } => "UnboundedStepsMustStartAtOne",
+        ResolveError::StepsIncrementMustBeOne { .. } => "StepsIncrementMustBeOne",
         ResolveError::MutableSigScoped { .. } => "MutableSigScoped",
         ResolveError::ExactScopeOnVar { .. } => "ExactScopeOnVar",
         ResolveError::ExactParamVarSig { .. } => "ExactParamVarSig",

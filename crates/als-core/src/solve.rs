@@ -222,6 +222,10 @@ struct Translated {
     /// self-check evaluator shares the encoder's exact relation bounds for the
     /// (C) constant-escape predicate (translation-ref §10.7c ext, mt-051).
     bounds: Bounds,
+    /// The lasso back-loop selector minted for a **temporal** encode (mt-067) —
+    /// how the solved trace's loop target is read back out of the model.
+    /// `None` on every static translate.
+    lasso: Option<crate::temporal::LassoSelector>,
 }
 
 /// Mints the primary variables (ADR-0011 decision 3) and builds the decode
@@ -296,11 +300,14 @@ fn translate(
         // Every atom from the start of the int run to the end of the universe
         // (ints, then the string tail) is its own singleton class,
         // unconditionally (translation-ref §16.1.1, probes Y6/uf1-SB20/fmrun).
+        // In temporal mode the plan additionally drops skolem relations
+        // (`SymmetryBreaker.java:231-232`) — see `symmetry::build_plan`.
         let int_start = scoped.sig_atom_count;
         Some(crate::encode::symmetry::build_plan(
             ir,
             &aug_bounds,
             int_start,
+            unrolled.is_some(),
         ))
     } else {
         None
@@ -334,6 +341,7 @@ fn translate(
         universe: bounds.bounds.universe.clone(),
         trivially_unsat,
         bounds: aug_bounds,
+        lasso,
     })
 }
 
@@ -346,9 +354,12 @@ fn translate(
 /// [`crate::ir::FormulaKind::LoopIs`] atoms range over its trace length.
 ///
 /// A trace-length *sweep* (`for k in [mintrace, maxtrace]`, first SAT wins —
-/// alloy6-temporal.md §(c)) is the driver's (mt-067) job; this is one length.
-/// The debug self-check is deliberately skipped: re-evaluating the goal needs
-/// the solved loop state, which a decoded [`Instance`] does not carry.
+/// alloy6-temporal.md §(c)) is
+/// [`solve_temporal_command`](crate::temporal_solve::solve_temporal_command)'s
+/// job; this is one length.
+///
+/// Returns only the verdict; [`solve_temporal_goal_at`] additionally returns the
+/// solved lasso back-loop target, which is what a renderable trace needs.
 ///
 /// # Errors
 /// The same typed errors as [`solve_goal`].
@@ -360,18 +371,163 @@ pub fn solve_temporal_goal(
     unrolled: &UnrolledBounds,
     opts: &SolveOptions,
 ) -> Result<SolveVerdict, TranslateError> {
+    Ok(
+        match solve_temporal_goal_at(ir, scoped, goal, bounds, unrolled, opts)? {
+            TemporalSolution::Sat { instance, .. } => SolveVerdict::Sat(instance),
+            TemporalSolution::Unsat => SolveVerdict::Unsat,
+            TemporalSolution::Unknown => SolveVerdict::Unknown,
+        },
+    )
+}
+
+/// One fixed-length temporal solve's outcome, carrying what a lasso trace needs
+/// beyond a plain verdict (mt-067).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum TemporalSolution {
+    /// Satisfiable at this trace length.
+    Sat {
+        /// The **flat** decoded instance: the per-state relation copies
+        /// (`name@s`) as ordinary relations, exactly as the encoder saw them.
+        /// [`crate::temporal_solve`] splits it into the per-state view.
+        instance: Instance,
+        /// The solved back-loop target `l ∈ [0, k)`, read off the
+        /// [`LassoSelector`](crate::temporal::LassoSelector)'s true variable.
+        loop_state: usize,
+        /// The debug self-check's verdict when `check_self` was requested — a
+        /// failure is a mettle bug, never a user error (ADR-0011 decision 5).
+        self_check: Option<crate::eval::SelfCheckFailure>,
+    },
+    /// No instance at this trace length.
+    Unsat,
+    /// [`SolveOptions::conflict_budget`] ran out first — not a verdict.
+    Unknown,
+}
+
+/// Solves one temporal lowered goal at a fixed trace length, recovering the
+/// lasso back-loop target from the SAT model (mt-067).
+///
+/// The loop index is a solver variable, not a relation, so it never reaches a
+/// decoded [`Instance`]: the exactly-one-encoded
+/// [`LassoSelector`](crate::temporal::LassoSelector) minted at translate time is
+/// read back here, and the "exactly one" is re-asserted against the model rather
+/// than trusted (STYLE I1 — the selector's clauses guarantee it, a numbering bug
+/// would not).
+///
+/// `check_self` runs [`crate::eval::self_check_temporal`] on the solved trace in
+/// *any* build (the gauge's release-mode net); debug builds assert it regardless,
+/// matching [`solve_goal`]'s regime.
+///
+/// # Errors
+/// The same typed errors as [`solve_goal`].
+pub fn solve_temporal_goal_at(
+    ir: &Ir,
+    scoped: &ScopedUniverse,
+    goal: &LoweredGoal,
+    bounds: &BoundsResult,
+    unrolled: &UnrolledBounds,
+    opts: &SolveOptions,
+) -> Result<TemporalSolution, TranslateError> {
+    solve_temporal_goal_checked(ir, scoped, goal, bounds, unrolled, opts, false)
+}
+
+/// [`solve_temporal_goal_at`] with the release-mode self-check switch (mt-067).
+///
+/// # Errors
+/// The same typed errors as [`solve_goal`].
+pub fn solve_temporal_goal_checked(
+    ir: &Ir,
+    scoped: &ScopedUniverse,
+    goal: &LoweredGoal,
+    bounds: &BoundsResult,
+    unrolled: &UnrolledBounds,
+    opts: &SolveOptions,
+    check_self: bool,
+) -> Result<TemporalSolution, TranslateError> {
     let t = translate(ir, scoped, goal, bounds, Some(unrolled), *opts)?;
     if t.trivially_unsat {
-        return Ok(SolveVerdict::Unsat);
+        return Ok(TemporalSolution::Unsat);
     }
     let mut solver = CdclSolver::new(&t.cnf);
     Ok(
         match solver.solve_within(opts.conflict_budget.unwrap_or(u64::MAX)) {
-            None => SolveVerdict::Unknown,
-            Some(Outcome::Sat(model)) => SolveVerdict::Sat(decode(&t.layout, &t.universe, &model)),
-            Some(Outcome::Unsat) => SolveVerdict::Unsat,
+            None => TemporalSolution::Unknown,
+            Some(Outcome::Unsat) => TemporalSolution::Unsat,
+            Some(Outcome::Sat(model)) => {
+                let Some(lasso) = t.lasso.as_ref() else {
+                    // `translate` mints the selector for every `Some(unrolled)`
+                    // call, so this is unreachable (STYLE I3).
+                    unreachable!("a temporal translate always mints a lasso selector")
+                };
+                let loop_state = recover_loop_state(lasso, &model);
+                let instance = decode(&t.layout, &t.universe, &model);
+                let self_check = if check_self {
+                    crate::eval::self_check_temporal(
+                        ir, scoped, goal, &instance, opts, &t.bounds, loop_state,
+                    )
+                    .err()
+                } else {
+                    None
+                };
+                debug_self_check_temporal(
+                    ir, scoped, goal, &instance, *opts, &t.bounds, loop_state,
+                );
+                TemporalSolution::Sat {
+                    instance,
+                    loop_state,
+                    self_check,
+                }
+            }
         },
     )
+}
+
+/// Reads the solved back-loop target off the exactly-one selector.
+///
+/// # Panics
+/// Panics if the model does not set exactly one loop variable — the selector's
+/// ALO + pairwise-AMO clauses make that impossible, so it can only be a mettle
+/// numbering/decoding bug (STYLE I1).
+fn recover_loop_state(lasso: &crate::temporal::LassoSelector, model: &Assignment) -> usize {
+    let mut found: Option<usize> = None;
+    for state in 0..lasso.k() {
+        if model.value(lasso.loop_var(state)) {
+            assert!(
+                found.is_none(),
+                "lasso selector set two loop states: {found:?} and {state}"
+            );
+            found = Some(state);
+        }
+    }
+    let Some(state) = found else {
+        panic!("lasso selector set no loop state (k={})", lasso.k())
+    };
+    state
+}
+
+/// The temporal twin of [`debug_self_check`]: same regime, with the solved loop
+/// target threaded through so `LoopIs` has a value.
+fn debug_self_check_temporal(
+    ir: &Ir,
+    scoped: &ScopedUniverse,
+    goal: &LoweredGoal,
+    inst: &Instance,
+    opts: SolveOptions,
+    bounds: &Bounds,
+    loop_state: usize,
+) {
+    #[cfg(debug_assertions)]
+    if let Err(failure) =
+        crate::eval::self_check_temporal(ir, scoped, goal, inst, &opts, bounds, loop_state)
+    {
+        debug_assert!(
+            false,
+            "temporal self-check failed (a mettle bug): {failure}"
+        );
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = (ir, scoped, goal, inst, opts, bounds, loop_state);
+    }
 }
 
 /// Decodes an assignment into an instance (STYLE I2 bounds-respect asserted).

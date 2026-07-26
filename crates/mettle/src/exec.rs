@@ -17,13 +17,14 @@ use std::process::ExitCode;
 use als_core::ir::Ir;
 use als_core::solve::Instance;
 use als_core::{
-    compute_bounds, compute_universe, lower_command, solve_goal, BoundsResult, LoweredGoal,
-    ScopedUniverse, SolveOptions, SolveVerdict,
+    compute_bounds, compute_universe, lower_command, solve_goal, solve_temporal_command,
+    BoundsResult, LoweredGoal, ScopedUniverse, SolveOptions, SolveVerdict, TemporalSolveConfig,
+    TemporalVerdict,
 };
 use als_syntax::ast::{CmdKind, Expect, ExprId, Para, ParaName};
 use als_types::{
-    resolve_session, CmdTargetResolved, FilesystemLoader, ModuleGraph, ModuleId, ResolvedCommand,
-    ResolvedSession, ResolvedWorld,
+    is_temporal_model, resolve_session, CmdTargetResolved, FilesystemLoader, ModuleGraph, ModuleId,
+    ResolvedCommand, ResolvedSession, ResolvedWorld, StepsMax,
 };
 
 use crate::repl::{self, ReplContext, SolvedCommand};
@@ -245,6 +246,18 @@ fn run_evaluator(
     };
     let (idx, cmd) = root_cmds[*pos];
 
+    // The evaluator answers questions about an instance *at a state*, and the
+    // pinned per-state semantics (wrap through the loop for `state >= k`, clamp
+    // negatives to 0 — alloy6-temporal.md §(h)) are mt-068's bead. Rather than
+    // silently answer at some unstated state, say so (STYLE E5).
+    if is_temporal_model(world, graph, cmd) {
+        eprintln!(
+            "mettle exec: --repl/--eval over a temporal command needs the per-state \
+             evaluator (Rung 6, mt-068); run without --repl for the verdict and trace."
+        );
+        return Err(ExitCode::from(1));
+    }
+
     let mut out = String::new();
     let _ = writeln!(out, "{}", command_header(world, graph, *pos, cmd));
     let run = match run_pipeline(world, graph, cmd, idx, opts) {
@@ -435,6 +448,11 @@ fn run_one_command(
     out: &mut String,
 ) -> bool {
     let _ = writeln!(out, "{}", command_header(world, graph, pos, cmd));
+    // Rung-6 dispatch (mt-067): the pinned discriminator, exactly as jar-side
+    // `CompUtil.isTemporalModel` gates `ScopeComputer`'s trace bounds.
+    if is_temporal_model(world, graph, cmd) {
+        return run_temporal_command(world, graph, cmd, idx, opts, out);
+    }
     match run_pipeline(world, graph, cmd, idx, opts) {
         Ok(run) => render_verdict(cmd, &run, out),
         Err(e) => {
@@ -444,12 +462,115 @@ fn run_one_command(
     }
 }
 
+/// Executes one **temporal** command: sweep its `steps` range, first SAT wins
+/// (`als_core::temporal_solve`), and report the verdict with a one-line trace
+/// summary.
+///
+/// **Rendering seam (mt-068).** The reference prints a temporal instance as one
+/// `"------State N-------"` block per state, with the loop state marked
+/// (`A4Solution.toString(-1)`, pinned byte-level in alloy6-temporal.md §(f)).
+/// That full rendering — and the REPL's per-state index with its pinned
+/// wrap/clamp semantics — is mt-068's bead. Until then this prints the verdict
+/// plus the trace's shape (length and loop target), which is everything a
+/// verdict-level reader needs and nothing that would have to be un-printed
+/// later. [`als_core::TemporalTrace::states`] already carries the full
+/// per-state values, keyed by the same relation ids
+/// [`render_instance`] renders.
+fn run_temporal_command(
+    world: &ResolvedWorld,
+    graph: &ModuleGraph,
+    cmd: &ResolvedCommand,
+    idx: usize,
+    opts: &SolveOptions,
+    out: &mut String,
+) -> bool {
+    let scoped = match compute_universe(world, graph, cmd) {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = writeln!(out, "CANNOT EXECUTE: {e}\n");
+            return true;
+        }
+    };
+    let mut ir = als_core::ir::Ir::default();
+    let bounds = compute_bounds(world, &scoped, &mut ir);
+    let cfg = TemporalSolveConfig {
+        opts: effective_opts(opts, cmd),
+        primary_var_cap: None,
+        self_check: false,
+    };
+    let verdict = match solve_temporal_command(world, graph, &scoped, &bounds, &mut ir, idx, &cfg) {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = writeln!(out, "CANNOT EXECUTE: {e}\n");
+            return true;
+        }
+    };
+
+    let bound = steps_bound_text(cmd);
+    let (is_sat, mut failed) = match verdict {
+        TemporalVerdict::Sat(trace) => {
+            let label = match cmd.kind {
+                CmdKind::Run => "SAT",
+                CmdKind::Check => "COUNTEREXAMPLE",
+            };
+            let _ = writeln!(out, "{label}");
+            let _ = writeln!(
+                out,
+                "trace: {} states, loop -> state {}",
+                trace.k(),
+                trace.loop_state
+            );
+            (Some(true), false)
+        }
+        // UNSAT is bound-relative and says so: "no counterexample within this
+        // many states", never "the assertion holds" (alloy6-temporal.md §(c),
+        // probe T-10b).
+        TemporalVerdict::Unsat => {
+            let label = match cmd.kind {
+                CmdKind::Run => "UNSAT (no instance",
+                CmdKind::Check => "VALID (no counterexample",
+            };
+            let _ = writeln!(out, "{label} within {bound})");
+            (Some(false), false)
+        }
+        TemporalVerdict::Unknown { k } => {
+            let _ = writeln!(
+                out,
+                "UNKNOWN (conflict budget exhausted at trace length {k})"
+            );
+            (None, true)
+        }
+        TemporalVerdict::PrimaryVarCap { k, primaries } => {
+            let _ = writeln!(
+                out,
+                "UNKNOWN (trace length {k} needs {primaries} primary variables)"
+            );
+            (None, true)
+        }
+    };
+
+    failed |= render_expect(cmd, is_sat, out);
+    let _ = writeln!(out);
+    failed
+}
+
+/// The command's resolved trace bound, for the bound-relative UNSAT wording.
+fn steps_bound_text(cmd: &ResolvedCommand) -> String {
+    let range = cmd.steps_range();
+    match range.max {
+        StepsMax::Bounded(max) if range.min == max => format!("exactly {max} steps"),
+        StepsMax::Bounded(max) => format!("{max} steps"),
+        // Unreachable: an open range is a typed defer before any solving.
+        StepsMax::Unbounded => format!("{}.. steps", range.min),
+    }
+}
+
 /// Renders one solved command's verdict block (and any `expect` check),
 /// returning whether it counts as a failure.
 fn render_verdict(cmd: &ResolvedCommand, run: &CommandRun, out: &mut String) -> bool {
     // Polarity (als-core/src/solve.rs module docs): a `check`'s goal is
     // already negated at lowering, so `Sat` there *is* a counterexample.
-    let (is_sat, mut failed) = match &run.verdict {
+    let (is_sat, failed) = match &run.verdict {
         SolveVerdict::Sat(inst) => {
             let label = match cmd.kind {
                 CmdKind::Run => "SAT",
@@ -473,30 +594,40 @@ fn render_verdict(cmd: &ResolvedCommand, run: &CommandRun, out: &mut String) -> 
         }
     };
 
-    if let (Some(sat), Some(expect)) = (is_sat, cmd.expect) {
-        match expect {
-            Expect::Sat if sat => {
-                let _ = writeln!(out, "expect 1: ok");
-            }
-            Expect::Sat => {
-                let _ = writeln!(out, "expect 1: MISMATCH (got UNSAT)");
-                failed = true;
-            }
-            Expect::Unsat if !sat => {
-                let _ = writeln!(out, "expect 0: ok");
-            }
-            Expect::Unsat => {
-                let _ = writeln!(out, "expect 0: MISMATCH (got SAT)");
-                failed = true;
-            }
-            // `expect N` for any other integer: accepted, never checked
-            // (matches `als_syntax::ast::Expect::Other`'s own doc).
-            Expect::Other(_) => {}
-        }
-    }
-
+    let failed = failed | render_expect(cmd, is_sat, out);
     let _ = writeln!(out);
     failed
+}
+
+/// Renders the `expect` check for a solved command, returning whether it
+/// mismatched. `is_sat` is `None` when no verdict was reached (nothing to
+/// check). Shared by the static and temporal paths: `expect` handling is
+/// identical under time (probe T-12 — the reference does not special-case it).
+fn render_expect(cmd: &ResolvedCommand, is_sat: Option<bool>, out: &mut String) -> bool {
+    let (Some(sat), Some(expect)) = (is_sat, cmd.expect) else {
+        return false;
+    };
+    match expect {
+        Expect::Sat if sat => {
+            let _ = writeln!(out, "expect 1: ok");
+            false
+        }
+        Expect::Sat => {
+            let _ = writeln!(out, "expect 1: MISMATCH (got UNSAT)");
+            true
+        }
+        Expect::Unsat if !sat => {
+            let _ = writeln!(out, "expect 0: ok");
+            false
+        }
+        Expect::Unsat => {
+            let _ = writeln!(out, "expect 0: MISMATCH (got SAT)");
+            true
+        }
+        // `expect N` for any other integer: accepted, never checked
+        // (matches `als_syntax::ast::Expect::Other`'s own doc).
+        Expect::Other(_) => false,
+    }
 }
 
 /// Resolves `--command <sel>` against the executable (root-module) commands:
@@ -627,6 +758,17 @@ fn scope_text(world: &ResolvedWorld, cmd: &ResolvedCommand) -> String {
     if let Some(n) = cmd.maxstring {
         let exact = if cmd.string_exact { "exactly " } else { "" };
         parts.push(format!("{exact}{n} String"));
+    }
+    if let Some(steps) = cmd.steps {
+        // Rendered as the jar's `Command.toString` does: a written range prints
+        // as `N..M`, an open one as `N..`, a bare bound as `N`.
+        let written = match (steps.min, steps.max) {
+            (Some(min), StepsMax::Unbounded) => format!("{min}.."),
+            (Some(min), StepsMax::Bounded(max)) => format!("{min}..{max}"),
+            (None, StepsMax::Bounded(max)) => max.to_string(),
+            (None, StepsMax::Unbounded) => "..".to_owned(),
+        };
+        parts.push(format!("{written} steps"));
     }
     if parts.is_empty() {
         String::new()

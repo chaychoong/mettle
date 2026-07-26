@@ -8,10 +8,11 @@ use std::path::{Path, PathBuf};
 use als_core::bounds::Bounds;
 use als_core::ir::Ir;
 use als_core::{
-    compute_bounds, compute_universe, lower_command, self_check, solve_goal, ScopedUniverse,
-    SolveOptions, SolveVerdict, TranslateError,
+    compute_bounds, compute_universe, lower_command, self_check, solve_goal,
+    solve_temporal_command, BoundsResult, ScopedUniverse, SolveOptions, SolveVerdict,
+    TemporalSolveConfig, TemporalVerdict, TranslateError,
 };
-use als_types::{FilesystemLoader, ModuleGraph, ResolvedWorld};
+use als_types::{is_temporal_model, FilesystemLoader, ModuleGraph, ResolvedWorld};
 
 use super::baseline;
 use super::baseline::JarVerdict;
@@ -304,13 +305,6 @@ fn classify_command(
 ) -> CmdResult {
     let mut ir = Ir::default();
     let bounds = compute_bounds(world, scoped, &mut ir);
-    let goal = match lower_command(world, graph, scoped, &bounds, &mut ir, idx) {
-        Ok(g) => g,
-        Err(e) => return CmdResult::defer(format!("mettle_defer:lower:{}", lower_defer_class(&e))),
-    };
-    if primary_var_count(&bounds.bounds) > cfg.primary_var_cap {
-        return CmdResult::defer("mettle_defer:primary_var_cap".to_owned());
-    }
 
     // `expect 1` forces symmetry off on both stages (translation-ref §3/§16.4).
     let expect_one = matches!(
@@ -327,6 +321,25 @@ fn classify_command(
         symmetry: stage1_sym,
         ..SolveOptions::default()
     };
+
+    // Rung-6 dispatch (mt-067): the pinned discriminator decides which pipeline
+    // owns the command, exactly as `CompUtil.isTemporalModel` does jar-side. A
+    // temporal command never reaches `lower_command` (which would defer it) —
+    // it runs the `steps`-range sweep instead.
+    if is_temporal_model(world, graph, &world.commands[idx]) {
+        return classify_temporal_command(
+            world, graph, scoped, &bounds, &mut ir, baseline, cfg, rel, idx, &opts,
+        );
+    }
+
+    let goal = match lower_command(world, graph, scoped, &bounds, &mut ir, idx) {
+        Ok(g) => g,
+        Err(e) => return CmdResult::defer(format!("mettle_defer:lower:{}", lower_defer_class(&e))),
+    };
+    if primary_var_count(&bounds.bounds) > cfg.primary_var_cap {
+        return CmdResult::defer("mettle_defer:primary_var_cap".to_owned());
+    }
+
     let (sat, self_check_fail) = match solve_goal(&ir, scoped, &goal, &bounds, &opts) {
         Ok(SolveVerdict::Sat(inst)) => {
             let sc = self_check(&ir, scoped, &goal, &inst, &opts, &bounds.bounds)
@@ -372,6 +385,86 @@ fn classify_command(
         disagreement,
         self_check_fail,
         count,
+    }
+}
+
+/// The Rung-6 arm of [`classify_command`] (mt-067): sweep the command's `steps`
+/// range and bucket the outcome.
+///
+/// Every bucket a temporal command can land in is typed and visible:
+///
+/// | outcome | bucket |
+/// |---|---|
+/// | SAT / UNSAT-within-bound | the ordinary verdict comparison — `no_baseline` until mt-069 banks the four temporal files |
+/// | conflict budget out at some length | `mettle_defer:over_budget` |
+/// | a length outgrew the primary-variable cap | `mettle_defer:primary_var_cap` |
+/// | encode budget out | `mettle_defer:capacity` |
+/// | `for 1.. steps` | `mettle_defer:temporal:unbounded_steps` |
+/// | `check … for 1 steps` | `mettle_defer:temporal:check_at_one_step` |
+/// | anything the temporal lowering still defers | `mettle_defer:lower:<class>` |
+///
+/// Stage 2 never enumerates a temporal command: [`als_core::enumerate`] is
+/// static-only, and trace enumeration semantics are deliberately deferred
+/// (ADR-0015 consequence 4). A SAT temporal command under `--count` therefore
+/// gets the typed skip `skip_temporal_trace`, never a fabricated count.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the temporal arm of `classify_command`, threading the same context"
+)]
+fn classify_temporal_command(
+    world: &ResolvedWorld,
+    graph: &ModuleGraph,
+    scoped: &ScopedUniverse,
+    bounds: &BoundsResult,
+    ir: &mut Ir,
+    baseline: &baseline::Baseline,
+    cfg: &GaugeConfig,
+    rel: &str,
+    idx: usize,
+    opts: &SolveOptions,
+) -> CmdResult {
+    let temporal_cfg = TemporalSolveConfig {
+        opts: *opts,
+        primary_var_cap: Some(cfg.primary_var_cap),
+        // The gauge is a release build, so the driver's `debug_assert` net is
+        // compiled out; ask for the check explicitly, as the static arm does.
+        self_check: true,
+    };
+    let (sat, self_check_fail) =
+        match solve_temporal_command(world, graph, scoped, bounds, ir, idx, &temporal_cfg) {
+            Ok(TemporalVerdict::Sat(trace)) => (true, trace.self_check.map(|f| f.to_string())),
+            Ok(TemporalVerdict::Unsat) => (false, None),
+            Ok(TemporalVerdict::Unknown { .. }) => {
+                return CmdResult::defer("mettle_defer:over_budget".to_owned())
+            }
+            Ok(TemporalVerdict::PrimaryVarCap { .. }) => {
+                return CmdResult::defer("mettle_defer:primary_var_cap".to_owned())
+            }
+            Err(TranslateError::UnboundedSteps { .. }) => {
+                return CmdResult::defer("mettle_defer:temporal:unbounded_steps".to_owned())
+            }
+            Err(TranslateError::TemporalCheckAtOneStep { .. }) => {
+                return CmdResult::defer("mettle_defer:temporal:check_at_one_step".to_owned())
+            }
+            Err(TranslateError::CapacityExceeded { .. }) => {
+                return CmdResult::defer("mettle_defer:capacity".to_owned())
+            }
+            Err(e) => {
+                return CmdResult::defer(format!("mettle_defer:lower:{}", lower_defer_class(&e)))
+            }
+        };
+
+    let baseline_v = baseline.lookup(rel, idx);
+    let (verdict_bucket, disagreement) = compare_verdict(baseline_v, sat, rel, idx);
+    CmdResult {
+        verdict_bucket,
+        disagreement,
+        self_check_fail,
+        count: if cfg.count && sat {
+            Some(CountOutcome::Skip("skip_temporal_trace"))
+        } else {
+            None
+        },
     }
 }
 
