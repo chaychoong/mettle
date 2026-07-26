@@ -261,7 +261,7 @@ pub enum StepsMax {
 /// resolve time) is what lets a diagnostic point at what the user typed and
 /// what `Command.toString` would print.
 ///
-/// The five surface shapes map as:
+/// The six surface shapes map as:
 ///
 /// | source | `min` | `max` | resolved range |
 /// |---|---|---|---|
@@ -269,7 +269,17 @@ pub enum StepsMax {
 /// | `for N steps` | `None` | `Bounded(N)` | `[1, N]` (probe T-06) |
 /// | `for exactly N steps` | `Some(N)` | `Bounded(N)` | `[N, N]` (probe T-07) |
 /// | `for N..M steps` | `Some(N)` | `Bounded(M)` | `[N, M]` (probe T-05) |
+/// | `for exactly N..M steps` | `Some(N)` | `Bounded(N)` | `[N, N]` — **`M` is discarded** (probes L6/L6b) |
 /// | `for 1.. steps` | `Some(1)` | `Unbounded` | rejected by the bounded engine (T-08b) |
+///
+/// The fifth row is the non-obvious one: `exactly` does not merely *mark* a
+/// written range, it **overrides** its end. The jar collapses `exactly N..M` to
+/// `N..N` at `Command`-construction time and the written `M` never reaches
+/// `ScopeComputer` at all — so this type stores the collapsed form, which is
+/// also what `Command.toString()` renders back (`"for 3..3 steps"` for a source
+/// `exactly 3..5 steps`). `exactly` on an *open* range (`exactly N.. steps`) is
+/// unprobed and deliberately left ignored — see
+/// `Resolver::steps_scope`'s docs.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct StepsScope {
     /// `minprefix` — the written range start, or `None` for a bare

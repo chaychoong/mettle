@@ -35,14 +35,30 @@
 //! `AFTER`/`BEFORE`/`PRIME`/`HISTORICALLY`/`ALWAYS`/`ONCE`/`EVENTUALLY` and
 //! `UNTIL`/`SINCE`/`TRIGGERED`/`RELEASES`). Walking mettle's **surface** AST
 //! reproduces that scope for free: a call site is a [`ExprKind::BoxJoin`] over a
-//! [`ExprKind::Name`], so there is nothing to descend into.
+//! [`ExprKind::Name`], so there is nothing to descend into — jar-confirmed by
+//! probe K1.
+//!
+//! **A top-level `let` macro is the one exception, and it is not symmetric with
+//! a call.** Macro expansion is *textual and pre-resolution* in the jar, so by
+//! the time `isTemporalModel` scans `cmd.formula` the macro's body is already
+//! spliced in: a macro whose body holds a temporal operator makes the command
+//! temporal, whether it is used from a free fact or straight from the command
+//! body (probes **K4a**/**K4b**, alloy6-temporal.md §(m); this refuted mt-065's
+//! original surface-only walk, which saw the use as an opaque
+//! [`ExprKind::Name`]). The walk therefore follows macro *definitions* while
+//! still refusing to follow func/pred *calls*. It gets the macro identity from
+//! the same seam the lowerer replays expansions through — the recorded
+//! [`crate::choice::MacroChoice`] — never by re-deriving name resolution.
 //!
 //! Not called from any dispatch path at mt-065 — mt-067 places it.
 
+use std::collections::BTreeSet;
+
 use als_syntax::ast::{Ast, BinOp, ExprId, ExprKind, UnOp};
 
+use crate::choice::{ChoiceTable, ExprChoice, MacroChoice, NameChoice, SpineChoice};
 use crate::graph::{ModuleGraph, ModuleId};
-use crate::world::{CmdTargetResolved, ResolvedCommand, ResolvedWorld};
+use crate::world::{CmdTargetResolved, MacroId, ResolvedCommand, ResolvedWorld};
 
 /// Whether `command` is a **temporal** command — the pinned discriminator
 /// (alloy6-temporal.md §(a)).
@@ -77,24 +93,29 @@ fn world_has_var(world: &ResolvedWorld) -> bool {
 
 /// The operator half: does a temporal operator appear in `globalFacts and
 /// commandBody` (`CompModule.java:2030`)?
+///
+/// One [`Scan`] serves the whole command, so a macro used by several facts (or
+/// by a fact *and* the body) has its body examined once.
 fn command_formula_has_temporal(
     world: &ResolvedWorld,
     graph: &ModuleGraph,
     command: &ResolvedCommand,
 ) -> bool {
+    let mut scan = Scan {
+        world,
+        graph,
+        expanded: BTreeSet::new(),
+    };
     let facts = world
         .facts
         .iter()
-        .any(|fact| module_expr_has_temporal(graph, fact.module, fact.body));
-    facts || command_body_has_temporal(world, graph, command)
+        .any(|fact| scan.run(fact.module, fact.body, &world.choices));
+    facts || command_body_has_temporal(&mut scan, command)
 }
 
 /// The command's own body, per target kind (`CompModule.java:1975-2014`).
-fn command_body_has_temporal(
-    world: &ResolvedWorld,
-    graph: &ModuleGraph,
-    command: &ResolvedCommand,
-) -> bool {
+fn command_body_has_temporal(scan: &mut Scan<'_>, command: &ResolvedCommand) -> bool {
+    let world = scan.world;
     match &command.target {
         // `e = f.getBody()` — the pred/fun body is substituted **directly**
         // into the command formula, so a temporal operator written inside the
@@ -107,85 +128,161 @@ fn command_body_has_temporal(
         // errors on more than one, so this is a singleton in practice.
         CmdTargetResolved::Named(funcs) => funcs.iter().any(|&f| {
             let func = &world.funcs[f];
-            module_expr_has_temporal(graph, func.module, func.body)
+            scan.run(func.module, func.body, &world.choices)
         }),
         // `e = assertBody.not()` / the inline block — negation and block
         // wrapping do not change which operators occur.
         CmdTargetResolved::Assert { body, module } | CmdTargetResolved::Block { body, module } => {
-            module_expr_has_temporal(graph, *module, *body)
+            scan.run(*module, *body, &world.choices)
         }
         // Resolution already rejected the model; there is no formula to scan.
         CmdTargetResolved::Unresolved => false,
     }
 }
 
-/// Whether the expression tree rooted at `root` (in `module`'s file) contains a
-/// temporal operator.
-fn module_expr_has_temporal(graph: &ModuleGraph, module: ModuleId, root: ExprId) -> bool {
-    let file = graph.modules[module].file;
-    expr_has_temporal(graph.files.file(file).ast_ref(), root)
+/// One command's `Expr.hasTemporal()` scan: the walk plus the set of macro
+/// bodies it has already examined.
+struct Scan<'a> {
+    world: &'a ResolvedWorld,
+    graph: &'a ModuleGraph,
+    /// Macros whose body this scan has already walked. Dual-purpose (STYLE
+    /// C2/D2 — `BTreeSet` so nothing hash-ordered can leak, though only
+    /// membership is read):
+    ///
+    /// 1. **Work bound.** Re-walking a macro body cannot reveal a new operator
+    ///    — the body AST is the same tree at every use site, and a use site's
+    ///    *arguments* are walked separately, in the calling module. So each
+    ///    body is walked at most once even if used a hundred times, keeping the
+    ///    scan linear in the model rather than exponential in macro nesting.
+    /// 2. **Cycle guard.** Alloy forbids recursive macros (resolution-doc
+    ///    §3.7), but the walk does not trust that: a cycle would simply hit an
+    ///    already-expanded id and stop. [`Scan::run`] asserts the resulting
+    ///    negative space (no more expansions than the world has macros).
+    expanded: BTreeSet<MacroId>,
 }
 
-/// `Expr.hasTemporal()` over mettle's surface AST: an explicit worklist walk
-/// (no recursion — a deeply-nested user expression must not blow the stack)
-/// that short-circuits on the first temporal operator.
-fn expr_has_temporal(ast: &Ast, root: ExprId) -> bool {
-    let mut stack = vec![root];
-    while let Some(id) = stack.pop() {
-        match &ast.exprs[id].kind {
-            // Leaves: nothing to descend into.
-            ExprKind::Num(_)
-            | ExprKind::Str(_)
-            | ExprKind::Const(_)
-            | ExprKind::This
-            | ExprKind::Name(_)
-            | ExprKind::AtName(_) => {}
-            ExprKind::Unary { op, expr } => {
-                if un_op_is_temporal(*op) {
-                    return true;
+/// One worklist entry: an expression, the module whose AST holds it, and the
+/// choice table its names resolved under (a macro body's names resolve under
+/// the *nested* table captured at its use site, not the world's top table).
+type Frame<'a> = (ModuleId, ExprId, &'a ChoiceTable);
+
+impl<'a> Scan<'a> {
+    /// `Expr.hasTemporal()` over mettle's surface AST: an explicit worklist walk
+    /// (no recursion — a deeply-nested user expression must not blow the stack)
+    /// that short-circuits on the first temporal operator, and splices in the
+    /// body of any macro it meets (probes K4a/K4b).
+    fn run(&mut self, module: ModuleId, root: ExprId, choices: &'a ChoiceTable) -> bool {
+        let world = self.world;
+        let mut stack: Vec<Frame<'a>> = vec![(module, root, choices)];
+        while let Some((module, id, choices)) = stack.pop() {
+            // A macro use is *not* a call: the jar splices the body in before
+            // `isTemporalModel` runs, so its operators are visible (K4a/K4b).
+            // The `MacroChoice` is the lowerer's own replay seam
+            // (`als_core::lower::replay_macro_*`), so name resolution is read,
+            // never re-derived (resolution-doc §4.4).
+            if let Some(mc) = macro_use(choices, module, id) {
+                if self.expanded.insert(mc.macro_id) {
+                    stack.push((
+                        mc.body_module,
+                        world.macros[mc.macro_id].body,
+                        &mc.body_choices,
+                    ));
                 }
-                stack.push(*expr);
             }
-            ExprKind::Binary { op, lhs, rhs } => {
-                if bin_op_is_temporal(*op) {
-                    return true;
+            let ast = self.ast_of(module);
+            // Children stay in the frame they were written in: only a macro
+            // expansion changes `(module, choices)`.
+            let mut push = |child: ExprId| stack.push((module, child, choices));
+            match &ast.exprs[id].kind {
+                // Leaves: nothing to descend into.
+                ExprKind::Num(_)
+                | ExprKind::Str(_)
+                | ExprKind::Const(_)
+                | ExprKind::This
+                | ExprKind::Name(_)
+                | ExprKind::AtName(_) => {}
+                ExprKind::Unary { op, expr } => {
+                    if un_op_is_temporal(*op) {
+                        return true;
+                    }
+                    push(*expr);
                 }
-                stack.push(*lhs);
-                stack.push(*rhs);
+                ExprKind::Binary { op, lhs, rhs } => {
+                    if bin_op_is_temporal(*op) {
+                        return true;
+                    }
+                    push(*lhs);
+                    push(*rhs);
+                }
+                ExprKind::Arrow { lhs, rhs, .. } | ExprKind::Compare { lhs, rhs, .. } => {
+                    push(*lhs);
+                    push(*rhs);
+                }
+                ExprKind::IfThenElse {
+                    cond,
+                    then_branch,
+                    else_branch,
+                } => {
+                    push(*cond);
+                    push(*then_branch);
+                    push(*else_branch);
+                }
+                // A call's callee is a bare `Name` in the surface AST, so
+                // pushing the target cannot descend into a pred body — it only
+                // covers the genuine relational box join (`r'[x]`), where the
+                // jar's resolved tree is an ordinary binary node whose children
+                // it visits too. A *macro* application is the same shape, and
+                // its body was already spliced in above; pushing the args here
+                // is what covers a temporal operator passed as an argument.
+                ExprKind::BoxJoin { target, args } => {
+                    push(*target);
+                    args.iter().copied().for_each(&mut push);
+                }
+                ExprKind::Quant { decls, body, .. } | ExprKind::Comprehension { decls, body } => {
+                    decls
+                        .iter()
+                        .map(|&d| ast.decls[d].bound)
+                        .for_each(&mut push);
+                    push(*body);
+                }
+                ExprKind::Let { bindings, body } => {
+                    bindings.iter().map(|b| b.value).for_each(&mut push);
+                    push(*body);
+                }
+                ExprKind::Block(parts) => parts.iter().copied().for_each(&mut push),
             }
-            ExprKind::Arrow { lhs, rhs, .. } | ExprKind::Compare { lhs, rhs, .. } => {
-                stack.push(*lhs);
-                stack.push(*rhs);
-            }
-            ExprKind::IfThenElse {
-                cond,
-                then_branch,
-                else_branch,
-            } => {
-                stack.push(*cond);
-                stack.push(*then_branch);
-                stack.push(*else_branch);
-            }
-            // A call's callee is a bare `Name` in the surface AST, so pushing
-            // the target cannot descend into a pred body — it only covers the
-            // genuine relational box join (`r'[x]`), where the jar's resolved
-            // tree is an ordinary binary node whose children it visits too.
-            ExprKind::BoxJoin { target, args } => {
-                stack.push(*target);
-                stack.extend(args.iter().copied());
-            }
-            ExprKind::Quant { decls, body, .. } | ExprKind::Comprehension { decls, body } => {
-                stack.extend(decls.iter().map(|&d| ast.decls[d].bound));
-                stack.push(*body);
-            }
-            ExprKind::Let { bindings, body } => {
-                stack.extend(bindings.iter().map(|b| b.value));
-                stack.push(*body);
-            }
-            ExprKind::Block(parts) => stack.extend(parts.iter().copied()),
         }
+        // Negative space (STYLE I1/I3): the expansion set is a strict subset of
+        // the world's macros, so no cycle — and no unbounded expansion — is
+        // possible even though Alloy's own no-recursive-macro rule is not
+        // trusted here.
+        debug_assert!(
+            self.expanded.len() <= world.macros.len(),
+            "macro expansion exceeded the world's macro count: {} > {}",
+            self.expanded.len(),
+            world.macros.len()
+        );
+        false
     }
-    false
+
+    /// The parsed AST holding `module`'s expressions.
+    fn ast_of(&self, module: ModuleId) -> &'a Ast {
+        let file = self.graph.modules[module].file;
+        self.graph.files.file(file).ast_ref()
+    }
+}
+
+/// The macro `(module, expr)` resolved to, if it resolved to one — a 0-param
+/// macro used as a value ([`NameChoice::Macro`]) or a macro application
+/// ([`SpineChoice::Macro`]). Every other choice (including a func/pred call,
+/// deliberately) yields `None`.
+fn macro_use(choices: &ChoiceTable, module: ModuleId, expr: ExprId) -> Option<&MacroChoice> {
+    match choices.get(module, expr)? {
+        ExprChoice::Name(NameChoice::Macro(mc)) | ExprChoice::Spine(SpineChoice::Macro(mc)) => {
+            Some(mc)
+        }
+        ExprChoice::Name(_) | ExprChoice::Spine(_) => None,
+    }
 }
 
 /// The seven unary members of the pinned 11-operator set (`ExprUnary$Op`:

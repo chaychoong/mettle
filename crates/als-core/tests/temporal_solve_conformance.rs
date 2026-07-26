@@ -123,12 +123,12 @@ fn rel_named(ir: &Ir, name: &str) -> RelId {
 
 // ========================= (b) the `steps` surface =========================
 
-/// **T-04/T-06/T-07/T-05/T-08b** — the five surface shapes resolve to the pinned
-/// ranges. The load-bearing one is the second: a bare `for N steps` means the
-/// range `[1, N]`, **not** "exactly N states".
+/// **T-04/T-06/T-07/T-05/L6/T-08b** — the six surface shapes resolve to the
+/// pinned ranges. The load-bearing one is the second: a bare `for N steps` means
+/// the range `[1, N]`, **not** "exactly N states".
 #[test]
-fn the_five_steps_shapes_resolve_to_the_pinned_ranges() {
-    let cases: [(&str, u32, StepsMax); 5] = [
+fn the_six_steps_shapes_resolve_to_the_pinned_ranges() {
+    let cases: [(&str, u32, StepsMax); 6] = [
         // No `steps` clause at all → `ScopeComputer`'s field defaults (T-01/T-02/T-04).
         ("var sig A {}\nrun {} for 2\n", 1, StepsMax::Bounded(10)),
         // Bare `for N steps` leaves `minprefix` at its -1 sentinel (T-06).
@@ -149,6 +149,13 @@ fn the_five_steps_shapes_resolve_to_the_pinned_ranges() {
             2,
             StepsMax::Bounded(4),
         ),
+        // `exactly` OVERRIDES a written range end: `exactly N..M` collapses to
+        // `N..N` and `M` is discarded (L6/L6b).
+        (
+            "var sig A {}\nrun {} for 2 but exactly 2..4 steps\n",
+            2,
+            StepsMax::Bounded(2),
+        ),
         // `1..` sets `maxprefix = Integer.MAX_VALUE` (T-08b).
         (
             "var sig A {}\nrun {} for 2 but 1.. steps\n",
@@ -164,6 +171,57 @@ fn the_five_steps_shapes_resolve_to_the_pinned_ranges() {
     assert_eq!(
         (DEFAULT_STEPS.min, DEFAULT_STEPS.max),
         (1, StepsMax::Bounded(10))
+    );
+}
+
+/// **L6/L6b** — `exactly N..M steps` discards `M` and searches `[N, N]`.
+///
+/// The jar collapses it at `Command`-construction time: `Command.toString()`
+/// renders a source `exactly 3..5 steps` back as `"for 3..3 steps"` (L6, on a
+/// static command, isolating the parse-time collapse), and a genuinely temporal
+/// solve of the same shape reports `getMinTrace()==3, getMaxTrace()==3` against
+/// the control `3..5 steps`'s `3`/`5` (L6b). Keeping `[N, M]` would search
+/// **wider** than the jar — see
+/// [`exactly_collapses_the_search_range_not_just_its_rendering`] for the
+/// verdict this changes.
+#[test]
+fn exactly_discards_a_written_steps_range_end() {
+    for (src, expected) in [
+        ("var sig A {}\nrun {} for 2 but exactly 3..5 steps\n", 3),
+        // The control from L6/L6b's own fixtures: without `exactly`, `M` stands.
+        ("var sig A {}\nrun {} for 2 but 3..5 steps\n", 5),
+    ] {
+        let (world, _) = resolved(src);
+        let range = world.commands[0].steps_range();
+        assert_eq!(range.min, 3, "{src}");
+        assert_eq!(range.max, StepsMax::Bounded(expected), "{src}");
+    }
+}
+
+/// The verdict consequence of L6/L6b, which is why the collapse is not cosmetic:
+/// a model satisfiable **only** above `N` answers UNSAT-within-bound under
+/// `exactly N..M steps`, because the search range really is `[N, N]`.
+///
+/// The fixture is P-C6's prime chain — `(no A) and (no A') and (some A'')`
+/// needs exactly 3 states — put under `exactly 2..4 steps`. Reading the range as
+/// the written `[2, 4]` would find the length-3 witness and answer SAT; reading
+/// it as the jar's `[2, 2]` cannot. The control at plain `2..4 steps` shows the
+/// witness is genuinely there.
+#[test]
+fn exactly_collapses_the_search_range_not_just_its_rendering() {
+    let body = "(no A) and (no A') and (some A'')";
+    assert_eq!(
+        minimal_k(
+            &format!("{AB}run {{ {body} }} for 2 but exactly 2..4 steps\n"),
+            0
+        ),
+        None,
+        "L6/L6b: the range is [2,2], so the length-3 witness is out of bounds"
+    );
+    assert_eq!(
+        minimal_k(&format!("{AB}run {{ {body} }} for 2 but 2..4 steps\n"), 0),
+        Some(3),
+        "control: the same command over the written range [2,4] finds it"
     );
 }
 

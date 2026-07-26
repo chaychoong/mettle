@@ -645,10 +645,23 @@ impl Resolver<'_> {
     /// recorded at mt-011). The wording is mettle's: the jar's exact message for
     /// this one is not pinned, and only the accept/reject answer is compared.
     ///
-    /// Unpinned corner, deliberately resolved the uniform way and recorded
-    /// rather than guessed at: `for exactly N..M steps` (the jar's grammar
-    /// desugars `exactly N` to `N..N`, so a range *and* `exactly` is a shape no
-    /// probe covers) is read as the plain range `N..M`.
+    /// **`exactly` wins over a written range end.** `for exactly N..M steps`
+    /// silently collapses to `N..N` — the written `M` is discarded outright, as
+    /// if it had never been typed (probes **L6/L6b**, `alloy6-temporal.md` §(m):
+    /// `Command.toString()` renders `exactly 3..5 steps` back as `3..3 steps`,
+    /// and a genuinely temporal solve reports `getMinTrace()==3,
+    /// getMaxTrace()==3`). This is not cosmetic: keeping `[N,M]` would search a
+    /// **wider** range than the jar, so a model satisfiable only in `(N,M]`
+    /// would answer SAT against the jar's UNSAT-within-`[N,N]` (STYLE E5). The
+    /// collapse happens here, at resolve, because that is where mettle first
+    /// knows the range targets `steps` — the same place the jar's
+    /// `Command`-construction does it.
+    ///
+    /// **Unpinned, so deliberately unchanged:** `for exactly N.. steps` (exact
+    /// *and* open above). L6/L6b probed only the bounded shape; `exactly` stays
+    /// ignored on an open range, which leaves that shape exactly where it was
+    /// (`1..` accepted then deferred by the bounded engine, any other start
+    /// rejected). Not guessed at — it needs its own probe.
     fn steps_scope(&mut self, entry: &TypeScope) -> StepsScope {
         if entry.increment.is_some_and(|i| i != 1) {
             self.error(ResolveError::StepsIncrementMustBeOne { span: entry.span });
@@ -659,6 +672,10 @@ impl Resolver<'_> {
             // range starts at 1, not at `N` (probe T-06).
             ScopeEnd::Same if entry.is_exact => (Some(entry.start), StepsMax::Bounded(entry.start)),
             ScopeEnd::Same => (None, StepsMax::Bounded(entry.start)),
+            // `exactly N..M` throws `M` away and reads as `N..N` (L6/L6b).
+            ScopeEnd::Bounded(_) if entry.is_exact => {
+                (Some(entry.start), StepsMax::Bounded(entry.start))
+            }
             ScopeEnd::Bounded(m) => (Some(entry.start), StepsMax::Bounded(m)),
             ScopeEnd::Unbounded => {
                 if entry.start != 1 {

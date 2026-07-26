@@ -304,6 +304,78 @@ fn the_scan_does_not_descend_into_a_called_pred_body() {
 }
 
 #[test]
+fn a_temporal_operator_in_a_used_macro_is_visible() {
+    // **Probes K4a/K4b** (mt-069, alloy6-temporal.md §(m) item 1): a top-level
+    // `let` macro is expanded *textually, before* `isTemporalModel` scans, so
+    // unlike a called pred (K1, above) its body's operators are visible.
+    // Confirmed both ways by the jar — used from a free fact (K4a) and used
+    // straight from the command body (K4b), both `isTemporalModel = true`.
+    // This refuted mt-065's original surface-only walk.
+    assert!(is_temporal(
+        "sig A {}\nlet m = always some A\nfact useMacro { m }\nrun {}\n",
+        0
+    ));
+    assert!(is_temporal(
+        "sig A {}\nlet m = always some A\nrun { m }\n",
+        0
+    ));
+    // Negative space: the same shapes with a non-temporal macro body stay
+    // static, so the expansion is not blanket-marking every macro user.
+    assert!(!is_temporal(
+        "sig A {}\nlet m = some A\nfact useMacro { m }\nrun {}\n",
+        0
+    ));
+    assert!(!is_temporal("sig A {}\nlet m = some A\nrun { m }\n", 0));
+}
+
+#[test]
+fn a_macro_used_through_another_macro_is_visible() {
+    // Nested expansion: the walk descends `outer` -> `inner` through the call
+    // site's own nested choice table (each body walked at most once per scan,
+    // which is also the cycle guard). Same K4a/K4b rule, one level deeper.
+    assert!(is_temporal(
+        "sig A {}\nlet inner = always some A\nlet outer = inner\nrun { outer }\n",
+        0
+    ));
+    assert!(!is_temporal(
+        "sig A {}\nlet inner = some A\nlet outer = inner\nrun { outer }\n",
+        0
+    ));
+}
+
+#[test]
+fn a_macro_with_arguments_is_expanded() {
+    // A parameterised macro use is an application spine, recorded as
+    // `SpineChoice::Macro` rather than `NameChoice::Macro`; both must expand.
+    // The argument itself is walked in the *calling* module, so an operator
+    // passed as an argument counts too.
+    assert!(is_temporal(
+        "sig A {}\nlet m[x] = always some x\nrun { m[A] }\n",
+        0
+    ));
+    assert!(is_temporal(
+        "sig A { f: set A }\nlet m[x] = some x\nrun { m[A'] }\n",
+        0
+    ));
+    assert!(!is_temporal(
+        "sig A {}\nlet m[x] = some x\nrun { m[A] }\n",
+        0
+    ));
+}
+
+#[test]
+fn an_unused_macro_body_is_not_scanned() {
+    // **Assumption, not pinned.** K4a/K4b probed only the *used* shapes. An
+    // unused macro's body is never spliced into `globalFacts` or the command
+    // body, so it cannot reach `cmd.formula` — but no probe cell states that
+    // directly. Flagged in LIMITATIONS.md / SEMANTICS_LEDGER.md.
+    assert!(!is_temporal(
+        "sig A {}\nlet unused = always some A\nfact { some A }\nrun {}\n",
+        0
+    ));
+}
+
+#[test]
 fn a_sig_appended_fact_is_outside_the_scanned_formula() {
     // `getAllReachableFacts()` collects free `fact` paragraphs only; a sig's
     // appended fact goes to `Sig.addFact` (CompModule.java:1884) and never

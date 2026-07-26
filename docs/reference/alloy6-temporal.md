@@ -777,7 +777,8 @@ descends into the callee's body (bytecode,
 `edu/mit/csail/sdg/ast/VisitQuery.class`).
 
 **Source-cited but never live-probed — mt-069 must probe these** (each has
-a mettle-side conformance test asserting the cited behavior, except 4):
+a mettle-side conformance test asserting the cited behavior). *All six were
+probed by mt-069; item 4 was refuted and has since been fixed — see §(m).*
 
 1. Non-descent into a *called* pred's body: `pred q { always some A } pred
    p { q } run p` → **not** temporal.
@@ -786,10 +787,12 @@ a mettle-side conformance test asserting the cited behavior, except 4):
 3. `;` counts as temporal: not an `ExprBinary$Op` member — the jar desugars
    `a ; b` to `a and after b` *before* resolution, so the scanned tree
    holds an AFTER; mettle treats the surface `;` as temporal-bearing.
-4. Macro bodies: mettle scans the surface AST where a used macro is a name;
-   the jar expands macros at typecheck, so an operator inside a *used*
-   macro would be visible to the jar but not to mettle's scan — a genuine
-   divergence risk, no test written, **needs a probe**.
+4. Macro bodies: the jar expands a top-level `let` macro *before*
+   `isTemporalModel` scans, so an operator inside a **used** macro makes
+   the command temporal. **Probed (K4a/K4b) → mettle's original
+   surface-only walk was refuted, and is now FIXED**: the discriminator
+   follows a macro use through its recorded `MacroChoice` into the macro
+   body (a called pred/fun body is still not descended — K1). See §(m).
 5. A `Named` command target with >1 recorded overload: mettle scans all
    overloads; the jar errors on ambiguity, so unreachable in an accepted
    model.
@@ -868,41 +871,73 @@ static-eval cell. Full fixtures/predictions/verbatim output:
 behavior** — real, corpus-reachable (if currently zero-incidence)
 divergences, escalated to the tech lead rather than silently patched (per
 this bead's ground rules); the rest confirmed what was already shipped or
-closed a "masked in practice" cell as still masked.
+closed a "masked in practice" cell as still masked. **Both have since been
+fixed** in tech-lead-approved follow-ups — see items 1 and 2 below.
 
-> **STOP-THE-LINE — not fixed by this bead, awaiting a tech-lead decision:**
-> 1. **§(k) item 4, macro-body visibility.** The jar expands a top-level
+> **STOP-THE-LINE — both since resolved:**
+> 1. ~~**§(k) item 4, macro-body visibility.**~~ **FIXED (mt-065
+>    follow-up, tech-lead approved).** The jar expands a top-level
 >    `let` macro's body *before* `CompUtil.isTemporalModel`'s scan runs, so a
 >    macro used (in a fact, or directly in a command body) whose body
 >    contains a temporal operator makes the command temporal
->    (`isTemporalModel = true`, confirmed both ways — probes K4a/K4b).
->    mettle's `als_types::temporal::expr_has_temporal` walks the **surface**
+>    (`isTemporalModel = true`, confirmed both ways — probes **K4a/K4b**).
+>    mettle's `als_types::temporal` walked the **surface**
 >    AST, where a used macro is `ExprKind::Name(_)` — a leaf, by the same
 >    non-descent rule that correctly excludes a called pred/fun's body
->    (K1). mettle therefore misclassifies such a command as **static**,
+>    (K1). mettle therefore misclassified such a command as **static**,
 >    rejecting a legal `steps` scope the jar accepts and solves. Verified
->    against the built binary, not just read from source. Zero corpus
+>    against the built binary, not just read from source. The scan now
+>    follows a macro *use* into its body through the recorded
+>    [`MacroChoice`](../../crates/als-types/src/choice.rs) — the same replay
+>    seam `als_core::lower` expands macros with, so name resolution is read,
+>    not re-derived — while still refusing to follow a func/pred **call**
+>    (K1 unchanged). Nested macro uses descend through the call site's own
+>    nested choice table; each macro body is walked at most once per scan,
+>    which doubles as the cycle guard (Alloy forbids recursive macros, but
+>    the walk does not trust that). Regression tests (jar-free, citing
+>    K4a/K4b): `crates/als-core/tests/temporal_conformance.rs`'s
+>    `a_temporal_operator_in_a_used_macro_is_visible` (both the fact and the
+>    command-body shapes),
+>    `a_macro_used_through_another_macro_is_visible` (nesting),
+>    `a_macro_with_arguments_is_expanded` and
+>    `an_unused_macro_body_is_not_scanned` (the last one an **assumption** —
+>    K4a/K4b pinned only the *used* shapes). Zero corpus
 >    incidence (grepped both corpora for a temporal-operator-bearing
->    top-level macro; none found).
-> 2. **§(l) leftover, `for exactly N..M steps`.** The jar's parser silently
->    collapses `exactly N..M` to `N..N` at `Command`-construction time —
->    the written upper bound `M` is discarded entirely (confirmed via
+>    top-level macro; none found), so no banked verdict changes.
+> 2. ~~**§(l) leftover, `for exactly N..M steps`.**~~ **FIXED (mt-067
+>    follow-up, tech-lead approved).** The jar's parser silently collapses
+>    `exactly N..M` to `N..N` at `Command`-construction time — the written
+>    upper bound `M` is discarded entirely (confirmed via
 >    `Command.toString()`'s own rendering, and via `getMinTrace()`/
->    `getMaxTrace()` on a genuinely temporal solve — probes L6/L6b).
->    mettle's `als_types::resolve::members::steps_scope` keeps the full
+>    `getMaxTrace()` on a genuinely temporal solve — probes **L6/L6b**).
+>    mettle's `als_types::resolve::members::steps_scope` kept the full
 >    written range `[N,M]` regardless of the `exactly` flag, so it
->    **searches a wider steps range than the jar does** for this shape — a
+>    **searched a wider steps range than the jar does** for this shape — a
 >    genuine wrong-verdict class (a model SAT only at length 4 or 5 but not
 >    3 would flip mettle's answer relative to the jar's `[3,3]`-bounded
->    UNSAT), not merely a cosmetic difference. Zero corpus incidence
->    (grepped both corpora; the only `exactly`+range-on-temporal-command
+>    UNSAT), not merely a cosmetic difference. It now collapses to `[N,N]`
+>    exactly as the jar does, so the *search range*, not just the
+>    rendering, matches. Regression tests (jar-free, citing L6/L6b):
+>    `crates/als-core/tests/temporal_solve_conformance.rs`'s
+>    `exactly_discards_a_written_steps_range_end` (the resolved range, plus
+>    the no-`exactly` control) and
+>    `exactly_collapses_the_search_range_not_just_its_rendering` (a P-C6
+>    prime chain satisfiable only at length 3, put under
+>    `exactly 2..4 steps`: UNSAT-within-bound under the collapsed `[2,2]`,
+>    SAT at length 3 under the written `2..4` control). Zero corpus
+>    incidence either way (the only `exactly`+range-on-temporal-command
 >    usage targets a *sig* scope, e.g. `exactly 4 Node`, always a single
 >    `N`, never a range).
 >
-> Both are recorded here, in `LIMITATIONS.md`, and in
-> `SEMANTICS_LEDGER.md`'s "Corners that NEED entries" section. Neither
-> `als_types::temporal` nor `als_types::resolve::members::steps_scope` was
-> touched by this bead.
+>    **Still unprobed, deliberately unchanged:** `for exactly N.. steps`
+>    (`exactly` on an *open* range). L6/L6b covered only the bounded shape;
+>    `exactly` stays ignored there, leaving that syntax exactly where it
+>    was (`1..` accepted then refused by the bounded engine, T-08b; any
+>    other start rejected, T-08a). Not guessed at — it needs its own cell.
+>
+> Neither item was touched by the probe bead itself:
+> `als_types::temporal` was fixed in the mt-065 follow-up above, and
+> `als_types::resolve::members::steps_scope` in the mt-067 one.
 
 The rest of the debt, all **CONFIRMS** (mettle's shipped behavior matches
 the jar, or a "masked" cell stayed masked on a genuine attempt):
