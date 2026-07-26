@@ -98,6 +98,73 @@ fn test1_count_smoke_matches_jar() {
     assert!(report.panics.is_empty());
 }
 
+/// mt-069 workstream 3: temporal counting posture. ADR-0015 consequence 4
+/// defers trace enumeration entirely, so **every** temporal command that
+/// solves SAT gets the typed `skip_temporal_trace` count bucket — even
+/// `leader.als`, whose commands DO have real jar counts cached in
+/// `baselines/alloytools-models-count-sb0.json` (probe T-26 reproduced the
+/// jar's own SB-0 count live: `count:1` for commands 1 and 3). This is
+/// jar-free (cached committed baselines, no live JVM): it pins that the
+/// skip is unconditional and that a real cached count entry is never
+/// silently misread as a `COUNT_MISMATCH`.
+#[test]
+fn leader_als_stays_skip_temporal_trace_despite_its_real_count_baseline() {
+    let root = workspace_root();
+    let cfg = GaugeConfig {
+        roots: vec![root.join("corpus/alloytools-models/models/examples/temporal/leader.als")],
+        workspace_root: root.clone(),
+        baselines_dir: root.join("baselines"),
+        conflict_budget: 10_000,
+        encode_budget: 4_000_000,
+        primary_var_cap: 20_000,
+        allow_overflow: false,
+        symmetry: 20,
+        count_symmetry: 0,
+        count: true,
+        count_cap: 10_000,
+        enum_budget: 250_000_000,
+        enumerate_all: false,
+        jar_path: jar_path(),
+        shim_source: PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/shim/OracleShim.java")),
+        jar_timeout: Duration::from_mins(5),
+        jobs: 1,
+        // Cached committed baselines only — this test must not need a JDK.
+        live_jar: false,
+        fail_fast: false,
+        only: Vec::new(),
+        from_report: None,
+        from_buckets: Vec::new(),
+        delta: false,
+        capture_sweep: None,
+        capture_commit: None,
+    };
+
+    let report = run_gauge(&cfg, &mut |_| {}).unwrap_or_else(|e| panic!("run_gauge failed: {e}"));
+
+    assert_eq!(report.commands, 4, "leader.als has four commands");
+    // Three commands solve SAT at default budgets (run$1, example, liveness);
+    // `safety` is a known over_budget row (mt-069 workstream 4).
+    assert_eq!(
+        report.verdict_buckets.get("agree_sat"),
+        Some(&3),
+        "buckets={:?}",
+        report.verdict_buckets
+    );
+    assert_eq!(
+        report.count_buckets.get("skip_temporal_trace"),
+        Some(&3),
+        "every SAT temporal command is skip_temporal_trace, never a fabricated \
+         count, even though this file's SB-0 baseline holds real jar counts; \
+         buckets={:?}",
+        report.count_buckets
+    );
+    assert!(
+        report.count_mismatches.is_empty(),
+        "the real count baseline entry must never surface as a mismatch: {:?}",
+        report.count_mismatches
+    );
+}
+
 /// mt-054 (b): `--refresh-counts` writes a valid count baseline for a single
 /// small file, and `--resume` on the already-complete output re-runs nothing.
 #[test]

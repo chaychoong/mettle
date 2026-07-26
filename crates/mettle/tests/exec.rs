@@ -137,6 +137,21 @@ fn temporal_model_solves_and_renders_its_trace() {
     );
 }
 
+/// (e1) T-12 (mt-069): `expect` on a temporal command is checked the same
+/// way as on a static one — no throw, no special-casing at the
+/// `execute_command` layer (alloy6-temporal.md §(c), jar-verified against
+/// `ExpectTemporal.als`). Both commands here solve SAT; command 0's
+/// `expect 1` matches, command 1's `expect 0` does not.
+#[test]
+fn expect_on_a_temporal_command_matches_and_mismatches_like_a_static_one() {
+    let file = fixture("temporal_expect.als");
+    let out = run_exec(&file, &[]);
+    assert_eq!(out.status.code(), Some(1), "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("expect 1: ok"), "{text}");
+    assert!(text.contains("expect 0: MISMATCH (got SAT)"), "{text}");
+}
+
 /// The verdict line, the state headers, and the user-sig lines of a rendered
 /// trace — everything but the builtin relations, which are identical in every
 /// block of every model and would bury the shape being asserted.

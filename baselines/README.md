@@ -21,10 +21,46 @@ Triage (2026-07-15, tech lead):
   `trash.als` (×2) — "Bounded engines do not support complete model checking"
   (unbounded `1.. steps` check needs an unbounded engine like electrod, out of
   scope for the sat4j configuration).
-- **1 timeout**: `temporal/buffer.als` at 60s.
+- **1 timeout**: `temporal/buffer.als` at 60s — **banked 2026-07-26 (mt-069),
+  see below; this file no longer has a live timeout entry.**
 
-When mettle solves, the comparison set is the 234 per-command verdicts in the
-JSON, not just the expect subset.
+When mettle solves, the comparison set is the 234 (now 239, see below)
+per-command verdicts in the JSON, not just the expect subset.
+
+### `temporal/buffer.als` banked per-command (2026-07-26, mt-069)
+
+`conform`'s whole-file JVM launch (`OracleShim` runs every command in one
+process under one caller-supplied timeout) is why `buffer.als` originally
+timed out at 60s: its slowest single command alone runs ~90s (mt-063 wave-1
+observation), well over the file-level cap, but the file's total across all
+5 commands is only ~118s — comfortably fast, just not within one 60s
+budget applied to the whole file at once.
+
+Rather than raise the file-level timeout (which would still let one slow
+command's timeout blot out every verdict before it in the same file),
+mt-069 banked each of `buffer.als`'s 5 commands with its own JVM launch: a
+small one-off harness, `scratchpad/probe/mt069/PerCommandProbe.java`,
+reruns `OracleShim.runOne`'s exact per-command JSON schema for a single
+command index per invocation, wrapped in its own `timeout` (1800s cap per
+command; none needed more than ~90s). The 5 verdicts (`run$1`→SAT,
+`everyReceivedValueWasSent`→UNSAT, `orderIsPreserved`→UNSAT,
+`receiveWeakFairness`→SAT, `everySentValueWillBeReceived`→UNSAT) matched
+the mt-063 wave-1 observation exactly (`scratchpad/probe/mt063/NOTES.md`)
+and were merged into `alloytools-models-verdict.json` by hand, matching the
+existing entries' exact JSON shape byte-for-byte (verified via a
+`json.dumps(..., indent=2)` round-trip against the untouched file before
+editing). The file-level `{"type":"timeout"}` entry became a
+`{"type":"commands","data":[...]}` entry with the 5 rows; `totals.commands`
+234→239, `totals.timeouts` 1→0, everything else unchanged. Full commands +
+verbatim output: `scratchpad/probe/mt069/NOTES.md` ("Workstream 1").
+
+Stage-1 sweep delta from this banking alone (before/after, both fresh
+runs): `agree_sat` 201→203, `jar_nonverdict` 18→16, nothing else moved,
+`DISAGREE` 0 both before and after — the two rows mettle had already
+solved SAT (`run$1`, `receiveWeakFairness`) simply gained a jar verdict to
+agree with; the file's other 3 commands were already typed
+`mettle_defer:over_budget` at default budgets (mettle's own solve capacity,
+independent of whether a baseline exists) and stayed there.
 
 ## portus-63-verdict.json (2026-07-17, mt-037)
 

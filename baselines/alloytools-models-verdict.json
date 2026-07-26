@@ -2486,7 +2486,59 @@
     {
       "file": "corpus/alloytools-models/models/examples/temporal/buffer.als",
       "outcome": {
-        "type": "timeout"
+        "type": "commands",
+        "data": [
+          {
+            "index": 0,
+            "label": "run$1",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 1,
+            "label": "everyReceivedValueWasSent",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 2,
+            "label": "orderIsPreserved",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 3,
+            "label": "receiveWeakFairness",
+            "check": false,
+            "expects": null,
+            "outcome": {
+              "type": "sat",
+              "instance_count": null
+            }
+          },
+          {
+            "index": 4,
+            "label": "everySentValueWillBeReceived",
+            "check": true,
+            "expects": null,
+            "outcome": {
+              "type": "unsat",
+              "instance_count": null
+            }
+          }
+        ]
       }
     },
     {
@@ -3099,11 +3151,11 @@
     }
   ],
   "totals": {
-    "commands": 234,
+    "commands": 239,
     "with_expect": 94,
     "matches": 91,
     "mismatches": 3,
-    "timeouts": 1,
+    "timeouts": 0,
     "errors": 7
   }
 }

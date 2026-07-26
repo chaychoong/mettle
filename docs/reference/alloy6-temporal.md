@@ -859,6 +859,96 @@ migration ban in practice); the static-`disj`-group-on-`var`-sig
 divergence in cell 6; per-state symmetry breaking (mt-067 owns it;
 mt-066's tests run at `symmetry=0`).
 
+## (m) The mt-069 probe wave — closing the debt, two STOP-THE-LINE finds
+
+The conformance arm (ADR-0015 §5): banked `buffer.als`'s jar verdicts, then
+live-probed every §(k)/§(l) source-cited-but-unprobed cell plus mt-068's
+static-eval cell. Full fixtures/predictions/verbatim output:
+`scratchpad/probe/mt069/NOTES.md`. Two cells **refuted mettle's shipped
+behavior** — real, corpus-reachable (if currently zero-incidence)
+divergences, escalated to the tech lead rather than silently patched (per
+this bead's ground rules); the rest confirmed what was already shipped or
+closed a "masked in practice" cell as still masked.
+
+> **STOP-THE-LINE — not fixed by this bead, awaiting a tech-lead decision:**
+> 1. **§(k) item 4, macro-body visibility.** The jar expands a top-level
+>    `let` macro's body *before* `CompUtil.isTemporalModel`'s scan runs, so a
+>    macro used (in a fact, or directly in a command body) whose body
+>    contains a temporal operator makes the command temporal
+>    (`isTemporalModel = true`, confirmed both ways — probes K4a/K4b).
+>    mettle's `als_types::temporal::expr_has_temporal` walks the **surface**
+>    AST, where a used macro is `ExprKind::Name(_)` — a leaf, by the same
+>    non-descent rule that correctly excludes a called pred/fun's body
+>    (K1). mettle therefore misclassifies such a command as **static**,
+>    rejecting a legal `steps` scope the jar accepts and solves. Verified
+>    against the built binary, not just read from source. Zero corpus
+>    incidence (grepped both corpora for a temporal-operator-bearing
+>    top-level macro; none found).
+> 2. **§(l) leftover, `for exactly N..M steps`.** The jar's parser silently
+>    collapses `exactly N..M` to `N..N` at `Command`-construction time —
+>    the written upper bound `M` is discarded entirely (confirmed via
+>    `Command.toString()`'s own rendering, and via `getMinTrace()`/
+>    `getMaxTrace()` on a genuinely temporal solve — probes L6/L6b).
+>    mettle's `als_types::resolve::members::steps_scope` keeps the full
+>    written range `[N,M]` regardless of the `exactly` flag, so it
+>    **searches a wider steps range than the jar does** for this shape — a
+>    genuine wrong-verdict class (a model SAT only at length 4 or 5 but not
+>    3 would flip mettle's answer relative to the jar's `[3,3]`-bounded
+>    UNSAT), not merely a cosmetic difference. Zero corpus incidence
+>    (grepped both corpora; the only `exactly`+range-on-temporal-command
+>    usage targets a *sig* scope, e.g. `exactly 4 Node`, always a single
+>    `N`, never a range).
+>
+> Both are recorded here, in `LIMITATIONS.md`, and in
+> `SEMANTICS_LEDGER.md`'s "Corners that NEED entries" section. Neither
+> `als_types::temporal` nor `als_types::resolve::members::steps_scope` was
+> touched by this bead.
+
+The rest of the debt, all **CONFIRMS** (mettle's shipped behavior matches
+the jar, or a "masked" cell stayed masked on a genuine attempt):
+
+- **§(k) item 1** (non-descent into a called pred's body, K1) and **item 2**
+  (an appended sig fact never enters the scanned formula, K2): both
+  confirmed exactly as source-cited, with a second, independent
+  confirmation via T-03's static-model `ErrorSyntax` on a `steps`-scoped
+  variant of the same (non-temporal) command.
+- **§(k) item 3** (`;` counts as temporal, K3): confirmed —
+  `isTemporalModel = true`, and a `steps` scope on the same command solves
+  cleanly (no `ErrorSyntax`), the positive-side confirmation K1/K2 lacked.
+- **§(k) item 6** was already closed at mt-066 (P-F1/P-F2); not reopened.
+- **§(l) leftover, a static `disj` field group on a `var` sig (L7):**
+  attempted construction (a `var` subset sig with two static, disjoint
+  fields, one command violating disjointness and one respecting it) —
+  mettle and the jar agree on both verdicts (UNSAT / SAT). No divergence
+  observed: wrapping a fully rigid (non-`var`-field) formula in `always`
+  versus asserting it once at state 0 cannot change its truth value, since
+  the formula's own truth never varies by state. Recorded as attempted and
+  closed, not merely asserted narrow.
+- **§(l) leftover, `BoundsComputer.size`'s var-sig witness shape (L8):**
+  attempted construction (a `one`-mult `var` subset sig forced to visit
+  every atom of a tight 2-atom pool across a 3-state trace) — mettle and
+  the jar agree (SAT, same trace length). Still masked, as the doc already
+  said, but now on the strength of a genuine attempt rather than only the
+  architectural argument.
+- **mt-068's cell, a temporal operator at a STATIC command's evaluator
+  prompt (M068):** the jar does **not** throw — it evaluates using the
+  same length-1 self-looping trace representation every static solve
+  carries internally (`traceLength=1, loopState=0`, the same machinery
+  behind the pre-existing "`isTemporal()==true` on a static solve" quirk).
+  mettle's current typed refusal here is a **conservative capability gap,
+  not a wrong answer** (it declines rather than mis-answers), so this is
+  **not** an escalation — recorded as a pinned fact for a later REPL bead.
+
+**Workstream 3 (temporal counting posture), verified, not a new finding:**
+`als-conform::solve_gauge::execute::classify_temporal_command` gives every
+SAT temporal command the typed skip `skip_temporal_trace` unconditionally,
+confirmed live against `leader.als` (whose SB-0 baseline holds a real jar
+count, T-26) — `agree_sat 3` / `skip_temporal_trace 3` / `COUNT_MISMATCH
+0`. The real count is never consulted and never misread as a mismatch;
+this is the deliberate ADR-0015 consequence-4 posture. Jar-free regression:
+`crates/als-conform/tests/solve_gauge_integration.rs::
+leader_als_stays_skip_temporal_trace_despite_its_real_count_baseline`.
+
 ## Probe evidence table
 
 Full commands, predictions-before-run, and verbatim jar output for every
@@ -904,6 +994,19 @@ id: `scratchpad/probe/mt063/NOTES.md`. Rerun:
 | T-27 | `ListSolvers.java` + `UnboundedSteps1.als` (mt063) | Correct electrod `SATFactory` id is `electrod.elo`; solves structurally but reports an unexplained UNSAT with a "possibly unsound" warning |
 | T-28 | ad hoc (`r1`/`r2`) | `minprefix=-1` (implicit) and explicit `minprefix=1` resolve identically |
 | **P-068-1** (mt-068) | `scratchpad/probe/mt068/fixtures/LoopPast.als` (loop target = state 0, so state 0 recurs) | **Prediction refuted**: `eval(expr,state)` evaluates at **logical time `state`**, not at the normalized state's first-pass prefix — `once some A` false@0 but true@2; `before some A` alternates with the index's parity (§(h)) |
+
+**mt-069** (`scratchpad/probe/mt069/NOTES.md`; full fixtures/predictions/verbatim there):
+
+| id | Fixture | What it pins |
+|---|---|---|
+| K1 | `K1_NoDescentIntoCallee.als` | §(k)-1 CONFIRMS: non-descent into a called pred's body, `isTemporalModel=false`, + static-model `ErrorSyntax` on `steps` |
+| K2 | `K2_AppendedSigFactOutsideScan.als` | §(k)-2 CONFIRMS: an appended sig fact never enters the scanned formula |
+| K3 | `K3_SemicolonIsTemporal.als` | §(k)-3 CONFIRMS: `;` counts as temporal (desugars to `after` pre-resolution) |
+| K4a/K4b | `K4a_MacroInFact.als`, `K4b_MacroInCommandBody.als` | §(k)-4 **REFUTES mettle**: the jar expands macro bodies before the discriminator scan (`isTemporalModel=true` both shapes); mettle's surface-AST scan does not — **STOP-THE-LINE** |
+| L6/L6b | `L6_ExactlyRange.als`, `L6b_ExactlyRangeTemporal.als` | §(l) leftover **REFUTES mettle**: `exactly N..M steps` silently collapses to `N..N` at parse time (`Command.toString()`/`getMinTrace`/`getMaxTrace` all confirm); mettle keeps the full `[N,M]` range — **STOP-THE-LINE** |
+| L7 | `L7_StaticDisjOnVarSig.als` | §(l) leftover CONFIRMS (no divergence found): a static `disj` field group on a `var` sig — always-wrap vs. state-0-only cannot differ for a rigid formula |
+| L8 | `L8_VarSigBoundExceedsScope.als` | §(l) leftover CONFIRMS (still masked): `BoundsComputer.size`'s var-sig witness shape — attempted construction, no divergence found |
+| M068 | `M068_StaticEvalTemporal.als` | mt-068's cell: the jar answers a temporal-operator eval at a STATIC command's prompt (length-1 self-loop, no throw); mettle's typed refusal is conservative, not wrong — not an escalation |
 
 ---
 

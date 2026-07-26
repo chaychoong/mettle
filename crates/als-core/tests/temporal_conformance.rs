@@ -288,8 +288,10 @@ fn the_scan_does_not_descend_into_a_called_pred_body() {
     // enters `x.fun.getBody()` (jar bytecode,
     // `edu/mit/csail/sdg/ast/VisitQuery.class`). So an operator that lives only
     // inside a pred the command *calls* (rather than names) is invisible to the
-    // discriminator. **Flagged for mt-069**: cited from bytecode + source, not
-    // yet confirmed by a live probe.
+    // discriminator. **Live-probe confirmed (mt-069, K1):** `isTemporalModel =
+    // false`, plus a second confirmation via T-03's static-model `ErrorSyntax`
+    // on a `steps`-scoped variant of the same command
+    // (`scratchpad/probe/mt069/NOTES.md`).
     assert!(!is_temporal(
         "sig A {}\npred q { always some A }\npred p { q }\nrun p\n",
         0
@@ -305,15 +307,19 @@ fn the_scan_does_not_descend_into_a_called_pred_body() {
 fn a_sig_appended_fact_is_outside_the_scanned_formula() {
     // `getAllReachableFacts()` collects free `fact` paragraphs only; a sig's
     // appended fact goes to `Sig.addFact` (CompModule.java:1884) and never
-    // enters `globalFacts`. **Flagged for mt-069** — source-cited, unprobed.
+    // enters `globalFacts`. **Live-probe confirmed (mt-069, K2):**
+    // `isTemporalModel = false` (`scratchpad/probe/mt069/NOTES.md`).
     assert!(!is_temporal("sig A {} { always some A }\nrun {}\n", 0));
 }
 
 #[test]
 fn sequential_composition_counts_as_temporal() {
-    // **Assumption, flagged for mt-069.** `;` is not a member of
-    // `ExprBinary$Op` at all: the jar desugars `a ; b` to `a and after b`
-    // before resolution, so the tree `hasTemporal()` scans holds an `AFTER`.
+    // `;` is not a member of `ExprBinary$Op` at all: the jar desugars `a ; b`
+    // to `a and after b` before resolution, so the tree `hasTemporal()` scans
+    // holds an `AFTER`. **Live-probe confirmed (mt-069, K3):** `isTemporalModel
+    // = true`, and a `steps` scope on the same command solves cleanly (no
+    // `ErrorSyntax`) — the positive-side confirmation K1/K2 lacked
+    // (`scratchpad/probe/mt069/NOTES.md`).
     assert!(is_temporal("sig A {}\nrun { some A ; some A }\n", 0));
 }
 
