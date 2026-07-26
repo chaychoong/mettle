@@ -264,6 +264,15 @@ impl<'a> Evaluator<'a> {
                     span: node.span,
                 })
             }
+            // The loop index is a solver variable, not a relation, so a decoded
+            // [`crate::Instance`] carries no value for it — re-evaluating a
+            // temporal goal needs the trace's loop state alongside the instance,
+            // which is the driver's (mt-067) shape to carry.
+            FormulaKind::LoopIs { .. } => Err(TranslateError::TemporalUnsupported {
+                op: "the lasso loop atom has no instance-level value — temporal \
+                     self-check needs the solved loop state (mt-067)",
+                span: node.span,
+            }),
         }
     }
 
@@ -843,7 +852,8 @@ impl<'a> Evaluator<'a> {
 
     fn collect_formula_vars(&self, id: FormulaId, out: &mut BTreeSet<VarId>) {
         match &self.ir.formulas[id].kind {
-            FormulaKind::Const(_) => {}
+            // A constant and the lasso loop atom are both closed (mt-066).
+            FormulaKind::Const(_) | FormulaKind::LoopIs { .. } => {}
             FormulaKind::Not(f) => self.collect_formula_vars(*f, out),
             FormulaKind::And(parts) | FormulaKind::Or(parts) => {
                 for &p in parts {

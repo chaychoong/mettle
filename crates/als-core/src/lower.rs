@@ -182,7 +182,58 @@ pub fn lower_command(
         bitwidth: scoped.bitwidth,
         strings_closed: true,
     };
-    lowerer.lower(command_index)
+    lowerer.lower(command_index, TemporalPosture::Defer)
+}
+
+/// Lowers command `command_index` **keeping** its temporal IR nodes instead of
+/// deferring on them (mt-066): the input to
+/// [`crate::temporal_lower::lower_temporal_command`], which then eliminates them
+/// by the LTL-on-lasso translation at a fixed trace length.
+///
+/// Identical to [`lower_command`] in every other respect — same walk, same
+/// choices, same skolemization rules (which already block under every temporal
+/// operator, `Skolemizer.java:494-526`) — so the two share one implementation
+/// and cannot drift.
+///
+/// # Errors
+/// Every [`TranslateError`] [`lower_command`] returns **except**
+/// [`TranslateError::TemporalUnsupported`], which is the whole point.
+pub fn lower_command_keeping_temporal(
+    world: &ResolvedWorld,
+    graph: &ModuleGraph,
+    scoped: &ScopedUniverse,
+    bounds: &BoundsResult,
+    ir: &mut Ir,
+    command_index: usize,
+) -> Result<LoweredGoal, TranslateError> {
+    let cmd_label = skolem_command_label(world, graph, command_index);
+    let mut lowerer = Lowerer {
+        world,
+        graph,
+        bounds,
+        ir,
+        binders: Vec::new(),
+        inline_stack: Vec::new(),
+        temporal: None,
+        pol: Pol::asserted(),
+        cmd_label,
+        skolem_bounds: Vec::new(),
+        has_higher_order_skolem: false,
+        skolem_names: BTreeSet::new(),
+        var_bound: BTreeMap::new(),
+        bitwidth: scoped.bitwidth,
+        strings_closed: true,
+    };
+    lowerer.lower(command_index, TemporalPosture::Keep)
+}
+
+/// What [`Lowerer::lower`] does when the walk hit a temporal construct: the
+/// static pipeline defers the whole command ([`TranslateError::TemporalUnsupported`]),
+/// the Rung-6 path keeps the nodes for [`crate::temporal_lower`] to translate.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum TemporalPosture {
+    Defer,
+    Keep,
 }
 
 /// A lowered evaluator fragment (mt-062): which of the three IR sorts the input
@@ -498,7 +549,11 @@ struct Lowerer<'a> {
 impl<'a> Lowerer<'a> {
     // =============================== driver ===============================
 
-    fn lower(&mut self, command_index: usize) -> Result<LoweredGoal, TranslateError> {
+    fn lower(
+        &mut self,
+        command_index: usize,
+        posture: TemporalPosture,
+    ) -> Result<LoweredGoal, TranslateError> {
         let cmd = self.world.commands.get(command_index).ok_or_else(|| {
             TranslateError::LoweringUnsupported {
                 what: "command index out of range".to_owned(),
@@ -581,8 +636,9 @@ impl<'a> Lowerer<'a> {
             provenance: Provenance::Command,
         });
 
-        // Defer if any temporal operator was lowered (translation-ref §2.3).
-        if let Some((op, span)) = self.temporal {
+        // Defer if any temporal operator was lowered (translation-ref §2.3) —
+        // unless the caller is the Rung-6 temporal path, which consumes them.
+        if let (TemporalPosture::Defer, Some((op, span))) = (posture, self.temporal) {
             return Err(TranslateError::TemporalUnsupported { op, span });
         }
 

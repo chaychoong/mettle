@@ -32,6 +32,7 @@ use crate::eval::self_check;
 use crate::ir::{Ir, RelId};
 use crate::lower::LoweredGoal;
 use crate::scope::ScopedUniverse;
+use crate::temporal::UnrolledBounds;
 
 /// Solver knobs (translation-ref §2.4): the LEDGER-001 overflow switch plus the
 /// **deterministic effort budgets**. Kept as a struct so mt-036/Rung-4 can
@@ -254,11 +255,18 @@ fn allocate_primaries(bounds: &Bounds, cnf: &mut Cnf) -> (PrimaryMap, Vec<Var>, 
 }
 
 /// Translates one lowered command goal to CNF (primary allocation + encoding).
+///
+/// `unrolled` is `Some` only on the **temporal** path (mt-066/mt-067): its
+/// per-state relation copies replace the static bounds, and the lasso back-loop
+/// selector is minted over its trace length so
+/// [`crate::ir::FormulaKind::LoopIs`] atoms have a solver variable to resolve
+/// to. `None` reproduces the static pipeline byte-for-byte.
 fn translate(
     ir: &Ir,
     scoped: &ScopedUniverse,
     goal: &LoweredGoal,
     bounds: &BoundsResult,
+    unrolled: Option<&UnrolledBounds>,
     opts: SolveOptions,
 ) -> Result<Translated, TranslateError> {
     let mut cnf = Cnf::new();
@@ -268,11 +276,15 @@ fn translate(
     // seam — the primary allocator, encoder, decoder, and self-check treat a
     // skolem exactly like any other bounded relation (zero special-casing). Bound
     // by `RelId` (allocation, source-walk order), so numbering stays deterministic.
-    let mut aug_bounds = bounds.bounds.clone();
+    let mut aug_bounds = unrolled.map_or_else(|| bounds.bounds.clone(), |u| u.bounds.clone());
     for (rel, bound) in &goal.skolem_bounds {
         aug_bounds.bind(*rel, bound.clone());
     }
     let (prim, primary_vars, layout) = allocate_primaries(&aug_bounds, &mut cnf);
+    // Minted *after* the primaries so a temporal encode's primary numbering is
+    // exactly the numbering the same (unrolled) bounds would get statically —
+    // the selector's `k` variables trail them (STYLE D1).
+    let lasso = unrolled.map(|u| crate::temporal::LassoSelector::mint(&mut cnf, u.k));
 
     // Symmetry-breaking plan (translation-ref §16): the coarsest atom partition +
     // the post-skolem relation order for the lex-leader predicate. Built only when
@@ -304,6 +316,7 @@ fn translate(
         opts,
         bounds.int_sig,
         bounds.seq_int_sig,
+        lasso.as_ref(),
     );
     let (goal_bool, mut cnf) = encoder.finish_goal(goal.goal, sbp_plan.as_ref(), opts.symmetry)?;
 
@@ -322,6 +335,43 @@ fn translate(
         trivially_unsat,
         bounds: aug_bounds,
     })
+}
+
+/// Solves one **temporal** lowered goal at a fixed trace length (mt-066).
+///
+/// `goal` must be the output of
+/// [`lower_temporal_command`](crate::temporal_lower::lower_temporal_command)
+/// over the same `unrolled` view — the two are a matched pair: the goal's
+/// relation references are the view's per-state copies, and its
+/// [`crate::ir::FormulaKind::LoopIs`] atoms range over its trace length.
+///
+/// A trace-length *sweep* (`for k in [mintrace, maxtrace]`, first SAT wins —
+/// alloy6-temporal.md §(c)) is the driver's (mt-067) job; this is one length.
+/// The debug self-check is deliberately skipped: re-evaluating the goal needs
+/// the solved loop state, which a decoded [`Instance`] does not carry.
+///
+/// # Errors
+/// The same typed errors as [`solve_goal`].
+pub fn solve_temporal_goal(
+    ir: &Ir,
+    scoped: &ScopedUniverse,
+    goal: &LoweredGoal,
+    bounds: &BoundsResult,
+    unrolled: &UnrolledBounds,
+    opts: &SolveOptions,
+) -> Result<SolveVerdict, TranslateError> {
+    let t = translate(ir, scoped, goal, bounds, Some(unrolled), *opts)?;
+    if t.trivially_unsat {
+        return Ok(SolveVerdict::Unsat);
+    }
+    let mut solver = CdclSolver::new(&t.cnf);
+    Ok(
+        match solver.solve_within(opts.conflict_budget.unwrap_or(u64::MAX)) {
+            None => SolveVerdict::Unknown,
+            Some(Outcome::Sat(model)) => SolveVerdict::Sat(decode(&t.layout, &t.universe, &model)),
+            Some(Outcome::Unsat) => SolveVerdict::Unsat,
+        },
+    )
 }
 
 /// Decodes an assignment into an instance (STYLE I2 bounds-respect asserted).
@@ -365,7 +415,7 @@ pub fn solve_goal(
     bounds: &BoundsResult,
     opts: &SolveOptions,
 ) -> Result<SolveVerdict, TranslateError> {
-    let t = translate(ir, scoped, goal, bounds, *opts)?;
+    let t = translate(ir, scoped, goal, bounds, None, *opts)?;
     if t.trivially_unsat {
         return Ok(SolveVerdict::Unsat);
     }
@@ -516,7 +566,7 @@ pub fn enumerate<'a>(
     bounds: &BoundsResult,
     opts: &SolveOptions,
 ) -> Result<InstanceEnumerator<'a>, TranslateError> {
-    let t = translate(ir, scoped, goal, bounds, *opts)?;
+    let t = translate(ir, scoped, goal, bounds, None, *opts)?;
     // A trivially-UNSAT goal (the encoded `Bool` folded to constant-false) gets an
     // empty clause, so the solver reports UNSAT on the first `next()` and the
     // enumerator terminates cleanly with no instances.

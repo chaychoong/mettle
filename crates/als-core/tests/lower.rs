@@ -678,6 +678,7 @@ fn determinism_lower_twice_identical() {
 fn pf(ir: &Ir, f: FormulaId) -> String {
     match &ir.formulas[f].kind {
         FormulaKind::Const(b) => b.to_string(),
+        FormulaKind::LoopIs { state } => format!("loop@{state}"),
         FormulaKind::Not(x) => format!("!({})", pf(ir, *x)),
         FormulaKind::And(xs) => format!(
             "({})",

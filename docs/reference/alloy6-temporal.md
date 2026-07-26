@@ -756,6 +756,69 @@ a mettle-side conformance test asserting the cited behavior, except 4):
 6. Skolem-relation mutability in a temporal model: consistent with
    `Skolemizer.java:494-526`, but no probe pins it directly.
 
+## (l) The LTL-on-lasso expansion cells (mt-066 probe wave)
+
+Pinned by a dedicated 8-fixture / 45-cell live probe wave while
+implementing the temporal lowering (harness, fixtures, predictions, and
+verbatim jar output: `scratchpad/probe/mt066/` — same discipline as
+mt-063; all cells at `symmetry=20, noOverflow=false, sat4j`, every
+prediction recorded before running). The load-bearing facts:
+
+1. **Past operators evaluate against the true lasso history, not the
+   physical prefix** — the decisive cell is **P-D2** (an alternation
+   gadget forcing `traceLength=2, loopState=0`, with
+   `always ((once some A) implies (some B))`): honest-physical-prefix
+   predicts SAT, the jar answers **UNSAT** (at logical time 2 the trace
+   re-enters state 0 with `once some A` now true). Confirmed independently
+   via `historically` (P-H1) and a depth-2 nest (P-H2). **This supersedes
+   ADR-0015 §2's original "honest prefix" shorthand** (ADR amended); it is
+   what the jar's `UNROLL_MAP`/`LEVEL`/`L_PREFIX`/`TemporalInstance.unrolls`
+   machinery exists for. mettle implements it by unrolling the timeline
+   `d` extra loop copies, `d` = past-nesting depth.
+2. **`before` is strong previous** — false at time 0 regardless of body
+   (P-A1/A2: both `before (some A)` and `before (no A)` are UNSAT when
+   asserted at the initial state), and loop-aware at the back-edge
+   (P-J1–J3: `always (after (before φ)) ≡ always φ`).
+3. **`once`/`historically` include the present**; at time 0 they collapse
+   to it (P-A3–A5).
+4. **Operand order for the binary four is standard** — the right operand
+   is the goal/obligation: `until`/`releases` (P-B1–B7),
+   `since`/`triggered` (P-A6–A9; at time 0 both collapse to the right
+   operand). `releases`/`triggered` are the De Morgan duals of
+   `until`/`since`.
+5. **Prime/`after` step the loop-aware successor** — at `exactly 1 steps`
+   the only state's successor is itself (P-C1/C2); prime chains step
+   *through* the back-loop (P-C5 UNSAT at k=2 / P-C6 SAT at k=3).
+6. **The per-conjunct `always` seam**
+   (`TranslateAlloyToKodkod.makeFacts:255-314`): a top-level `fact` and
+   the command body bind **state 0 only** (P-F3); field-decl/domain facts
+   (`:268-269`/`:281-282`) and sig appended facts (`:307-308`) are
+   `always`-wrapped iff temporal (P-F4–F6); a field `disj` group
+   (`:291-292`/`:297-298`) is `always`-wrapped iff the decl is `var` —
+   mettle keys this last one on is-temporal instead, which additionally
+   wraps a *static* `disj` group on a `var` sig (recorded divergence,
+   unprobed, narrow).
+7. **`BoundsComputer`'s temporal-only structural constraints**, all
+   observable and probed: **union rigidity** — a static parent of a `var`
+   child keeps its whole population rigid, `always (sum' = sum)`
+   (`:206-207`, P-E0/E1); the **`[electrum]` subsig-migration ban** — an
+   atom may never move between `var` sibling subsigs (`:164-173`/
+   `:195-199`, P-E2/E3); a `var` sig's `one`/`some`/`lone` multiplicity
+   holds **at every state** (`:473/477/479`, P-E4/E5).
+8. **§(k) item 6 is now closed by probe**: a temporal command still
+   skolemizes its outermost non-temporal existentials and the witness is
+   **rigid** — identical in every state (P-F1, `skolem $f1_x` byte-equal
+   across states); an existential under any temporal operator never
+   skolemizes (P-F2, no skolem line).
+
+Still unpinned after this wave (owed to mt-069/mt-067): the minimal
+unroll count (mettle's `d` is argued sufficient, not probed minimal —
+cost, not correctness); `BoundsComputer.size`'s exact `var`-sig
+size-witness quantifier shape (`:284/:288`, masked by rigidity + the
+migration ban in practice); the static-`disj`-group-on-`var`-sig
+divergence in cell 6; per-state symmetry breaking (mt-067 owns it;
+mt-066's tests run at `symmetry=0`).
+
 ## Probe evidence table
 
 Full commands, predictions-before-run, and verbatim jar output for every

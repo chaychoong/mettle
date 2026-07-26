@@ -206,8 +206,9 @@ fn formula_const(ir: &Ir, bounds: &Bounds, id: crate::ir::FormulaId) -> bool {
             translation_constant(ir, bounds, *lhs) && translation_constant(ir, bounds, *rhs)
         }
         FormulaKind::MultTest { expr, .. } => rel_const(ir, bounds, *expr),
-        // A quantifier binds a variable — its body is not a translation constant.
-        FormulaKind::Quant { .. } => false,
+        // A quantifier binds a variable — its body is not a translation
+        // constant; the lasso loop atom is a free solver variable (mt-066).
+        FormulaKind::Quant { .. } | FormulaKind::LoopIs { .. } => false,
         FormulaKind::TemporalUnary { body, .. } => formula_const(ir, bounds, *body),
         FormulaKind::TemporalBinary { lhs, rhs, .. } => {
             formula_const(ir, bounds, *lhs) && formula_const(ir, bounds, *rhs)

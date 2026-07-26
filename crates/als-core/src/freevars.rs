@@ -104,7 +104,8 @@ impl Builder<'_> {
         }
         let mut set = BTreeSet::new();
         match &self.ir.formulas[id].kind {
-            FormulaKind::Const(_) => {}
+            // A constant and the lasso loop atom are both closed (mt-066).
+            FormulaKind::Const(_) | FormulaKind::LoopIs { .. } => {}
             FormulaKind::Not(f) => set = self.formula(*f),
             FormulaKind::And(parts) | FormulaKind::Or(parts) => {
                 for &p in parts {

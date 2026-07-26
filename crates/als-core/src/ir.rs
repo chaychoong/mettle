@@ -201,6 +201,22 @@ pub enum FormulaKind {
         /// Right operand.
         rhs: FormulaId,
     },
+    /// **The lasso back-loop atom** (mt-066): true exactly when the trace loops
+    /// back to physical state `state`.
+    ///
+    /// The one node the temporal lowering ([`crate::temporal_lower`]) emits that
+    /// is neither relational nor integer: it is a *solver-level* proposition,
+    /// encoded as the corresponding [`crate::temporal::LassoSelector`] variable
+    /// (which the encoder receives from the driver, and which is exactly-one
+    /// constrained). Every SAT temporal instance is a lasso, so exactly one of
+    /// `LoopIs { state: 0..k }` holds (alloy6-temporal.md §(c)).
+    ///
+    /// Trivially inert in the static pipeline: no static lowering ever emits it,
+    /// so no static goal can contain one.
+    LoopIs {
+        /// The physical state the trace loops back to (`0 <= state < k`).
+        state: usize,
+    },
 }
 
 /// Primitive quantifiers after desugaring.

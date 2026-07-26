@@ -126,6 +126,10 @@ pub(crate) struct Encoder<'a> {
     /// recognizing a bare-`Int` quantifier domain.
     int_sig: Option<RelId>,
     seq_int_sig: Option<RelId>,
+    /// The lasso back-loop selector (mt-066), when encoding a temporal goal:
+    /// [`crate::ir::FormulaKind::LoopIs`] resolves through it. `None` for every
+    /// static goal, which is what keeps the temporal path inert here.
+    lasso: Option<&'a crate::temporal::LassoSelector>,
     // Env-cached grounding memo (mt-049): keyed by `(node id, free-var bindings)`.
     // `BTreeMap` (STYLE D2): keys are ordered, iteration never escapes.
     matrix_cache: BTreeMap<(RelExprId, EnvKey), Matrix>,
@@ -155,6 +159,7 @@ impl<'a> Encoder<'a> {
         opts: crate::solve::SolveOptions,
         int_sig: Option<RelId>,
         seq_int_sig: Option<RelId>,
+        lasso: Option<&'a crate::temporal::LassoSelector>,
     ) -> Self {
         let universe_len = bounds.universe.len();
         let int_end = int_start + if bitwidth >= 1 { 1usize << bitwidth } else { 0 };
@@ -178,6 +183,7 @@ impl<'a> Encoder<'a> {
             behind_implies: false,
             int_sig,
             seq_int_sig,
+            lasso,
             matrix_cache: BTreeMap::new(),
             formula_cache: BTreeMap::new(),
             int_cache: BTreeMap::new(),
@@ -810,10 +816,27 @@ impl<'a> Encoder<'a> {
             FormulaKind::TemporalUnary { .. } | FormulaKind::TemporalBinary { .. } => {
                 Err(TranslateError::LoweringUnsupported {
                     what: "temporal operator reached the encoder — a lowering invariant \
-                           failure; temporal solving is Rung 6"
+                           failure; the temporal lowering (mt-066) eliminates them"
                         .to_owned(),
                     span: node.span,
                 })
+            }
+            // The lasso back-loop atom (mt-066): the driver minted an exactly-one
+            // selector over the `k` candidate loop states, so the atom *is* that
+            // variable. Trivially inert when no such atom occurs — a static goal
+            // never contains one, so `lasso` stays `None` and this arm is dead.
+            FormulaKind::LoopIs { state } => {
+                let state = *state;
+                let span = node.span;
+                let Some(lasso) = self.lasso else {
+                    return Err(TranslateError::LoweringUnsupported {
+                        what: "a lasso loop atom reached the encoder without a loop \
+                               selector — the temporal driver must mint one"
+                            .to_owned(),
+                        span,
+                    });
+                };
+                Ok(Bool::Lit(als_solve::Lit::positive(lasso.loop_var(state))))
             }
         }
     }

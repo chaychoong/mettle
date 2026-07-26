@@ -53,14 +53,25 @@ before optimizing, and per-length encodes keep determinism trivial).
    `Bounds`/universe machinery — atoms are rigid, only relation values
    vary); static relations bind once. The lasso is a selector: one
    loop-index variable set `l ∈ [0,k-1]`, exactly-one-encoded.
-2. **Lowering (mt-066):** temporal formulas lower by the standard
-   LTL-on-lasso translation — a formula is lowered *at a state index*,
-   `'`/`after` step through the successor function (which follows the
-   back-loop at state k−1), past operators walk the honest prefix, and
-   `always`/`eventually`/`until`/`releases` expand over the k states with
-   loop closure. Skolemization under temporal operators is blocked with
-   the existing `Pol.blocked` machinery (the jar-conform rule is already
-   pinned and partially shipped at mt-055).
+2. **Lowering (mt-066):** temporal formulas lower by the LTL-on-lasso
+   translation — a formula is lowered *at a logical time index* over a
+   concrete timeline, `'`/`after` step through the loop-aware successor,
+   and `always`/`eventually`/`until`/`releases` expand over the reachable
+   times with loop closure. **Amended at implementation (2026-07-26):**
+   this ADR's original shorthand "past operators walk the honest prefix"
+   was **refuted by live probe P-D2** (`alloy6-temporal.md` §(l)) — the
+   jar evaluates past operators against the true lasso history (its
+   `UNROLL_MAP`/`LEVEL`/`TemporalInstance.unrolls` machinery exists for
+   exactly this). mettle implements the jar: the timeline is the k
+   physical states unrolled `d` additional loop copies, `d` = the
+   formula's past-nesting depth (sufficiency argued in
+   `als_core::temporal_lower`'s module doc), and the loop index is split
+   once above the whole goal (`⋁_l (LoopIs(l) ∧ Goal_l)`) because the
+   timeline's shape depends on `l`. Skolemization under temporal
+   operators is blocked with the existing `Pol.blocked` machinery (the
+   jar-conform rule is already pinned and partially shipped at mt-055);
+   a temporal command's outermost non-temporal existentials still
+   skolemize, with rigid witnesses (probe P-F1/F2).
 3. **Solve driver & verdicts (mt-067):** `for k in [min,max]` — encode,
    solve, return the first SAT as a k-state lasso trace; exhausting the
    range yields UNSAT-within-bound. Typed defers: `1..` (unbounded) gets

@@ -85,6 +85,15 @@ pub struct BoundsResult {
     /// The sig-hierarchy / subset / size / multiplicity constraint formulas, in
     /// deterministic emission order. mt-031 conjoins these into the goal (§2.5).
     pub constraints: Vec<FormulaId>,
+    /// The `<Sig>_remainder` relation of each non-abstract prim sig that has
+    /// children — the part of the sig's population belonging to none of them.
+    ///
+    /// Exposed for the temporal path only (mt-066): the `[electrum]`
+    /// subsig-migration ban (`BoundsComputer.java:195-199`) is stated over the
+    /// remainder *relation*, and it cannot be recovered from
+    /// [`Self::sig_denote`] (which is the union the remainder is a summand of).
+    /// Nothing in the static pipeline reads it.
+    pub remainder_rel: BTreeMap<SigId, RelId>,
     /// Denotation of the `Int/next` builtin binary relation (`{i → i+1}`,
     /// translation-ref §12) — the seam `util/integer`'s `next`/`prev`/`nexts`/
     /// `prevs` and the seq contiguity fact reference. `None` when the model uses
@@ -197,6 +206,7 @@ impl<'a> BoundsBuilder<'a> {
             sig_denote: self.sig_denote,
             field_denote: self.field_denote,
             constraints: self.constraints,
+            remainder_rel: self.remainder_rel,
             int_next: self.int_next,
             int_zero: self.int_zero,
             int_sig: self.int_sig,
