@@ -4,6 +4,7 @@ Every doc in the project is reachable from here. Nothing is orphaned. Superseded
 
 ## Live state (always current)
 - **[STATE.md](STATE.md)** — where we are right now; read this first on pickup.
+- **[REVIEW-v0.1.0.md](REVIEW-v0.1.0.md)** — the pending combined feature-complete review: the owner's copy-paste test script (release channels, Rung-6 gate, frontend, the `check … for 1 steps` fork). One-shot; folded into STATE and marked done after the review.
 - **[ROADMAP.md](ROADMAP.md)** — the North Star and the human-testable rungs.
 - **[TASKS.md](TASKS.md)** — beads-style task ledger.
 
