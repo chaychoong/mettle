@@ -15,23 +15,16 @@ with all four platform archives + shell installer, the Homebrew formula is
 live on `chaychoong/homebrew-tap` (installed, smoked, and uninstalled on this
 machine), the Docker image is published to GHCR, and CI is green on the tag.
 
-## 0. One chore first (release plumbing only you can do)
+## 0. Release plumbing — all done, no chores
 
-1. **`HOMEBREW_TAP_TOKEN`** — create a fine-grained PAT (web UI only; there
-   is no API for minting PATs): <https://github.com/settings/personal-access-tokens/new>,
-   repository access = only `chaychoong/homebrew-tap`, permissions =
-   **Contents: read & write**. Add it as an Actions secret named
-   `HOMEBREW_TAP_TOKEN` on `chaychoong/mettle`
-   (`gh secret set HOMEBREW_TAP_TOKEN --repo chaychoong/mettle`). Until it
-   exists, each tag's `publish-homebrew-formula` job fails red with
-   `Input required and not supplied: token` (v0.1.0's formula was published
-   by hand, so `brew install` already works today). Once the secret exists,
-   "Re-run failed jobs" on the v0.1.0 release run exercises the automated
-   publish end-to-end — the re-cut tag's workflow targets the right tap.
-
-_(The container image is public and pull-verified — no chore. Gotcha for
-other machines: a stale `docker login ghcr.io` credential makes GHCR return
-`denied` even for public images; `docker logout ghcr.io` fixes it.)_
+Both owner chores closed 2026-07-27: the `HOMEBREW_TAP_TOKEN` secret exists
+and the re-run v0.1.0 release went green end-to-end (all builds, `host`,
+`publish-homebrew-formula` — the axo-bot formula commit landed on the tap
+and was install-verified — and `announce`). The container image is public
+and pull-verified. Every future `v*` tag publishes fully automatically.
+Gotcha for other machines: a stale `docker login ghcr.io` credential makes
+GHCR return `denied` even for public images; `docker logout ghcr.io` fixes
+it.
 
 ## 1. Fresh install → visualized instance in under a minute (the Rung-5 bar)
 
