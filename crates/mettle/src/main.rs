@@ -42,6 +42,12 @@ use std::process::ExitCode;
 use als_syntax::{dump, parse, ArenaId as _, FileId};
 use als_types::{FilesystemLoader, ModuleGraph, ResolveError};
 
+/// The Alloy version mettle's conformance is measured against — the pinned
+/// oracle jar (ADR-0002, `docs/reference/alloy6-reference.md`). mettle's own
+/// version is independent semver (1.0.0 = the drop-in bar); this constant is
+/// how `--version` states the target without mirroring its number.
+const TRACKED_ALLOY_VERSION: &str = "6.2.0";
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match run(&args) {
@@ -62,7 +68,16 @@ fn run(args: &[String]) -> Result<(), ExitCode> {
         // every other single-binary Rust CLI's convention); it prints and
         // exits 0 same as `-h`/`--help` below, never reaching subcommand
         // dispatch.
-        Some("-V" | "--version") => write_stdout(format!("mettle {}\n", env!("CARGO_PKG_VERSION"))),
+        // The tracked Alloy version rides along (owner decision, 2026-07-28:
+        // mettle keeps its own semver — 1.0.0 stays reserved for the drop-in
+        // bar — and states the conformance target instead of mirroring it).
+        // The authority for that target is the pinned oracle (ADR-0002,
+        // docs/reference/alloy6-reference.md); update this string when the
+        // pin moves.
+        Some("-V" | "--version") => write_stdout(format!(
+            "mettle {} (tracking Alloy {TRACKED_ALLOY_VERSION})\n",
+            env!("CARGO_PKG_VERSION")
+        )),
         Some("-h" | "--help") | None => {
             print_usage();
             // A bare `--help`/no-args is a successful help request; an

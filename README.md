@@ -1,6 +1,6 @@
 # mettle
 
-**A conformance-tested reimplementation of Alloy 6 as a single self-contained binary.** No JVM. mettle reads standard `.als` files — the same language as the reference Alloy Analyzer — finds instances and counterexamples, steps through temporal traces, and visualizes it all in your browser, from a first-class CLI.
+**A conformance-tested reimplementation of Alloy 6 as a single self-contained binary.** No JVM. mettle reads standard `.als` files — the same language as the reference Alloy Analyzer — finds instances and counterexamples, steps through temporal traces, and visualizes it all in your browser, from a first-class CLI. It tracks **Alloy 6.2.0** (the latest release of the reference implementation); mettle's own version number is independent, with 1.0.0 reserved for verified drop-in parity.
 
 <picture>
   <source srcset="docs/screenshots/graph-dark.png" media="(prefers-color-scheme: dark)">

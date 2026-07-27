@@ -23,7 +23,10 @@ fn dash_capital_v_prints_the_cargo_package_version_and_exits_zero() {
     assert!(out.status.success());
     assert_eq!(
         stdout(&out),
-        format!("mettle {}\n", env!("CARGO_PKG_VERSION"))
+        format!(
+            "mettle {} (tracking Alloy 6.2.0)\n",
+            env!("CARGO_PKG_VERSION")
+        )
     );
 }
 
