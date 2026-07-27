@@ -98,17 +98,21 @@ fn test1_count_smoke_matches_jar() {
     assert!(report.panics.is_empty());
 }
 
-/// mt-069 workstream 3: temporal counting posture. ADR-0015 consequence 4
-/// defers trace enumeration entirely, so **every** temporal command that
-/// solves SAT gets the typed `skip_temporal_trace` count bucket — even
-/// `leader.als`, whose commands DO have real jar counts cached in
-/// `baselines/alloytools-models-count-sb0.json` (probe T-26 reproduced the
-/// jar's own SB-0 count live: `count:1` for commands 1 and 3). This is
-/// jar-free (cached committed baselines, no live JVM): it pins that the
-/// skip is unconditional and that a real cached count entry is never
-/// silently misread as a `COUNT_MISMATCH`.
+/// mt-076: temporal counting posture, **inverted**. `skip_temporal_trace` is
+/// retired — `leader.als`'s two real cached jar counts (probe T-26 reproduced
+/// the jar's own SB-0 `count:1` for commands 1 and 3 live) are now *compared*,
+/// and mettle's own trace enumeration reproduces them. This is the single
+/// sharpest live check that `als_core`'s [`TraceEnumerator`] walks the same set
+/// the jar's `next()`-until-UNSAT loop does: the number is 1, and 1 is only
+/// right if the configuration-hold and the across-length de-duplication are
+/// both right.
+///
+/// Jar-free (cached committed baselines, no live JVM). What it pins, in order:
+/// nothing lands in the retired bucket; the two comparable commands match; the
+/// third is the *existing* typed `skip_enum_budget`, not a new bucket and not a
+/// fabricated count; no mismatch is manufactured.
 #[test]
-fn leader_als_stays_skip_temporal_trace_despite_its_real_count_baseline() {
+fn leader_als_counts_match_its_real_jar_baseline() {
     let root = workspace_root();
     let cfg = GaugeConfig {
         roots: vec![root.join("corpus/alloytools-models/models/examples/temporal/leader.als")],
@@ -122,12 +126,23 @@ fn leader_als_stays_skip_temporal_trace_despite_its_real_count_baseline() {
         count_symmetry: 0,
         count: true,
         count_cap: 10_000,
+        // The sweep's own default, deliberately: measured, a smaller budget
+        // pushes commands 1 and 3 into `skip_enum_budget` too (their counts are
+        // 1, but reaching that answer still means sweeping every length in a
+        // `10 steps` range), which would gut the test. This is the slowest test
+        // in the workspace as a result — a couple of minutes in a debug build —
+        // and it earns it: it is the only live check that mettle's trace
+        // enumeration walks the same set the jar's does.
         enum_budget: 250_000_000,
         enumerate_all: false,
         jar_path: jar_path(),
         shim_source: PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/shim/OracleShim.java")),
         jar_timeout: Duration::from_mins(5),
-        jobs: 1,
+        // Four workers, one per command: the gauge's stdout and JSON are
+        // byte-identical at any `--jobs` for a FULL run, and this is the
+        // slowest test in the workspace (mt-076's enumeration runs on top of
+        // the verdict sweep), so there is no reason to serialize it.
+        jobs: 4,
         // Cached committed baselines only — this test must not need a JDK.
         live_jar: false,
         fail_fast: false,
@@ -152,10 +167,22 @@ fn leader_als_stays_skip_temporal_trace_despite_its_real_count_baseline() {
     );
     assert_eq!(
         report.count_buckets.get("skip_temporal_trace"),
-        Some(&3),
-        "every SAT temporal command is skip_temporal_trace, never a fabricated \
-         count, even though this file's SB-0 baseline holds real jar counts; \
-         buckets={:?}",
+        None,
+        "mt-076 retired the bucket outright; buckets={:?}",
+        report.count_buckets
+    );
+    assert_eq!(
+        report.count_buckets.get("count_match"),
+        Some(&2),
+        "commands 1 and 3 have real cached jar counts (both 1) and mettle's \
+         trace enumeration reproduces them; buckets={:?}",
+        report.count_buckets
+    );
+    assert_eq!(
+        report.count_buckets.get("skip_enum_budget"),
+        Some(&1),
+        "command 0's space is past the enumeration budget — the EXISTING typed \
+         skip, never a new bucket and never a truncated count; buckets={:?}",
         report.count_buckets
     );
     assert!(

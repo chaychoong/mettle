@@ -179,7 +179,7 @@ impl SolvedTrace {
 
     /// The trace state the current time index sits at — the pinned wrap/clamp
     /// rule (§(h), probes T-22/T-23/T-25), and what the session reports.
-    fn trace_state(&self) -> usize {
+    pub(crate) fn trace_state(&self) -> usize {
         normalize_state(self.state, self.k(), self.loop_state)
     }
 
@@ -284,6 +284,19 @@ impl<'a> ReplContext<'a> {
     /// The universe results render against.
     pub(crate) fn universe(&self) -> &Universe {
         &self.instance.universe
+    }
+
+    /// The trace state this evaluator currently sits at, or `None` for a static
+    /// command.
+    ///
+    /// This is the reference GUI's `current` field: `VizGUI` and its evaluator
+    /// console share one state index (`OurConsole.setCurrentState` is called
+    /// whenever the viz moves — alloy6-temporal.md §(h)), and `doFork()` sends
+    /// `current + 1`. mettle's evaluator pane owns that index (`:state N`
+    /// moves it), so "New Fork" reads it from here rather than inventing a
+    /// second one.
+    pub(crate) fn trace_state(&self) -> Option<usize> {
+        self.trace.as_ref().map(SolvedTrace::trace_state)
     }
 
     /// The one line a temporal session opens with: what the trace looks like,

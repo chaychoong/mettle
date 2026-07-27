@@ -577,10 +577,22 @@ fn fold_command(
             count_bucket = Some(bucket.clone());
         }
         CountDisp::PendingJar(n) => {
-            jar_todo
-                .entry(c.canon.clone())
-                .or_default()
-                .push((c.rel.clone(), c.idx, *n, pos));
+            jar_todo.entry(c.canon.clone()).or_default().push((
+                c.rel.clone(),
+                c.idx,
+                *n,
+                pos,
+                false,
+            ));
+        }
+        CountDisp::PendingJarConfigRelative(n) => {
+            jar_todo.entry(c.canon.clone()).or_default().push((
+                c.rel.clone(),
+                c.idx,
+                *n,
+                pos,
+                true,
+            ));
         }
     }
     report.per_command.push(PerCommand {

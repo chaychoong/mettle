@@ -17,11 +17,12 @@ use std::fmt::Write as _;
 use als_core::ir::Ir;
 use als_core::{
     BoundsResult, Instance, InstanceEnumerator, LoweredGoal, ScopedUniverse, SolveOptions,
-    TemporalTrace, TranslateError,
+    TemporalTrace, TraceAdvance, TraceEnumerator, TraceStep, TranslateError,
 };
 use als_instance::{write_instance_xml, XmlRequest, XmlSolution};
 use als_sterling::{
-    Button, ClickRefused, ProviderMeta, ServeSession, SessionDatum, CLICK_NEXT, TEMPORAL_CLICKS,
+    Button, ClickRefused, ProviderMeta, ServeSession, SessionDatum, CLICK_NEW_FORK, CLICK_NEW_INIT,
+    CLICK_NEXT, CLICK_NEXT_CONFIG, CLICK_NEXT_TRACE, TEMPORAL_CLICKS,
 };
 use als_syntax::ast::CmdKind;
 use als_types::{ModuleGraph, ResolvedSession, ResolvedWorld};
@@ -39,8 +40,9 @@ pub(super) struct StaticArtifacts {
     pub(super) opts: SolveOptions,
 }
 
-/// A temporal command's solved artifacts. No enumerator borrows these (trace
-/// enumeration is mt-076), so the session simply owns them.
+/// A temporal command's solved artifacts, pinned for the trace enumerator's
+/// lifetime (mt-076 — the enumerator borrows `scoped`/`bounds` for as long as
+/// it lives, exactly as the static enumerator borrows [`StaticArtifacts`]).
 pub(super) struct TemporalArtifacts {
     pub(super) ir: Ir,
     pub(super) scoped: ScopedUniverse,
@@ -74,10 +76,25 @@ pub(super) struct StaticSession<'a> {
     exhausted: bool,
 }
 
-/// A temporal command's session: one lasso, no enumeration yet (mt-076).
+/// A temporal command's session: the trace on screen, and the enumerator that
+/// answers the reference GUI's four exploration buttons (mt-076).
 pub(super) struct TemporalSession<'a> {
     generator: String,
+    artifacts: &'a TemporalArtifacts,
+    context: ViewContext<'a>,
+    enumerator: TraceEnumerator<'a>,
     shown: Shown<'a>,
+    /// How many datum ids have been minted (see [`StaticSession::minted`]).
+    minted: usize,
+    /// Set once **path** enumeration has run out. Only "Next Trace" retires:
+    /// the other three verbs ask different questions of the same length and can
+    /// still answer (a fork is a fresh restricted search, and a new
+    /// configuration restarts the sweep).
+    paths_exhausted: bool,
+    /// Set once the enumerator reports its effort budget spent. Every button
+    /// goes at that point — nothing further is reachable, and the space was
+    /// never shown empty, so "no more" would be a lie.
+    budget_spent: bool,
 }
 
 /// The borrowed inputs both views need to render an instance.
@@ -153,13 +170,19 @@ impl<'a> ViewContext<'a> {
 
     /// The temporal twin: the whole lasso as one document, and an evaluator
     /// sitting at state 0 of it.
+    ///
+    /// `ir` is the **enumerator's** arena, not the session's: a trace
+    /// references the per-state copies and skolems its own trace length
+    /// allocated, and none of those exist in the pre-solve arena
+    /// [`TemporalArtifacts`] holds (see [`TraceEnumerator::ir`]).
     fn show_trace(
         &self,
         artifacts: &TemporalArtifacts,
+        ir: &Ir,
         id: String,
         trace: &TemporalTrace,
     ) -> Result<Shown<'a>, TranslateError> {
-        let mut ir = artifacts.ir.clone();
+        let mut ir = ir.clone();
         let xml = write_instance_xml(
             &mut ir,
             &XmlRequest {
@@ -173,6 +196,8 @@ impl<'a> ViewContext<'a> {
                 solution: XmlSolution::Trace { trace },
             },
         )?;
+        // The XML writer appended to its own copy; the evaluator gets a fresh
+        // one from the same base so neither sees the other's nodes.
         // Cloned rather than moved out of the trace: the trace itself stays
         // alive as the thing the XML above describes.
         let eval_artifacts = (*trace.artifacts).clone();
@@ -181,7 +206,7 @@ impl<'a> ViewContext<'a> {
             self.graph,
             self.graph.root,
             SolvedCommand {
-                ir: artifacts.ir.clone(),
+                ir,
                 bounds: artifacts.bounds.clone(),
                 scoped: artifacts.scoped.clone(),
                 goal: eval_artifacts.goal,
@@ -293,7 +318,7 @@ impl ServeSession for StaticSession<'_> {
 
     fn click(&mut self, on_click: &str) -> Result<(), ClickRefused> {
         if TEMPORAL_CLICKS.contains(&on_click) {
-            return Err(temporal_defer(on_click, "this command is not temporal"));
+            return Err(temporal_defer(on_click));
         }
         if on_click != CLICK_NEXT {
             return Err(ClickRefused::unknown(on_click));
@@ -340,16 +365,106 @@ impl<'a> TemporalSession<'a> {
         session: &'a ResolvedSession<'a>,
         graph: &'a ModuleGraph,
         inputs: &SolveInputs<'a>,
-        artifacts: &TemporalArtifacts,
+        artifacts: &'a TemporalArtifacts,
+        enumerator: TraceEnumerator<'a>,
         trace: &TemporalTrace,
     ) -> Result<Self, TranslateError> {
         let context = ViewContext::new(session, graph, inputs);
-        print_solved(inputs, &artifacts.ir, &Solved::Trace(trace));
-        let shown = context.show_trace(artifacts, datum_id(0), trace)?;
+        print_solved(inputs, enumerator.ir(), &Solved::Trace(trace));
+        let shown = context.show_trace(artifacts, enumerator.ir(), datum_id(0), trace)?;
         Ok(TemporalSession {
             generator: inputs.header.to_owned(),
+            artifacts,
+            context,
+            enumerator,
             shown,
+            minted: 0,
+            paths_exhausted: false,
+            budget_spent: false,
         })
+    }
+
+    /// The state "New Fork" forks *after* — the reference GUI's `current`
+    /// field, which sends `fork(current + 1)`.
+    ///
+    /// **Known gap, for mt-075.** The pinned Sterling `click` message carries
+    /// nothing but the verb string, so a client cannot tell the provider which
+    /// state its graph view is showing. mettle reads it from the **evaluator
+    /// pane** instead, which is not a workaround so much as the reference's own
+    /// arrangement: `VizGUI` and `OurConsole` share one `current` index
+    /// (alloy6-temporal.md §(h) — `setCurrentState` is called from the viz's
+    /// nav arrows), so "the state the evaluator is pointed at" *is* "the state
+    /// the user is looking at" in Alloy too. Today the only way to move it is
+    /// the evaluator's own `:state N`; when mt-075's trace stepper exists it
+    /// should move this same index, and if it ever needs to move it without an
+    /// evaluator round trip the protocol needs a payload the pinned shape does
+    /// not have — an ADR-0016-style amendment, decided then, not guessed now.
+    fn displayed_state(&self) -> usize {
+        self.shown.evaluator.trace_state().unwrap_or(0)
+    }
+
+    /// Runs one enumerator step and, if it produced a trace, puts it on screen.
+    fn take(&mut self, step: TraceStep, verb: &str) -> Result<(), ClickRefused> {
+        let advance = self.enumerator.advance(step).map_err(|e| ClickRefused {
+            code: "export-failed",
+            message: format!("`{verb}` could not be answered: {e}."),
+        })?;
+        let trace = match advance {
+            TraceAdvance::Trace(trace) => trace,
+            TraceAdvance::Exhausted => {
+                if matches!(step, TraceStep::NextPath) {
+                    self.paths_exhausted = true;
+                }
+                return Err(exhausted_verb(verb, step));
+            }
+            // The reference re-displays the byte-identical original here, which
+            // is indistinguishable from doing nothing; saying so is more use
+            // than silently redrawing the same picture.
+            TraceAdvance::SameConfig => {
+                return Err(ClickRefused {
+                    code: "no-more-instances",
+                    message: "this model has no static (non-`var`) relations left free, so \
+                              there is only one configuration to show."
+                        .to_owned(),
+                })
+            }
+            TraceAdvance::BudgetExhausted => {
+                self.budget_spent = true;
+                return Err(ClickRefused {
+                    code: "enumeration-budget",
+                    message: "the enumeration budget ran out, so there may be further traces \
+                              this session cannot reach."
+                        .to_owned(),
+                });
+            }
+            TraceAdvance::PrimaryVarCap { k, primaries } => {
+                return Err(ClickRefused {
+                    code: "enumeration-budget",
+                    message: format!(
+                        "trace length {k} needs {primaries} primary variables, past this \
+                         session's cap; the search stopped short of it."
+                    ),
+                })
+            }
+        };
+        self.minted += 1;
+        let shown = self
+            .context
+            .show_trace(
+                self.artifacts,
+                self.enumerator.ir(),
+                datum_id(self.minted),
+                &trace,
+            )
+            .map_err(|e| ClickRefused {
+                code: "export-failed",
+                message: format!(
+                    "the next trace was found but could not be rendered as XML ({e}); \
+                     it has been skipped."
+                ),
+            })?;
+        self.shown = shown;
+        Ok(())
     }
 }
 
@@ -363,10 +478,7 @@ impl ServeSession for TemporalSession<'_> {
             id: self.shown.id.clone(),
             generator_name: self.generator.clone(),
             xml: self.shown.xml.clone(),
-            // No buttons at all until mt-076: a "Next Trace" that produced the
-            // same trace, or a wrong one, is worse than no button (ADR-0016
-            // Decision 2).
-            buttons: Vec::new(),
+            buttons: self.buttons(),
         }
     }
 
@@ -374,25 +486,110 @@ impl ServeSession for TemporalSession<'_> {
         match stale(datum_id, &self.shown.id) {
             Some(message) => message,
             // `:state N` moves where this evaluates, exactly as at the REPL
-            // prompt — the protocol carries no state of its own.
+            // prompt — and, as of mt-076, also moves what "New Fork" forks
+            // after (see `displayed_state`).
             None => repl::eval_line(&mut self.shown.evaluator, expression),
         }
     }
 
     fn click(&mut self, on_click: &str) -> Result<(), ClickRefused> {
-        if TEMPORAL_CLICKS.contains(&on_click) {
-            return Err(temporal_defer(
-                on_click,
-                "trace enumeration is not implemented",
+        if self.budget_spent {
+            return Err(ClickRefused {
+                code: "enumeration-budget",
+                message: "the enumeration budget for this session is spent; no further trace \
+                          is reachable."
+                    .to_owned(),
+            });
+        }
+        match on_click {
+            // The reference's "New" and "New Trace" are the *same* operator —
+            // `fork(-3)` and `fork(-2)` produce byte-identical sequences (probe
+            // P-076-3) — so mettle answers both, rather than pretending to a
+            // distinction the jar does not have.
+            CLICK_NEXT | CLICK_NEXT_TRACE => {
+                if self.paths_exhausted {
+                    return Err(exhausted_verb(on_click, TraceStep::NextPath));
+                }
+                self.take(TraceStep::NextPath, on_click)
+            }
+            CLICK_NEXT_CONFIG => self.take(TraceStep::NextConfig, on_click),
+            CLICK_NEW_INIT => self.take(TraceStep::Fork { hold: 0 }, on_click),
+            CLICK_NEW_FORK => {
+                let hold = self.displayed_state() + 1;
+                self.take(TraceStep::Fork { hold }, on_click)
+            }
+            _ => Err(ClickRefused::unknown(on_click)),
+        }
+    }
+}
+
+impl TemporalSession<'_> {
+    /// The buttons this session offers, following mt-072's rule: a button is
+    /// present only while it can still do something.
+    ///
+    /// "New Fork" is additionally hidden at the last state, where
+    /// `current + 1 == k` and the answer is always exhaustion (probe P-076-6) —
+    /// the same "absent, never wrong" discipline, one state finer.
+    fn buttons(&self) -> Vec<Button> {
+        if self.budget_spent {
+            return Vec::new();
+        }
+        let k = self
+            .enumerator
+            .current()
+            .map_or(0, als_core::TemporalTrace::k);
+        let mut buttons = Vec::new();
+        if !self.paths_exhausted {
+            buttons.push(button(
+                "New Trace",
+                CLICK_NEXT_TRACE,
+                "(Show a new trace, same configuration)",
             ));
         }
-        if on_click == CLICK_NEXT {
-            return Err(temporal_defer(
-                on_click,
-                "`next` enumerates instances of a static command, and this command is temporal",
+        buttons.push(button(
+            "New Config",
+            CLICK_NEXT_CONFIG,
+            "(Show a new configuration)",
+        ));
+        buttons.push(button(
+            "New Init",
+            CLICK_NEW_INIT,
+            "(Show a new initial state)",
+        ));
+        if self.displayed_state() + 1 < k {
+            buttons.push(button(
+                "New Fork",
+                CLICK_NEW_FORK,
+                "(Fork the trace after the state the evaluator is on)",
             ));
         }
-        Err(ClickRefused::unknown(on_click))
+        buttons
+    }
+}
+
+fn button(text: &str, on_click: &str, mouseover: &str) -> Button {
+    Button {
+        text: text.to_owned(),
+        on_click: on_click.to_owned(),
+        mouseover: Some(mouseover.to_owned()),
+    }
+}
+
+/// The "nothing further down this road" refusal, worded per verb so a client
+/// can tell "this trace has no other configuration" from "this command has no
+/// other trace at all".
+fn exhausted_verb(verb: &str, step: TraceStep) -> ClickRefused {
+    let what = match step {
+        TraceStep::NextPath => {
+            "there are no further traces of this configuration within the command's scopes"
+        }
+        TraceStep::NextConfig => "this command has no other configuration within its scopes",
+        TraceStep::Fork { hold: 0 } => "this command has no other initial state",
+        TraceStep::Fork { .. } => "this trace cannot fork after the state you are on",
+    };
+    ClickRefused {
+        code: "no-more-instances",
+        message: format!("`{verb}`: {what}."),
     }
 }
 
@@ -408,15 +605,15 @@ fn provider_meta(generator: &str) -> ProviderMeta {
     }
 }
 
-/// The refusal for a verb that is real but not implemented yet, always naming
-/// the bead that retires it.
-fn temporal_defer(on_click: &str, because: &str) -> ClickRefused {
+/// The refusal a **static** session gives a temporal verb: the verb is real and
+/// implemented (mt-076), it simply has no meaning for this command.
+fn temporal_defer(on_click: &str) -> ClickRefused {
     ClickRefused {
-        code: "not-yet-supported",
+        code: "unknown-click",
         message: format!(
-            "`{on_click}` is not available yet: {because}. Temporal trace \
-             enumeration (New Trace / New Config / New Init / New Fork) arrives \
-             in mt-076; until then this session shows the one solved trace."
+            "`{on_click}` explores a lasso trace (New Trace / New Config / \
+             New Init / New Fork), and this command is not temporal — it has \
+             instances, not traces. Use `next`."
         ),
     }
 }

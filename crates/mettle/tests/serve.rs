@@ -267,6 +267,22 @@ fn next_advances_the_enumeration_then_refuses_honestly() {
         Some(0),
         "{after}"
     );
+
+    // The four trace verbs are implemented (mt-076) but mean nothing here, so
+    // a static session refuses them as unknown *for this command* — not as
+    // "not yet supported", which would be false.
+    for verb in ["next-trace", "next-config", "new-init", "new-fork"] {
+        let reply = click(&mut client, verb);
+        assert_eq!(reply["type"], "error", "verb {verb}: {reply}");
+        assert_eq!(reply["payload"]["code"], "unknown-click", "verb {verb}");
+        assert!(
+            reply["payload"]["message"]
+                .as_str()
+                .expect("message")
+                .contains("not temporal"),
+            "the refusal says why: {reply}"
+        );
+    }
 }
 
 /// (4) The evaluator follows the enumeration: after an advance, the old datum
@@ -299,9 +315,16 @@ fn the_evaluator_follows_the_advance_and_refuses_a_stale_datum() {
 }
 
 /// (5) A temporal command serves its whole lasso, evaluates per state through
-/// the REPL's `:state`, and defers every enumeration verb in words.
+/// the REPL's `:state`, and — as of mt-076 — answers every enumeration verb.
+///
+/// This fixture's four verbs mostly *refuse*, and each refusal is a pinned
+/// jar behavior rather than a gap: its only static relation is `one sig
+/// Counter` (exact-bounded, so "New Config" is probe P-076-1's
+/// no-free-static-primaries case) and its state 0 is pinned by `fact { no A }`
+/// (so "New Init" is probe P-076-6's UNSAT case). The reachable-enumeration
+/// side is `a_temporal_command_enumerates_traces_and_configurations` below.
 #[test]
-fn a_temporal_command_serves_its_trace_and_defers_enumeration() {
+fn a_temporal_command_serves_its_trace_and_answers_every_verb() {
     let file = fixture("temporal.als");
     let path = file.to_str().expect("utf-8 path");
     let server = serve(&file, &[]);
@@ -314,9 +337,18 @@ fn a_temporal_command_serves_its_trace_and_defers_enumeration() {
         2,
         "a two-state lasso is two <instance> blocks: {xml}"
     );
-    // No buttons at all: trace enumeration is mt-076's, and a button that
-    // cannot work is worse than no button.
-    assert_eq!(datum["buttons"].as_array().map(Vec::len), Some(0));
+    // Buttons now exist. All four, because the evaluator starts at state 0 of
+    // a two-state trace, so `current + 1 = 1` is a real state to fork at.
+    let buttons: Vec<String> = datum["buttons"]
+        .as_array()
+        .expect("buttons")
+        .iter()
+        .map(|b| b["onClick"].as_str().expect("onClick").to_owned())
+        .collect();
+    assert_eq!(
+        buttons,
+        ["next-trace", "next-config", "new-init", "new-fork"]
+    );
 
     let datum_id = datum["id"].as_str().expect("id").to_owned();
     // The session starts at state 0, exactly as `--eval` does.
@@ -338,18 +370,96 @@ fn a_temporal_command_serves_its_trace_and_defers_enumeration() {
             .expect("result")
     );
 
+    // Every verb answers in the pinned way, and none of them says "not yet".
     for verb in ["next", "next-trace", "next-config", "new-init", "new-fork"] {
         let reply = click(&mut client, verb);
         assert_eq!(reply["type"], "error", "verb {verb}: {reply}");
-        assert_eq!(reply["payload"]["code"], "not-yet-supported", "verb {verb}");
+        let code = reply["payload"]["code"].as_str().expect("code");
+        assert_eq!(
+            code, "no-more-instances",
+            "verb {verb} is refused because the jar refuses it here, not \
+             because it is unimplemented: {reply}"
+        );
         assert!(
-            reply["payload"]["message"]
+            !reply["payload"]["message"]
                 .as_str()
                 .expect("message")
                 .contains("mt-076"),
-            "a defer names the bead that retires it: {reply}"
+            "no defer names a bead any more: {reply}"
         );
     }
+    // An unknown verb is still an unknown verb.
+    assert_eq!(
+        click(&mut client, "next-universe")["payload"]["code"],
+        "unknown-click"
+    );
+}
+
+/// (5a) The reachable half of mt-076: a temporal command with both a real path
+/// space and a real configuration space enumerates through both.
+///
+/// The numbers are the jar's own, from probes P-076-1/P-076-5 against this
+/// fixture's shape: **8 traces** inside the first configuration, then
+/// exhaustion; **2 configurations** in total (`|X|` = 1, 2 at this scope), each
+/// shown once.
+#[test]
+fn a_temporal_command_enumerates_traces_and_configurations() {
+    let server = serve(&fixture("temporal-enum.als"), &[]);
+    let mut client = connect(&server);
+
+    let first = entered(&data(&mut client)).clone();
+    let mut ids = vec![first["id"].as_str().expect("id").to_owned()];
+    let mut xmls = vec![first["data"].as_str().expect("xml").to_owned()];
+
+    // "New Trace" walks the whole path space of one configuration and then
+    // retires its own button.
+    loop {
+        let reply = click(&mut client, "next-trace");
+        if reply["type"] == "error" {
+            assert_eq!(reply["payload"]["code"], "no-more-instances", "{reply}");
+            break;
+        }
+        let datum = entered(&reply).clone();
+        ids.push(datum["id"].as_str().expect("id").to_owned());
+        xmls.push(datum["data"].as_str().expect("xml").to_owned());
+        assert!(ids.len() <= 16, "enumeration did not terminate");
+    }
+    assert_eq!(
+        ids.len(),
+        8,
+        "probe P-076-5: 8 traces inside one configuration"
+    );
+    let mut unique = xmls.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), 8, "every trace shown is a different trace");
+    let mut unique_ids = ids.clone();
+    unique_ids.sort();
+    unique_ids.dedup();
+    assert_eq!(unique_ids.len(), 8, "every advance mints a fresh datum id");
+
+    // The exhausted verb's button is gone; the other three remain, because
+    // they ask different questions of the same command.
+    let buttons: Vec<String> = entered(&data(&mut client))["buttons"]
+        .as_array()
+        .expect("buttons")
+        .iter()
+        .map(|b| b["onClick"].as_str().expect("onClick").to_owned())
+        .collect();
+    assert!(!buttons.contains(&"next-trace".to_owned()), "{buttons:?}");
+    assert!(buttons.contains(&"next-config".to_owned()), "{buttons:?}");
+
+    // "New Config" still works, and moves to the second configuration.
+    let second_config = entered(&click(&mut client, "next-config")).clone();
+    assert_ne!(
+        second_config["data"].as_str().expect("xml"),
+        xmls[0],
+        "a new configuration is a different picture"
+    );
+    // …and then there is no third.
+    let refused = click(&mut client, "next-config");
+    assert_eq!(refused["type"], "error", "{refused}");
+    assert_eq!(refused["payload"]["code"], "no-more-instances");
 }
 
 /// (5b) Two clients at once — the shape a second browser tab produces. Both

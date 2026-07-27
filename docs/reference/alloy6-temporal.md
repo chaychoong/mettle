@@ -578,6 +578,110 @@ cleaner fixture shows this was a `MinLen.als`-specific anomaly, not
 evidence that enumeration is length-confined in general; see "Unpinned"
 below.)
 
+### The mt-076 probe wave — the four corners closed, and one refutation
+
+Wave 3 (`scratchpad/probe/mt076/NOTES.md`, harness `EnumProbe.java`) went back
+with fixtures built to *discriminate* rather than to demonstrate, and closed
+every enumeration corner the two bullets in "Unpinned" carried. It also found
+one thing wave 2 could not have seen.
+
+**P-076-0 — `A4Solution.fork(p)` memoizes, so a naive grid probe is
+meaningless.** `fork` populates `nextCache` for `p ∈ {-3, -1}` only, but once
+populated **returns it for every `p`** (`scratchpad/src794/A4Solution.java
+:1843-1855`, verbatim in the probe notes). Calling `sol.next()` and then
+`sol.fork(0)` on the same object answers the `next()` question twice — one
+`solving p cnf` line for eight `fork` calls, eight byte-identical results. The
+GUI never trips it (each button press replaces the displayed solution, so every
+press starts from a fresh object). A jar API-shape artifact, not a semantic;
+mettle does not replicate it. Every cell below re-solves per `p`.
+
+**P-076-5 — plain `next()` never changes the configuration.** This is the
+wave's headline, and it **refines §(i)'s counting rule** (see the correction
+there). On `StaticMultiConfig.als` — `sig X` at scope 3 with `some X`, three
+genuinely non-isomorphic configs, proven to exist because chained `fork(-1)`
+walks all three — plain `next()` yields **exactly 8 solutions and then UNSAT,
+every one with `X={X$0}`**. Re-run at `symmetry = 0`, where the raw space holds
+all seven non-empty subsets: still 8, still `X={X$0}`. `FieldConfig.als` moves
+the static freedom into a field (`one sig P { f: one X }`) and confirms it
+again at `symmetry = 0`: 24 consecutive solutions, `f = {P$0->X$0}` in every
+one. **The configuration is held.**
+
+**P-076-3 — `fork(-2)` is byte-for-byte `fork(-3)`**, which is *why*: `nextP`
+holds the config and varies the path, and so does plain `next()`. Chaining each
+six times on `StaticMultiConfig.als` gives identical SHA-256 digests at every
+step and exhausts at the same point. §(g)'s wave-2 sentence "`fork(-3)`/
+`fork(-2)` held nothing fixed" was an artifact of both wave-2 fixtures having a
+*unique* configuration, which made "the config is unchanged" unfalsifiable
+there; the part of that sentence about no state prefix being held stands.
+
+**P-076-1 — the `fork(-1)` failure-mode split is a rule, not solver
+discretion.** The discriminator is **whether the static relations have any free
+primary variables at all**: with none, the config-blocking clause is empty and
+the solver re-derives the same model; with some, a real blocking clause goes in
+and an exhausted config space reports UNSAT.
+
+| fixture | free static primaries? | alternate config? | `fork(-1)` |
+|---|---|---|---|
+| `NoStaticFree.als`, `RangeExact3.als` (`one sig X`) | no | — | **byte-identical original** |
+| `StaticFreeOneConfig.als` (`sig X`, `#X = 2`) | yes | none non-isomorphic | **UNSAT** |
+| `StaticMultiConfig.als` (`sig X`, `some X`) | yes | yes | **SAT, config changed** |
+
+This reproduces and explains wave 2's split exactly: `TraceDemo.als` (T-21) has
+only `one sig Counter` — exact-bounded, no free static primaries — hence the
+byte-identical original; `EnumDemo.als` (T-20) has free static primaries with
+only symmetric alternates — hence UNSAT. Deterministic and portable; mettle
+implements it, no divergence needed.
+
+**P-076-2 — each operator's relation to the length sweep.** On
+`RangeMulti.als` (`1..3 steps`, two configs):
+
+| operator | length sweep |
+|---|---|
+| `next()` / `fork(-2)` | **advances** through the range (T-19 reproduced, and reproduced on mt-064's own `RangeEnum.als`) |
+| `fork(p)`, `p ≥ 0` | **never moves**; `p ≥ tracelength` is UNSAT |
+| `fork(-1)` | **restarts it** from the bottom — the script `-3,-3,-1,-3,-3,-3,-3` walks k=2, k=2, k=3, then comes back at **k=2** with the new config, then advances to k=3 again |
+
+**The `p ≥ 0` rule, sharpened.** T-20/T-21's "forces state `p` onward to a new
+value" is really **"require state `p` *itself* to differ; states `p+1 …` are
+free"** — which is what Pardinus's `nextS(state, steps, rels)` called with
+`steps = 1` means. The discriminating cell: on `RangeExact3.als`, whose
+`fact { no Flag }` pins state 0 to one value, **`fork(0)` is UNSAT**, even
+though eight solutions with a different state 1 or 2 exist and a "differs
+somewhere at or after `p`" constraint would have found one at once. `fork(1)`
+on the same fixture returns the *only* shape with a different state 1, diverging
+exactly at 1. This also explains `p ≥ k` cleanly — there is no state `p` to
+force different. `fork(p)` holds the configuration too.
+
+**P-076-4 — what the enumerator treats as a duplicate, at two levels.**
+
+- *Within one length*: the raw `(per-state contents, loop state)` assignment.
+  `RangeExact2.als` yields exactly **2** solutions whose per-state contents are
+  **identical** and which differ only in `loopState` — so the loop position is
+  part of the solution's identity, and a blocking clause must cover the lasso
+  selector, not just the relation primaries. `RangeExact3.als` yields **9**,
+  including two that denote the *same infinite trace*
+  (`({},{X},{X})` at `loop=2` and at `loop=1` are both `{},{X}^ω`) — both are
+  emitted.
+- *Across lengths*: the **infinite trace**. The `1..3` sweep emits 2 at k=2 and
+  only **6 of the 9** at k=3; the three missing are exactly those whose infinite
+  trace was already emitted at k=2. Range total: **8**.
+
+Because `exactly 3 steps` (no shorter length ever visited) keeps all 9 —
+*including* the ones representable at length 2 — the exclusion is **not** a
+structural minimality constraint inside the length-k encoding. It is the sweep
+declining to re-emit an infinite trace it already emitted at a shorter length.
+(The two readings coincide extensionally whenever the shorter length is inside
+the command's own range, since LTL truth is a property of the infinite trace.)
+
+**The contract, in one table** — this is what mettle implements:
+
+| operator | GUI button | semantics |
+|---|---|---|
+| `next()` = `fork(-3)` = `fork(-2)` | "New" / "New Trace" | the next raw `(states, loop)` solution **inside the current configuration** at the current length; when that length is exhausted, advance through `[mintrace,maxtrace]`, skipping any solution whose infinite trace was already emitted at a shorter length; UNSAT when the range runs out |
+| `fork(-1)` | "New Config" | block the current static assignment, re-run the sweep from `mintrace`. No free static primaries ⇒ the byte-identical original; free but no alternate ⇒ UNSAT |
+| `fork(0)` | "New Init" | hold nothing; force state 0 to differ |
+| `fork(current+1)` | "New Fork" | hold states `0..current` byte-identical; force state `current+1` to differ; UNSAT if `current+1 ≥ tracelength` |
+
 ## (h) The evaluator's per-state story
 
 Closes [alloy6-evaluator.md §4](alloy6-evaluator.md#4-the-temporal-edge-deferred-to-rung-6-d)/§7's
@@ -710,6 +814,44 @@ gauge's temporal arm needs no special per-length or per-config model beyond
 what §(g) already pins: it is the same next()-until-UNSAT loop used for
 static commands, and its result already naturally spans the steps range by
 construction.
+
+### Correction (mt-076, probe P-076-5): the count is **configuration-relative**
+
+The paragraph above is right about the steps range and wrong about the rest of
+the space. §(g)'s mt-076 wave shows plain `next()` **never leaves the
+configuration the first solve landed on** — proven at `symmetry = 0`, and with
+the static freedom in a sig bound and in a field. So a temporal command's jar
+count is:
+
+> the number of distinct infinite lasso traces **within a single static
+> configuration** — the one the solver happened to find first — across every
+> length in the steps range, counting `(states, loop)` assignments raw at each
+> length but never re-emitting a trace already emitted at a shorter one.
+
+The live T-26 evidence is untouched (its counts are `1` or cap-hits, where the
+distinction cannot show), but the *rule* needed the qualification, and it has a
+consequence the counting gauge must own: **exact count parity with the jar is
+not achievable by construction for any temporal command whose configuration
+space has more than one member**, because the two engines' first solutions pick
+different configurations and therefore count different sets. That is
+solver-discretion of the same family ADR-0002 already accepts for *which*
+instance is shown, not a semantics gap — the algorithm itself is reproduced
+verbatim and is deterministic given the first solution.
+
+It is not hypothetical. **Probe P-076-7** ran the jar's `next()` over
+`leader.als`'s `check liveness for 3` and mettle's enumerator over the same
+command: the jar's first solution is a full three-node ring
+(`Node = {Node$0, Node$1, Node$2}`, a real `succ` cycle) which it walks from k=1
+through k=3 to the 10001 cap, holding those statics at every step; mettle's is
+**the empty model** (`Node = {}`), an equally valid counterexample whose
+configuration contains exactly one infinite trace, because with no nodes every
+state is identical and every longer lasso de-duplicates onto the k=1 one.
+mettle's 1 and the jar's 10001 are both right about different sets.
+
+mettle's gauge therefore **compares but does not cry wolf**: an agreement is a
+`count_match`; a *disagreement* on a command with more than one configuration is
+the typed skip `skip_temporal_config`; only a unique-configuration command can
+raise a temporal `COUNT_MISMATCH`, and there the alarm means what it says.
 
 ## (j) Wave-1 loose ends closed
 
@@ -974,15 +1116,18 @@ the jar, or a "masked" cell stayed masked on a genuine attempt):
   not a wrong answer** (it declines rather than mis-answers), so this is
   **not** an escalation — recorded as a pinned fact for a later REPL bead.
 
-**Workstream 3 (temporal counting posture), verified, not a new finding:**
-`als-conform::solve_gauge::execute::classify_temporal_command` gives every
+**Workstream 3 (temporal counting posture), verified, not a new finding —
+and since SUPERSEDED by mt-076:**
+`als-conform::solve_gauge::execute::classify_temporal_command` gave every
 SAT temporal command the typed skip `skip_temporal_trace` unconditionally,
 confirmed live against `leader.als` (whose SB-0 baseline holds a real jar
 count, T-26) — `agree_sat 3` / `skip_temporal_trace 3` / `COUNT_MISMATCH
-0`. The real count is never consulted and never misread as a mismatch;
-this is the deliberate ADR-0015 consequence-4 posture. Jar-free regression:
-`crates/als-conform/tests/solve_gauge_integration.rs::
-leader_als_stays_skip_temporal_trace_despite_its_real_count_baseline`.
+0`. That was the deliberate ADR-0015 consequence-4 posture. **mt-076 retired
+the bucket**: temporal commands are now enumerated by
+`als_core::temporal_enum::TraceEnumerator` and compared like any other, and
+`leader.als`'s two real cached counts land `count_match`. The regression test
+survives with its polarity inverted
+(`leader_als_counts_match_its_real_jar_baseline`).
 
 ## Probe evidence table
 
@@ -1041,6 +1186,20 @@ id: `scratchpad/probe/mt063/NOTES.md`. Rerun:
 | L6/L6b | `L6_ExactlyRange.als`, `L6b_ExactlyRangeTemporal.als` | §(l) leftover **REFUTES mettle**: `exactly N..M steps` silently collapses to `N..N` at parse time (`Command.toString()`/`getMinTrace`/`getMaxTrace` all confirm); mettle keeps the full `[N,M]` range — **STOP-THE-LINE** |
 | L7 | `L7_StaticDisjOnVarSig.als` | §(l) leftover CONFIRMS (no divergence found): a static `disj` field group on a `var` sig — always-wrap vs. state-0-only cannot differ for a rigid formula |
 | L8 | `L8_VarSigBoundExceedsScope.als` | §(l) leftover CONFIRMS (still masked): `BoundsComputer.size`'s var-sig witness shape — attempted construction, no divergence found |
+
+**mt-076** (`scratchpad/probe/mt076/NOTES.md`, harness `EnumProbe.java`; full
+fixtures/predictions/verbatim there):
+
+| id | Fixture | What it pins |
+|---|---|---|
+| P-076-0 | any (`forkgrid`) | `A4Solution.fork` memoizes into `nextCache` for `p ∈ {-3,-1}` and then returns it for **every** `p` — one solve, eight identical answers. A jar API artifact, not a semantic; every other cell re-solves per `p` |
+| P-076-1 | `NoStaticFree.als`, `StaticFreeOneConfig.als`, `StaticMultiConfig.als` | **Closes the T-20/T-21 split**: `fork(-1)` returns the byte-identical original iff the statics have **no free primary variables**; otherwise it blocks the config and reports UNSAT when none is left. Deterministic, not solver discretion |
+| P-076-2 | `RangeMulti.als` (`1..3 steps`, two configs) | `next()`/`fork(-2)` advance through the steps range (T-19 reproduced); `fork(p≥0)` never moves the length and is UNSAT for `p ≥ tracelength`; `fork(-1)` **restarts** the sweep at the minimal length for the new config |
+| P-076-3 | `StaticMultiConfig.als` (`forkseq -2` vs `-3`) | `fork(-2)` is **byte-for-byte** `fork(-3)`: both hold the configuration and vary the path. Refines §(g)'s wave-2 "held nothing fixed" (unfalsifiable there — those fixtures had a unique config) |
+| P-076-4 | `RangeExact2.als`, `RangeExact3.als` vs. `RangeEnum.als`'s `1..3` sweep | The duplicate unit is `(states, loop)` **raw within a length** (2 solutions differing only in `loopState`; 9 at k=3 including two denoting the same infinite trace) and the **infinite trace across lengths** (6 of those 9 survive the sweep; range total 8). `exactly 3 steps` keeps all 9, so the exclusion is the sweep's memory, not a structural minimality constraint |
+| P-076-5 | `StaticMultiConfig.als`, `FieldConfig.als` (both also at `symmetry=0`) | **Plain `next()` never changes the configuration** — 8 solutions all at `X={X$0}` with three configs available; 24 solutions all at `f={P$0->X$0}`. Explains the `MinLen.als` anomaly and **corrects §(i)'s counting rule** |
+| P-076-7 | `leader.als[3]` (corpus, jar `nextall` vs. mettle's own enumerator) | The configuration divergence on a **real** model, both sides: the jar's first solution is a three-node ring walked to the 10001 cap; mettle's is the empty model with exactly one trace. Found by chasing three SB-20 `COUNT_MISMATCH` rows to the bottom rather than explaining them away |
+| P-076-6 | `RangeExact3.als` (`fork(0)` UNSAT), `RangeMulti.als` | Sharpens T-20/T-21: `fork(p)` requires state `p` **itself** to differ (states `p+1…` free) — a fixture whose state 0 is pinned by a fact makes `fork(0)` UNSAT even though eight other solutions exist |
 | M068 | `M068_StaticEvalTemporal.als` | mt-068's cell: the jar answers a temporal-operator eval at a STATIC command's prompt (length-1 self-loop, no throw); mettle's typed refusal is conservative, not wrong — not an escalation |
 
 ---
@@ -1053,27 +1212,26 @@ story, and counting under temporal scopes (all four of wave 1's headline
 deferrals) — what's left is materially smaller and mostly Pardinus-internal
 curiosities plus two carried-forward items:
 
-- **Two Pardinus-internal enumeration curiosities, observed but not
-  explained (both explicitly not chased further, matching this repo's
-  precedent of not reverse-engineering solver-internal search-strategy
-  discretion byte-for-byte):**
-  - `MinLen.als` (T-17/T-17b) reports only one raw solution before UNSAT at
-    both `symmetry=20` and `symmetry=0`, despite its `sig A{}`'s default
-    scope apparently allowing multiple non-isomorphic cardinalities that
-    should each be independently satisfying. Wave 2's cleaner `RangeEnum.als`
-    fixture (T-19) independently established that `next()`'s enumeration is
-    *not* generally length-confined, so this is read as a fixture-specific
-    anomaly rather than evidence against T-19's finding — but the anomaly
-    itself is unexplained.
-  - `fork(-1)` ("next config") returns UNSAT when no alternate static
-    config exists on one fixture (`EnumDemo.als`, T-20) but returns the
-    byte-identical original solution again on another (`TraceDemo.als`,
-    T-21). Both are plausible readings of "no alternate config"; which
-    one a given model gets was not traced to a specific code path.
+- ~~**Two Pardinus-internal enumeration curiosities**~~ — **both closed by
+  mt-076's probe wave** (§(g)'s "The mt-076 probe wave"), and the `MinLen.als`
+  anomaly closed with them:
+  - The **`MinLen.als` anomaly (T-17/T-17b)** — one raw solution before UNSAT
+    even at `symmetry=0`, despite a default scope that looks like it admits
+    several non-isomorphic cardinalities — **is P-076-5**: those alternative
+    cardinalities are alternative *configurations*, and plain `next()` never
+    leaves the configuration it started in. `MinLen.als` was never anomalous;
+    wave 2 simply had not yet found the config-hold. Reaching them needs
+    `fork(-1)`.
+  - The **`fork(-1)` failure-mode split** is **P-076-1**: the discriminator is
+    whether the static relations have any free primary variables at all (none ⇒
+    the byte-identical original, because the blocking clause is empty; some ⇒
+    UNSAT once the config space is exhausted). Deterministic and portable, not
+    solver discretion.
   - `TemporalBoundsExpander.extend(...)`'s exact role in incremental
-    enumeration (identified structurally in wave 1 §(d), still not
-    exercised) likely bears on both of the above — a future wave chasing
-    either curiosity should start there.
+    enumeration (identified structurally in wave 1 §(d)) is **still not
+    exercised**, and remains the place to start for anyone wanting the
+    *mechanism* behind P-076-4's across-length de-duplication; the *behavior*
+    is now pinned without it.
 - **`electrod.elo`'s solving semantics, beyond "it's the right id and it
   runs" (T-27).** It reports UNSAT (with a jar-logged "Temporal formula:
   will be reduced to possibly unsound static version." warning) for a

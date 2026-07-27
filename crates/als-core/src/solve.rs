@@ -202,30 +202,30 @@ fn debug_self_check(
 /// How to reconstruct one relation's [`TupleSet`] from an [`Assignment`]: its
 /// fixed lower tuples plus each floating tuple gated by its primary variable.
 #[derive(Debug)]
-struct RelDecode {
-    rel: RelId,
+pub(crate) struct RelDecode {
+    pub(crate) rel: RelId,
     arity: usize,
     lower: TupleSet,
-    floating: Vec<(Tuple, Var)>,
+    pub(crate) floating: Vec<(Tuple, Var)>,
 }
 
 /// The finished translation: CNF, primary variables (for blocking), the decode
 /// layout, and the universe. `trivially_unsat` short-circuits an all-false goal.
 #[derive(Debug)]
-struct Translated {
-    cnf: Cnf,
-    primary_vars: Vec<Var>,
-    layout: Vec<RelDecode>,
-    universe: Universe,
-    trivially_unsat: bool,
+pub(crate) struct Translated {
+    pub(crate) cnf: Cnf,
+    pub(crate) primary_vars: Vec<Var>,
+    pub(crate) layout: Vec<RelDecode>,
+    pub(crate) universe: Universe,
+    pub(crate) trivially_unsat: bool,
     /// The augmented bounds the encoder used (base bounds + skolem bounds), so the
     /// self-check evaluator shares the encoder's exact relation bounds for the
     /// (C) constant-escape predicate (translation-ref §10.7c ext, mt-051).
-    bounds: Bounds,
+    pub(crate) bounds: Bounds,
     /// The lasso back-loop selector minted for a **temporal** encode (mt-067) —
     /// how the solved trace's loop target is read back out of the model.
     /// `None` on every static translate.
-    lasso: Option<crate::temporal::LassoSelector>,
+    pub(crate) lasso: Option<crate::temporal::LassoSelector>,
 }
 
 /// Mints the primary variables (ADR-0011 decision 3) and builds the decode
@@ -265,7 +265,7 @@ fn allocate_primaries(bounds: &Bounds, cnf: &mut Cnf) -> (PrimaryMap, Vec<Var>, 
 /// selector is minted over its trace length so
 /// [`crate::ir::FormulaKind::LoopIs`] atoms have a solver variable to resolve
 /// to. `None` reproduces the static pipeline byte-for-byte.
-fn translate(
+pub(crate) fn translate(
     ir: &Ir,
     scoped: &ScopedUniverse,
     goal: &LoweredGoal,
@@ -487,7 +487,10 @@ pub fn solve_temporal_goal_checked(
 /// Panics if the model does not set exactly one loop variable — the selector's
 /// ALO + pairwise-AMO clauses make that impossible, so it can only be a mettle
 /// numbering/decoding bug (STYLE I1).
-fn recover_loop_state(lasso: &crate::temporal::LassoSelector, model: &Assignment) -> usize {
+pub(crate) fn recover_loop_state(
+    lasso: &crate::temporal::LassoSelector,
+    model: &Assignment,
+) -> usize {
     let mut found: Option<usize> = None;
     for state in 0..lasso.k() {
         if model.value(lasso.loop_var(state)) {
@@ -506,7 +509,7 @@ fn recover_loop_state(lasso: &crate::temporal::LassoSelector, model: &Assignment
 
 /// The temporal twin of [`debug_self_check`]: same regime, with the solved loop
 /// target threaded through so `LoopIs` has a value.
-fn debug_self_check_temporal(
+pub(crate) fn debug_self_check_temporal(
     ir: &Ir,
     scoped: &ScopedUniverse,
     goal: &LoweredGoal,
@@ -531,7 +534,7 @@ fn debug_self_check_temporal(
 }
 
 /// Decodes an assignment into an instance (STYLE I2 bounds-respect asserted).
-fn decode(layout: &[RelDecode], universe: &Universe, assign: &Assignment) -> Instance {
+pub(crate) fn decode(layout: &[RelDecode], universe: &Universe, assign: &Assignment) -> Instance {
     let mut rels: BTreeMap<RelId, TupleSet> = BTreeMap::new();
     for rd in layout {
         let mut ts = rd.lower.clone();

@@ -855,6 +855,49 @@ pub(crate) struct TemporalRun {
     pub(crate) opts: SolveOptions,
 }
 
+/// Everything a temporal command needs **before** the sweep — universe, bounds,
+/// arena and the `expect 1`-corrected options.
+///
+/// Split out for `serve` (mt-076), which drives the sweep itself through
+/// `als_core`'s [`TraceEnumerator`](als_core::TraceEnumerator) rather than
+/// calling [`run_temporal_pipeline`] and then re-solving: the trace it displays
+/// must be the *enumerator's* first, or the first "New Trace" would show the
+/// same one again.
+pub(crate) struct TemporalSetup {
+    pub(crate) ir: Ir,
+    pub(crate) scoped: ScopedUniverse,
+    pub(crate) bounds: BoundsResult,
+    pub(crate) opts: SolveOptions,
+}
+
+/// The pre-solve phases of [`run_temporal_pipeline`], shared with `serve`.
+pub(crate) fn setup_temporal(
+    world: &ResolvedWorld,
+    graph: &ModuleGraph,
+    cmd: &ResolvedCommand,
+    opts: &SolveOptions,
+) -> Result<TemporalSetup, als_core::TranslateError> {
+    let scoped = compute_universe(world, graph, cmd)?;
+    let mut ir = Ir::default();
+    let bounds = compute_bounds(world, &scoped, &mut ir);
+    Ok(TemporalSetup {
+        ir,
+        scoped,
+        bounds,
+        opts: effective_opts(opts, cmd),
+    })
+}
+
+/// The [`TemporalSolveConfig`] `exec` and `serve` both sweep with: no budgets
+/// and no cap (see [`TemporalRun`]'s note), self-check left to the debug net.
+pub(crate) fn temporal_cfg(opts: SolveOptions) -> TemporalSolveConfig {
+    TemporalSolveConfig {
+        opts,
+        primary_var_cap: None,
+        self_check: false,
+    }
+}
+
 /// Sweeps one temporal command's `steps` range, first SAT wins
 /// (`als_core::temporal_solve`), keeping the artifacts rather than dropping them.
 pub(crate) fn run_temporal_pipeline(
@@ -864,22 +907,23 @@ pub(crate) fn run_temporal_pipeline(
     idx: usize,
     opts: &SolveOptions,
 ) -> Result<TemporalRun, als_core::TranslateError> {
-    let scoped = compute_universe(world, graph, cmd)?;
-    let mut ir = Ir::default();
-    let bounds = compute_bounds(world, &scoped, &mut ir);
-    let opts = effective_opts(opts, cmd);
-    let cfg = TemporalSolveConfig {
-        opts,
-        primary_var_cap: None,
-        self_check: false,
-    };
-    let verdict = solve_temporal_command(world, graph, &scoped, &bounds, &mut ir, idx, &cfg)?;
+    let mut setup = setup_temporal(world, graph, cmd, opts)?;
+    let cfg = temporal_cfg(setup.opts);
+    let verdict = solve_temporal_command(
+        world,
+        graph,
+        &setup.scoped,
+        &setup.bounds,
+        &mut setup.ir,
+        idx,
+        &cfg,
+    )?;
     Ok(TemporalRun {
-        ir,
-        scoped,
-        bounds,
+        ir: setup.ir,
+        scoped: setup.scoped,
+        bounds: setup.bounds,
         verdict,
-        opts,
+        opts: setup.opts,
     })
 }
 

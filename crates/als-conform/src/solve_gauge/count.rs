@@ -6,8 +6,11 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use als_core::ir::Ir;
-use als_core::{enumerate, BoundsResult, LoweredGoal, ScopedUniverse, SolveOptions};
-use als_types::ResolvedWorld;
+use als_core::{
+    enumerate, BoundsResult, LoweredGoal, ScopedUniverse, SolveOptions, TemporalSolveConfig,
+    TraceAdvance, TraceEnumerator, TraceStep,
+};
+use als_types::{ModuleGraph, ResolvedWorld};
 
 use crate::config::{EnumerationCap, OracleConfig};
 use crate::error::ConformError;
@@ -27,6 +30,19 @@ pub(super) enum CountOutcome {
     Skip(&'static str),
     /// Eligible: mettle's exact SB count, awaiting the jar comparison.
     JarTodo(u64),
+    /// A **temporal** command's exact count where mettle's own configuration is
+    /// *not* the only one (mt-076, probe P-076-5/P-076-7).
+    ///
+    /// The count is real and is still compared: an **agreement** is a genuine
+    /// `count_match`. But a **disagreement** carries no signal about mettle —
+    /// the jar's `next()` walked sat4j's first configuration and mettle's walked
+    /// mettle's, and on such a command those are provably different sets (the
+    /// measured case: `leader.als[3]`, jar's first solution a full three-node
+    /// ring counting to the 10001 cap, mettle's the empty model whose whole
+    /// space is one trace). So a disagreement here is bucketed
+    /// `skip_temporal_config` rather than raised as a `COUNT_MISMATCH`, which in
+    /// this repo means "mettle counted wrong".
+    JarTodoConfigRelative(u64),
 }
 
 /// The stage-2 disposition after cache lookup (or deferred to the live jar stage).
@@ -37,10 +53,17 @@ pub(super) enum CountDisp {
         mismatch: Option<String>,
     },
     PendingJar(u64),
+    /// As [`CountDisp::PendingJar`], for a configuration-relative temporal
+    /// count: the live jar stage softens a disagreement the same way
+    /// [`resolve_count`] does for the cached path.
+    PendingJarConfigRelative(u64),
 }
 
-/// A live-jar todo: `(relpath, command index, mettle count, per_command index)`.
-pub(super) type JarTodo = (String, usize, u64, usize);
+/// A live-jar todo: `(relpath, command index, mettle count, per_command index,
+/// configuration-relative?)`. The last flag softens a disagreement exactly as
+/// [`resolve_count`] does on the cached path (see
+/// [`CountOutcome::JarTodoConfigRelative`]).
+pub(super) type JarTodo = (String, usize, u64, usize, bool);
 
 /// Resolves a mettle-side [`CountOutcome`] into its report disposition: a typed
 /// skip stays resolved; a `JarTodo` is resolved against the cache (default) or
@@ -69,6 +92,41 @@ pub(super) fn resolve_count(
                 CountDisp::Resolved { bucket, mismatch }
             }
         }
+        Some(CountOutcome::JarTodoConfigRelative(n)) => {
+            if live_jar {
+                CountDisp::PendingJarConfigRelative(n)
+            } else {
+                let (bucket, mismatch) = count_baseline.map_or_else(
+                    || ("skip_no_count_baseline".to_owned(), None),
+                    |cb| cb.disposition(rel, idx, n),
+                );
+                CountDisp::Resolved {
+                    bucket: soften(&bucket),
+                    mismatch: soften_line(&bucket, mismatch),
+                }
+            }
+        }
+    }
+}
+
+/// A `COUNT_MISMATCH` on a configuration-relative temporal count is not a
+/// mismatch (see [`CountOutcome::JarTodoConfigRelative`]); everything else
+/// stands.
+fn soften(bucket: &str) -> String {
+    if bucket == "COUNT_MISMATCH" {
+        "skip_temporal_config".to_owned()
+    } else {
+        bucket.to_owned()
+    }
+}
+
+/// The matching half of [`soften`]: a softened bucket must not also file the
+/// `COUNT_MISMATCH` line, or a fail-fast run would stop on a non-finding.
+fn soften_line(bucket: &str, mismatch: Option<String>) -> Option<String> {
+    if bucket == "COUNT_MISMATCH" {
+        None
+    } else {
+        mismatch
     }
 }
 
@@ -201,9 +259,13 @@ pub(super) fn run_jar_stage(
         );
         item.1
             .iter()
-            .map(|(rel, idx, mettle_count, pos)| {
+            .map(|(rel, idx, mettle_count, pos, config_relative)| {
                 let (bucket, mismatch) = jar_bucket(&result.outcome, *idx, *mettle_count, rel);
-                (bucket, mismatch, *pos)
+                if *config_relative && bucket == "COUNT_MISMATCH" {
+                    ("skip_temporal_config", None, *pos)
+                } else {
+                    (bucket, mismatch, *pos)
+                }
             })
             .collect()
     };
@@ -269,4 +331,125 @@ fn jar_bucket(
             }
         }
     }
+}
+
+/// The temporal twin of [`classify_count`] (mt-076): count a temporal command's
+/// traces the way the jar's own baseline generator does — but only where that
+/// number is comparable at all.
+///
+/// `OracleShim.countInstances` enumerates a temporal command by repeated
+/// `A4Solution.next()` (alloy6-temporal.md §(i), source-cited), and mt-076's
+/// probe wave pinned what that loop actually walks: the traces of **one static
+/// configuration**, across every length in the `steps` range, counting
+/// `(states, loop)` assignments raw at each length but never re-emitting an
+/// infinite trace already shown at a shorter one.
+/// [`TraceEnumerator`] is that loop, so this arm is the same shape as the
+/// static one — solve, block, repeat — with the temporal semantics living in
+/// `als-core` where they can be tested jar-free.
+///
+/// **A disagreement is checked before it is called a mismatch.** Because the
+/// walk is confined to *one* configuration — whichever the solver's first
+/// solution landed on (probe P-076-5) — the jar's banked number is "the traces
+/// of sat4j's first configuration" and mettle's is "the traces of mettle's".
+/// Where a command's configuration space has more than one member those are
+/// **different sets**: measured, `leader.als[3]` gives mettle=1 jar=10001,
+/// because the jar's first solution is a full three-node ring and mettle's is
+/// the empty model, whose whole space genuinely is one trace (probe P-076-7).
+/// So this arm reports the count as [`CountOutcome::JarTodoConfigRelative`]
+/// whenever a second configuration exists — an **agreement** still counts as
+/// `count_match`, but a **disagreement** is bucketed `skip_temporal_config`
+/// instead of raised as a `COUNT_MISMATCH`, which in this repo means "mettle
+/// counted wrong". Only a command with a unique configuration can produce a
+/// temporal `COUNT_MISMATCH`, and there the alarm means what it says.
+///
+/// The uniqueness probe costs two solves and runs after the enumeration, whose
+/// cost dominates.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the temporal command plus the same two stage-2 policy inputs as the static arm"
+)]
+pub(super) fn classify_temporal_count(
+    world: &ResolvedWorld,
+    graph: &ModuleGraph,
+    scoped: &ScopedUniverse,
+    bounds: &BoundsResult,
+    ir: &Ir,
+    idx: usize,
+    cfg: &TemporalSolveConfig,
+    count_cap: u64,
+    presettled: Option<&'static str>,
+) -> CountOutcome {
+    if let Some(bucket) = presettled {
+        return CountOutcome::Skip(bucket);
+    }
+    let Ok(mut it) = TraceEnumerator::new(world, graph, scoped, bounds, ir, idx, cfg) else {
+        // The two typed steps-scope defers; the verdict arm already bucketed
+        // them, so there is nothing here to compare.
+        return CountOutcome::Skip("skip_mettle_cap");
+    };
+    let mut n = 0u64;
+    loop {
+        match it.advance(TraceStep::NextPath) {
+            Ok(TraceAdvance::Trace(_)) => {
+                n += 1;
+                if n > count_cap {
+                    return CountOutcome::Skip("skip_mettle_cap");
+                }
+            }
+            Ok(TraceAdvance::Exhausted) => break,
+            Ok(TraceAdvance::BudgetExhausted) => return CountOutcome::Skip("skip_enum_budget"),
+            // A cap hit or an encoder capacity failure is a non-answer, not a
+            // count; the verdict arm has already said so in its own bucket.
+            Ok(TraceAdvance::PrimaryVarCap { .. } | TraceAdvance::SameConfig) | Err(_) => {
+                return CountOutcome::Skip("skip_mettle_cap")
+            }
+        }
+    }
+    if it.has_higher_order_skolem() {
+        // Same exclusion the static arm applies, decided after the fact because
+        // a temporal command lowers once per trace length.
+        return CountOutcome::Skip("skip_ho_skolem");
+    }
+    if unique_configuration(world, graph, scoped, bounds, ir, idx, cfg) {
+        CountOutcome::JarTodo(n)
+    } else {
+        CountOutcome::JarTodoConfigRelative(n)
+    }
+}
+
+/// Whether this command has exactly **one** static configuration — the
+/// condition under which a count *disagreement* is a real finding rather than
+/// the two engines counting different sets (see [`classify_temporal_count`]).
+///
+/// Costs two solves: the first trace, then one `NextConfig`. **Inconclusive is
+/// `false`.** A probe that runs out of effort has not shown the configuration
+/// unique, and the conservative reading — treat the count as
+/// configuration-relative — costs only alarm sensitivity on that one command,
+/// while the alternative (dropping the count) would throw away a perfectly good
+/// `count_match`. Measured: making this `Err` instead cost one SB-0 match on a
+/// command whose re-sweep is expensive.
+fn unique_configuration(
+    world: &ResolvedWorld,
+    graph: &ModuleGraph,
+    scoped: &ScopedUniverse,
+    bounds: &BoundsResult,
+    ir: &Ir,
+    idx: usize,
+    cfg: &TemporalSolveConfig,
+) -> bool {
+    let Ok(mut probe) = TraceEnumerator::new(world, graph, scoped, bounds, ir, idx, cfg) else {
+        return false;
+    };
+    if !matches!(
+        probe.advance(TraceStep::NextPath),
+        Ok(TraceAdvance::Trace(_))
+    ) {
+        return false;
+    }
+    matches!(
+        probe.advance(TraceStep::NextConfig),
+        // No other configuration exists — either because nothing static is free
+        // to vary (`SameConfig`, probe P-076-1) or because the search proved it.
+        Ok(TraceAdvance::SameConfig | TraceAdvance::Exhausted)
+    )
 }

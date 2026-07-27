@@ -74,9 +74,12 @@ impl ServeSession for StubSession {
                 }
                 Ok(())
             }
+            // A stub, so this refusal stands in for any provider-defined
+            // refusal — what the wire test cares about is that the code and
+            // message survive the round trip, not which verb produced them.
             CLICK_NEXT_TRACE => Err(ClickRefused {
-                code: "not-yet-supported",
-                message: "trace enumeration arrives in mt-076.".to_owned(),
+                code: "no-more-instances",
+                message: "this stub has exactly one trace.".to_owned(),
             }),
             other => Err(ClickRefused::unknown(other)),
         }
@@ -229,7 +232,7 @@ fn every_refused_click_answers_with_a_typed_error() {
     on_wire(1, |addr| {
         let mut client = connect(addr);
         let cases = [
-            (CLICK_NEXT_TRACE, "not-yet-supported"),
+            (CLICK_NEXT_TRACE, "no-more-instances"),
             ("nonsense", "unknown-click"),
         ];
         for (verb, code) in cases {

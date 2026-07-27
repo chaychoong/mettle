@@ -20,6 +20,7 @@ pub mod scope;
 pub mod solve;
 mod strings;
 pub mod temporal;
+pub mod temporal_enum;
 pub mod temporal_lower;
 pub mod temporal_solve;
 
@@ -37,6 +38,7 @@ pub use solve::{
     TemporalSolution,
 };
 pub use temporal::{unroll, LassoSelector, UnrolledBounds};
+pub use temporal_enum::{TraceAdvance, TraceEnumerator, TraceStep};
 pub use temporal_lower::{eliminate_fragment_at_state, lower_temporal_command};
 pub use temporal_solve::{
     normalize_state, solve_temporal_command, TemporalSolveConfig, TemporalTrace, TemporalVerdict,

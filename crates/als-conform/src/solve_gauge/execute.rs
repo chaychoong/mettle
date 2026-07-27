@@ -17,7 +17,8 @@ use als_types::{is_temporal_model, FilesystemLoader, ModuleGraph, ResolvedWorld}
 use super::baseline;
 use super::baseline::JarVerdict;
 use super::count::{
-    classify_count, presettled_count_bucket, resolve_count, CountDisp, CountOutcome,
+    classify_count, classify_temporal_count, presettled_count_bucket, resolve_count, CountDisp,
+    CountOutcome,
 };
 use super::count_baseline::CountBaseline;
 use super::detect::lower_defer_class;
@@ -328,7 +329,18 @@ fn classify_command(
     // it runs the `steps`-range sweep instead.
     if is_temporal_model(world, graph, &world.commands[idx]) {
         return classify_temporal_command(
-            world, graph, scoped, &bounds, &mut ir, baseline, cfg, rel, idx, &opts,
+            world,
+            graph,
+            scoped,
+            &bounds,
+            &mut ir,
+            baseline,
+            count_baseline,
+            cfg,
+            rel,
+            idx,
+            &opts,
+            stage2_sym,
         );
     }
 
@@ -403,10 +415,14 @@ fn classify_command(
 /// | `check … for 1 steps` | `mettle_defer:temporal:check_at_one_step` |
 /// | anything the temporal lowering still defers | `mettle_defer:lower:<class>` |
 ///
-/// Stage 2 never enumerates a temporal command: [`als_core::enumerate`] is
-/// static-only, and trace enumeration semantics are deliberately deferred
-/// (ADR-0015 consequence 4). A SAT temporal command under `--count` therefore
-/// gets the typed skip `skip_temporal_trace`, never a fabricated count.
+/// Stage 2 **does** enumerate a temporal command as of mt-076: the typed skip
+/// `skip_temporal_trace` (ADR-0015 consequence 4's deliberate deferral) is
+/// retired, and [`classify_temporal_count`] runs `als_core`'s
+/// [`TraceEnumerator`](als_core::TraceEnumerator) — the jar's own
+/// `next()`-until-UNSAT loop, with the configuration-hold and across-length
+/// de-duplication mt-076's probes pinned. A command whose enumeration outgrows
+/// the effort budget lands in the existing `skip_enum_budget`, not a new
+/// bucket.
 #[allow(
     clippy::too_many_arguments,
     reason = "the temporal arm of `classify_command`, threading the same context"
@@ -418,10 +434,12 @@ fn classify_temporal_command(
     bounds: &BoundsResult,
     ir: &mut Ir,
     baseline: &baseline::Baseline,
+    count_baseline: Option<&CountBaseline>,
     cfg: &GaugeConfig,
     rel: &str,
     idx: usize,
     opts: &SolveOptions,
+    stage2_sym: u32,
 ) -> CmdResult {
     let temporal_cfg = TemporalSolveConfig {
         opts: *opts,
@@ -456,15 +474,36 @@ fn classify_temporal_command(
 
     let baseline_v = baseline.lookup(rel, idx);
     let (verdict_bucket, disagreement) = compare_verdict(baseline_v, sat, rel, idx);
+    // Same gate as the static arm: only a mettle-SAT command the jar also calls
+    // SAT (or has no verdict for) can be compared on a count.
+    let count = if cfg.count && sat && matches!(baseline_v, None | Some(JarVerdict::Sat)) {
+        let enum_cfg = TemporalSolveConfig {
+            opts: SolveOptions {
+                enum_effort_budget: Some(cfg.enum_budget),
+                symmetry: stage2_sym,
+                ..*opts
+            },
+            ..temporal_cfg
+        };
+        Some(classify_temporal_count(
+            world,
+            graph,
+            scoped,
+            bounds,
+            ir,
+            idx,
+            &enum_cfg,
+            cfg.count_cap,
+            presettled_count_bucket(cfg, count_baseline, rel, idx),
+        ))
+    } else {
+        None
+    };
     CmdResult {
         verdict_bucket,
         disagreement,
         self_check_fail,
-        count: if cfg.count && sat {
-            Some(CountOutcome::Skip("skip_temporal_trace"))
-        } else {
-            None
-        },
+        count,
     }
 }
 

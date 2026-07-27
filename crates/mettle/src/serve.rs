@@ -7,7 +7,9 @@
 //! same machinery `exec` already drives, and re-derives none of it:
 //!
 //! - the pipeline is [`crate::exec::lower_for_solve`] /
-//!   [`crate::exec::run_temporal_pipeline`], the same calls `--xml` makes;
+//!   [`crate::exec::setup_temporal`], the same calls `--xml` makes (the
+//!   temporal half stops before the sweep, because mt-076's enumerator *is*
+//!   the sweep — see below);
 //! - `data` is mt-071's [`als_instance::write_instance_xml`], with the same
 //!   `filename=` the `--xml` export uses, so serve and export are
 //!   byte-identical;
@@ -15,8 +17,30 @@
 //!   of input — `:state` meta-command included, which is how a temporal
 //!   session moves the state its expressions are evaluated at (the protocol has
 //!   no state parameter of its own; see "Under-pinned corners" below);
-//! - `click next` is `als_core`'s [`enumerate`], whose order *is* the
-//!   enumeration order the whole project is deterministic about.
+//! - `click next` is `als_core`'s [`enumerate`] on a static command and
+//!   [`TraceEnumerator`] on a temporal one (mt-076), whose orders *are* the
+//!   enumeration orders the whole project is deterministic about.
+//!
+//! # The temporal session's five verbs (mt-076)
+//!
+//! `next`/`next-trace`, `next-config`, `new-init` and `new-fork` are the
+//! reference GUI's own exploration buttons, with the semantics
+//! [alloy6-temporal.md §(g)](../../../docs/reference/alloy6-temporal.md)'s
+//! mt-076 probe wave pinned. Two consequences show up here rather than in
+//! `als-core`:
+//!
+//! - **The displayed trace is the enumerator's first**, never a separately
+//!   solved one — otherwise the first "New Trace" would redisplay it. That is
+//!   why the temporal path calls [`crate::exec::setup_temporal`] and drives the
+//!   sweep itself instead of calling `run_temporal_pipeline`.
+//! - **"New Fork" needs a current state, and the protocol has none.** `click`
+//!   carries only a verb string, so a client cannot say which state its graph
+//!   view is showing. mettle reads it from the evaluator pane instead — which
+//!   is the reference's own arrangement, since `VizGUI` and `OurConsole` share
+//!   one `current` index. Today the only way to move it is the evaluator's
+//!   `:state N`; a trace stepper (mt-075) should move the same index, and if it
+//!   ever needs to do so without an evaluator round trip the protocol needs a
+//!   payload the pinned shape does not have.
 //!
 //! # Why the artifacts are borrowed, not owned
 //!
@@ -51,7 +75,7 @@ use std::process::ExitCode;
 use std::sync::Mutex;
 
 use als_core::ir::Ir;
-use als_core::{enumerate, SolveOptions, TemporalTrace, TemporalVerdict, TranslateError};
+use als_core::{enumerate, SolveOptions, TraceAdvance, TraceEnumerator, TraceStep, TranslateError};
 use als_sterling::{stub_index_html, Provider, ServeEvent, ServeSession, StaticAssets};
 use als_syntax::ast::CmdKind;
 use als_types::{is_temporal_model, ModuleGraph, ResolvedCommand, ResolvedWorld};
@@ -189,9 +213,44 @@ pub(crate) fn run_serve(args: &[String]) -> Result<(), ExitCode> {
     // The two shapes differ only in what they own; from `serve` down they are
     // the same session behind the same trait.
     if is_temporal_model(world, &graph, cmd) {
-        let (artifacts, trace) = solved.solve_temporal()?;
-        let session = TemporalSession::new(&session, &graph, &solved, &artifacts, &trace)
-            .map_err(|e| report_export_failure(&e))?;
+        // As on the static side, the enumerator borrows the artifacts for as
+        // long as it lives, so they are pinned to this frame first — and the
+        // trace shown is the *enumerator's* first, never a separately-solved
+        // one, or the first "New Trace" would redisplay it (mt-076).
+        let artifacts = solved.setup_temporal()?;
+        let mut enumerator = TraceEnumerator::new(
+            world,
+            &graph,
+            &artifacts.scoped,
+            &artifacts.bounds,
+            &artifacts.ir,
+            idx,
+            &exec::temporal_cfg(artifacts.opts),
+        )
+        .map_err(|e| {
+            eprintln!("mettle serve: CANNOT EXECUTE: {e}");
+            ExitCode::from(1)
+        })?;
+        let trace = match enumerator.advance(TraceStep::NextPath).map_err(|e| {
+            eprintln!("mettle serve: CANNOT EXECUTE: {e}");
+            ExitCode::from(1)
+        })? {
+            TraceAdvance::Trace(trace) => trace,
+            TraceAdvance::Exhausted => return Err(no_instance(cmd)),
+            // Unreachable at today's defaults (`serve` applies no budgets, like
+            // `exec`), but a search that stopped short has *not* shown there is
+            // nothing to see, and must not be reported as if it had.
+            other => {
+                eprintln!(
+                    "mettle serve: this command did not reach a verdict within its budget, \
+                     so there is no trace to visualize ({other:?})."
+                );
+                return Err(ExitCode::from(1));
+            }
+        };
+        let session =
+            TemporalSession::new(&session, &graph, &solved, &artifacts, enumerator, &trace)
+                .map_err(|e| report_export_failure(&e))?;
         serve(&listener, &header, path, session)
     } else {
         // The enumerator borrows the artifacts for as long as it lives, so
@@ -257,42 +316,21 @@ impl SolveInputs<'_> {
         Ok((ir, lowered))
     }
 
-    /// The temporal sweep, sharing `exec`'s implementation.
-    fn solve_temporal(&self) -> Result<(TemporalArtifacts, TemporalTrace), ExitCode> {
-        let run = exec::run_temporal_pipeline(
-            self.world,
-            self.graph,
-            self.cmd,
-            self.idx,
-            &SolveOptions::default(),
-        )
-        .map_err(|e| {
-            eprintln!("mettle serve: CANNOT EXECUTE: {e}");
-            ExitCode::from(1)
-        })?;
-        let trace = match run.verdict {
-            TemporalVerdict::Sat(trace) => trace,
-            TemporalVerdict::Unsat => return Err(no_instance(self.cmd)),
-            // Unreachable at today's defaults (`serve` applies no budgets, like
-            // `exec`), but a budget that stopped short has *not* shown there is
-            // nothing to see, and must not be reported as if it had.
-            TemporalVerdict::Unknown { .. } | TemporalVerdict::PrimaryVarCap { .. } => {
-                eprintln!(
-                    "mettle serve: this command did not reach a verdict within its budget, \
-                     so there is no trace to visualize."
-                );
-                return Err(ExitCode::from(1));
-            }
-        };
-        Ok((
-            TemporalArtifacts {
-                ir: run.ir,
-                scoped: run.scoped,
-                bounds: run.bounds,
-                opts: run.opts,
-            },
-            trace,
-        ))
+    /// The temporal command's pre-solve artifacts, sharing `exec`'s
+    /// implementation. The sweep itself is the trace enumerator's (mt-076).
+    fn setup_temporal(&self) -> Result<TemporalArtifacts, ExitCode> {
+        let setup =
+            exec::setup_temporal(self.world, self.graph, self.cmd, &SolveOptions::default())
+                .map_err(|e| {
+                    eprintln!("mettle serve: CANNOT EXECUTE: {e}");
+                    ExitCode::from(1)
+                })?;
+        Ok(TemporalArtifacts {
+            ir: setup.ir,
+            scoped: setup.scoped,
+            bounds: setup.bounds,
+            opts: setup.opts,
+        })
     }
 }
 

@@ -43,16 +43,16 @@
 //! | `onClick` | meaning | today |
 //! |---|---|---|
 //! | [`CLICK_NEXT`] | the next distinct instance of a static command | implemented, via `als_core`'s `InstanceEnumerator` |
-//! | [`CLICK_NEXT_TRACE`] | the next lasso trace, configuration held | typed refusal until mt-076 |
-//! | [`CLICK_NEXT_CONFIG`] | the next trace with a different configuration | typed refusal until mt-076 |
-//! | [`CLICK_NEW_INIT`] | re-solve from a different initial state (`fork(0)`) | typed refusal until mt-076 |
-//! | [`CLICK_NEW_FORK`] | fork at the current state (`fork(current+1)`) | typed refusal until mt-076 |
+//! | [`CLICK_NEXT_TRACE`] | the next lasso trace, configuration held | implemented (mt-076), via `als_core`'s `TraceEnumerator` |
+//! | [`CLICK_NEXT_CONFIG`] | the next trace with a different configuration | implemented (mt-076) |
+//! | [`CLICK_NEW_INIT`] | re-solve from a different initial state (`fork(0)`) | implemented (mt-076) |
+//! | [`CLICK_NEW_FORK`] | fork at the current state (`fork(current+1)`) | implemented (mt-076) |
 //!
-//! A temporal session offers **no buttons at all** while those four are
-//! unimplemented (ADR-0016 Decision 2: absent, never a button that produces a
-//! wrong trace) — but the verbs are still accepted on the wire, so a client
-//! that sends one gets a sentence naming the bead rather than
-//! "unknown action".
+//! On a **temporal** session [`CLICK_NEXT`] and [`CLICK_NEXT_TRACE`] are the
+//! same operator, because the reference's own `fork(-3)` and `fork(-2)` are
+//! (mt-076 probe P-076-3). Buttons still follow ADR-0016 Decision 2 — a verb
+//! whose space is empty loses its button rather than offering a click that
+//! cannot work — and a verb sent anyway is refused with a typed `error`.
 
 mod handshake;
 
