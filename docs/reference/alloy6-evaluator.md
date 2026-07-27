@@ -2,8 +2,8 @@
 
 This document pins **exactly how the reference Alloy 6.2.0 GUI's expression
 evaluator behaves** — the "Evaluator" console reachable from Sterling/the
-visualizer after a `run`/`check` command solves — so mettle's upcoming REPL
-(mt-062) can be implemented *from this contract*, not from memory or from a
+visualizer after a `run`/`check` command solves — so mettle's REPL
+(mt-062, since shipped) could be implemented *from this contract*, not from memory or from a
 plausible-looking API read. Per this repo's method: **behavior is pinned by
 the oracle jar, probed and recorded with evidence; a claim without a probe
 run or a source citation is not pinned.**

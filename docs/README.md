@@ -23,6 +23,7 @@ Every doc in the project is reachable from here. Nothing is orphaned. Superseded
 - **[adr/](adr/)** — Architecture Decision Records. Index: [adr/README.md](adr/README.md).
 
 ## Reference material
+- **[screenshots/](screenshots/)** — the frontend screenshots the root [README](../README.md) embeds (mt-073's README pass; re-capture via `mettle serve` + headless Chrome when the UI changes materially).
 - **[reference/](reference/)** — verified briefs on the reference implementation:
   - **[reference/alloy6-reference.md](reference/alloy6-reference.md)** — the pinned Alloy 6.2.0 oracle: provenance, licenses, and empirically-proven headless invocation.
   - **[reference/corpora.md](reference/corpora.md)** — conformance-corpus provenance manifest: exact pins, retrieval commands, license evidence per corpus (`corpus/` itself is git-ignored pending mt-008).

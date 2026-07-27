@@ -37,7 +37,7 @@ implementation in `tnelson/Forge`'s `forge/server/forgeserver.rkt` and
   reconnect-on-close. Fully pinned in §2, with exact TypeScript source and
   a cross-check against Forge's own Racket-side handler.
 - **Instance format:** the same Alloy instance XML schema mettle already
-  writes (or will write) — `<instance>`/`<sig>`/`<field>`/`<skolem>`/
+  writes (mt-071) — `<instance>`/`<sig>`/`<field>`/`<skolem>`/
   `<type>`/`<tuple>`/`<atom>` with `label`/`ID`/`parentID` — **with one
   confirmed, load-bearing attribute-name mismatch**: mettle's jar-pinned
   contract uses `looplength`; Sterling's parser reads `backloop`/`loop`.
@@ -501,8 +501,10 @@ Prebuilt static bundles exist as GitHub Release assets on
 
 This is heavy for what mettle needs (instance visualization + evaluator),
 almost entirely because of Monaco (a full VS-Code-grade code editor) for a
-scripting feature mettle likely doesn't want in v1. **Options, not yet
-decided:**
+scripting feature mettle likely doesn't want in v1. **Options as surveyed
+at mt-070 — RESOLVED same day: the owner chose option 3's shape (ADR-0016
+Resolution 1), and mt-075 shipped it — mettle's own from-scratch frontend,
+nothing upstream embedded:**
 
 1. Ship the full prebuilt zip as-is, embedded via `rust-embed` or similar
    — simplest, but bakes an ~18 MB (uncompressed) asset payload into the
@@ -524,7 +526,9 @@ decided:**
    reimplementation of a documented wire protocol — the same posture
    ADR-0006 already takes for the Alloy stdlib).
 
-**License — a genuine open question, not yet resolved.** No LICENSE file
+**License — a genuine open question at survey time, MOOT since mt-075
+shipped a first-party frontend embedding nothing upstream (the finding
+stands for anyone who ever wants to embed Sterling assets).** No LICENSE file
 exists anywhere in the entire Sterling lineage checked
 (`atdyer/sterling`, `alloy-js/sterling`, `alloy-js/sterling-ui`,
 `alloy-js/sterling-js`, `sidprasad/sterling-ts`) — confirmed by `find

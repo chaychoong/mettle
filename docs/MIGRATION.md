@@ -112,14 +112,12 @@ change lands after it, per that section's note.
    counts on `oracle/test1.als`'s `show` command) — a wrong jar version or a wrong
    JDK fails these immediately, before anything more expensive runs.
 
-   **Toolchain caveat:** inside `nix develop` the compiler is nixpkgs' rustc
-   (1.95.0 at the current pin — see `flake.nix`'s header), NOT the 1.97.0 that
-   `rust-toolchain.toml` pins and that every recorded gate ran at. If the
-   gauntlet (esp. `fmt --check`/clippy) or step 4's hash diverges under the nix
-   shell, suspect the toolchain delta FIRST: install the exact pin via rustup
-   (`rustup toolchain install 1.97.0` — `cargo` then auto-selects it from
-   `rust-toolchain.toml`) and re-run outside the nix shell before treating the
-   divergence as real.
+   **Toolchain caveat — RETIRED at mt-074 (2026-07-27):** `nix develop` now
+   provides the *exact* toolchain `rust-toolchain.toml` pins (1.97.0), built
+   via `oxalica/rust-overlay`'s `fromRustupToolchainFile` — the historical
+   1.95-vs-1.97 delta this paragraph used to warn about no longer exists.
+   If a future `rust-toolchain.toml` bump ever desyncs the shell, re-run
+   `nix flake update rust-overlay` (see `flake.nix`'s header).
 4. **Determinism cross-check.** Re-run the exact stage-1 sweep recorded in
    Phase 1 and compare stdout by hash — a byte-identical sweep across two
    different machines is mettle's determinism contract (STYLE.md: fixed solver
@@ -138,8 +136,11 @@ change lands after it, per that section's note.
    ```
    ./target/release/solve-gauge --count
    ```
-   Expect **count_match 49 / COUNT_MISMATCH 3** (verified post-mt-053, 2026-07-22; the three filed mt-041 rows —
-   see `docs/TASKS.md`). Any other number is a new finding, not a known
+   Expect the figures of the latest recorded run in `docs/STATE.md`'s
+   Scorecard — as of 2026-07-27 (post-mt-076): **count_match 56 /
+   COUNT_MISMATCH 0** at SB-0 (the historical 49/3 recorded here at
+   migration time predates the mt-041-family retirement). Any other number
+   than the currently-recorded pair is a new finding, not a known
    quantity — investigate before treating the box as ready for mt-050's
    deep-budget exit sweeps.
 

@@ -21,6 +21,6 @@ Each ADR captures one non-trivial decision, its context, and its consequences. A
 | [0013](0013-verification-instrument-never-trades-coverage.md) | The verification instrument never trades coverage for speed (owner-decided; the mt-057 fast lane built, measured at 6%, and deleted) | Accepted |
 | [0014](0014-rung5-repl-slice-before-rung6.md) | A thin Rung-5 slice (evaluator REPL only) before Rung 6, then temporal, then the rest of Rung 5 | Accepted (owner-delegated call, 2026-07-25) |
 | [0015](0015-rung6-temporal-architecture.md) | Rung-6 temporal architecture: bounded lasso solving as per-length unrolling on the existing CDCL; unbounded (electrod) out of scope | Proposed |
-| [0016](0016-rung5-remainder-serve-xml-packaging.md) | Rung-5 remainder: jar-exact instance-XML writer, `mettle serve` on Sterling's provider protocol, cargo-dist packaging | Proposed (2 owner forks open: Sterling assets/license, crates.io name) |
+| [0016](0016-rung5-remainder-serve-xml-packaging.md) | Rung-5 remainder: jar-exact instance-XML writer, `mettle serve` on Sterling's provider protocol, cargo-dist packaging | Proposed (both owner forks RESOLVED 2026-07-27: own browser-first frontend, nothing upstream embedded; crates.io skipped outright — blessing batched to the combined feature-complete review) |
 
 Template for new ADRs: **Context → Decision → Consequences → Alternatives considered**, with `Status:` and `Date:` headers, and a `Supersedes` / `Superseded by` line when relevant.

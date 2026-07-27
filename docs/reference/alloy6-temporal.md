@@ -1,6 +1,9 @@
-# Alloy 6 temporal semantics — pinned contract, wave 2 (mt-064)
+# Alloy 6 temporal semantics — pinned contract, waves 1–3 (mt-064 … mt-076)
 
-**Status: wave 2 of N, in progress.** This document pins the reference
+**Status: three waves complete** — wave 2's frame below stands, and the
+mt-069 closing wave (§(m)) plus the mt-076 wave (§(g)/§(i): enumeration
+`next`/`fork` parity, the configuration-lock correction) closed the
+enumeration-counting gaps wave 2 left open. This document pins the reference
 Alloy 6.2.0 jar's **temporal** behavior — the `var` surface, the `steps`
 scope grammar, verdict semantics, the Pardinus translation architecture,
 trace/XML rendering, enumeration operators, the evaluator's per-state
@@ -1272,8 +1275,7 @@ curiosities plus two carried-forward items:
   bytecode — `Evaluator` itself was not extracted this wave. The *behavior*
   is solidly pinned (three independent code paths, T-22/T-23/T-25, all
   agree); the mechanism inside Kodkod is not claimed.
-- **This document does not yet appear in `docs/README.md`'s reference
-  index** — unchanged from wave 1; the task's constraints for both probe
-  passes excluded editing any `docs/` file other than this one. Linking it
-  in `docs/README.md` (next to `alloy6-evaluator.md`/`alloy6-translation.md`)
-  is a small follow-up the tech lead should do when merging this wave.
+- ~~**This document does not yet appear in `docs/README.md`'s reference
+  index**~~ — closed: it is indexed there now. (Historical note: the probe
+  passes' constraints excluded editing any `docs/` file other than this one;
+  the tech lead linked it at merge, next to `alloy6-evaluator.md`/`alloy6-translation.md`.)

@@ -236,7 +236,11 @@ resolves quickly. This goes to the owner as a decision, not a status line.
   the flake must build the *same* pinned toolchain as everything else;
   the project's determinism value applies to release builds too).
 - Both beads land only after the workspace version leaves `0.0.0`, which
-  happens at the Rung-5 exit gate, not before.
+  happens at the Rung-5 exit gate, not before. _(Amended at mt-073,
+  2026-07-27: with the exit gate batched into the combined feature-complete
+  review — which itself sits after these beads — the version gate was
+  resolved in-bead by the tech lead instead: `0.0.0 → 0.1.0`, pre-1.0
+  semver, `1.0.0` reserved for the drop-in bar.)_
 - The moment any third-party web assets are embedded (Decision 3 A-path),
   ADR-0006 §5's "no third-party text, no NOTICE file" claim goes stale —
   the embedding bead owns updating it. Named here so it cannot drop
