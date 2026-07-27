@@ -15,20 +15,23 @@ with all four platform archives + shell installer, the Homebrew formula is
 live on `chaychoong/homebrew-tap` (installed, smoked, and uninstalled on this
 machine), the Docker image is published to GHCR, and CI is green on the tag.
 
-## 0. Two one-click chores first (release plumbing only you can do)
+## 0. One chore first (release plumbing only you can do)
 
-1. **`HOMEBREW_TAP_TOKEN`** — create a fine-grained PAT with **Contents:
-   read & write** on `chaychoong/homebrew-tap`, add it as an Actions secret
-   named `HOMEBREW_TAP_TOKEN` on `chaychoong/mettle`. Until it exists, each
-   tag's `publish-homebrew-formula` job fails red with `Input required and
-   not supplied: token` (v0.1.0's formula was published by hand, so
-   `brew install` already works today). Once the secret exists, "Re-run
-   failed jobs" on the v0.1.0 release run exercises the automated publish
-   end-to-end — the re-cut tag's workflow targets the right tap.
-2. **Make the container image public** — the GHCR package defaulted to
-   private on first publish, so anonymous `docker pull` is denied. Go to
-   <https://github.com/users/chaychoong/packages/container/mettle/settings>
-   → Danger Zone → Change visibility → Public.
+1. **`HOMEBREW_TAP_TOKEN`** — create a fine-grained PAT (web UI only; there
+   is no API for minting PATs): <https://github.com/settings/personal-access-tokens/new>,
+   repository access = only `chaychoong/homebrew-tap`, permissions =
+   **Contents: read & write**. Add it as an Actions secret named
+   `HOMEBREW_TAP_TOKEN` on `chaychoong/mettle`
+   (`gh secret set HOMEBREW_TAP_TOKEN --repo chaychoong/mettle`). Until it
+   exists, each tag's `publish-homebrew-formula` job fails red with
+   `Input required and not supplied: token` (v0.1.0's formula was published
+   by hand, so `brew install` already works today). Once the secret exists,
+   "Re-run failed jobs" on the v0.1.0 release run exercises the automated
+   publish end-to-end — the re-cut tag's workflow targets the right tap.
+
+_(The container image is public and pull-verified — no chore. Gotcha for
+other machines: a stale `docker login ghcr.io` credential makes GHCR return
+`denied` even for public images; `docker logout ghcr.io` fixes it.)_
 
 ## 1. Fresh install → visualized instance in under a minute (the Rung-5 bar)
 
