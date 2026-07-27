@@ -27,16 +27,16 @@ install-updater = false
 # GitHub Artifact Attestations (the current signing norm; no key custody --
 # ADR-0016 Decision 4).
 github-attestations = true
-# Homebrew tap to publish formulae to. The `chaychoong/homebrew-mettle`
-# repo does not exist yet as of this bead (mt-073) -- the coordinator must
-# create it (empty is fine, `dist` pushes the formula) and set a
-# `HOMEBREW_TAP_TOKEN` repo secret (a PAT with `contents: write` on that
-# tap repo; `secrets.GITHUB_TOKEN` can't write cross-repo) before the first
-# tagged release. Until then `publish-homebrew-formula` in the generated
-# release.yml fails at its checkout step -- the GitHub Release itself
-# (built by the `host` job, which does not depend on the Homebrew job)
-# still ships with the shell installer and all four archives.
-tap = "chaychoong/homebrew-mettle"
+# Homebrew tap to publish formulae to. The owner's existing shared tap
+# (`brew install chaychoong/tap/mettle`). Publishing needs a
+# `HOMEBREW_TAP_TOKEN` repo secret (a PAT with `contents: write` on the
+# tap repo; `secrets.GITHUB_TOKEN` can't write cross-repo). Without it
+# `publish-homebrew-formula` in the generated release.yml fails at its
+# checkout step -- the GitHub Release itself (built by the `host` job,
+# which does not depend on the Homebrew job) still ships with the shell
+# installer and all four archives. The v0.1.0 formula was published to the
+# tap by hand (the tag predated this repointing).
+tap = "chaychoong/homebrew-tap"
 # Only the homebrew publish job needs to run post-release; there's no npm
 # package or custom job for this workspace.
 publish-jobs = ["homebrew"]
