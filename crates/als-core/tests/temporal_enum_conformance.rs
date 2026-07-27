@@ -504,10 +504,11 @@ fn a_length_past_the_primary_var_cap_is_typed_not_exhaustion() {
     ));
 }
 
-/// The two typed defers the sweep raises are raised at construction, so a caller
-/// cannot build an enumerator that could never answer.
+/// The typed defer the sweep raises is raised at construction, so a caller
+/// cannot build an enumerator that could never answer. A one-state bound is
+/// **not** one of them as of mt-077 — it enumerates like any other length.
 #[test]
-fn the_sweeps_typed_defers_are_refused_up_front() {
+fn the_sweeps_typed_defer_is_refused_up_front() {
     let unbounded = "var sig A {}\nrun {} for 1.. steps\n";
     let s = Session::new(unbounded, 0);
     assert!(matches!(
@@ -523,20 +524,25 @@ fn the_sweeps_typed_defers_are_refused_up_front() {
         Err(TranslateError::UnboundedSteps { .. })
     ));
 
+    // P-077-5: a `check` at a one-state bound opens and enumerates — the jar
+    // answers the same shape (`sat=true traceLength=1 loopState=0`).
     let check_at_one = "var sig A {}\nassert P { always some A }\ncheck P for exactly 1 steps\n";
     let s = Session::new(check_at_one, 0);
-    assert!(matches!(
-        TraceEnumerator::new(
-            &s.built.world,
-            &s.built.graph,
-            &s.built.scoped,
-            &s.built.bounds,
-            &s.built.ir,
-            0,
-            &cfg(20),
-        ),
-        Err(TranslateError::TemporalCheckAtOneStep { .. })
-    ));
+    let mut e = TraceEnumerator::new(
+        &s.built.world,
+        &s.built.graph,
+        &s.built.scoped,
+        &s.built.bounds,
+        &s.built.ir,
+        0,
+        &cfg(20),
+    )
+    .expect("a one-state check enumerates");
+    let TraceAdvance::Trace(first) = e.advance(TraceStep::NextPath).expect("advance") else {
+        panic!("a one-state counterexample exists");
+    };
+    assert_eq!(first.k(), 1);
+    assert_eq!(first.loop_state, 0);
 }
 
 /// An UNSAT command enumerates to nothing at once, and stays that way.

@@ -89,21 +89,19 @@ arc; **New Trace / New Config / New Init / New Fork** all answer live
 the displayed state; the table-view toggle; dark/light; and it's fully
 offline (no webfonts, no CDN).
 
-## 4. The one open fork: `check … for 1 steps`
+## 4. ~~The one open fork: `check … for 1 steps`~~ — DECIDED (owner, mid-review 2026-07-27)
 
-The jar NPE-crashes on exactly this shape (pinned, reproducible); mettle
-cannot conform to a crash. Pick one:
-
-- **(A) — recommended:** keep the typed `CANNOT EXECUTE` naming the jar
-  bug. Strict drop-in posture, zero wrong-verdict risk. (This is what ships
-  today.)
-- **(B):** answer the length-1 check correctly — more useful, a deliberate
-  scorecard-invisible divergence (the jar produces no verdict to compare).
+The owner chose **Option B: answer the length-1 check** — implemented same
+day as **mt-077** ([LEDGER-015](../SEMANTICS_LEDGER.md)). The probe wave
+run for the implementation also corrected the bug's pinned scope: the
+jar's NPE is *not* `check`-specific (constant-folding `run`s crash too)
+and most one-state `check`s answer fine — so the old refusal was itself a
+divergence, and B increases conformance. Nothing left to decide here.
 
 ## 5. Verdict
 
-Reply with: bless / findings per section, plus the A-or-B call. Anything
-that looks like a divergence from Alloy fits the issue template at
-`.github/ISSUE_TEMPLATE/divergence.md`. On blessing, the tech lead flips
-ADR-0015 to Accepted, records the Rung-5/6 exits in STATE/ROADMAP/TASKS,
-and marks this doc done.
+Reply with: bless / findings per section (parts 1–3 are what remain).
+Anything that looks like a divergence from Alloy fits the issue template
+at `.github/ISSUE_TEMPLATE/divergence.md`. On blessing, the tech lead
+flips ADR-0015 to Accepted, records the Rung-5/6 exits in
+STATE/ROADMAP/TASKS, and marks this doc done.

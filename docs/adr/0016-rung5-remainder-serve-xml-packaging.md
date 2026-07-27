@@ -303,8 +303,10 @@ The owner resolved both forks and reshaped the cadence in one exchange:
    libraries — a fresh naming decision then.
 3. **Cadence: all human tests batch to one combined feature-complete
    review** (owner, superseding per-rung gating from here forward — the
-   Rung-6 gate and the `check … for 1 steps` fork ride along to that
-   review; engineering gates continue every chunk unchanged). **The
+   Rung-6 gate rides along to that review; the `check … for 1 steps` fork
+   was originally parked there too but the owner decided it early,
+   mid-review — [LEDGER-015](../../SEMANTICS_LEDGER.md), Option B, mt-077,
+   2026-07-27; engineering gates continue every chunk unchanged). **The
    feature-complete bar includes instance/trace enumeration** (the GUI's
    Next / New Config / New Init / New Fork parity + temporal counting on
    the scorecard) — new bead **mt-076**, cut into the set. Estimated

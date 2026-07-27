@@ -35,10 +35,25 @@
 //!   continuing would let the sweep report UNSAT-within-bound for a range it
 //!   never actually searched (STYLE E5 — never a wrong verdict).
 //!
-//! Two `steps` shapes never reach the loop, each a typed defer:
-//! [`TranslateError::UnboundedSteps`] for `1..` and
-//! [`TranslateError::TemporalCheckAtOneStep`] for the pinned `check`-at-one-state
-//! jar bug (see those variants' docs).
+//! One `steps` shape never reaches the loop: `1..` (open above) is the typed
+//! defer [`TranslateError::UnboundedSteps`] (see that variant's docs).
+//!
+//! # The one-state bound (`for 1 steps`) is answered, not refused (mt-077)
+//!
+//! A `k == 1` trace is an ordinary lasso whose only state is its own loop
+//! target, so the sweep handles it with no special case: every future operator
+//! collapses to "now" (`after X` ≡ `eventually X` ≡ `always X` ≡ `X`,
+//! `X until Y` ≡ `Y`), `before X` is false, and `once`/`historically` collapse
+//! to "now" as well — all jar-confirmed by evaluating each operator on a solved
+//! single-state instance (probe P-077-3).
+//!
+//! The jar cannot always be asked directly: a temporal command whose translation
+//! constant-folds at `maxtrace == 1` dies with a `NullPointerException` instead
+//! of answering (probes T-10a/T-11, re-pinned and **narrowed** by P-077-4 —
+//! the crash is not `check`-specific, plain `run`s trip it too). Where the jar
+//! does answer, mettle agrees (P-077-1/2/5); where it crashes, mettle answers
+//! the negation-dual the jar itself computes fine, since `check P` is the
+//! negated `run { not P }`.
 //!
 //! # Determinism and cost
 //!
@@ -228,8 +243,6 @@ pub enum TemporalVerdict {
 /// # Errors
 /// - [`TranslateError::UnboundedSteps`] for a `1..` (open-above) `steps` scope —
 ///   the reference's bounded engine refuses it (probe T-08b).
-/// - [`TranslateError::TemporalCheckAtOneStep`] for a `check` at a one-state
-///   bound — the pinned jar `NullPointerException`, an open owner fork.
 /// - Anything [`lower_temporal_command`] or the encoder can raise, including
 ///   [`TranslateError::CapacityExceeded`] when a length outgrows
 ///   [`SolveOptions::encode_budget`].
@@ -266,14 +279,9 @@ pub fn solve_temporal_command(
         StepsMax::Bounded(max) => max,
     };
 
-    // The pinned jar bug: any `check` whose resolved `maxtrace == 1` throws a
-    // NullPointerException instead of answering (probes T-10a/T-11). mettle
-    // cannot conform to a crash and the divergence is an open owner fork, so
-    // the boundary is a typed defer naming the bug — not an answer.
-    if matches!(command.kind, als_syntax::ast::CmdKind::Check) && max == 1 {
-        return Err(TranslateError::TemporalCheckAtOneStep { span: command.span });
-    }
-
+    // `max == 1` is deliberately NOT special-cased (mt-077): a one-state lasso
+    // is an ordinary trace, and refusing it would diverge from the jar on every
+    // such command the jar answers cleanly (module docs).
     for k in range.min..=max {
         let k = k as usize;
         let unrolled = unroll(ir, &bounds.bounds, k);

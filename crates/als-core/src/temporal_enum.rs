@@ -232,11 +232,9 @@ impl<'a> TraceEnumerator<'a> {
     /// instead. `ir` is cloned; the caller's arena is left alone.
     ///
     /// # Errors
-    /// [`TranslateError::UnboundedSteps`] for a `1..` steps scope and
-    /// [`TranslateError::TemporalCheckAtOneStep`] for the pinned
-    /// `check`-at-one-state jar bug — the same two typed defers the sweep
-    /// raises, refused here rather than at the first advance so a caller cannot
-    /// build an enumerator that could never answer.
+    /// [`TranslateError::UnboundedSteps`] for a `1..` steps scope — the same
+    /// typed defer the sweep raises, refused here rather than at the first
+    /// advance so a caller cannot build an enumerator that could never answer.
     ///
     /// # Panics
     /// Debug builds assert that `command_index` really is a temporal command;
@@ -261,9 +259,6 @@ impl<'a> TraceEnumerator<'a> {
                 span: command.steps.map_or(command.span, |s| s.span),
             });
         };
-        if matches!(command.kind, als_syntax::ast::CmdKind::Check) && max == 1 {
-            return Err(TranslateError::TemporalCheckAtOneStep { span: command.span });
-        }
         Ok(TraceEnumerator {
             world,
             graph,

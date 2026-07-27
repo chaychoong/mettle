@@ -262,11 +262,10 @@ fn a_temporal_check_reports_unsat_within_the_steps_bound() {
     );
 }
 
-/// (e3) The two Rung-6 typed defers still print `CANNOT EXECUTE` and exit 1 —
-/// an unbounded `steps` range (the jar's own engine rejection) and a `check` at
-/// a one-state bound (the pinned jar `NullPointerException`).
+/// (e3) The Rung-6 typed defer still prints `CANNOT EXECUTE` and exits 1: an
+/// unbounded `steps` range is the jar's own engine rejection (T-08b).
 #[test]
-fn temporal_defers_are_typed_and_fail_the_run() {
+fn an_unbounded_steps_range_is_typed_and_fails_the_run() {
     let out = run_exec(&fixture("temporal_check.als"), &["--command", "1"]);
     assert_eq!(out.status.code(), Some(1), "stderr: {}", stderr(&out));
     assert!(
@@ -274,14 +273,35 @@ fn temporal_defers_are_typed_and_fail_the_run() {
         "{}",
         stdout(&out)
     );
+}
 
+/// (e3b) **mt-077, probes P-077-1/P-077-5** — a `check` at a one-state bound is
+/// answered end-to-end, both ways: `always some univ` holds in the single state
+/// (VALID within the bound), and `always some A` is falsified by the single-state
+/// lasso in which `A` is empty (a 1-state counterexample).
+#[test]
+fn a_check_at_a_one_state_bound_is_answered() {
     let out = run_exec(&fixture("temporal_check.als"), &["--command", "2"]);
-    assert_eq!(out.status.code(), Some(1), "stderr: {}", stderr(&out));
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
     assert!(
-        stdout(&out).contains("NullPointerException"),
+        stdout(&out).contains("VALID (no counterexample within exactly 1 steps)"),
         "{}",
         stdout(&out)
     );
+
+    let out = run_exec(&fixture("temporal_check.als"), &["--command", "3"]);
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("COUNTEREXAMPLE"), "{text}");
+    assert!(
+        text.contains("------State 0 (loop)-------"),
+        "a one-state lasso loops on state 0: {text}"
+    );
+    assert!(
+        !text.contains("State 1"),
+        "the counterexample is a single state: {text}"
+    );
+    assert!(text.contains("this/A = {}"), "`A` is empty: {text}");
 }
 
 /// (e4) A `steps` scope on a **static** model is the jar's own reject, verbatim

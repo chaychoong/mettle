@@ -75,10 +75,13 @@ before optimizing, and per-length encodes keep determinism trivial).
 3. **Solve driver & verdicts (mt-067):** `for k in [min,max]` — encode,
    solve, return the first SAT as a k-state lasso trace; exhausting the
    range yields UNSAT-within-bound. Typed defers: `1..` (unbounded) gets
-   the jar's exact rejection text; `check … for 1 steps` awaits the
-   ledgered owner fork (the jar NPEs there — mettle cannot conform to a
-   crash) and until decided is a typed defer naming the bug. Symmetry
-   breaking applies per-state per the pinned rule.
+   the jar's exact rejection text; `check … for 1 steps` was a typed defer
+   awaiting the ledgered owner fork — **decided 2026-07-27
+   ([LEDGER-015](../../SEMANTICS_LEDGER.md), owner Option B, mt-077): the
+   defer is removed and every one-state bound is answered** (the mt-077
+   probes also narrowed the jar bug to constant-folding translations,
+   `run` and `check` alike). Symmetry breaking applies per-state per the
+   pinned rule.
 4. **Surface (mt-068):** `exec` renders traces state-by-state against the
    pinned `toString(state)` shapes with the loop marked; the REPL gains a
    state index with the pinned wrap/clamp semantics, making it the trace

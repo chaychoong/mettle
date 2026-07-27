@@ -280,26 +280,33 @@ occurred: ...")`) instead of returning a clean verdict.** Verbatim:
 edu.mit.csail.sdg.alloy4.ErrorFatal: Unknown exception occurred: java.lang.NullPointerException: Cannot invoke "kodkod.engine.fol2sat.Translation$Whole.cnf()" because "translation" is null
 ```
 
-Reproduced twice with unrelated fact bodies — **T-10a** (`fact { no Flag;
-always (no Flag => after some Flag) }`, `check ... for 1 steps`) and a
-minimal isolation with no `after` in the fact at all (`fact { no Flag }`,
-same `check ... for 1 steps`) — so the bug is general to `check` +
-`maxtrace==1`, not specific to any particular formula shape. **T-11**
-isolates it to `check` specifically: the identical `maxtrace==1` bound on
-a plain `run` command (`run {} for 1 steps`, `run {} for exactly 1 steps`)
-solves cleanly with no error. Not chased into Pardinus internals to find
-the root cause (a `check` negates the assertion and solves that — the bug
-is presumably somewhere in how that negated-formula path handles a
-`Translation$Whole` that comes back `trivial()`/degenerate at the
-single-state bound) — recorded as observed jar behavior, exact repro
-given, mechanism not claimed. This is the same category of finding as this
-repo's other pinned oracle quirks (the dead `-y` flag, the
-entry-point-dependent overflow default — see the `mettle-oracle-gotchas`
-memory note) and should be treated the same way: **Rung 6 must decide,
-with a Ledger entry, whether mettle reproduces this exact failure at
-`check ... for 1 steps` or diverges (and if it diverges, that divergence
-belongs in `LIMITATIONS.md`)** — not silently "fixed" by an agent without
-that decision being made explicitly.
+**Scope CORRECTED by the mt-077 probe wave (P-077-1..5 + bisect B1–B6,
+`scratchpad/probe/mt077/NOTES.md`, 2026-07-27) — wave 1 characterized the
+trigger too broadly in both directions.** Wave 1 claimed (from T-10a/T-11)
+that the bug is "general to `check` + `maxtrace==1`" and "isolated to
+`check`". Both halves are refuted: nine distinct one-state `check`
+commands in the mt-077 wave returned clean verdicts from the jar, and
+three plain **`run`** commands at a one-state bound NPE'd with the
+identical stack. The empirical trigger is **any temporal command at
+`maxtrace == 1` whose translation constant-folds to a boolean** — Kodkod
+then returns a non-`Whole` trivial translation and Pardinus dereferences
+null (`Translation$Whole.cnf()` on `translation == null`). T-10a's two
+repros happen to be constant-folding shapes (`fact { no Flag }` bounds
+`Flag` empty, so the negated assertion folds); B5/B2 pin the scope
+dependence — an identical formula NPEs at scope 1 and solves at scope 3.
+Root cause not chased past that empirical predicate; mechanism inside
+Pardinus still not claimed. This remains the same category as the repo's
+other pinned oracle quirks (the dead `-y` flag, the entry-point-dependent
+overflow default — see the `mettle-oracle-gotchas` memory note).
+
+**The ledger decision is MADE — [LEDGER-015](../../SEMANTICS_LEDGER.md)
+(genuine fork, owner-decided Option B, 2026-07-27): mettle answers every
+one-state-bound temporal command correctly**; the old blanket
+`check`-at-1 refusal (which was itself diverging from the jar on the
+majority, answering subset) is removed, and the deliberate divergence —
+answering where the jar's crashing subset produces nothing — is recorded
+in `LIMITATIONS.md`. The one-state semantics is jar-anchored through the
+negated-`run` dual, which the jar solves (P-077-1/2/3).
 
 ---
 
@@ -1151,9 +1158,9 @@ id: `scratchpad/probe/mt063/NOTES.md`. Rerun:
 | T-08a | `UnboundedSteps.als` | `for 3.. steps` → `ErrorSyntax("Unbounded time scope must start at 1.")` |
 | T-08b | `UnboundedSteps1.als` | `for 1.. steps` → `maxprefix=Integer.MAX_VALUE`; default (bounded) solver → `ErrorAPI("Bounded engines do not support complete model checking.")` |
 | T-09 | `MinLen.als` | Solver returns the *minimal* satisfying trace length, not the max available |
-| T-10a | `CounterexampleAtLength.als`, `TrivialLen1.als` | `check ... for 1 steps` → jar bug: `NullPointerException`/`ErrorFatal`, reproduced with two unrelated fact shapes |
+| T-10a | `CounterexampleAtLength.als`, `TrivialLen1.als` | `check ... for 1 steps` → jar bug: `NullPointerException`/`ErrorFatal`, reproduced with two unrelated fact shapes — *scope corrected by mt-077: both repros are constant-folding shapes; most one-state `check`s answer cleanly (P-077-1/2/4/5)* |
 | T-10b | `CounterexampleAtLength2.als` | Clean UNSAT(2)→SAT(3)→SAT-still-minimal(4) — bound-relativity of UNSAT, and a second minimality confirmation, with no boundary bug |
-| T-11 | `RunLen1.als` | `run ... for 1 steps` (not `check`) solves cleanly — isolates T-10a's bug to `check` specifically |
+| T-11 | `RunLen1.als` | `run ... for 1 steps` (not `check`) solves cleanly — *the "isolates to `check`" inference is REFUTED by mt-077: constant-folding `run`s at a one-state bound NPE identically (P3 cmds 1–3); the real discriminator is constant-folding, not command kind* |
 | T-12 | `ExpectTemporal.als` | `expect` mismatch on a temporal `run` doesn't throw at the `execute_command` layer — same as static commands |
 
 **Wave 2** (`scratchpad/probe/mt064/NOTES.md`; rerun `scratchpad/probe/mt064/rerun_all.sh` plus T-26/T-27's inline one-offs):
@@ -1243,12 +1250,14 @@ curiosities plus two carried-forward items:
   in-scope for mettle (still Rung-6-out-of-scope per the North Star: the
   bounded default path is the priority). The *id* (`electrod.elo`) is
   pinned; its correctness is not.
-- **The `check ... for 1 steps` `NullPointerException` jar bug's root
-  cause inside Pardinus** — unchanged from wave 1. The exact repro is
-  pinned (T-10a/T-11), the internal mechanism is not. A Ledger decision
-  (reproduce the failure vs. diverge, with the divergence recorded in
-  `LIMITATIONS.md`) is still owed before Rung 6 implements `check` verdict
-  handling at trace-length-1 bounds.
+- **The one-state-bound `NullPointerException` jar bug's root cause
+  inside Pardinus** — narrowed but still unpinned. mt-077 corrected the
+  trigger's scope (any temporal command at `maxtrace==1` whose translation
+  constant-folds — not `check`-specific; see §(c)) and characterized it
+  empirically via bisect (B1–B6), but the precise Pardinus/Kodkod code
+  path that nulls `translation` was deliberately not chased. The Ledger
+  decision is no longer owed: [LEDGER-015](../../SEMANTICS_LEDGER.md)
+  (owner, 2026-07-27) — mettle answers, divergence in `LIMITATIONS.md`.
 - **Integers/Strings-stay-rigid** is now live-reconfirmed per-state (T-13:
   `Int`/`String`/`seq/Int`/`univ` byte-identical across all three states of
   a forced multi-state trace) — the specific claim in §(d)'s "Static-vs-

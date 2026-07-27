@@ -370,30 +370,125 @@ fn unbounded_steps_is_the_pinned_engine_rejection() {
     );
 }
 
-/// **T-10a/T-11** — the pinned jar bug: any `check` whose resolved `maxtrace`
-/// is 1 throws a `NullPointerException` instead of answering, while the
-/// identical bound on a `run` solves cleanly. mettle cannot conform to a crash
-/// and the fork is an open owner decision (`SEMANTICS_LEDGER.md`, "Temporal
-/// semantics (Rung 6)"), so the boundary is a typed defer naming the bug.
+/// **P-077-1** — a `check` at a one-state bound is *answered*, not refused
+/// (mt-077). `always some Flag` is falsified by the single-state lasso in which
+/// `Flag` is empty, so the counterexample is a 1-state trace looping on state 0.
+///
+/// Jar cell (`fixtures/P1_CounterexampleAtOne.als`): `check AlwaysSome for 2 but
+/// 1 steps` → `sat=true traceLength=1 loopState=0`, and its dual `run { not
+/// (always some Flag) } for 2 but 1 steps` → the same. The jar answers this one
+/// directly — the T-10a `NullPointerException` fires only when the translation
+/// constant-folds (P-077-4), not for every one-state `check`.
 #[test]
-fn check_at_a_one_state_bound_is_a_typed_defer_naming_the_jar_bug() {
-    let assertion = "var sig A {}\nassert NeverA { always (no A) }\n";
-    // Every spelling of "maxtrace == 1" trips it — the condition is the
-    // *resolved* bound, not the surface syntax.
-    for clause in ["1 steps", "exactly 1 steps", "1..1 steps"] {
-        let src = format!("{assertion}check NeverA for 2 but {clause}\n");
-        let err = drive(&src, 0, 20).expect_err("T-10a defers");
-        assert!(
-            matches!(err, TranslateError::TemporalCheckAtOneStep { .. }),
-            "{clause}: {err:?}"
+fn a_check_at_a_one_state_bound_finds_its_one_state_counterexample() {
+    let src = "var sig Flag {}\nassert AlwaysSome { always some Flag }\ncheck AlwaysSome for 2 but 1 steps\n";
+    let t = trace(src, 0);
+    assert_eq!(t.k(), 1, "the counterexample is a single state");
+    assert_eq!(t.loop_state, 0, "a 1-state lasso loops on state 0");
+}
+
+/// **P-077-2** — the dual boundary: an assertion that holds on *every* one-state
+/// trace is VALID-within-1-step and only fails once the bound admits a second
+/// state. On a self-loop `after X` is `X`, so `some Flag implies after some Flag`
+/// is `X implies X`.
+///
+/// Jar cells (`fixtures/P2_HoldsAtOneFailsAtTwo.als`): `run notPersists for 2 but
+/// 1 steps` → UNSAT and `check Persists for 2 but 1 steps` → UNSAT (the jar
+/// answers both); `run notPersists for 2 but 2 steps` → SAT at `traceLength=2
+/// loopState=1`, matching `check Persists for 2 but 2 steps`.
+#[test]
+fn a_check_holding_at_one_state_is_unsat_within_bound_and_fails_at_two() {
+    let assertion =
+        "var sig Flag {}\nassert Persists { always (some Flag implies after some Flag) }\n";
+    let at_one = format!("{assertion}check Persists for 2 but 1 steps\n");
+    assert_eq!(
+        minimal_k(&at_one, 0),
+        None,
+        "no counterexample within 1 step"
+    );
+    let at_two = format!("{assertion}check Persists for 2 but 2 steps\n");
+    assert_eq!(
+        minimal_k(&at_two, 0),
+        Some(2),
+        "it takes two states to fail"
+    );
+}
+
+/// **P-077-3** — every temporal operator collapses at a one-state self-loop:
+/// `after X` ≡ `eventually X` ≡ `always X` ≡ `once X` ≡ `historically X` ≡ `X`,
+/// `X until Y` ≡ `Y`, and `before X` is false.
+///
+/// Jar cell (`fixtures/P3b_OperatorEvalAtSelfLoop.als`): each operator evaluated
+/// on a solved single-state instance, once with `Flag` nonempty and once empty —
+/// positive evidence, because the equivalence-negation form constant-folds hard
+/// enough to trip the jar's own `maxtrace == 1` crash (P-077-4). Here the same
+/// equivalences are asserted the way mettle can check them jar-free: each
+/// collapsed form is UNSAT to violate at `k = 1`.
+#[test]
+fn the_temporal_operators_collapse_at_a_one_state_self_loop() {
+    let sig = "var sig Flag {}\n";
+    // `not (op iff collapsed)` must be unsatisfiable at a one-state bound.
+    for (op, collapsed) in [
+        ("after some Flag", "some Flag"),
+        ("eventually some Flag", "some Flag"),
+        ("always some Flag", "some Flag"),
+        ("once some Flag", "some Flag"),
+        ("historically some Flag", "some Flag"),
+        ("(some Flag) until (no Flag)", "no Flag"),
+    ] {
+        let src = format!("{sig}run {{ not (({op}) iff ({collapsed})) }} for 2 but 1 steps\n");
+        assert_eq!(
+            minimal_k(&src, 0),
+            None,
+            "`{op}` does not collapse to `{collapsed}`"
         );
     }
-    // T-11 isolates the bug to `check`: the same bound on a `run` is fine.
-    let run = "var sig A {}\nrun { some A } for 2 but exactly 1 steps\n";
-    assert_eq!(minimal_k(run, 0), Some(1));
-    // And a wider bound on the same `check` answers normally.
-    let wide = format!("{assertion}check NeverA for 2 but 2 steps\n");
-    assert!(matches!(drive(&wide, 0, 20), Ok(TemporalVerdict::Sat(_))));
+    // `before` has no predecessor at state 0, so it is false there whatever the
+    // state holds — unsatisfiable, and its negation trivially satisfiable.
+    let holds = format!("{sig}run {{ before some Flag }} for 2 but 1 steps\n");
+    assert_eq!(minimal_k(&holds, 0), None, "`before` held at state 0");
+    let fails = format!("{sig}run {{ not (before some Flag) }} for 2 but 1 steps\n");
+    assert_eq!(minimal_k(&fails, 0), Some(1));
+}
+
+/// **P-077-5** — the three spellings of a `[1, 1]` steps range share one code
+/// path (the *resolved* bound, not the surface syntax), so all three answer.
+///
+/// Jar cell (`fixtures/P5_Spellings.als`): `1 steps`, `exactly 1 steps` and
+/// `1..1 steps` all report `mintrace=1 maxtrace=1` and all three `check`s come
+/// back `sat=true traceLength=1 loopState=0`.
+#[test]
+fn every_spelling_of_a_one_state_bound_answers() {
+    let assertion = "var sig Flag {}\nassert AlwaysSome { always some Flag }\n";
+    for clause in ["1 steps", "exactly 1 steps", "1..1 steps"] {
+        let src = format!("{assertion}check AlwaysSome for 2 but {clause}\n");
+        assert_eq!(minimal_k(&src, 0), Some(1), "{clause}");
+    }
+}
+
+/// **mt-077, jar-free** — the negation dual is the internal invariant the whole
+/// decision rests on: `check P` *is* `run { not P }`, so mettle's own verdicts
+/// for the two must be exact opposites at the same one-state bound. This test
+/// needs no oracle — it catches a `check`-only regression in the sweep that a
+/// jar-cited constant could not.
+#[test]
+fn a_one_state_check_is_the_negation_dual_of_its_run() {
+    let sig = "var sig Flag {}\n";
+    for goal in [
+        "always some Flag",
+        "always (some Flag implies after some Flag)",
+        "eventually no Flag",
+        "(some Flag) until (no Flag)",
+        "before some Flag",
+    ] {
+        let checked = format!("{sig}assert P {{ {goal} }}\ncheck P for 2 but 1 steps\n");
+        let dual = format!("{sig}run {{ not ({goal}) }} for 2 but 1 steps\n");
+        assert_eq!(
+            minimal_k(&checked, 0).is_some(),
+            minimal_k(&dual, 0).is_some(),
+            "`check {{ {goal} }}` and `run {{ not ({goal}) }}` disagree at a one-state bound"
+        );
+    }
 }
 
 // ==================== the trace: loop target + per-state ====================

@@ -89,12 +89,11 @@ pub fn lower_defer_class(err: &TranslateError) -> &'static str {
         TranslateError::LoweringUnsupported { .. } => "lowering",
         TranslateError::HigherOrder { .. } => "higher_order",
         TranslateError::CapacityExceeded { .. } => "capacity",
-        // The two Rung-6 driver defers (mt-067). They are raised by
+        // The Rung-6 driver defer (mt-067). It is raised by
         // `solve_temporal_command` before any lowering, so the temporal arm
-        // buckets them itself (`mettle_defer:temporal:*`); the arms here keep
-        // the classifier total.
+        // buckets it itself (`mettle_defer:temporal:unbounded_steps`); the arm
+        // here keeps the classifier total.
         TranslateError::UnboundedSteps { .. } => "unbounded_steps",
-        TranslateError::TemporalCheckAtOneStep { .. } => "check_at_one_step",
         TranslateError::StepsScopeInStaticModel { .. }
         | TranslateError::ScopeOnSubset { .. }
         | TranslateError::ScopeOnEnum { .. }

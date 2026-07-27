@@ -128,25 +128,6 @@ pub enum TranslateError {
         span: Span,
     },
 
-    /// A temporal `check` whose resolved trace bound is a **single state**
-    /// (`check … for 1 steps`, `for exactly 1 steps`, `for 1..1 steps`). The
-    /// reference jar does not answer this: it throws a `NullPointerException`
-    /// wrapped as `ErrorFatal("Unknown exception occurred: …")`, reproducibly,
-    /// for any `check` at `maxtrace == 1` and for no `run` (probes T-10a/T-11,
-    /// alloy6-temporal.md §(c)). mettle cannot conform to a crash, and whether
-    /// to reproduce the failure or deliberately diverge and answer correctly is
-    /// an **open owner fork** in `SEMANTICS_LEDGER.md` ("Temporal semantics
-    /// (Rung 6)"). Until it is decided this is a typed defer naming the bug —
-    /// never a verdict either way (STYLE E5).
-    #[error(
-        "the reference jar throws a NullPointerException for `check` at a 1-state trace bound \
-         (a pinned jar bug); mettle defers pending the ledgered decision"
-    )]
-    TemporalCheckAtOneStep {
-        /// Span of the offending command.
-        span: Span,
-    },
-
     /// The command's goal contains a temporal operator (`always`/`until`/`'`/…
     /// or a `var` relation). Well-typed, but bounded LTL→FOL solving is Rung 6
     /// (ADR-0011): mettle lowers the operators faithfully into the IR but refuses
@@ -217,7 +198,6 @@ impl TranslateError {
             | TranslateError::BitwidthTooLarge { span, .. }
             | TranslateError::StepsScopeInStaticModel { span }
             | TranslateError::UnboundedSteps { span }
-            | TranslateError::TemporalCheckAtOneStep { span }
             | TranslateError::TemporalUnsupported { span, .. }
             | TranslateError::LoweringUnsupported { span, .. }
             | TranslateError::HigherOrder { span }

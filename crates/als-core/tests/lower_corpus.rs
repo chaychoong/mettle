@@ -45,10 +45,9 @@ fn defer_bucket(e: &TranslateError) -> &'static str {
         // succeeded) and the clause cap is an encode-phase guard, but keep the
         // match exhaustive.
         TranslateError::CapacityExceeded { .. } => "capacity",
-        // Driver-phase temporal defers (mt-067) are raised before any lowering,
-        // so they cannot reach here either.
+        // The driver-phase temporal defer (mt-067) is raised before any
+        // lowering, so it cannot reach here either.
         TranslateError::UnboundedSteps { .. } => "unbounded-steps",
-        TranslateError::TemporalCheckAtOneStep { .. } => "check-at-one-step",
         TranslateError::ScopeOnSubset { .. }
         | TranslateError::ScopeOnEnum { .. }
         | TranslateError::StringScopeNotExact { .. }

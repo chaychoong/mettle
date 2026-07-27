@@ -412,8 +412,10 @@ fn classify_command(
 /// | a length outgrew the primary-variable cap | `mettle_defer:primary_var_cap` |
 /// | encode budget out | `mettle_defer:capacity` |
 /// | `for 1.. steps` | `mettle_defer:temporal:unbounded_steps` |
-/// | `check … for 1 steps` | `mettle_defer:temporal:check_at_one_step` |
 /// | anything the temporal lowering still defers | `mettle_defer:lower:<class>` |
+///
+/// `check … for 1 steps` is **not** a bucket as of mt-077: a one-state lasso is
+/// an ordinary trace length and the sweep answers it like any other.
 ///
 /// Stage 2 **does** enumerate a temporal command as of mt-076: the typed skip
 /// `skip_temporal_trace` (ADR-0015 consequence 4's deliberate deferral) is
@@ -460,9 +462,6 @@ fn classify_temporal_command(
             }
             Err(TranslateError::UnboundedSteps { .. }) => {
                 return CmdResult::defer("mettle_defer:temporal:unbounded_steps".to_owned())
-            }
-            Err(TranslateError::TemporalCheckAtOneStep { .. }) => {
-                return CmdResult::defer("mettle_defer:temporal:check_at_one_step".to_owned())
             }
             Err(TranslateError::CapacityExceeded { .. }) => {
                 return CmdResult::defer("mettle_defer:capacity".to_owned())
