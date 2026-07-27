@@ -114,8 +114,19 @@ fn test1_count_smoke_matches_jar() {
 #[test]
 fn leader_als_counts_match_its_real_jar_baseline() {
     let root = workspace_root();
+    let leader = root.join("corpus/alloytools-models/models/examples/temporal/leader.als");
+    // Same posture as every corpus-driven test (corpus/ is git-ignored, so CI
+    // never has it): skip cleanly with a note, never fail.
+    if !leader.is_file() {
+        eprintln!(
+            "SKIP leader_als_counts_match_its_real_jar_baseline: {} not present \
+             (expected for a fresh checkout; run the corpus fetch script to enable)",
+            leader.display()
+        );
+        return;
+    }
     let cfg = GaugeConfig {
-        roots: vec![root.join("corpus/alloytools-models/models/examples/temporal/leader.als")],
+        roots: vec![leader],
         workspace_root: root.clone(),
         baselines_dir: root.join("baselines"),
         conflict_budget: 10_000,
