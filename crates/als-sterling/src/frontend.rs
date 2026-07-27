@@ -227,12 +227,15 @@ mod tests {
                 );
             }
         }
+        // Same carve-out for the shell: its inline favicon is a data: URI SVG
+        // whose xmlns is that identifier, not a fetch.
+        let shell = SHELL.replace(SVG_NAMESPACE, "");
         assert!(
-            !SHELL.contains("http://"),
+            !shell.contains("http://"),
             "the shell references an outside origin"
         );
         assert!(
-            !SHELL.contains("https://"),
+            !shell.contains("https://"),
             "the shell references an outside origin"
         );
     }
