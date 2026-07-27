@@ -13,9 +13,9 @@ members = [
 
 [workspace.package]
 edition = "2021"
-version = "0.0.0"
+version = "0.1.0"
 license = "MPL-2.0"
-repository = "https://github.com/mettle-lang/mettle"
+repository = "https://github.com/chaychoong/mettle"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -24,3 +24,8 @@ missing_debug_implementations = "warn"
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

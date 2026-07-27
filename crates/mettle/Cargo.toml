@@ -4,6 +4,11 @@ edition.workspace = true
 version.workspace = true
 license.workspace = true
 repository.workspace = true
+# description/homepage: consumed by the Homebrew formula `dist` generates
+# (mt-073) -- without them `dist generate` warns and the formula ships
+# without a description/homepage stanza.
+description = "A Rust reimplementation of the Alloy 6 language and analyzer"
+homepage = "https://github.com/chaychoong/mettle"
 
 [[bin]]
 name = "mettle"

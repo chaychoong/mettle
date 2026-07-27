@@ -8,6 +8,13 @@ repository.workspace = true
 [lints]
 workspace = true
 
+# als-conform's bins (conform, resolve-gauge, solve-gauge) are internal
+# conformance-gauge instruments, not shipped product (mt-073, ADR-0016
+# Decision 4) -- `dist` would otherwise happily package them alongside
+# `mettle` since they're `[[bin]]` targets in a workspace member.
+[package.metadata.dist]
+dist = false
+
 [[bin]]
 name = "conform"
 path = "src/bin/conform.rs"

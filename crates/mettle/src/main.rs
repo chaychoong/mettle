@@ -9,6 +9,8 @@
 //! mettle check <file.als>
 //! mettle exec <file.als> [--command <sel>] [--allow-overflow] [--conflicts N] [--encode-budget N]
 //! mettle serve <file.als> [--command <sel>] [--port N]
+//! mettle -h | --help
+//! mettle -V | --version
 //! ```
 //!
 //! `parse` parses a module and, on success, prints it back as canonical
@@ -56,6 +58,11 @@ fn run(args: &[String]) -> Result<(), ExitCode> {
         Some("check") => run_check(&args[1..]),
         Some("exec") => exec::run_exec(&args[1..]),
         Some("serve") => serve::run_serve(&args[1..]),
+        // `-V`/`--version` is a top-level flag, not a subcommand (matches
+        // every other single-binary Rust CLI's convention); it prints and
+        // exits 0 same as `-h`/`--help` below, never reaching subcommand
+        // dispatch.
+        Some("-V" | "--version") => write_stdout(format!("mettle {}\n", env!("CARGO_PKG_VERSION"))),
         Some("-h" | "--help") | None => {
             print_usage();
             // A bare `--help`/no-args is a successful help request; an
@@ -83,6 +90,12 @@ fn print_usage() {
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20[--repl] [--eval <EXPR>] [--state N]\n\
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20[--xml <PATH>]\n\
          \x20\x20\x20\x20\x20mettle serve <file.als> [--command <name|index>] [--port N]\n\
+         \x20\x20\x20\x20\x20mettle -h | --help\n\
+         \x20\x20\x20\x20\x20mettle -V | --version\n\
+         \n\
+         Options:\n\
+         \x20\x20-h, --help             print this usage text\n\
+         \x20\x20-V, --version          print the mettle version\n\
          \n\
          Subcommands:\n\
          \x20\x20parse <file.als>       parse a module and print it back as canonical Alloy 6\n\
