@@ -445,21 +445,25 @@ fn serve<S: ServeSession + Send>(
     }
 
     // `0.0.0.0`/`::` (from `--bind`, e.g. inside a container) is what the
-    // listener is bound to, not a URL a browser on the host can open — print
+    // listener is bound to, not a URL a browser on the host can open — add
     // an extra line with the loopback address that actually works there,
     // alongside the (still accurate) bound address the tests and any script
-    // parse.
+    // parse. One `write_stdout` call for the whole banner, deliberately: a
+    // consumer may close our stdout the moment it has read the address line
+    // (the integration tests do), and `write_stdout` treats a closed pipe as
+    // "exit quietly" — a second write racing that close would take the whole
+    // server down before it served anything.
+    let open_hint = if address.ip().is_unspecified() {
+        let open_at = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), address.port());
+        format!("mettle serve: bound to all interfaces; open http://{open_at} on this machine\n")
+    } else {
+        String::new()
+    };
     crate::write_stdout(format!(
         "mettle serve: listening on http://{address}\n\
-         mettle serve: provider socket at ws://{address}{WS_PATH}\n"
+         mettle serve: provider socket at ws://{address}{WS_PATH}\n\
+         {open_hint}mettle serve: press Ctrl-C to stop\n"
     ))?;
-    if address.ip().is_unspecified() {
-        let open_at = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), address.port());
-        crate::write_stdout(format!(
-            "mettle serve: bound to all interfaces; open http://{open_at} on this machine\n"
-        ))?;
-    }
-    crate::write_stdout("mettle serve: press Ctrl-C to stop\n")?;
 
     let session = Mutex::new(session);
     // Events go to stderr so that the URL above stays the only thing on stdout
