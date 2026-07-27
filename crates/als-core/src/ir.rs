@@ -45,7 +45,13 @@ define_id! {
 /// Allocation order is deterministic (it follows lowering order, which
 /// follows resolved source order) — `RelId` order is *the* relation order
 /// used for variable numbering downstream (STYLE D2).
-#[derive(Debug, Default)]
+/// `Clone` because a solved `Ir` is append-only shared state that two
+/// consumers now want to grow *independently*: the evaluator lowers fragments
+/// into it and the XML writer lowers macro bodies into it. Cloning the arena
+/// (IDs preserved, allocation order preserved) gives each its own copy-on-write
+/// view instead of letting one caller's appends leak into another's — the
+/// `mettle serve` session does exactly this once per instance.
+#[derive(Clone, Debug, Default)]
 pub struct Ir {
     /// Boolean-sorted nodes.
     pub formulas: Arena<FormulaId, Formula>,

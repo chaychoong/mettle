@@ -115,6 +115,20 @@ impl<I: ArenaId, T> Default for Arena<I, T> {
     }
 }
 
+/// Hand-written rather than derived: `#[derive(Clone)]` would demand `I: Clone`
+/// as well, and the ID parameter is a pure marker (`PhantomData<fn(I) -> I>`)
+/// that never needs cloning. Cloning an arena copies its items and preserves
+/// every ID, which is what makes an arena forkable at all (`mettle serve`
+/// re-derives a per-instance evaluator/XML view from one solved `Ir`).
+impl<I, T: Clone> Clone for Arena<I, T> {
+    fn clone(&self) -> Self {
+        Self {
+            items: self.items.clone(),
+            _id: PhantomData,
+        }
+    }
+}
+
 impl<I: ArenaId, T> Index<I> for Arena<I, T> {
     type Output = T;
 

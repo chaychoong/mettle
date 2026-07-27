@@ -637,6 +637,42 @@ fn state_command(ctx: &mut ReplContext<'_>, arg: &str) -> String {
     format!("{}\n", trace.move_to(requested))
 }
 
+/// Whether `input` is the `:state` meta-command, and its argument if so.
+///
+/// The guard is what keeps a model's own names safe: `:state`-prefixed input
+/// only counts when the prefix is the whole word.
+fn state_arg(input: &str) -> Option<&str> {
+    input
+        .strip_prefix(STATE_COMMAND)
+        .filter(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace))
+        .map(str::trim)
+}
+
+/// One line of evaluator input, answered as a single block of text — the shape
+/// a request/response transport needs (`mettle serve`'s `eval` verb, mt-072,
+/// whose protocol has exactly one string slot for the answer).
+///
+/// Deliberately the *same* three cases the interactive prompt has, in the same
+/// order and with the same rendering: the `:state` meta-command, a value, or a
+/// caret-and-label diagnostic. The trailing newline a diagnostic block carries
+/// is trimmed, because this is one field of a JSON message rather than a line
+/// on a terminal.
+pub(crate) fn eval_line(ctx: &mut ReplContext<'_>, input: &str) -> String {
+    let input = input.trim();
+    if input.is_empty() {
+        return String::new();
+    }
+    if let Some(arg) = state_arg(input) {
+        return state_command(ctx, arg).trim_end().to_owned();
+    }
+    match eval_input(ctx, input) {
+        Ok(value) => render_value(&value, ctx.universe()),
+        Err(err) => render_error(&err, input, ctx.fragment_file)
+            .trim_end()
+            .to_owned(),
+    }
+}
+
 /// The interactive loop: prompt, read a line, print one result line, repeat.
 ///
 /// Hand-rolled on purpose — a line reader is the whole requirement, and no
@@ -669,11 +705,8 @@ pub(crate) fn run_loop(ctx: &mut ReplContext<'_>) -> io::Result<()> {
         if input == ":q" {
             return Ok(());
         }
-        if let Some(arg) = input
-            .strip_prefix(STATE_COMMAND)
-            .filter(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace))
-        {
-            print!("{}", state_command(ctx, arg.trim()));
+        if let Some(arg) = state_arg(input) {
+            print!("{}", state_command(ctx, arg));
             continue;
         }
         match eval_input(ctx, input) {

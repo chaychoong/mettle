@@ -186,16 +186,7 @@ pub(crate) fn run_exec(args: &[String]) -> Result<(), ExitCode> {
     let session = resolve_graph(&graph)?;
     let world = session.world();
 
-    // Only root-module commands execute (opened-module commands are never
-    // executed, matching the jar) — `(world index, command)` pairs, source
-    // order; their position in this vec is the display/`--command` index.
-    let root_file = graph.modules[graph.root].file;
-    let root_cmds: Vec<(usize, &ResolvedCommand)> = world
-        .commands
-        .iter()
-        .enumerate()
-        .filter(|(_, c)| c.span.file == root_file)
-        .collect();
+    let root_cmds = root_commands(world, &graph);
 
     let selected: Vec<usize> = match command_sel {
         None => (0..root_cmds.len()).collect(),
@@ -247,6 +238,26 @@ pub(crate) fn run_exec(args: &[String]) -> Result<(), ExitCode> {
     } else {
         Ok(())
     }
+}
+
+/// The root module's executable commands, as `(world index, command)` pairs in
+/// source order — a command's position in this vec is its display index and
+/// what `--command <N>` selects.
+///
+/// Only root-module commands execute; an opened module's are never run
+/// (matching the jar). Shared with [`crate::serve`], which selects exactly one
+/// of them the same way `--xml` does.
+pub(crate) fn root_commands<'a>(
+    world: &'a ResolvedWorld,
+    graph: &ModuleGraph,
+) -> Vec<(usize, &'a ResolvedCommand)> {
+    let root_file = graph.modules[graph.root].file;
+    world
+        .commands
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.span.file == root_file)
+        .collect()
 }
 
 /// What `--repl`/`--eval`/`--state` asked for, as one bundle (the three travel
@@ -623,7 +634,7 @@ fn solve_for_temporal_eval(
 /// `run_check` uses (E3/E5): a lex/parse failure is never this command's
 /// business to reinterpret, it's the same caret diagnostic `mettle check`
 /// would print.
-fn load(path: &str) -> Result<ModuleGraph, ExitCode> {
+pub(crate) fn load(path: &str) -> Result<ModuleGraph, ExitCode> {
     let source = match std::fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) => {
@@ -649,7 +660,7 @@ fn load(path: &str) -> Result<ModuleGraph, ExitCode> {
 /// tables outlive the pass — that is what lets `--repl`/`--eval` type-check an
 /// expression typed at the prompt (mt-062). The pipeline it runs, and so the
 /// verdict and warnings, are the same either way.
-fn resolve_graph(graph: &ModuleGraph) -> Result<ResolvedSession<'_>, ExitCode> {
+pub(crate) fn resolve_graph(graph: &ModuleGraph) -> Result<ResolvedSession<'_>, ExitCode> {
     let session = match resolve_session(graph) {
         Ok(session) => session,
         Err(err) => {
@@ -707,6 +718,50 @@ struct CommandRun {
     opts: SolveOptions,
 }
 
+/// The three phases before the solver, for one command: everything
+/// [`solve_goal`] (or [`als_core::enumerate`]) needs, and nothing about how the
+/// answer is obtained.
+///
+/// Split out of [`run_pipeline`] so that `serve` — which enumerates rather than
+/// solving once — shares the lowering instead of forking it.
+pub(crate) struct LoweredCommand {
+    pub(crate) scoped: ScopedUniverse,
+    pub(crate) bounds: BoundsResult,
+    pub(crate) goal: LoweredGoal,
+    /// The options the solve should use (after the `expect 1` override).
+    pub(crate) opts: SolveOptions,
+}
+
+/// Drives `compute_universe` → `compute_bounds` → `lower_command` for one
+/// command, into the caller's `ir`.
+///
+/// # Errors
+/// Whatever typed defer a phase raised; the caller decides how to say so.
+pub(crate) fn lower_for_solve(
+    world: &ResolvedWorld,
+    graph: &ModuleGraph,
+    cmd: &ResolvedCommand,
+    idx: usize,
+    opts: &SolveOptions,
+    ir: &mut Ir,
+) -> Result<LoweredCommand, als_core::TranslateError> {
+    let scoped = compute_universe(world, graph, cmd)?;
+    let bounds = compute_bounds(world, &scoped, ir);
+    let goal = lower_command(world, graph, &scoped, &bounds, ir, idx)?;
+    Ok(LoweredCommand {
+        scoped,
+        bounds,
+        goal,
+        // `expect 1` forces symmetry breaking off (translation-ref §3/§16.4):
+        // the jar's `A4Solution` does `sym = expected==1 ? 0 : opt.symmetry`, so
+        // a command annotated `expect 1` is solved with no SBP (changing the
+        // enumerated count). mettle mirrors that at the command boundary, where
+        // the resolved `expect` is available, leaving the shared `opts`
+        // untouched.
+        opts: effective_opts(opts, cmd),
+    })
+}
+
 /// Drives `compute_universe` → `compute_bounds` → `lower_command` →
 /// `solve_goal` for one command. Every typed defer surfaces as the `Err` its
 /// phase raised; the caller decides how to say so.
@@ -717,17 +772,13 @@ fn run_pipeline(
     idx: usize,
     opts: &SolveOptions,
 ) -> Result<CommandRun, als_core::TranslateError> {
-    let scoped = compute_universe(world, graph, cmd)?;
     let mut ir = Ir::default();
-    let bounds = compute_bounds(world, &scoped, &mut ir);
-    let goal = lower_command(world, graph, &scoped, &bounds, &mut ir, idx)?;
-
-    // `expect 1` forces symmetry breaking off (translation-ref §3/§16.4): the
-    // jar's `A4Solution` does `sym = expected==1 ? 0 : opt.symmetry`, so a command
-    // annotated `expect 1` is solved with no SBP (changing the enumerated count).
-    // mettle mirrors that at the command boundary, where the resolved `expect` is
-    // available, leaving the shared `opts` untouched.
-    let opts = effective_opts(opts, cmd);
+    let LoweredCommand {
+        scoped,
+        bounds,
+        goal,
+        opts,
+    } = lower_for_solve(world, graph, cmd, idx, opts, &mut ir)?;
     let verdict = solve_goal(&ir, &scoped, &goal, &bounds, &opts)?;
     Ok(CommandRun {
         ir,
@@ -795,18 +846,18 @@ fn run_temporal_command(
 /// belong to the conformance gauge, which owns a sweep's cost
 /// ([`TemporalSolveConfig::primary_var_cap`] and the `--conflicts` /
 /// `--encode-budget` flags are the opt-ins).
-struct TemporalRun {
-    ir: Ir,
-    scoped: ScopedUniverse,
-    bounds: BoundsResult,
-    verdict: TemporalVerdict,
+pub(crate) struct TemporalRun {
+    pub(crate) ir: Ir,
+    pub(crate) scoped: ScopedUniverse,
+    pub(crate) bounds: BoundsResult,
+    pub(crate) verdict: TemporalVerdict,
     /// The options the sweep actually used (after the `expect 1` override).
-    opts: SolveOptions,
+    pub(crate) opts: SolveOptions,
 }
 
 /// Sweeps one temporal command's `steps` range, first SAT wins
 /// (`als_core::temporal_solve`), keeping the artifacts rather than dropping them.
-fn run_temporal_pipeline(
+pub(crate) fn run_temporal_pipeline(
     world: &ResolvedWorld,
     graph: &ModuleGraph,
     cmd: &ResolvedCommand,
@@ -960,7 +1011,7 @@ fn render_expect(cmd: &ResolvedCommand, is_sat: Option<bool>, out: &mut String) 
 /// the unique command whose label or target name equals `sel`. Zero or
 /// multiple non-index matches are both errors — the caller lists every
 /// available command either way.
-fn select_command(
+pub(crate) fn select_command(
     world: &ResolvedWorld,
     graph: &ModuleGraph,
     root_cmds: &[(usize, &ResolvedCommand)],
@@ -997,7 +1048,7 @@ fn select_command(
 /// The one-line, stable header for a command: its display index, kind, name
 /// (label if written, else the target's name), and scope text. Exact
 /// formatting is this CLI's own choice (mt-036 spec) — not a jar transcript.
-fn command_header(
+pub(crate) fn command_header(
     world: &ResolvedWorld,
     graph: &ModuleGraph,
     pos: usize,
@@ -1128,7 +1179,7 @@ fn scope_text(world: &ResolvedWorld, cmd: &ResolvedCommand) -> String {
 /// `skolem …=…` line syntax, and tuple order is mettle's live solve order. Both
 /// are the LEDGER-012 posture — shapes match, mettle's own naming and ordering
 /// stand, and neither is scorecard-visible (ADR-0002 never diffs instance text).
-fn render_trace(ir: &Ir, trace: &TemporalTrace) -> String {
+pub(crate) fn render_trace(ir: &Ir, trace: &TemporalTrace) -> String {
     let mut out = String::from("---Trace---\n");
     for (state, instance) in trace.states.iter().enumerate() {
         let loop_marker = if state == trace.loop_state {
@@ -1146,7 +1197,7 @@ fn render_trace(ir: &Ir, trace: &TemporalTrace) -> String {
 /// (sigs, fields, and skolem relations alike — `ir.relations[rel].name`
 /// covers all three uniformly, no special-casing needed), tuples in Alloy's
 /// own arrow syntax (`A$0->B$1`); an empty relation prints `{}`.
-fn render_instance(ir: &Ir, inst: &Instance) -> String {
+pub(crate) fn render_instance(ir: &Ir, inst: &Instance) -> String {
     let mut out = String::new();
     for (rel, tuples) in inst.iter() {
         let name = &ir.relations[rel].name;

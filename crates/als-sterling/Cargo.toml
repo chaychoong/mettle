@@ -9,7 +9,48 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# als-types: the Sterling protocol reports sig/type information alongside instances.
-als-types = { path = "../als-types" }
-# als-instance: Sterling serves decoded instances over the JSON data-provider protocol.
-als-instance = { path = "../als-instance" }
+# serde + serde_json: the Sterling provider protocol is a JSON wire format
+# owned by someone else (`docs/reference/sterling.md` §2), so its envelope and
+# payloads are decoded/encoded rather than invented. serde's derive keeps the
+# Rust types the single spelling of that contract (rename attributes carry the
+# camelCase field names the TypeScript client sends), and hand-rolling a JSON
+# parser to consume an external protocol is exactly what `als-conform` already
+# declined to do. This is serde's first appearance in the *shipped* binary
+# (als-conform, which already depended on it, is gauge-only).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# tungstenite: the RFC 6455 *framing* layer for the provider socket, and only
+# that. std has no WebSocket, and framing is not hand-rollable at acceptable
+# risk (masking, fragmentation, interleaved control frames, the close
+# handshake, incremental UTF-8 validation of text frames). tungstenite is the
+# sync, runtime-free implementation the ecosystem standardized on, chosen
+# precisely because it pulls **no async runtime** (STYLE P4): mettle's server is
+# one blocking thread per connection over `std::net`.
+#
+# `default-features = false` turns OFF its `handshake` feature, and the split
+# is deliberate: **frames are tungstenite's, the handshake echo is ours**
+# (`src/handshake.rs`). That feature exists to parse and build HTTP handshake
+# messages -- but this crate already reads the request head itself, because one
+# port has to serve both the static assets and the `Upgrade` (it routes on the
+# header, then hands the raw socket to `WebSocket::from_partially_read`). All
+# that remained of the feature was `derive_accept_key`: concatenate a constant
+# GUID, SHA-1, base64. Keeping it cost eleven crates (`http`, `httparse`,
+# `data-encoding`, `sha1` + its `digest`/`block-buffer`/`crypto-common`/
+# `const-oid`/`cpufeatures`/`hybrid-array`/`typenum` tail) for ~130 lines of
+# published arithmetic that is explicitly not a security primitive (RFC 6455's
+# echo proves protocol comprehension; the "key" travels in plaintext beside
+# it). In a workspace that hand-writes its own CDCL solver, that trade does not
+# clear STYLE P1/P2 -- so it is written here, pinned against FIPS 180-4's and
+# RFC 4648's own vectors as well as RFC 6455 §1.3's worked example.
+tungstenite = { version = "0.30", default-features = false }
+
+[dev-dependencies]
+# tungstenite, this time as a *client*: the wire tests drive a real socket
+# against a real session instead of calling the handler directly, because a
+# framing bug that only shows up on the wire is the whole risk this crate adds.
+# Default features ON here (the client half genuinely needs `handshake` --
+# `tungstenite::connect` builds and validates the HTTP upgrade), which is why
+# the trim above is expressed per-dependency-kind rather than crate-wide: dev
+# dependencies are not built for `cargo build`, so none of that tree reaches
+# the shipped binary. `cargo tree -p mettle -e normal` is the check.
+tungstenite = "0.30"

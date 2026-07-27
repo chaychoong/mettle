@@ -25,3 +25,12 @@ als-core = { path = "../als-core" }
 als-instance = { path = "../als-instance" }
 # als-sterling: the CLI's `serve` subcommand speaks the Sterling protocol.
 als-sterling = { path = "../als-sterling" }
+
+[dev-dependencies]
+# tungstenite + serde_json: `tests/serve.rs` drives the built binary the way a
+# browser will -- a real WebSocket client over a real socket, decoding the real
+# JSON. Anything less would test the session and skip the wire, which is where
+# `mettle serve`'s new risk actually lives. Both are already in the dependency
+# tree via als-sterling, so this costs nothing.
+tungstenite = "0.30"
+serde_json = "1"

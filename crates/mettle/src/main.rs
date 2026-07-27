@@ -1,13 +1,14 @@
 //! The `mettle` CLI.
 //!
 //! Rung 1 shipped `parse`; Rung 2 added `check`, the names-and-types
-//! human-testable front end; Rung 3 adds `exec`, which drives a model's
-//! commands to a verdict:
+//! human-testable front end; Rung 3 added `exec`, which drives a model's
+//! commands to a verdict; Rung 5 adds `serve`, which visualizes one of them:
 //!
 //! ```text
 //! mettle parse <file.als> [--ast]
 //! mettle check <file.als>
 //! mettle exec <file.als> [--command <sel>] [--allow-overflow] [--conflicts N] [--encode-budget N]
+//! mettle serve <file.als> [--command <sel>] [--port N]
 //! ```
 //!
 //! `parse` parses a module and, on success, prints it back as canonical
@@ -18,6 +19,8 @@
 //! each `run`/`check` command in the root module it runs the full
 //! `compute_universe` → `compute_bounds` → `lower_command` → `solve_goal`
 //! pipeline and prints the verdict (and any SAT instance / counterexample).
+//! `serve` (mt-072, [`serve`]) solves **one** command and then answers the
+//! Sterling provider protocol about it on a local port until Ctrl-C.
 //! Parse/lex/resolve errors render to stderr as a rustc-style caret-and-label
 //! block (mt-013, [`diagnostics`]) with exit code 1; usage or I/O problems
 //! exit with code 2.
@@ -28,6 +31,7 @@
 mod diagnostics;
 mod exec;
 mod repl;
+mod serve;
 
 use std::io::{self, Write as _};
 use std::process::ExitCode;
@@ -51,6 +55,7 @@ fn run(args: &[String]) -> Result<(), ExitCode> {
         Some("parse") => run_parse(&args[1..]),
         Some("check") => run_check(&args[1..]),
         Some("exec") => exec::run_exec(&args[1..]),
+        Some("serve") => serve::run_serve(&args[1..]),
         Some("-h" | "--help") | None => {
             print_usage();
             // A bare `--help`/no-args is a successful help request; an
@@ -77,11 +82,13 @@ fn print_usage() {
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20[--conflicts N] [--encode-budget N]\n\
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20[--repl] [--eval <EXPR>] [--state N]\n\
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20[--xml <PATH>]\n\
+         \x20\x20\x20\x20\x20mettle serve <file.als> [--command <name|index>] [--port N]\n\
          \n\
          Subcommands:\n\
          \x20\x20parse <file.als>       parse a module and print it back as canonical Alloy 6\n\
          \x20\x20check <file.als>       load, resolve, and type-check a module (and its opens)\n\
          \x20\x20exec <file.als>        run every root-module command to a verdict/instance\n\
+         \x20\x20serve <file.als>       solve one command and visualize it in a browser\n\
          \n\
          Options (parse):\n\
          \x20\x20--ast                  print the span-free structural AST dump instead of source\n\
@@ -99,7 +106,11 @@ fn print_usage() {
          \x20\x20--xml <PATH>           write the command's instance as Alloy instance XML\n\
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20(one command; not combinable with --repl/--eval/--state)\n\
          \x20\x20--state N              evaluate at trace state N (temporal commands; N wraps\n\
-         \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20through the loop, negatives clamp to 0; `:state N` moves in --repl)"
+         \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20through the loop, negatives clamp to 0; `:state N` moves in --repl)\n\
+         \n\
+         Options (serve):\n\
+         \x20\x20--command <sel>        the command to visualize (required unless there is one)\n\
+         \x20\x20--port N               listen on 127.0.0.1:N (default 4030; 0 picks a free port)"
     );
 }
 

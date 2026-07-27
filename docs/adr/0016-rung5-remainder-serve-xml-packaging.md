@@ -123,6 +123,57 @@ external contract. Divergences from *Sterling's* expectations are bugs
 against mt-072's own spec; divergences from the *jar's* XML are governed by
 Decision 1.
 
+### Amendments (mt-072, 2026-07-27 — as implemented, tech-lead approved)
+
+Three things this decision left to the implementation, recorded here because
+each is a standing contract the frontend (mt-075) and the trace-enumeration
+bead (mt-076) both build against.
+
+**(a) A fifth outgoing message type, `error`.** The pinned protocol gives a
+provider no channel to refuse anything: §2.2's four types are `data`, `click`,
+`eval` and `meta`, and none of them can carry "I could not do that." Yet a
+`click` on an unimplemented verb, an exhausted enumeration, and an unparseable
+frame all need an answer — silence and a dropped connection are the two things
+STYLE E5 forbids. mettle therefore sends `{"type":"error","version":1,
+"payload":{"code","message"}}`, with `code` a stable machine-readable string
+(`unknown-click`, `not-yet-supported`, `no-more-instances`,
+`malformed-message`, `bad-payload`, …) and `message` one finished sentence.
+This is **verified safe for external Sterling**: `sterling-connection`'s
+`receive/onMessage.ts` dispatches on exactly `data`/`eval`/`meta` and falls
+through silently on anything else, so an upstream client sees a no-op where
+mettle's own frontend sees a diagnosable failure. It is the only place mt-072
+extends the pinned shapes.
+
+**(b) The `click` verb strings.** Enumeration is not a protocol verb (§2.3:
+`onClick` is an opaque provider-defined string), so mettle defines five —
+`next`, `next-trace`, `next-config`, `new-init`, `new-fork` — named after the
+reference GUI's own exploration commands rather than Forge's `next`/`next-P`/
+`next-C`. The divergence is deliberate: mettle's frontend is the first-party
+consumer, nothing in the protocol requires matching Forge, and a self-
+describing string is worth more than wire-compatibility with a provider mettle
+never talks to. Only `next` is implemented; the four temporal verbs are
+accepted on the wire and answered with a typed refusal naming mt-076, while a
+temporal session offers **no buttons at all** (the "absent, never wrong"
+half of the bullet above).
+
+**(c) The runtime dependency shape, as landed.** `tungstenite` with
+`default-features = false` (framing only), plus `serde`/`serde_json` — which
+enter the *shipped* binary here for the first time, having been gauge-only via
+`als-conform`. Explicitly **no async runtime and no HTTP framework** (STYLE
+P4): the server is one hand-rolled `std::net::TcpListener`, thread per
+connection via `std::thread::scope`, with the session behind a `Mutex`.
+**Single port**, routed on the `Upgrade` header rather than the path — which
+sidesteps §2.1's two-server query-string handoff for our own frontend
+(`/ws` on the page's origin) while still letting an external Sterling upgrade
+on `/` for free. Turning tungstenite's `handshake` feature off cost the
+`Sec-WebSocket-Accept` derivation, which is now mettle's own (~130 lines of
+SHA-1 + base64, pinned against FIPS 180-4's and RFC 4648's published vectors
+as well as RFC 6455 §1.3's worked example); it is not a security primitive and
+is documented as such. That trade removed eleven transitive crates (`http`,
+`httparse`, `data-encoding`, `sha1` and its `digest` tail) from a workspace
+that hand-writes its own CDCL solver — the framing layer is worth a
+dependency, a fixed-GUID echo is not.
+
 ## Decision 3 — frontend assets: owner fork (A/B/C), recommendation B
 
 How `mettle serve` gets a frontend, given the missing license grant:
