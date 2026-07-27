@@ -29,3 +29,6 @@
 
 # Claude harness worktrees/session dirs — never committed
 /.claude/
+
+# nix build's output symlink
+/result
