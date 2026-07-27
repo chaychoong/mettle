@@ -5,56 +5,72 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{model}} — mettle</title>
 <link rel="stylesheet" href="/app.css">
+<link rel="stylesheet" href="/graph.css">
 <script type="module" src="/app.js"></script>
 </head>
 <body>
 
-<header class="chrome">
-  <div class="identity">
-    <span class="wordmark">mettle</span>
+<header class="masthead">
+  <span class="mark">mettle</span>
+  <div class="subject">
+    <span class="eyebrow">model</span>
     <span class="model" title="{{model}}">{{model}}</span>
   </div>
-  <code class="command" id="command">{{command}}</code>
-  <span class="status" id="status" data-state="connecting">connecting</span>
+  <div class="subject wide">
+    <span class="eyebrow">command</span>
+    <span class="command" id="command">{{command}}</span>
+  </div>
+  <div class="link" id="status" data-state="connecting">
+    <span class="lamp"></span><span id="link-text">connecting</span>
+  </div>
 </header>
 
-<nav class="toolbar">
+<nav class="console">
   <div class="actions" id="actions"></div>
-  <div class="filters">
+  <div class="instruments">
     <span class="hidden-note" id="hidden-note"></span>
+    <label class="switch">
+      <input type="checkbox" id="show-builtins">
+      <span>builtins</span>
+    </label>
     <div class="views" id="views" role="group" aria-label="view">
       <button type="button" data-view="graph" aria-pressed="true">graph</button>
       <button type="button" data-view="table" aria-pressed="false">table</button>
     </div>
-    <label class="toggle">
-      <input type="checkbox" id="show-builtins">
-      show builtins
-    </label>
   </div>
 </nav>
 
-<nav class="stepper" id="stepper" hidden>
-  <span class="stepper-label">trace</span>
-  <div class="states" id="states" role="tablist" aria-label="trace states"></div>
+<nav class="rail" id="stepper" hidden>
+  <span class="eyebrow">trace</span>
+  <div class="ticks-frame">
+    <div class="ticks" id="states" role="tablist" aria-label="trace states"></div>
+    <svg class="lasso" id="lasso" aria-hidden="true"></svg>
+  </div>
   <span class="loop-note" id="loop-note"></span>
 </nav>
 
+<p class="bulletin" id="bulletin" hidden></p>
+
 <main>
-  <section class="instance" id="instance" aria-live="polite"></section>
+  <section class="field" id="instance" aria-live="polite"></section>
   <aside class="evaluator" id="evaluator">
+   <div class="evaluator-sticky">
     <div class="evaluator-head">
-      <h2>Evaluator</h2>
-      <span class="evaluator-state" id="evaluator-state"></span>
+      <span class="eyebrow">evaluator</span>
+      <span class="at-state" id="evaluator-state"></span>
     </div>
     <div class="history" id="history">
-      <p class="entry note" id="hint">Expressions are evaluated against the instance on screen.
-On a trace, they are answered at the state the stepper is on; <code>:state N</code> moves both.</p>
+      <div class="blank" id="hint">
+        <p>Ask the instance on screen a question — any expression the REPL takes.</p>
+        <p>On a trace, answers come from the state the rail is on. <code>:state N</code> moves both.</p>
+      </div>
     </div>
     <form class="prompt" id="prompt">
       <textarea id="expression" rows="2" spellcheck="false" autocomplete="off"
-                placeholder="an expression — Enter to evaluate, Shift+Enter for a newline"></textarea>
+                placeholder="an expression"></textarea>
       <button type="submit">Evaluate</button>
     </form>
+   </div>
   </aside>
 </main>
 

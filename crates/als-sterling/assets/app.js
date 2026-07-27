@@ -31,9 +31,11 @@ import { renderGraph } from './graph.js';
 import { layoutGraph } from './layout.js';
 import { connectProvider } from './protocol.js';
 import { renderState } from './tables.js';
+import { blank } from './ui.js';
 
 const dom = {
   status: document.getElementById('status'),
+  linkText: document.getElementById('link-text'),
   command: document.getElementById('command'),
   actions: document.getElementById('actions'),
   showBuiltins: document.getElementById('show-builtins'),
@@ -41,6 +43,8 @@ const dom = {
   stepper: document.getElementById('stepper'),
   states: document.getElementById('states'),
   loopNote: document.getElementById('loop-note'),
+  lasso: document.getElementById('lasso'),
+  bulletin: document.getElementById('bulletin'),
   instance: document.getElementById('instance'),
   evaluator: document.getElementById('evaluator'),
   evaluatorState: document.getElementById('evaluator-state'),
@@ -93,7 +97,7 @@ function providerUrl() {
 
 function showStatus(state) {
   dom.status.dataset.state = state;
-  dom.status.textContent = state;
+  dom.linkText.textContent = state;
 }
 
 function showMeta(meta) {
@@ -128,8 +132,15 @@ function showDatum(datum) {
 }
 
 function showError({ code, message }) {
+  // A refusal that answers our own click may also have retired the button that
+  // produced it — the provider drops a verb the moment its space is empty, and
+  // an `error` carries no datum to notice that from. Asking again is one frame
+  // on a loopback socket, and it is what turns "that did nothing" into a
+  // toolbar that tells the truth.
+  const answeredClick = view.busy;
   view.busy = false;
   renderActions();
+  if (answeredClick && view.datum !== null) provider.requestData();
   const toast = document.createElement('div');
   toast.className = 'toast';
   const label = document.createElement('span');
@@ -145,9 +156,28 @@ function showError({ code, message }) {
 
 function render() {
   renderActions();
-  renderStepper();
+  renderBulletin();
+  renderRail();
   renderInstance();
   renderEvaluatorState();
+}
+
+/**
+ * The standing condition, if there is one.
+ *
+ * A provider that offers no actions has said something durable — the
+ * enumeration is out of reach — and a toast that fades would leave the user
+ * looking at an empty toolbar with no explanation of why.
+ */
+function renderBulletin() {
+  const spent = view.datum !== null && (view.datum.buttons ?? []).length === 0;
+  dom.bulletin.hidden = !spent;
+  if (spent) {
+    dom.bulletin.textContent =
+      'The provider has no further actions for this command — this is where its '
+      + 'enumeration ends. The instance on screen is still live: keep evaluating it, '
+      + 'or restart mettle serve to explore from the beginning.';
+  }
 }
 
 function renderActions() {
@@ -196,31 +226,69 @@ function act(onClick) {
   }
 }
 
-function renderStepper() {
+/**
+ * The trace rail: a tick per state, and the loop drawn as a loop.
+ *
+ * An Alloy 6 trace is a lasso — a finite prefix and then a return to some
+ * earlier state, forever — and that shape decides what the instance *means*.
+ * Drawing the return as an arc under the ticks says it before anyone reads the
+ * note beside it, which a row of tabs cannot.
+ */
+function renderRail() {
   const instance = view.instance;
   dom.stepper.hidden = instance === null || !instance.temporal;
   if (dom.stepper.hidden) return;
 
   dom.states.replaceChildren(...Array.from({ length: instance.traceLength }, (unused, index) => {
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = index === instance.loopState ? 'state-chip loop-target' : 'state-chip';
-    chip.textContent = `state ${index}`;
-    chip.setAttribute('role', 'tab');
-    chip.setAttribute('aria-selected', String(index === view.step));
-    if (index === instance.loopState) chip.title = 'the trace loops back to this state';
-    chip.addEventListener('click', () => step(index));
-    return chip;
+    const tick = document.createElement('button');
+    tick.type = 'button';
+    tick.className = index === instance.loopState ? 'tick loop-target' : 'tick';
+    tick.textContent = `state ${index}`;
+    tick.setAttribute('role', 'tab');
+    tick.setAttribute('aria-selected', String(index === view.step));
+    if (index === instance.loopState) tick.title = 'the trace returns here';
+    tick.addEventListener('click', () => step(index));
+    return tick;
   }));
   dom.loopNote.textContent = loopNote(instance);
+  drawLasso(instance);
 }
 
-/** What the lasso does at its end, said in words next to the chips. */
+/** The return arc, from the last tick back to the loop target's. */
+function drawLasso(instance) {
+  const svg = dom.lasso;
+  svg.replaceChildren();
+  const ticks = [...dom.states.children];
+  if (instance.loopState === null || ticks.length === 0) return;
+
+  const width = dom.states.offsetWidth;
+  const height = 22;
+  svg.setAttribute('width', String(width));
+  svg.setAttribute('height', String(height));
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+
+  const centre = (tick) => tick.offsetLeft + tick.offsetWidth / 2;
+  const from = centre(ticks[ticks.length - 1]);
+  const to = centre(ticks[instance.loopState]);
+  const drop = height - 6;
+  // A trace whose last state loops to itself has no distance to travel, so it
+  // gets a closed curl rather than a line of zero length.
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', from === to
+    ? `M ${from - 7} 1 C ${from - 11} ${drop}, ${from + 11} ${drop}, ${from + 7} 1`
+    : `M ${from} 1 C ${from} ${drop}, ${to} ${drop}, ${to} 5`);
+  const head = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+  const tip = from === to ? from + 7 : to;
+  head.setAttribute('points', `${tip} 0, ${tip - 3.5} 6, ${tip + 3.5} 6`);
+  svg.append(path, head);
+}
+
+/** What the lasso does at its end, in words, beside the drawing of it. */
 function loopNote(instance) {
   const last = instance.traceLength - 1;
   if (instance.loopState === null) return '';
   if (instance.loopState === last) return `state ${last} repeats forever`;
-  return `state ${last} loops back to state ${instance.loopState}`;
+  return `returns to state ${instance.loopState}`;
 }
 
 function renderInstance() {
@@ -228,8 +296,14 @@ function renderInstance() {
     button.setAttribute('aria-pressed', String(button.dataset.view === view.mode));
   }
   if (view.instance === null) {
-    dom.instance.replaceChildren(notice('This datum did not parse as Alloy instance XML.'));
+    dom.instance.replaceChildren(blank(
+      'unreadable instance',
+      'The provider sent a datum this page could not parse as Alloy instance XML. '
+      + 'The connection is fine — ask for the instance again, or check the server log.',
+      { alert: true },
+    ));
     dom.hiddenNote.textContent = '';
+    settle();
     return;
   }
   const state = view.instance.states[view.step];
@@ -245,24 +319,32 @@ function renderInstance() {
     renderState(dom.instance, state, options);
   }
   const hidden = options.showBuiltins ? 0 : countHidden(state);
-  dom.hiddenNote.textContent = hidden === 0 ? '' : `${hidden} builtin/private hidden`;
+  dom.hiddenNote.textContent = hidden === 0 ? '' : `${hidden} hidden`;
+  settle();
+}
+
+/**
+ * Replays the field's entrance animation.
+ *
+ * The content inside the field is replaced wholesale, so the animation on the
+ * field itself would only ever run once; taking the class off, forcing a
+ * layout read, and putting it back is what restarts it. Reduced motion turns
+ * the animation into a no-op, and this into a no-op with it.
+ */
+function settle() {
+  dom.instance.classList.remove('settling');
+  void dom.instance.offsetWidth;
+  dom.instance.classList.add('settling');
 }
 
 function renderEvaluatorState() {
-  dom.evaluatorState.textContent = view.instance?.temporal ? `at state ${view.step}` : '';
+  dom.evaluatorState.textContent = view.instance?.temporal ? `state ${view.step}` : '';
 }
 
 function step(index) {
   if (view.instance === null || index === view.step) return;
   view.step = index;
   render();
-}
-
-function notice(text) {
-  const node = document.createElement('p');
-  node.className = 'notice';
-  node.textContent = text;
-  return node;
 }
 
 /* ---------- evaluator ---------- */

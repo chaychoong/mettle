@@ -3,10 +3,10 @@
 //!
 //! ADR-0016 Resolution 1: mettle writes its own browser frontend against the
 //! pinned wire protocol rather than embedding anything from the Sterling
-//! lineage. It is hand-written ES modules and one stylesheet — **no build
-//! toolchain, no bundler, and no external reference of any kind**, so the page
-//! renders identically with the machine offline, which is the only way a
-//! single static binary can promise a visualizer at all.
+//! lineage. It is hand-written ES modules and two stylesheets — **no build
+//! toolchain, no bundler, no webfont, and no external reference of any kind**,
+//! so the page renders identically with the machine offline, which is the only
+//! way a single static binary can promise a visualizer at all.
 //!
 //! The files live in `crates/als-sterling/assets/` and are `include_str!`d
 //! here: they are documents, not Rust modules, and keeping them as real files
@@ -19,9 +19,11 @@
 //! both views project (which datum, which trace state, which filter);
 //! `protocol.js` owns the socket; `instance.js` parses the instance XML;
 //! `layout.js` turns one state into graph geometry (deterministically — its own
-//! module docs state the invariant); `graph.js` and `tables.js` draw. The two
-//! parsing/geometry modules are pure, which is what lets
-//! `tests/frontend/layout-determinism.mjs` check the layout without a browser.
+//! module docs state the invariant); `graph.js` and `tables.js` draw, over the
+//! two shared DOM helpers in `ui.js`. The two parsing/geometry modules are
+//! pure, which is what lets `tests/frontend/layout-determinism.mjs` check the
+//! layout without a browser. `app.css` carries the design and the reasoning
+//! behind it; `graph.css` the drawing's.
 
 /// The content type of every HTML response.
 pub const HTML: &str = "text/html; charset=utf-8";
@@ -54,8 +56,13 @@ const COMMAND_SLOT: &str = "{{command}}";
 pub const ASSETS: &[FrontendAsset] = &[
     FrontendAsset {
         path: "/app.css",
-        content_type: "text/css; charset=utf-8",
+        content_type: CSS,
         body: include_str!("../assets/app.css"),
+    },
+    FrontendAsset {
+        path: "/graph.css",
+        content_type: CSS,
+        body: include_str!("../assets/graph.css"),
     },
     FrontendAsset {
         path: "/app.js",
@@ -87,10 +94,18 @@ pub const ASSETS: &[FrontendAsset] = &[
         content_type: JAVASCRIPT,
         body: include_str!("../assets/graph.js"),
     },
+    FrontendAsset {
+        path: "/ui.js",
+        content_type: JAVASCRIPT,
+        body: include_str!("../assets/ui.js"),
+    },
 ];
 
 /// The type a browser must see to run a file as an ES module.
 const JAVASCRIPT: &str = "text/javascript; charset=utf-8";
+
+/// The type a browser must see to apply a stylesheet.
+const CSS: &str = "text/css; charset=utf-8";
 
 /// The app shell, naming the model and command this server was started on.
 ///
@@ -165,9 +180,9 @@ mod tests {
         for asset in ASSETS {
             assert!(!asset.body.is_empty(), "{} is empty", asset.path);
         }
-        // The two the page loads directly; the rest are imported by `app.js`,
-        // which the module graph below covers.
-        for path in ["/app.css", "/app.js"] {
+        // The three the page loads directly; the rest are imported by
+        // `app.js`, which the module graph below covers.
+        for path in ["/app.css", "/graph.css", "/app.js"] {
             assert!(html.contains(path), "the shell must load {path}: {html}");
         }
         // A relative `import` that names a file the server does not serve is a
@@ -181,6 +196,7 @@ mod tests {
                 "./tables.js",
                 "./layout.js",
                 "./graph.js",
+                "./ui.js",
             ] {
                 let served = import.trim_start_matches('.');
                 assert!(

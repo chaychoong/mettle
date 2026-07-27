@@ -16,6 +16,7 @@
  */
 
 import { columnLabels, isHiddenRelation, isHiddenSig, shortLabel } from './instance.js';
+import { blank, element } from './ui.js';
 
 /** Renders one state into `container`, replacing whatever was there. */
 export function renderState(container, state, { showBuiltins }) {
@@ -36,7 +37,10 @@ export function renderState(container, state, { showBuiltins }) {
     groups.push(group('Skolems', skolems.length, skolems.map((skolem) => relationCard(skolem, state.sigsById, shortLabel(skolem.label)))));
   }
   if (sigs.length === 0 && fields.length === 0 && skolems.length === 0) {
-    groups.push(notice('This state has nothing to show with the current filter.'));
+    groups.push(blank(
+      'nothing to show',
+      'Every signature and relation in this state is hidden by the builtins filter. Turn it on to see them.',
+    ));
   }
   container.replaceChildren(...groups);
 }
@@ -44,7 +48,9 @@ export function renderState(container, state, { showBuiltins }) {
 function group(title, count, cards) {
   const section = element('section', 'group');
   const head = element('div', 'group-head');
-  head.append(element('h2', null, title), element('span', 'count', String(count)));
+  // The heading is an `h2` for the document outline and an `.eyebrow` for the
+  // page's own type system, which has exactly one voice for a section label.
+  head.append(element('h2', 'eyebrow', title), element('span', 'count', String(count)));
   const grid = element('div', 'cards');
   grid.append(...cards);
   section.append(head, grid);
@@ -126,13 +132,3 @@ function table(columns, rows) {
   return node;
 }
 
-function notice(text) {
-  return element('p', 'notice', text);
-}
-
-function element(tag, className, text) {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
-}

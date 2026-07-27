@@ -1,0 +1,201 @@
+/*
+ * The graph view (mt-075). `app.css` owns the tokens this file spends.
+ *
+ * Two ideas run through it. First, **a signature is a colour and the legend is
+ * the key**: each sig gets a hue, every atom of it carries that hue, and the
+ * legend above the drawing is both the key and the control — which is what
+ * makes the palette survive a model with more sigs than hues. Second,
+ * **attention is subtractive**: hovering or selecting does not paint the thing
+ * you want brighter, it takes the page's attention off everything else, so the
+ * drawing never gains a colour it did not already have.
+ */
+
+/* ---------- legend ---------- */
+
+.legend {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  margin-bottom: var(--s4);
+  padding-bottom: var(--s3);
+  border-bottom: 1px solid var(--rule);
+}
+
+.legend-key {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: 3px var(--s2) 3px 5px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  font: 500 11px/1 var(--mono);
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: color var(--motion), border-color var(--motion), background var(--motion);
+}
+
+.legend-key:hover { color: var(--ink); border-color: var(--rule-firm); }
+.legend-key[aria-pressed="true"] { color: var(--ink); border-color: var(--live); background: var(--live-wash); }
+
+/* Colour comes from the hue block below, so the key and the atoms it keys
+   cannot drift apart. */
+.swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+
+.legend-count {
+  font: 500 10px/1 var(--mono);
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- the drawing ---------- */
+
+.graph {
+  display: block;
+  /* Natural size, set per drawing; scaled down only when the pane is narrower. */
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+  touch-action: none;
+  cursor: grab;
+  --wire: var(--ink-faint);
+  --wire-ink: var(--ink-soft);
+}
+
+.graph.panning { cursor: grabbing; }
+
+/*
+ * Each node group carries its sig's hue inline as `--hue`, and these blocks are
+ * the only place that decides what a hue *looks* like — so both themes are one
+ * design with one variable between them, tuned rather than inverted: light
+ * fills are a wash under a mid-chroma line, dark fills are a deep tint under a
+ * brighter line, because the same fill lightness in dark would read as a hole.
+ *
+ * The `hsl()` calls sit on rules that inherit `--hue` (the node's own subtree)
+ * rather than on `.graph`: a custom property is substituted where it is
+ * declared, so a `--node-fill` declared on the svg would resolve against a
+ * `--hue` that only exists further down, and collapse to nothing.
+ */
+.node rect {
+  fill: hsl(var(--hue) 58% 95%);
+  stroke: hsl(var(--hue) 40% 47%);
+  stroke-width: 1.25;
+  transition: stroke-width var(--motion), filter var(--motion);
+}
+
+.node .atom { fill: hsl(var(--hue) 45% 24%); }
+.node .node-tags { fill: hsl(var(--hue) 30% 38%); }
+.swatch { background: hsl(var(--hue) 40% 47%); }
+
+@media (prefers-color-scheme: dark) {
+  .node rect {
+    fill: hsl(var(--hue) 26% 16%);
+    stroke: hsl(var(--hue) 42% 54%);
+  }
+
+  .node .atom { fill: hsl(var(--hue) 45% 82%); }
+  .node .node-tags { fill: hsl(var(--hue) 25% 62%); }
+  .swatch { background: hsl(var(--hue) 42% 54%); }
+}
+
+/* An atom no visible sig lists — an integer, a filtered sig's atom. */
+.node.unowned rect { fill: var(--sunken); stroke: var(--rule-firm); }
+.node.unowned .atom { fill: var(--ink-soft); }
+.node.unowned .node-tags { fill: var(--ink-faint); }
+
+/* A solver-chosen witness: named by the command, not by the model's own text. */
+.node.witness rect { stroke-dasharray: 4 3; }
+
+.node .atom {
+  font: 650 12px var(--mono);
+  letter-spacing: -0.01em;
+}
+
+.node .node-tags {
+  font: 500 9.5px var(--mono);
+  letter-spacing: 0.04em;
+}
+
+.edge .wire {
+  fill: none;
+  stroke: var(--wire);
+  stroke-width: 1.4;
+  transition: stroke var(--motion), stroke-width var(--motion);
+}
+
+/* A fat transparent twin of each edge: a 1.4px line is not a pointer target. */
+.edge .hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  pointer-events: stroke;
+  cursor: default;
+}
+
+.edge.back .wire { stroke: var(--signal); stroke-dasharray: 6 4; }
+.edge.witness .wire { stroke-dasharray: 3 3; }
+
+/*
+ * `var` relations carry a `temporal` class and no rule. A 0.4px weight bump
+ * was tried and cut: a distinction nobody can see is worse than none, and the
+ * drawing already has four edge treatments (back, witness, derived, self)
+ * competing for the same reader. The class stays because it is true, and
+ * because stepping the rail already shows which tuples move.
+ */
+
+/* A zero-arg `fun`'s relation: real, but not something the model wrote. */
+.edge.derived { opacity: 0.55; }
+
+.arrow { fill: var(--wire); }
+.arrow-back { fill: var(--signal); }
+
+.edge-label {
+  font: 500 10px var(--mono);
+  letter-spacing: -0.01em;
+  fill: var(--wire-ink);
+  /* The label sits on its own edge, so it is drawn with the page behind it. */
+  paint-order: stroke;
+  stroke: var(--page);
+  stroke-width: 3.5;
+  stroke-linejoin: round;
+  transition: fill var(--motion);
+}
+
+.edge.back .edge-label { fill: var(--signal); }
+
+/* ---------- attention ---------- */
+
+/*
+ * Subtractive focus: the graph dims what is not part of what you are looking
+ * at. `.focused` is on while a pointer is over something or a selection is
+ * pinned; `.focus`/`.related` mark what survives.
+ */
+.graph.focused .node,
+.graph.focused .edge {
+  opacity: 0.2;
+  transition: opacity var(--motion);
+}
+
+.graph.focused .node.focus,
+.graph.focused .node.related,
+.graph.focused .edge.related { opacity: 1; }
+
+.graph.focused .edge.derived.related { opacity: 0.7; }
+
+.node.focus rect {
+  stroke-width: 2.25;
+  filter: drop-shadow(0 1px 3px rgb(0 0 0 / 18%));
+}
+
+.node.pinned rect { stroke-dasharray: none; }
+
+.edge.related .wire { stroke-width: 2; }
+.edge.related .edge-label { fill: var(--ink); }
+.edge.back.related .edge-label { fill: var(--signal); }
+
+.node { cursor: pointer; }

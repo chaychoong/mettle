@@ -636,12 +636,14 @@ fn one_port_serves_both_the_app_and_the_provider() {
     // actually execute.
     for (target, content_type) in [
         ("/app.css", "text/css"),
+        ("/graph.css", "text/css"),
         ("/app.js", "text/javascript"),
         ("/protocol.js", "text/javascript"),
         ("/instance.js", "text/javascript"),
         ("/tables.js", "text/javascript"),
         ("/layout.js", "text/javascript"),
         ("/graph.js", "text/javascript"),
+        ("/ui.js", "text/javascript"),
     ] {
         let response = http_response(server.address, target);
         assert!(

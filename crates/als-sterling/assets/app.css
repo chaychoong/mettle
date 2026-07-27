@@ -1,283 +1,435 @@
 /*
- * mettle serve — the first-party frontend's one stylesheet (mt-075).
+ * mettle serve — the chrome, the tables, the evaluator (mt-075).
+ * The graph view's own styles are in `graph.css`.
  *
- * Information design over decoration: the page is a reading surface for
- * instance data, so the type scale is small and tight, the tables are hairline
- * grids with no chrome of their own, and colour is spent on exactly three
- * things — connection status, the loop target, and the evaluator's own voice.
- * Everything is a CSS custom property resolved once per scheme, so light and
- * dark are the same design rather than two.
+ * ## The design, in one paragraph
  *
- * No web fonts, no external anything: `mettle serve` must render identically
- * with the machine offline.
+ * This page is an instrument readout, not a web app: a solver has produced one
+ * piece of evidence, and the page's whole job is to let someone read it and
+ * move to the next. So the chrome is a dense silkscreened band — small
+ * monospace, uppercase, widely tracked, hairline-divided, the way a bench
+ * instrument labels its controls — and everything below it is a calm field for
+ * the specimen. The typography carries one rule that is also a semantic
+ * distinction: **the solver speaks in monospace, the tool speaks in prose.**
+ * Atoms, tuples, expressions, commands and paths are mono; the only sans on the
+ * page is mettle's own voice (hints, empty states, refusals), so "what was
+ * found" never looks like "what mettle is telling you about it". Colour has
+ * exactly three jobs — teal for what is live, current or selected; amber for
+ * what loops or refuses; the per-signature hues inside the graph — which leaves
+ * the page itself achromatic paper.
+ *
+ * ## Why there is no webfont
+ *
+ * `mettle serve` is a single static binary that must render identically with
+ * the machine offline, and this page is ~95% monospace data. An embedded face
+ * would cost 100-200 kB of binary per weight to restyle the 5% that is prose.
+ * The mono/sans role split above does that expressive work for nothing.
  */
 
 :root {
   color-scheme: light dark;
 
-  --ink: #16181d;
-  --ink-muted: #5d6470;
-  --ink-faint: #8b939f;
-  --page: #fbfbfc;
+  /* Ink and paper. Light: cool enamel, panels raised above a tinted page. */
+  --page: #f1f3f7;
   --panel: #ffffff;
-  --rule: #e3e5ea;
-  --rule-strong: #cdd1d9;
-  --accent: #2f5fd0;
-  --accent-soft: #eaf0fd;
-  --good: #1f7a4d;
-  --warn: #a8541c;
-  --bad: #b3261e;
+  --sunken: #f7f8fb;
+  --ink: #10151c;
+  --ink-soft: #4c5563;
+  --ink-faint: #838d9c;
+  --rule: #dee3ec;
+  --rule-firm: #c6cddb;
+
+  /* Live, current, selected. */
+  --live: #0b6b73;
+  --live-wash: #e2f0f1;
+  --live-edge: #9dc9cc;
+
+  /* Loops, refusals, anything that turns back. */
+  --signal: #a2570f;
+  --signal-wash: #f8ecdd;
 
   --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
-  --step: 0.5rem;
-  --radius: 6px;
+  /* 4px rhythm. Every pad and gap on the page is one of these. */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+
+  --radius: 5px;
+  --radius-card: 7px;
+  --band: 44px;
+  --motion: 140ms cubic-bezier(0.2, 0, 0.2, 1);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --ink: #e7e9ee;
-    --ink-muted: #9aa2b0;
-    --ink-faint: #6d7684;
-    --page: #14161a;
-    --panel: #1b1e24;
-    --rule: #2b2f37;
-    --rule-strong: #3a3f49;
-    --accent: #7ba2f5;
-    --accent-soft: #1e2a41;
-    --good: #6cc79a;
-    --warn: #dfa06a;
-    --bad: #f2938c;
+    /* Dark is warmer and shallower than light inverted: separation moves from
+       shadow to line, so panels read without glowing. */
+    --page: #0f1216;
+    --panel: #171b21;
+    --sunken: #12161b;
+    --ink: #e8ebef;
+    --ink-soft: #a4adba;
+    --ink-faint: #6b7482;
+    --rule: #252b33;
+    --rule-firm: #39414c;
+
+    --live: #4fc4c9;
+    --live-wash: #102b2e;
+    --live-edge: #2c5f63;
+
+    --signal: #e0a463;
+    --signal-wash: #2b2117;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
   }
 }
 
 * { box-sizing: border-box; }
 
-/*
- * The panes below set `display`, which outranks the UA stylesheet's rule for
- * `[hidden]` — so a hidden stepper would otherwise still take a row of the
- * page on a static command.
- */
+/* The panes below set `display`, which outranks the UA rule for `[hidden]`. */
 [hidden] { display: none !important; }
 
 body {
   margin: 0;
   background: var(--page);
   color: var(--ink);
-  font: 14px/1.5 var(--sans);
+  font: 400 13px/1.55 var(--sans);
   -webkit-font-smoothing: antialiased;
 }
 
-h1, h2, h3 { font-weight: 600; margin: 0; }
+::selection { background: var(--live-wash); color: var(--ink); }
 
-/* ---------- header ---------- */
-
-.chrome {
-  display: flex;
-  align-items: baseline;
-  gap: calc(var(--step) * 2);
-  padding: calc(var(--step) * 1.5) calc(var(--step) * 2);
-  border-bottom: 1px solid var(--rule);
-  background: var(--panel);
+:focus-visible {
+  outline: 2px solid var(--live);
+  outline-offset: 1px;
+  border-radius: 2px;
 }
 
-.identity { display: flex; align-items: baseline; gap: var(--step); min-width: 0; }
+/* ---------- the two type roles ---------- */
 
-.wordmark {
-  font-weight: 650;
-  letter-spacing: -0.02em;
-}
-
-.model {
-  font: 12px/1 var(--mono);
-  color: var(--ink-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.command {
-  flex: 1 1 auto;
-  min-width: 0;
-  font: 12px/1 var(--mono);
-  color: var(--ink-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.status {
-  font-size: 11px;
-  letter-spacing: 0.06em;
+/*
+ * Silkscreen: every label on a control or a section. Wide tracking on a mono
+ * face at 10px is this page's signature texture — it is what makes the chrome
+ * read as an instrument panel instead of a toolbar.
+ */
+.eyebrow {
+  font: 600 10px/1 var(--mono);
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--ink-muted);
+  color: var(--ink-faint);
   white-space: nowrap;
 }
 
-.status::before {
+/* The solver's own words. */
+.model, .command, code { font: 500 12.5px/1.5 var(--mono); }
+
+/* ---------- masthead ---------- */
+
+.masthead {
+  display: flex;
+  align-items: stretch;
+  height: var(--band);
+  background: var(--panel);
+  border-bottom: 1px solid var(--rule);
+}
+
+.masthead > * {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: 0 var(--s4);
+  min-width: 0;
+}
+
+.masthead > * + * { border-left: 1px solid var(--rule); }
+
+/*
+ * The wordmark: mono, tight, with an accent rule standing in for a stamped
+ * mark. A drawn logo would be a second visual language on a page whose entire
+ * identity is its typography.
+ */
+.mark {
+  position: relative;
+  padding-left: calc(var(--s4) + var(--s3));
+  font: 700 15px/1 var(--mono);
+  letter-spacing: -0.045em;
+}
+
+.mark::before {
   content: "";
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  margin-right: 0.4em;
+  position: absolute;
+  left: var(--s4);
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 15px;
+  border-radius: 1px;
+  background: var(--live);
+}
+
+.subject.wide { flex: 1 1 auto; }
+
+.model, .command {
+  color: var(--ink-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The connection lamp: the only live state on the masthead. */
+.link {
+  margin-left: auto;
+  gap: var(--s2) !important;
+  font: 600 10px/1 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+
+.lamp {
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: currentColor;
-  vertical-align: baseline;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 18%, transparent);
+  transition: background var(--motion);
 }
 
-.status[data-state="connected"] { color: var(--good); }
-.status[data-state="connecting"] { color: var(--ink-faint); }
-.status[data-state="reconnecting"] { color: var(--warn); }
-.status[data-state="failed"] { color: var(--bad); }
+.link[data-state="connected"] { color: var(--live); }
+.link[data-state="reconnecting"], .link[data-state="failed"] { color: var(--signal); }
 
-/* ---------- toolbar ---------- */
+/* ---------- console band ---------- */
 
-.toolbar {
+.console {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--step);
+  gap: var(--s4);
   flex-wrap: wrap;
-  padding: var(--step) calc(var(--step) * 2);
-  border-bottom: 1px solid var(--rule);
+  min-height: var(--band);
+  padding: var(--s2) var(--s4);
   background: var(--panel);
+  border-bottom: 1px solid var(--rule);
 }
 
-.actions { display: flex; gap: var(--step); flex-wrap: wrap; min-height: 28px; }
+.actions { display: flex; gap: var(--s2); flex-wrap: wrap; }
+.instruments { display: flex; align-items: center; gap: var(--s4); margin-left: auto; }
 
 button {
-  font: inherit;
-  font-size: 13px;
+  font: 600 11px/1 var(--mono);
+  letter-spacing: 0.04em;
   color: var(--ink);
   background: var(--panel);
-  border: 1px solid var(--rule-strong);
+  border: 1px solid var(--rule-firm);
   border-radius: var(--radius);
-  padding: 4px 10px;
+  padding: 7px 11px;
   cursor: pointer;
+  transition: color var(--motion), border-color var(--motion), background var(--motion);
 }
 
-button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-button:disabled { opacity: 0.45; cursor: not-allowed; }
-button:focus-visible, [type="checkbox"]:focus-visible, textarea:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+button:hover:not(:disabled) { color: var(--live); border-color: var(--live); }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.hidden-note { font: 400 11px/1 var(--mono); color: var(--ink-faint); }
+
+/* A checkbox restyled as a panel switch, so it belongs to the same instrument. */
+.switch { display: flex; align-items: center; gap: var(--s2); cursor: pointer; }
+
+.switch span {
+  font: 600 10px/1 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  transition: color var(--motion);
 }
 
-.filters { display: flex; align-items: center; gap: calc(var(--step) * 1.5); }
+.switch input {
+  appearance: none;
+  position: relative;
+  margin: 0;
+  width: 26px;
+  height: 14px;
+  border: 1px solid var(--rule-firm);
+  border-radius: 8px;
+  background: var(--sunken);
+  cursor: pointer;
+  transition: background var(--motion), border-color var(--motion);
+}
 
-/* The view switch: one control, two states, no drop-down. */
+.switch input::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--ink-faint);
+  transition: transform var(--motion), background var(--motion);
+}
+
+.switch input:checked { background: var(--live-wash); border-color: var(--live-edge); }
+.switch input:checked::after { transform: translateX(12px); background: var(--live); }
+.switch:hover span { color: var(--ink-soft); }
+
 .views { display: flex; }
-.views button {
-  border-radius: 0;
-  font-size: 12px;
-  color: var(--ink-muted);
-  padding: 4px 12px;
-}
+.views button { border-radius: 0; padding: 7px 12px; color: var(--ink-faint); }
 .views button:first-child { border-radius: var(--radius) 0 0 var(--radius); }
 .views button:last-child { border-radius: 0 var(--radius) var(--radius) 0; margin-left: -1px; }
+
 .views button[aria-pressed="true"] {
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-color: var(--accent);
+  color: var(--live);
+  background: var(--live-wash);
+  border-color: var(--live-edge);
   z-index: 1;
 }
-.toggle { display: flex; align-items: center; gap: 0.4em; color: var(--ink-muted); font-size: 13px; }
-.hidden-note { color: var(--ink-faint); font-size: 12px; }
 
-/* ---------- trace stepper ---------- */
+/* ---------- the trace rail ---------- */
 
-.stepper {
+/*
+ * Alloy 6's time is a lasso, not a line: a finite prefix, then a loop back to
+ * some earlier state, forever. Tools usually draw that as a row of tabs. Here
+ * the return is *drawn* — a tick scale with an arc beneath it running from the
+ * last state back to the loop target — because the shape of a trace is the most
+ * consequential thing about a temporal instance and should be legible before
+ * anyone reads a word. This is the one place the page raises its voice.
+ */
+.rail {
   display: flex;
-  align-items: center;
-  gap: calc(var(--step) * 1.5);
-  padding: var(--step) calc(var(--step) * 2);
-  border-bottom: 1px solid var(--rule);
+  align-items: flex-start;
+  gap: var(--s4);
+  padding: var(--s3) var(--s4) var(--s2);
   background: var(--panel);
+  border-bottom: 1px solid var(--rule);
   overflow-x: auto;
 }
 
-.stepper-label {
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
+.rail .eyebrow { padding-top: 9px; }
+.ticks-frame { position: relative; padding-bottom: 22px; }
+.ticks { display: flex; gap: var(--s1); }
+
+.tick {
+  font: 500 11px/1 var(--mono);
+  letter-spacing: 0.02em;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 7px 10px;
 }
 
-.states { display: flex; gap: 4px; }
+.tick:hover:not(:disabled) { background: var(--sunken); color: var(--ink); border-color: transparent; }
 
-.state-chip {
-  font: 12px/1 var(--mono);
-  padding: 6px 10px;
-  border-radius: var(--radius);
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--ink-muted);
+.tick[aria-selected="true"] {
+  color: var(--live);
+  background: var(--live-wash);
+  border-color: var(--live-edge);
+  font-weight: 650;
+}
+
+.tick.loop-target { color: var(--signal); }
+.tick.loop-target[aria-selected="true"] { color: var(--live); }
+
+.lasso {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 22px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.lasso path { fill: none; stroke: var(--signal); stroke-width: 1.2; }
+.lasso polygon { fill: var(--signal); }
+
+.loop-note {
+  padding-top: 9px;
+  font: 400 11px/1 var(--mono);
+  color: var(--signal);
   white-space: nowrap;
 }
 
-.state-chip:hover:not(:disabled) { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+/* ---------- bulletin ---------- */
 
-.state-chip[aria-selected="true"] {
-  background: var(--accent-soft);
-  color: var(--accent);
-  border-color: var(--accent);
-  font-weight: 600;
+/*
+ * An exhausted enumeration is a *condition* of the session, not an event: it
+ * stays true until something changes it. So it gets a band that stays on
+ * screen, rather than a toast that vanishes and leaves the user staring at a
+ * toolbar with nothing in it.
+ */
+.bulletin {
+  margin: 0;
+  padding: var(--s3) var(--s4);
+  background: var(--signal-wash);
+  border-bottom: 1px solid var(--rule);
+  border-left: 3px solid var(--signal);
+  font: 400 12.5px/1.5 var(--sans);
+  color: var(--ink-soft);
 }
-
-.state-chip.loop-target::after {
-  content: " ↺";
-  color: var(--warn);
-}
-
-.loop-note { font-size: 12px; color: var(--ink-faint); white-space: nowrap; }
 
 /* ---------- layout ---------- */
 
 main {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(300px, 26rem);
-  align-items: start;
-  gap: 0;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 25rem);
+  min-height: calc(100vh - var(--band) * 2);
 }
 
-@media (max-width: 60rem) {
+@media (max-width: 62rem) {
   main { grid-template-columns: minmax(0, 1fr); }
+
   .evaluator { border-left: none; border-top: 1px solid var(--rule); }
+  .evaluator-sticky { position: static; max-height: none; }
 }
 
-.instance { padding: calc(var(--step) * 2); min-width: 0; }
+.field {
+  padding: var(--s5) var(--s4);
+  min-width: 0;
+}
 
-/* ---------- instance tables ---------- */
+.field.settling { animation: settle var(--motion) both; }
 
-.group + .group { margin-top: calc(var(--step) * 3); }
+/* The page's one entrance: a new picture arrives, it does not blink in. */
+@keyframes settle {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ---------- tables ---------- */
+
+.group + .group { margin-top: var(--s6); }
 
 .group-head {
   display: flex;
   align-items: baseline;
-  gap: var(--step);
-  margin-bottom: var(--step);
+  gap: var(--s2);
+  margin-bottom: var(--s3);
+  padding-bottom: var(--s2);
+  border-bottom: 1px solid var(--rule);
 }
 
-.group-head h2 {
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-}
-
-.group-head .count { font-size: 11px; color: var(--ink-faint); }
+.group-head h2 { margin: 0; }
+.group-head .count { font: 500 10px/1 var(--mono); color: var(--ink-faint); }
 
 .cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
-  gap: var(--step);
+  gap: var(--s3);
   align-items: start;
 }
 
 .card {
   border: 1px solid var(--rule);
-  border-radius: var(--radius);
+  border-radius: var(--radius-card);
   background: var(--panel);
   overflow: hidden;
 }
@@ -285,234 +437,214 @@ main {
 .card-head {
   display: flex;
   align-items: baseline;
-  gap: 0.5em;
-  padding: 6px 10px;
+  gap: var(--s2);
+  padding: var(--s2) var(--s3);
   border-bottom: 1px solid var(--rule);
 }
 
-.card-title { font: 12px/1.3 var(--mono); font-weight: 600; }
-.card-arity { margin-left: auto; font-size: 11px; color: var(--ink-faint); }
+.card-title { font: 650 12.5px/1.3 var(--mono); letter-spacing: -0.01em; }
 
-.flag {
-  font-size: 10px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--ink-muted);
-  border: 1px solid var(--rule-strong);
-  border-radius: 3px;
-  padding: 0 4px;
+.card-arity {
+  margin-left: auto;
+  font: 500 10px/1 var(--mono);
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
 }
 
-.card-sub { padding: 4px 10px; font-size: 11px; color: var(--ink-faint); border-bottom: 1px solid var(--rule); }
+.flag {
+  font: 600 9px/1.5 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  border: 1px solid var(--rule-firm);
+  border-radius: 3px;
+  padding: 1px 4px;
+}
+
+.card-sub {
+  padding: var(--s1) var(--s3);
+  font: 400 11px/1.4 var(--mono);
+  color: var(--ink-faint);
+  background: var(--sunken);
+  border-bottom: 1px solid var(--rule);
+}
 
 table { border-collapse: collapse; width: 100%; }
 
 th {
-  font: 10px/1.4 var(--sans);
-  font-weight: 600;
-  letter-spacing: 0.06em;
+  font: 600 9px/1.4 var(--mono);
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--ink-faint);
   text-align: left;
-  padding: 4px 10px;
+  padding: var(--s1) var(--s3);
   border-bottom: 1px solid var(--rule);
 }
 
 td {
-  font: 12px/1.4 var(--mono);
-  padding: 3px 10px;
+  font: 500 12px/1.5 var(--mono);
+  padding: 3px var(--s3);
   border-bottom: 1px solid var(--rule);
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 tr:last-child td { border-bottom: none; }
-tbody tr:hover td { background: var(--accent-soft); }
+tbody tr:hover td { background: var(--live-wash); }
 
-.empty { padding: 6px 10px; font-size: 12px; color: var(--ink-faint); font-style: italic; }
-
-.notice {
-  padding: calc(var(--step) * 2);
-  border: 1px dashed var(--rule-strong);
-  border-radius: var(--radius);
-  color: var(--ink-muted);
-}
-
-/* ---------- graph view ---------- */
-
-.graph {
-  display: block;
-  /* Natural size (set per drawing), scaled down only when the pane is narrower. */
-  max-width: 100%;
-  height: auto;
-  margin: 0 auto;
-  touch-action: none;
-  cursor: grab;
-  --wire: var(--ink-faint);
-  --wire-ink: var(--ink-muted);
-  --wire-back: var(--warn);
-}
-
-.graph.panning { cursor: grabbing; }
+/* ---------- empty states ---------- */
 
 /*
- * Each node group carries its sig's hue as an inline `--hue`, and these two
- * blocks are the only place that decides what a hue *looks* like — so light and
- * dark stay one design with one variable between them.
- *
- * The `hsl()` calls sit on the rules that inherit `--hue` (the node's own
- * subtree) rather than on `.graph`: a custom property is substituted where it
- * is *declared*, so a `--node-fill` declared on the svg would resolve against a
- * `--hue` that only exists further down, and collapse to an invalid value.
+ * One component for every "there is nothing here" moment, so emptiness always
+ * reads as part of the instrument rather than as a failure of it. mettle is
+ * speaking in these, so they are set in the sans face.
  */
-.node rect {
-  fill: hsl(var(--hue) 72% 96%);
-  stroke: hsl(var(--hue) 45% 52%);
-  stroke-width: 1.25;
+.blank {
+  padding: var(--s5);
+  max-width: 34rem;
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--rule-firm);
+  border-radius: var(--radius-card);
+  background: var(--panel);
+  color: var(--ink-soft);
 }
 
-.node .atom { fill: hsl(var(--hue) 55% 26%); }
-.node .node-tags { fill: hsl(var(--hue) 45% 34%); }
+.blank.alert { border-left-color: var(--signal); }
+.blank p { margin: 0 0 var(--s2); }
+.blank p:last-child { margin-bottom: 0; }
+.blank .eyebrow { display: block; margin-bottom: var(--s2); }
+.blank code { color: var(--ink); }
 
-@media (prefers-color-scheme: dark) {
-  .node rect {
-    fill: hsl(var(--hue) 38% 19%);
-    stroke: hsl(var(--hue) 45% 58%);
-  }
-
-  .node .atom { fill: hsl(var(--hue) 65% 88%); }
-  .node .node-tags { fill: hsl(var(--hue) 40% 72%); }
-}
-
-/* An atom no visible sig lists — an integer, a filtered-out sig's atom. */
-.node.unowned rect { fill: var(--panel); stroke: var(--rule-strong); }
-.node.unowned .atom { fill: var(--ink-muted); }
-
-/* A solver-chosen witness: named by a skolem, not by the model's own text. */
-.node.witness rect { stroke-dasharray: 4 3; }
-
-.node .atom {
-  font: 12px var(--mono);
-  font-weight: 600;
-}
-
-.node .node-tags {
-  font: 9.5px var(--sans);
-  letter-spacing: 0.02em;
-}
-
-.node.unowned .node-tags { fill: var(--ink-faint); }
-
-.edge path {
-  fill: none;
-  stroke: var(--wire);
-  stroke-width: 1.4;
-}
-
-.edge.back path { stroke: var(--wire-back); stroke-dasharray: 6 4; }
-.edge.self path { stroke-dasharray: none; }
-.edge.temporal path { stroke-width: 1.8; }
-.edge.witness path { stroke-dasharray: 3 3; }
-
-/* A zero-arg `fun`'s relation — real, but not something the model wrote. */
-.edge.derived path,
-.edge.derived + .edge-label,
-.edge.derived .edge-label { opacity: 0.6; }
-
-.arrow { fill: var(--wire); }
-.arrow-back { fill: var(--wire-back); }
-
-.edge-label {
-  font: 10px var(--mono);
-  fill: var(--wire-ink);
-  /* The label sits on its own edge, so it is drawn with the page behind it. */
-  paint-order: stroke;
-  stroke: var(--page);
-  stroke-width: 3.5;
-  stroke-linejoin: round;
-}
-
-.edge.back .edge-label { fill: var(--wire-back); }
+.empty { padding: var(--s2) var(--s3); font: 400 11px/1.4 var(--sans); color: var(--ink-faint); }
 
 /* ---------- evaluator ---------- */
 
+/*
+ * The column keeps its paper the full height of the page; the pane inside it
+ * is what sticks, so the evaluator stays reachable beside a drawing that is
+ * taller than the viewport.
+ */
 .evaluator {
+  background: var(--panel);
+  border-left: 1px solid var(--rule);
+}
+
+.evaluator-sticky {
   position: sticky;
   top: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--step);
+  gap: var(--s3);
+  /* Content height, capped at the viewport: the pane is as tall as it has
+     something to say. A fixed height would push the prompt below the fold on a
+     temporal command, where the rail takes a third band. */
   max-height: 100vh;
-  padding: calc(var(--step) * 2);
-  border-left: 1px solid var(--rule);
-  background: var(--panel);
+  padding: var(--s4);
 }
 
-.evaluator-head { display: flex; align-items: baseline; gap: var(--step); }
-
-.evaluator-head h2 {
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
+.evaluator-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  padding-bottom: var(--s2);
+  border-bottom: 1px solid var(--rule);
 }
 
-.evaluator-state { font: 11px/1 var(--mono); color: var(--ink-faint); }
+.at-state {
+  margin-left: auto;
+  font: 500 10px/1 var(--mono);
+  letter-spacing: 0.04em;
+  color: var(--live);
+}
 
 .history {
   flex: 1 1 auto;
   overflow-y: auto;
-  min-height: 8rem;
-  font: 12px/1.5 var(--mono);
+  min-height: 11rem;
+  font: 500 12px/1.6 var(--mono);
 }
 
-.entry { padding: 4px 0; border-bottom: 1px solid var(--rule); white-space: pre-wrap; word-break: break-word; }
-.entry:last-child { border-bottom: none; }
-.entry.input { color: var(--ink-muted); }
-.entry.input::before { content: "› "; color: var(--accent); }
-.entry.result { color: var(--ink); }
-.entry.failed { color: var(--bad); }
-.entry.note { color: var(--ink-faint); font-style: italic; }
+/* The pane's own empty state is quieter than a page's: no frame, just the
+   tool's voice where the answers will be. */
+.history .blank {
+  padding: 0;
+  max-width: none;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink-faint);
+  font: 400 12px/1.6 var(--sans);
+}
 
-.prompt { display: flex; gap: var(--step); align-items: flex-end; }
+.entry {
+  padding: var(--s2) 0;
+  border-bottom: 1px solid var(--rule);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.entry:last-child { border-bottom: none; }
+
+/* The echo carries the accent caret, so a scrolled-back history reads as a
+   column of questions with their answers under them. */
+.entry.input { color: var(--ink-faint); }
+.entry.input::before { content: "› "; color: var(--live); font-weight: 700; }
+.entry.result { color: var(--ink); }
+.entry.failed { color: var(--signal); }
+.entry.note { color: var(--ink-faint); font: 400 11px/1.5 var(--sans); }
+
+.prompt { display: flex; gap: var(--s2); align-items: flex-end; }
 
 textarea {
   flex: 1 1 auto;
-  font: 12px/1.5 var(--mono);
+  font: 500 12px/1.6 var(--mono);
   color: var(--ink);
-  background: var(--page);
-  border: 1px solid var(--rule-strong);
+  background: var(--sunken);
+  border: 1px solid var(--rule-firm);
   border-radius: var(--radius);
-  padding: 6px 8px;
+  padding: var(--s2);
   resize: vertical;
+  transition: border-color var(--motion);
 }
+
+textarea::placeholder { color: var(--ink-faint); }
+textarea:focus { border-color: var(--live); }
 
 /* ---------- toasts ---------- */
 
 .toasts {
   position: fixed;
-  right: calc(var(--step) * 2);
-  bottom: calc(var(--step) * 2);
+  right: var(--s5);
+  bottom: var(--s5);
+  z-index: 10;
   display: flex;
   flex-direction: column;
-  gap: var(--step);
+  gap: var(--s2);
   max-width: 26rem;
-  z-index: 10;
 }
 
 .toast {
-  padding: calc(var(--step) * 1.25) calc(var(--step) * 1.5);
-  border: 1px solid var(--rule-strong);
-  border-left: 3px solid var(--bad);
-  border-radius: var(--radius);
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--rule-firm);
+  border-left: 3px solid var(--signal);
+  border-radius: var(--radius-card);
   background: var(--panel);
-  box-shadow: 0 6px 24px rgb(0 0 0 / 12%);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 14%);
+  color: var(--ink-soft);
   cursor: pointer;
+  animation: arrive var(--motion) both;
+}
+
+@keyframes arrive {
+  from { opacity: 0; transform: translateX(8px); }
+  to { opacity: 1; transform: none; }
 }
 
 .toast .code {
   display: block;
-  font: 10px/1.6 var(--mono);
-  letter-spacing: 0.04em;
+  margin-bottom: 2px;
+  font: 600 9px/1.6 var(--mono);
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--signal);
 }

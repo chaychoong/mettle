@@ -8,10 +8,18 @@
  *
  * Colour is a per-sig hue set as a custom property on each node's group, which
  * is what lets the stylesheet keep both schemes in one place: the hue is the
- * datum, and `app.css` decides what lightness it gets in light and in dark.
+ * datum, and `graph.css` decides what lightness it gets in light and in dark.
+ *
+ * Two affordances live here besides the drawing itself. The **legend** is the
+ * key to those hues and doubles as the control for them — past ten sigs hues
+ * repeat, and a key you can point at is what keeps that honest. **Focus** is
+ * subtractive: hovering an atom, an edge or a legend key dims everything that
+ * is not part of it, and clicking pins that state until it is cleared, so the
+ * drawing never gains a colour it did not already have.
  */
 
 import { tagLine } from './layout.js';
+import { blank } from './ui.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -41,7 +49,10 @@ const MAX_SCALE = 6;
  */
 export function renderGraph(container, layout, { viewBox, onViewBox }) {
   if (layout.nodes.length === 0) {
-    container.replaceChildren(notice('This state has no atoms to draw.'));
+    container.replaceChildren(blank(
+      'nothing to draw',
+      'This state has no atoms. Turn on builtins to see the empty built-in signatures, or open the table view.',
+    ));
     return;
   }
   const svg = element('svg', 'graph');
@@ -57,7 +68,9 @@ export function renderGraph(container, layout, { viewBox, onViewBox }) {
   applyViewBox(svg, viewBox ?? fitted);
   svg.append(defs(), edgeLayer(layout), nodeLayer(layout));
   panAndZoom(svg, fitted, onViewBox);
-  container.replaceChildren(svg);
+  const legend = legendFor(layout, svg);
+  attention(svg, layout, legend);
+  container.replaceChildren(legend, svg);
 }
 
 /** The `viewBox` that shows the whole drawing. */
@@ -99,12 +112,21 @@ function defs() {
 
 function edgeLayer(layout) {
   const layer = element('g', 'edges');
-  for (const edge of layout.edges) {
+  for (const [index, edge] of layout.edges.entries()) {
     const group = element('g', edgeClass(edge));
+    group.dataset.edge = String(index);
+    group.dataset.from = String(edge.from);
+    group.dataset.to = String(edge.to);
+    // The visible line, and a fat transparent twin under it that is what the
+    // pointer actually hits — 1.4px of curve is not a target.
+    const hit = document.createElementNS(SVG_NS, 'path');
+    hit.setAttribute('d', edge.path);
+    hit.setAttribute('class', 'hit');
     const line = document.createElementNS(SVG_NS, 'path');
     line.setAttribute('d', edge.path);
+    line.setAttribute('class', 'wire');
     line.setAttribute('marker-end', edge.back ? 'url(#arrow-back)' : 'url(#arrow)');
-    group.append(line, text(edge.label, edge.labelAt.x, edge.labelAt.y, 'edge-label'));
+    group.append(hit, line, text(edge.label, edge.labelAt.x, edge.labelAt.y, 'edge-label'));
     layer.append(group);
   }
   return layer;
@@ -126,11 +148,16 @@ function nodeLayer(layout) {
   const layer = element('g', 'nodes');
   for (const node of layout.nodes) {
     const group = element('g', node.witness ? 'node witness' : 'node');
+    group.dataset.node = String(node.index);
     // `-1` is an atom no visible sig lists (an integer, a filtered-out sig's
     // atom reached through a relation): no hue, so it reads as outside the
     // model's own structure rather than as one more sig.
-    if (node.sigIndex >= 0) group.style.setProperty('--hue', String(HUES[node.sigIndex % HUES.length]));
-    else group.classList.add('unowned');
+    if (node.sigIndex >= 0) {
+      group.dataset.sig = String(node.sigIndex);
+      group.style.setProperty('--hue', String(hueFor(node.sigIndex)));
+    } else {
+      group.classList.add('unowned');
+    }
 
     const box = document.createElementNS(SVG_NS, 'rect');
     box.setAttribute('x', String(node.x - node.width / 2));
@@ -152,6 +179,158 @@ function nodeLayer(layout) {
     layer.append(group);
   }
   return layer;
+}
+
+/** The hue a signature's atoms are drawn in, by the order it was met. */
+function hueFor(sigIndex) {
+  return HUES[sigIndex % HUES.length];
+}
+
+/**
+ * The key to the hues, and the control for them.
+ *
+ * Every visible signature gets a swatch, its name and its atom count. Pointing
+ * at a key lights that signature's atoms; clicking pins it. Past ten
+ * signatures the hues repeat, and this is what keeps that from being a puzzle:
+ * the key is right there to disambiguate, and pinning answers "which of these
+ * two teal ones is `Name`?" directly.
+ */
+function legendFor(layout, svg) {
+  const legend = document.createElement('div');
+  legend.className = 'legend';
+  const label = document.createElement('span');
+  label.className = 'eyebrow';
+  label.textContent = 'signatures';
+  legend.append(label);
+  for (const sig of layout.sigs) {
+    const key = document.createElement('button');
+    key.type = 'button';
+    key.className = 'legend-key';
+    key.dataset.sig = String(sig.index);
+    key.setAttribute('aria-pressed', 'false');
+    key.style.setProperty('--hue', String(hueFor(sig.index)));
+    const swatch = document.createElement('span');
+    swatch.className = 'swatch';
+    const name = document.createElement('span');
+    name.textContent = sig.label;
+    const count = document.createElement('span');
+    count.className = 'legend-count';
+    count.textContent = String(sig.atoms);
+    key.append(swatch, name, count);
+    legend.append(key);
+  }
+  // A drawing with no named signature (only unowned atoms) has nothing to key.
+  return layout.sigs.length === 0 ? emptyLegend() : legend;
+}
+
+function emptyLegend() {
+  const legend = document.createElement('div');
+  legend.className = 'legend';
+  legend.hidden = true;
+  return legend;
+}
+
+/**
+ * Hover and selection, subtractively.
+ *
+ * One `focused` class on the drawing dims everything, and `focus`/`related`
+ * marks put back what belongs to whatever is being pointed at: an atom brings
+ * its incident tuples and their far ends, a tuple brings both its atoms, a
+ * legend key brings a whole signature. A click pins the current focus (Escape
+ * or a click on empty space clears it), which is what makes it usable for
+ * *reading* — following one atom's relations through a dense drawing — rather
+ * than only for pointing.
+ */
+function attention(svg, layout, legend) {
+  const nodes = new Map([...svg.querySelectorAll('.node')].map((node) => [node.dataset.node, node]));
+  const edges = [...svg.querySelectorAll('.edge')];
+  let pinned = null;
+
+  const clear = () => {
+    svg.classList.remove('focused');
+    for (const node of nodes.values()) node.classList.remove('focus', 'related', 'pinned');
+    for (const edge of edges) edge.classList.remove('related');
+    for (const key of legend.querySelectorAll('.legend-key')) key.setAttribute('aria-pressed', 'false');
+  };
+
+  const show = (focus) => {
+    clear();
+    if (focus === null) return;
+    svg.classList.add('focused');
+    focus();
+  };
+
+  const focusNode = (index) => () => {
+    nodes.get(index)?.classList.add('focus');
+    for (const edge of edges) {
+      if (edge.dataset.from !== index && edge.dataset.to !== index) continue;
+      edge.classList.add('related');
+      nodes.get(edge.dataset.from)?.classList.add('related');
+      nodes.get(edge.dataset.to)?.classList.add('related');
+    }
+  };
+
+  const focusEdge = (edge) => () => {
+    edge.classList.add('related');
+    nodes.get(edge.dataset.from)?.classList.add('focus');
+    nodes.get(edge.dataset.to)?.classList.add('focus');
+  };
+
+  const focusSig = (sigIndex) => () => {
+    for (const node of nodes.values()) {
+      if (node.dataset.sig === sigIndex) node.classList.add('focus');
+    }
+    for (const edge of edges) {
+      const ends = [edge.dataset.from, edge.dataset.to];
+      if (ends.some((end) => nodes.get(end)?.dataset.sig === sigIndex)) edge.classList.add('related');
+    }
+  };
+
+  const hover = (focus) => {
+    if (pinned === null) show(focus);
+  };
+
+  for (const [index, node] of nodes) {
+    node.addEventListener('pointerenter', () => hover(focusNode(index)));
+    node.addEventListener('pointerleave', () => hover(null));
+    node.addEventListener('click', (event) => {
+      event.stopPropagation();
+      pinned = pinned === `node ${index}` ? null : `node ${index}`;
+      show(pinned === null ? null : focusNode(index));
+      if (pinned !== null) nodes.get(index)?.classList.add('pinned');
+    });
+  }
+
+  for (const edge of edges) {
+    edge.addEventListener('pointerenter', () => hover(focusEdge(edge)));
+    edge.addEventListener('pointerleave', () => hover(null));
+  }
+
+  for (const key of legend.querySelectorAll('.legend-key')) {
+    const sigIndex = key.dataset.sig;
+    key.addEventListener('pointerenter', () => hover(focusSig(sigIndex)));
+    key.addEventListener('pointerleave', () => hover(null));
+    // The keys are the one part of the drawing a keyboard can reach, so they
+    // light their signature on focus as well as on hover.
+    key.addEventListener('focus', () => hover(focusSig(sigIndex)));
+    key.addEventListener('blur', () => hover(null));
+    key.addEventListener('click', () => {
+      pinned = pinned === `sig ${sigIndex}` ? null : `sig ${sigIndex}`;
+      show(pinned === null ? null : focusSig(sigIndex));
+      if (pinned !== null) key.setAttribute('aria-pressed', 'true');
+    });
+  }
+
+  // Empty space and Escape both mean "stop looking at that".
+  svg.addEventListener('click', () => {
+    pinned = null;
+    show(null);
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || pinned === null) return;
+    pinned = null;
+    show(null);
+  });
 }
 
 function text(content, x, y, className) {
@@ -239,15 +418,9 @@ function toGraph(svg, box, event) {
   };
 }
 
+/** An SVG element — its own namespace, which is why `ui.js`'s is not this one. */
 function element(tag, className) {
   const node = document.createElementNS(SVG_NS, tag);
   node.setAttribute('class', className);
-  return node;
-}
-
-function notice(message) {
-  const node = document.createElement('p');
-  node.className = 'notice';
-  node.textContent = message;
   return node;
 }

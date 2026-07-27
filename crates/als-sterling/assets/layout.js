@@ -33,9 +33,16 @@ import { isHiddenRelation, isHiddenSig, isMacroSkolem, shortLabel } from './inst
 /** Every node is one line of label plus at most one line of tags. */
 const NODE_HEIGHT = 44;
 const MIN_NODE_WIDTH = 64;
-/** Width of one character of the node's monospace label, at its rendered size. */
+/**
+ * Estimated advance widths, in pixels per character, for the two monospace
+ * sizes the drawing uses (12px atom labels, 10px edge labels, 9.5px tags).
+ *
+ * Estimated on purpose: see `placeLabels`. A monospace face makes the estimate
+ * accurate to the face's own aspect ratio, and every consumer pads for the rest.
+ */
 const LABEL_CHAR_WIDTH = 7.4;
 const TAG_CHAR_WIDTH = 5.8;
+const LABEL_WIDTH_10PX = 6.1;
 const NODE_PADDING = 18;
 
 /** Vertical distance between one rank's boxes and the next's. */
@@ -65,7 +72,7 @@ const SWEEPS = 4;
  * the top-left of the drawing; the renderer supplies its own padding.
  */
 export function layoutGraph(state, { showBuiltins }) {
-  const { nodes, edges } = collect(state, showBuiltins);
+  const { nodes, edges, sigs } = collect(state, showBuiltins);
   const ranks = assignRanks(nodes, edges);
   const segments = addBends(nodes, edges, ranks);
   orderRanks(nodes, segments, ranks);
@@ -75,7 +82,7 @@ export function layoutGraph(state, { showBuiltins }) {
   size.width = Math.max(size.width, route(nodes, edges));
   // The bend points did their work in the ordering and the routing; they are
   // not atoms, so they never reach the drawing.
-  return { nodes: nodes.filter((node) => !node.bend), edges, ...size };
+  return { nodes: nodes.filter((node) => !node.bend), edges, sigs, ...size };
 }
 
 /* ---------- what is in the picture ---------- */
@@ -94,6 +101,7 @@ export function layoutGraph(state, { showBuiltins }) {
  */
 function collect(state, showBuiltins) {
   const nodes = [];
+  const sigs = [];
   const byAtom = new Map();
   const visible = (sig) => showBuiltins || !isHiddenSig(sig);
 
@@ -101,6 +109,9 @@ function collect(state, showBuiltins) {
   for (const sig of state.sigs) {
     if (!visible(sig)) continue;
     const label = shortLabel(sig.label);
+    // The legend's own list: which sigs the drawing is showing, in the order
+    // they were met, which is the order their hues were assigned.
+    sigs.push({ index: sigIndex, label, atoms: sig.atoms.length });
     for (const atom of sig.atoms) {
       const existing = byAtom.get(atom);
       // An atom is written under its most specific sig (§2), so the first sig
@@ -147,7 +158,7 @@ function collect(state, showBuiltins) {
       });
     }
   }
-  return { nodes, edges };
+  return { nodes, edges, sigs };
 }
 
 function newNode(atom, sigIndex, sigLabel, byAtom) {
@@ -464,33 +475,61 @@ function route(nodes, edges) {
     edge.labelAt = shape.labelAt;
     // The label is centred on its anchor, so half of it hangs to the right; the
     // width below is the widest label this instance can produce there.
-    right = Math.max(right, (shape.reach ?? 0), edge.labelAt.x + edge.label.length * LABEL_CHAR_WIDTH / 2);
+    right = Math.max(right, shape.reach ?? 0, edge.labelAt.x + (edge.label.length * LABEL_WIDTH_10PX) / 2);
   }
-  stagger(edges);
+  placeLabels(edges);
   return right;
 }
 
 /**
- * Nudges labels that would land on the same line apart.
+ * Keeps edge labels off each other.
  *
- * Every edge between two adjacent ranks has its midpoint at the same height, so
- * a rank with several outgoing tuples piles four labels into one line of text.
- * Edges sharing a height are dealt out over three offsets in document order —
- * deterministic like everything else here, and enough separation to read at the
- * label's own size without a measuring pass the layout has no DOM to do.
+ * Every edge between one pair of ranks hangs its label at the same height, so a
+ * rank with four outgoing tuples would print four labels on one line, on top of
+ * each other. Each label is given an estimated box — **character count times a
+ * fixed per-character width, never a DOM measurement** — and then dealt into
+ * the first of five vertical lanes where that box misses everything already
+ * placed in the same lane; if all five are taken, it goes to the lane it
+ * overlaps least, argmin with a first-lane-wins tie-break.
+ *
+ * The estimate is the point, not a shortcut: this module has to be a pure
+ * function of the instance and has to produce the same geometry in a headless
+ * determinism check as in a browser, and a measured box would make it depend on
+ * the machine's font rasterization. Monospace makes the estimate close, and the
+ * padding below absorbs the error.
  */
-function stagger(edges) {
-  const LEVELS = [-13, 0, 13];
-  const seen = new Map();
+function placeLabels(edges) {
+  const LANES = [0, -14, 14, -28, 28];
+  const PADDING = 7;
+  const lanes = new Map();
   for (const edge of edges) {
+    const half = (edge.label.length * LABEL_WIDTH_10PX) / 2 + PADDING;
+    const box = { from: edge.labelAt.x - half, to: edge.labelAt.x + half };
     const line = Math.round(edge.labelAt.y / 12);
-    const position = seen.get(line) ?? 0;
-    seen.set(line, position + 1);
-    edge.labelAt = {
-      x: edge.labelAt.x,
-      y: round(edge.labelAt.y + LEVELS[position % LEVELS.length]),
-    };
+    let best = 0;
+    let leastOverlap = Infinity;
+    for (const [lane, offset] of LANES.entries()) {
+      const taken = lanes.get(`${line} ${lane}`) ?? [];
+      const overlap = taken.reduce((most, other) => Math.max(most, span(box, other)), 0);
+      if (overlap === 0) {
+        best = lane;
+        leastOverlap = 0;
+        break;
+      }
+      if (overlap < leastOverlap) {
+        leastOverlap = overlap;
+        best = lane;
+      }
+    }
+    const key = `${line} ${best}`;
+    lanes.set(key, [...(lanes.get(key) ?? []), box]);
+    edge.labelAt = { x: edge.labelAt.x, y: round(edge.labelAt.y + LANES[best]) };
   }
+}
+
+/** How much two label boxes overlap horizontally; `0` when they miss. */
+function span(one, two) {
+  return Math.max(0, Math.min(one.to, two.to) - Math.max(one.from, two.from));
 }
 
 function forward(from, to, spread) {
@@ -523,8 +562,15 @@ function throughBends(nodes, edge, from, to) {
   }
   // The middle bend, so a long edge's label sits on the part of it that is
   // furthest from both endpoints' own clutter.
-  const middle = points[Math.floor(points.length / 2)];
-  return { path, labelAt: { x: round(middle.x), y: round(middle.y) } };
+  // Hung on the first span rather than on a bend: a bend sits on a rank line,
+  // which is exactly where the boxes are, so a label there lands on top of an
+  // atom. Between two ranks there is nothing but other labels.
+  const above = points[0];
+  const below = points[1];
+  return {
+    path,
+    labelAt: { x: round((above.x + below.x) / 2), y: round((above.y + below.y) / 2) },
+  };
 }
 
 function sameRank(from, to, spread) {
