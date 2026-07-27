@@ -90,6 +90,9 @@ cargo test --release -p als-syntax --test corpus_roundtrip  # syntax net
 Binary releases cover macOS (arm64, x86_64) and Linux (arm64, x86_64); no JVM, no runtime dependencies.
 
 ```sh
+# homebrew
+brew install chaychoong/tap/mettle
+
 # shell installer
 curl -LsSf https://github.com/chaychoong/mettle/releases/latest/download/mettle-installer.sh | sh
 
@@ -100,7 +103,7 @@ nix run github:chaychoong/mettle -- --help
 cargo build --release
 ```
 
-A Homebrew tap (`chaychoong/mettle`) is configured and coming shortly. `cargo install` from crates.io is deliberately not a channel.
+`cargo install` from crates.io is deliberately not a channel.
 
 ## Found a difference from Alloy?
 
