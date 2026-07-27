@@ -88,6 +88,15 @@ cargo build --release
 
 A Homebrew tap (`chaychoong/mettle`) is configured and coming shortly. `cargo install` from crates.io is deliberately not a channel.
 
+## Found a difference from Alloy?
+
+That's the most valuable contribution you can make. mettle's whole claim is "Alloy, exactly" — so **any** model where mettle and the Alloy Analyzer disagree (different verdict, different error, mettle accepts something Alloy rejects or vice versa, a trace or evaluator answer that differs) is a bug here, however small.
+
+1. Check [LIMITATIONS.md](LIMITATIONS.md) first — every *known* gap and deliberate divergence is listed there, and a typed `CANNOT EXECUTE` is mettle declining honestly, not disagreeing.
+2. [Open a divergence issue](https://github.com/chaychoong/mettle/issues/new?template=divergence.md) with the smallest `.als` you can make that shows it, the exact command you ran, what Alloy says (version 6.2.0 is the reference), what mettle says, and your `mettle --version`.
+
+Shrinking the model is appreciated but optional — a big model that disagrees is still a real find. Every confirmed divergence gets root-caused and pinned by a regression test.
+
 ## How it's built, and how you can trust it
 
 This project is built primarily by an AI agent fleet under human review. The credible answer to "is this just unreviewed AI output?" is **published, reproducible evidence**, not authorship claims: the scorecard and every net above regenerate from a checkout with one script and the pinned jar; builds are deterministic (fixed solver build → byte-identical output); and the exact behavioral rules being matched live in a human-owned [Semantics Ledger](SEMANTICS_LEDGER.md), with every non-trivial decision recorded as an [ADR](docs/adr/).
@@ -96,7 +105,7 @@ Note: the *product* contains no JVM. The *test infrastructure* deliberately runs
 
 ## Documentation
 
-Start at **[docs/README.md](docs/README.md)** (index) or **[docs/ROADMAP.md](docs/ROADMAP.md)** (the plan). Honest current gaps: [LIMITATIONS.md](LIMITATIONS.md).
+Start at **[docs/README.md](docs/README.md)** (index) or **[docs/ROADMAP.md](docs/ROADMAP.md)** (the plan). Honest current gaps: [LIMITATIONS.md](LIMITATIONS.md). Want to hack on mettle itself? **[CONTRIBUTING.md](CONTRIBUTING.md)** has the workspace setup, build, and test story.
 
 ## License
 

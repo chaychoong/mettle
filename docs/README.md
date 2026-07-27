@@ -18,6 +18,7 @@ Every doc in the project is reachable from here. Nothing is orphaned. Superseded
 - **[../PORTING_RULES.md](../PORTING_RULES.md)** — Java→Rust translation rules.
 - **[../SEMANTICS_LEDGER.md](../SEMANTICS_LEDGER.md)** — human-owned behavioral rules pinned to Alloy; agents implement from here.
 - **[../LIMITATIONS.md](../LIMITATIONS.md)** — honest, current list of what mettle can't do yet.
+- **[../CONTRIBUTING.md](../CONTRIBUTING.md)** — external-contributor guide: setup (`scripts/bootstrap.sh`), build/test gauntlet, house rules digest, divergence-report pointer (issue template at `.github/ISSUE_TEMPLATE/divergence.md`).
 
 ## Decisions
 - **[adr/](adr/)** — Architecture Decision Records. Index: [adr/README.md](adr/README.md).
