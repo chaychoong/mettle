@@ -180,6 +180,13 @@ pub struct Param {
 pub struct ResolvedFunc {
     /// Declared name (bare).
     pub name: String,
+    /// The func's global label, built exactly like [`ResolvedSig::qualified_name`]:
+    /// `this/Best` for a root-module func, the alias path from the root
+    /// (`ordering/first`) for one declared in an opened module. This is the
+    /// string the reference labels a *macro skolem* with (`"$" + label`,
+    /// `alloy6-instance-xml.md` §6), which is why it is materialized here
+    /// rather than rebuilt per caller. mt-071 widening.
+    pub qualified_name: String,
     /// The module instance this func/pred was declared in.
     pub module: ModuleId,
     /// Span of the declaring name.

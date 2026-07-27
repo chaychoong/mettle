@@ -1,6 +1,6 @@
 # Alloy 6 instance XML — the `A4Solution.writeXML` schema (mt-070)
 
-**Status: PINNED (mt-070, tech-lead reviewed 2026-07-27 — the six nominated load-bearing cells X-01/X-03/X-04/X-06b/X-07/X-09 re-run fresh, all byte-identical to the captures). Implemented by mt-071; the Unpinned tail is mt-071's probe debt.**
+**Status: PINNED (mt-070, tech-lead reviewed 2026-07-27 — the six nominated load-bearing cells X-01/X-03/X-04/X-06b/X-07/X-09 re-run fresh, all byte-identical to the captures). Implemented by mt-071 (`crates/als-instance/src/xml.rs`), which folded eight further **bytecode-derived** corners back into this document — each tagged `mt-071, bytecode` at the point it appears, and each honestly distinguished from the live-probed `X-NN` cells around it. mt-071 also closed §11's round-trip debt empirically (18 files accepted, 0 rejected).**
 
 This document pins the **complete instance-XML schema** the reference
 Alloy 6.2.0 jar's `A4Solution.writeXML` (via `A4SolutionWriter.
@@ -68,10 +68,13 @@ structured after `scratchpad/probe/mt064/TraceProbe.java`'s and
 3. Fields are **interleaved** immediately after their owning sig's
    `</sig>` (via a recursive call before that sig's `writeSig` returns to
    its own caller) — not batched separately (§2, `X-01`).
-4. Every field/skolem gets a `<types>` element unconditionally (the
-   declared column shape, one `<type ID=.../>` per column); `<tuple>`
-   elements are printed **additionally**, before `<types>`, only when the
-   relation is actually nonempty in this state (§5, `X-04`).
+4. Every field/skolem gets `<types>` unconditionally (the declared column
+   shape, one `<type ID=.../>` per column) — but **one `<types>` element
+   per `Type.fold()` entry**, so a *union*-typed relation gets several
+   (§5, mt-071 bytecode correction to this wave's single-product
+   samples); `<tuple>` elements are printed **additionally**, before
+   `<types>`, only when the relation is actually nonempty in this state
+   (§5, `X-04`).
 5. `String` is the **one** builtin sig that gets ordinary `<atom>`
    children — `univ`/`Int`/`seq/Int` structurally never do (explicit
    special-cases in the writer). A string-literal atom's label is its own
@@ -106,6 +109,17 @@ every probe run in this session, not wall-clock; source: bytecode constant
 (§9), then `</alloy>`. **X-01** through **X-09** (every probe in this
 document ran against this root shape).
 
+**`builddate` is never read back (mt-071, bytecode).** An exhaustive `ldc`
+string-constant enumeration of `A4SolutionReader` finds no `builddate`
+among the attribute names it looks up (it reads `bitwidth`, `maxseq`,
+`mintrace`, `maxtrace`, `command`, `filename`, `tracelength`,
+`looplength`, and the sig/field/skolem/type attributes — and nothing
+else). The value is also **escaped** on the way out (it sits in an
+odd-index slot of `Util.encodeXMLs`, §8). Consequence for a
+reimplementation: writing a *different, fixed* stamp there costs nothing
+in round-trip fidelity — mettle writes `mettle <version>` rather than
+faking a jar build date, and `A4SolutionReader.read` accepts it (§11).
+
 **`<instance>`'s complete attribute inventory, in this exact print order**
 (bytecode-enumerated from the private constructor that is the actual
 per-state driver — every `ldc` string constant in that method accounted
@@ -129,6 +143,70 @@ bytecode, not just absence-from-samples (source-cited, not independently
 re-probed with a `noOverflow`-toggled fixture; see "Unpinned"). **X-01**
 through **X-03** jar-verify every attribute except `metamodel` (§10,
 source-only).
+
+### 1.1 The per-`<instance>` driver's section order (mt-071, bytecode)
+
+No probe in this wave carried both an ordinary skolem and a macro skolem,
+so the relative order of the writer's four sections was unpinned from
+samples. Read off the private constructor (the per-state driver) it is,
+exactly and unconditionally:
+
+1. the `<instance …>` open tag (the attribute table above);
+2. `writeSig(UNIV, state)` — the whole recursion tree (§2);
+3. a loop over the `sigs` argument, `writeSig` for each `SubsetSig` (§3);
+4. `sol.getAllSkolems()` → `writeSkolem` for each (§6, first kind);
+5. the `macros` loop → the synthesized `m<i>` skolems (§6, second kind);
+6. `"\n</instance>\n"`.
+
+Steps 4 and 5 are both gated on `sol != null`; step 5 is additionally
+gated on `macros != null`. The `m<i>` counter `i` is local to step 5 and
+starts at 0 for **every** block.
+
+### 1.2 `command=`, reconstructed in full (mt-071, bytecode)
+
+§1's table and the "Unpinned" tail below both flagged that only the three
+shapes this wave's fixtures happened to produce were observed. The string
+is `("Check " | "Run ") + Command.toString()`, and `Command.toString()`
+disassembles to (constants quoted exactly, trailing spaces included):
+
+```
+sb = (check ? "Check " : "Run ") + label
+decorated = bitwidth>=0 || maxseq>=0 || scope.size()>0
+            || minprefix>=0 || maxprefix>=0
+if      (overall>=0 && decorated) sb += " for " + overall + " but"
+else if (overall>=0)              sb += " for " + overall
+else if (decorated)               sb += " for"
+first = true
+if (bitwidth>=0)  { sb += " " + bitwidth + " int";  first = false }
+if (maxseq>=0)    { sb += (first?" ":", ") + maxseq + " seq"; first = false }
+if (maxprefix>=0) { sb += " "
+                    if (minprefix>=0) sb += minprefix + ".."
+                    if (maxprefix != Integer.MAX_VALUE) sb += maxprefix
+                    sb += " steps"; first = false }
+for (cs : scope) { sb += (first?" ":", ") + cs; first = false }
+if (expects>=0)   sb += " expect " + expects
+```
+
+Note the two *distinct* `" for "`/`" for"` constants (the third branch has
+no trailing space because no number follows it) and that the `" but"`
+branch does **not** clear `first`, which is why `X-03` reads
+`"… for 3 but 3..3 steps"` and not `"… for 3 but, 3..3 steps"`.
+`CommandScope.toString()` is `(isExact?"exactly ":"") + startingScope +
+(ending!=starting ? ".."+ending : "") + (increment>1 ? ":"+increment : "")
++ " " + sig.label` — the **full** sig label (`this/A`), not the bare name.
+`maxstring` is a `Command` field but is **not** printed.
+
+**The `label`** is `CompModule.addCommand`'s (`CompModule.java:1919-1961`,
+source-cited from `scratchpad/src794/`): the written `label:` prefix if
+non-empty; else the run/check target's own written name (`run p` → `p`,
+`check NoEmpty` → `NoEmpty`); else, for an inline block, the synthesized
+`"run$" + (1 + commands.size())` / `"check$" + (1 + commands.size())` —
+i.e. the **1-based position of the command among its own module's
+commands**, which is why `X-01`'s single anonymous run is `run$1`.
+Live-verified against `X-01`/`X-03`/`X-05b`'s captures (`Run run$1 for 3`,
+`Run run$1 for 3 but 3..3 steps`, `Check allSame for 3` — all three
+byte-reproduced by mt-071's implementation); the remaining scope-clause
+combinations are now source-pinned rather than sampled.
 
 ## 2. Sig/field ID numbering — the lazy-memoization scheme
 
@@ -255,6 +333,13 @@ beyond the already-pinned `alloy6-temporal.md` T-13 finding for var
 *sigs*; var *fields* were not independently re-probed here, see
 "Unpinned"), `X-02b` (`private`).
 
+**A field whose declared type holds no tuple is skipped entirely
+(mt-071, bytecode):** `writeField` returns immediately when
+`field.type().hasNoTuple()` — no `<field>` tag at all, not an empty one.
+(It also returns immediately for `isMeta != null` when `sol == null`, the
+§10 metamodel path.) Not observable in any of this wave's fixtures, since
+every probed field had a populated declared type.
+
 **Tuple/type body, jar-verified precisely (`X-01`, `X-04`):**
 - **Every field gets a `<types>` element, unconditionally** — one `<type
   ID="..."/>` per column of the field's *declared* type, where column 0
@@ -262,6 +347,25 @@ beyond the already-pinned `alloy6-temporal.md` T-13 finding for var
   Alloy arity **+ 1**, for the owning sig). `X-04`: `g: A -> B -> A` on
   sig `C` → 4-column tuples (`C, A, B, A`), `<types>` has 4 `<type>`
   entries.
+- **Correction (mt-071, bytecode): "a `<types>` element" is singular only
+  for a single-product type.** `writeExpr`'s tail is `for (List<PrimSig>
+  columns : type.fold()) { … }` — **one `<types>` element per entry of
+  `Type.fold()`**, so a **union**-typed field or skolem (`f: B + C`, whose
+  type is `{owner→B, owner→C}`) emits **two** `<types>` elements, each
+  with its own column list. Every fixture in this wave happened to have a
+  single-product type, which is why the sampled output never showed it.
+  `Type.fold()` itself (disassembled, `edu.mit.csail.sdg.ast.Type`) is not
+  the identity on the entry list: it collapses entries that differ in
+  **exactly one** column onto that column's parent, and only when (a) the
+  parent is non-`univ` and **`abstract`**, and (b) *every* one of that
+  parent's children is present among the entries being folded (siblings
+  are ticked off a working copy of `parent.children()`; a leftover sibling
+  aborts the fold). So `{C→A1, C→A2}` with `abstract sig A` and exactly
+  those two children folds to a single `{C→A}`, while the same pair under
+  a non-abstract or partially-covered parent stays two `<types>`. Ported
+  verbatim in mt-071 (`fold`/`fold_column` in `als-instance/src/xml.rs`);
+  **bytecode-derived, not live-probed** — no fixture this wave produced a
+  union-typed field.
 - **`<tuple>` elements are printed additionally, before `<types>`, only
   when the relation is nonempty in this state.** An empty field (`X-04`'s
   `empty: A -> B`, forced empty by a fact) prints `<types>` alone, no
@@ -274,6 +378,21 @@ beyond the already-pinned `alloy6-temporal.md` T-13 finding for var
 
 Arity ≥ 3 fields (`X-04`) follow the identical shape, just with more
 `<atom>`s per `<tuple>` and more `<type>`s in `<types>`.
+
+**`writeExpr` has a type-*refinement* loop nobody's output shows
+(mt-071, bytecode).** Before printing tuples, `writeExpr` repeatedly
+evaluates `expr.minus(type.toExpr())` and, while that residue is
+non-empty, merges the first residual tuple's own type into `type` and adds
+it to the subtracted expression — i.e. it *widens* the declared type until
+the value is covered, so `<types>` can end up broader than the static
+declaration. The loop is **skipped outright** when `expr instanceof
+ExprVar` or `ExprCall` — which is *both* kinds of skolem (§6) — and is a
+no-op for a field whose declared type already covers its value, which is
+every well-typed field. Sigs do not route through `writeExpr` at all.
+**Conclusion: the loop cannot fire on any path this writer takes for a
+solved instance**, so mt-071 deliberately does not implement it; recorded
+here (and in "Unpinned") so a future reader knows the branch exists rather
+than rediscovering it as a divergence.
 
 ## 6. `<skolem>` elements — two independent kinds
 
@@ -310,6 +429,20 @@ IdentityHashMap sigs/fields/ordinary-skolems share. `X-06`
 (`fun Best: one A { A }` → `<skolem label="$this/Best" ID="m0">`; a
 zero-arg `pred trivial` in the same fixture correctly produces **no**
 entry — negative space confirmed, not just unobserved).
+
+**A macro skolem can carry `private="yes"` (mt-071, bytecode)** — the
+driver appends it from `Func.isPrivate` between the `ID="m<i>"` attribute
+and the closing `">\n"`. It is the **only** attribute a macro skolem takes
+(an ordinary skolem takes none beyond `label`/`ID`). Not observable in
+`X-06`, whose `fun Best` is public.
+
+**Which funcs reach `macros` (source-cited, `CompModule.java:1782-1789`):**
+`getAllReachableUserDefinedFunc()` walks `world.getAllReachableModules()`
+and adds every func of every module **except `util/integer`**, which is
+excluded by module name. So a model that opens `util/ordering` gets
+`$ordering/first`, `$ordering/next`, `$ordering/prev`, `$ordering/last`
+in its instance XML, but never `$util/integer`'s zero-arg `max`/`min`/
+`next`/`prev`. The `m<i>` index follows that enumeration order.
 
 **This mechanism is live in every real solve, not an API-only edge
 case**: `SimpleReporter.writeXML` (bytecode-traced,
@@ -389,6 +522,30 @@ XML metacharacters (the grammar doesn't allow it), so those attributes
 were not separately escaping-tested — the two sites above are the only
 places user-influenced text with arbitrary characters reaches the XML.
 
+**Which slots get escaped at all (mt-071, bytecode).** Every write site is
+`Util.encodeXMLs(sink, String...)`, whose contract is **alternating**:
+even-index arguments are printed **raw**, odd-index arguments are escaped.
+That is what lets a call like `encodeXMLs(out, "\n<sig label=\"",
+sig.label, "\" ID=\"", map(sig))` emit literal `<` for the tag while
+escaping the label. Reading the call sites off the disassembly, the
+escaped slots are exactly: `builddate`, `command`, `filename`, each
+`<source>`'s `filename` and `content`, every `<atom label=…>` (both the
+sig-child and the in-tuple forms), every `<sig>`/`<field>`/`<skolem>`
+`label`, and every `ID`/`parentID`/`<type ID=…>` value. Everything else —
+the tag text, `builtin="yes"` and friends — is a raw constant.
+
+**The non-printable form, generalized — INFERRED, not probed (mt-071).**
+`&#x000a;` is the only numeric character reference this wave observed
+(`X-03`, from newlines in `<source content=…>`). The natural reading of
+`Util.encodeXML` — the five entities, printable ASCII verbatim, everything
+else as a zero-padded 4-digit lowercase hex reference over Java `char`
+(UTF-16 code) units — reproduces that datum exactly, and mettle implements
+it, but **only the newline case is jar-verified**. Tabs, carriage returns,
+non-ASCII source text, and astral-plane characters (which under a
+`char`-loop reading would emit a *surrogate pair* of references) are
+**unprobed**; if any of them ever matters, it needs its own probe cell
+before the rule above is treated as pinned. Recorded in "Unpinned".
+
 ## 9. `<source>` elements — full protocol, including the flagged temporal gap
 
 Written **once per `sourceFiles` map entry**, **after every `<instance>`
@@ -441,9 +598,24 @@ co-occurs with one.
 both a static (`X-08a`) and a genuine multi-`<instance>` temporal
 (`X-08b`) file, reproducing identical `satisfiable()`/`getTraceLength()`/
 `getLoopState()`. This is the acceptance bar any mettle instance-XML
-writer must clear at minimum. Not exhaustive: round-trip was not
-independently re-run against the subset-sig/enum/arity-3/skolem/macro-
-extra-instance shapes in §§3-7 (see "Unpinned").
+writer must clear at minimum.
+
+**Closed at mt-071 (2026-07-27), on *mettle-written* XML.** The gap this
+section flagged — round-trip exercised on only the two simplest shapes —
+is closed by mt-071's differential: **18 files fed to
+`A4SolutionReader.read`, 18 accepted, 0 rejected**, covering every shape
+§§3-7 describes. All ten probe fixtures (subset sigs, enum + injected
+`ordering/Ord`, `String` atoms, arity-4 fields + an empty field, both
+skolem namings, the `m<i>` macros, the 3-state trace, and the §7
+extra-instance case) plus eight `corpus/alloytools-models` commands,
+including a **6-state** temporal trace over an enum-bearing model with two
+`util/ordering` instances and 11 macro skolems
+(`examples/temporal/leader_events.als#1`). The §7 case is the sharp one:
+mettle's 5-block `MacroPastDepth` output reads back as `traceLength=5
+loopState=3`, **byte-consistent with what the same reader reports for the
+jar's own `out/MacroPastDepth.xml`** — so writer and reader agree on how
+the extra blocks re-derive the loop. Per-file table and rerun commands:
+`scratchpad/probe/mt071/NOTES.md` (gitignored; `diff.sh <model> <cmd>`).
 
 ## 12. Determinism
 
@@ -473,6 +645,14 @@ comparison (not just "stable within one process").
   solve *verdicts*, not instance-XML bytes) — but if a Sterling-interop
   goal is ever adopted, this is exactly the kind of divergence that would
   need a deliberate SEMANTICS_LEDGER.md entry, one way or the other.
+  **Resolved at mt-071 (ADR-0016 Decision 1): mettle replicates the exact
+  scheme**, and its output reproduces this document's `X-NN` ID
+  assignments byte-for-byte. The one place the writer *could* not match
+  the reference is skolem `<types>` columns, which is filed as
+  [LEDGER-013](../../SEMANTICS_LEDGER.md#ledger-013--instance-xml-skolem-types-columns);
+  the residual cosmetic differences (`m<i>` index order, `<source
+  filename=>` spellings, subsig atom labels) are listed in
+  [LIMITATIONS.md](../../LIMITATIONS.md)'s mt-071 section.
 - **The macros mechanism (§§6-7) is not optional to model** if mettle
   ever writes instance XML for Sterling/GUI consumption: the real jar's
   own CLI/GUI path always passes every reachable `fun`/`pred` as
@@ -507,6 +687,12 @@ wave" section:
   within this wave's budget. The parser grammar file itself was not found
   in `scratchpad/src794`'s decompile set (likely only present as
   generated parser code inside the jar, not yet extracted).
+  **mt-071 note:** mettle's writer emits the attribute whenever its own
+  resolver reports `SigKind::Subset { exact: true }`, i.e. for the `sig X
+  = A + B` spelling. Whether that is the *same* set of models the jar
+  marks `exact="yes"` is exactly the question above, still open — so if
+  this cell ever gets probed, mettle's emission condition must be
+  re-checked against it, not assumed to match.
 - **`this/static$`/`this/var$` meta-sig reachability** was checked on only
   one `var`-using fixture and found absent; not checked across a wider
   variety of temporal models, and the actual explicit `$`-syntax that
@@ -524,9 +710,31 @@ wave" section:
   substitute) was not bytecode-traced to its construction site.
 - **Why `util/integer` is always pulled into `sourceFiles`** even absent
   an explicit `open` (§9) — parser-internals question, not chased.
-- **Round-trip (`A4SolutionReader.read`) acceptance** was only exercised
-  on the two simplest shapes (§11) — not on subset sigs, enum, arity-3+
-  fields, ordinary/macro skolems, or the extra-instance (§7) shape.
+- ~~**Round-trip (`A4SolutionReader.read`) acceptance** was only exercised
+  on the two simplest shapes (§11).~~ **CLOSED at mt-071** — 18 files
+  accepted, 0 rejected, across every §§3-7 shape plus eight corpus
+  commands (§11).
+- **The generalized non-printable escape form** (§8) is **inferred from
+  `Util.encodeXML`'s shape, not probed**: only the newline case
+  (`&#x000a;`, `X-03`) is jar-verified. Tabs, carriage returns, non-ASCII
+  source text, and astral-plane characters (surrogate-pair behavior) all
+  want their own cell before §8's generalization is treated as pinned.
+- **`writeExpr`'s type-refinement loop** (§5) is bytecode-read but
+  **deliberately unimplemented** by mt-071, on the argument that it cannot
+  fire on any solved-instance path (skipped for `ExprVar`/`ExprCall`, i.e.
+  both skolem kinds; a no-op for a well-typed field; sigs never route
+  through `writeExpr`). That argument is a *reading*, not a probe — a
+  fixture that makes a field's decoded value exceed its declared type
+  would settle it, and none was constructed.
+- **`Type.fold()`'s sibling-collapse rule and the multi-`<types>` union
+  case** (§5) are bytecode-derived only; no fixture this wave produced a
+  union-typed field or skolem, so neither the multi-element output nor the
+  abstract-parent collapse has been seen in live jar output.
+- **§1.1's section order and §1.2's `command=` reconstruction** are
+  bytecode-derived. §1.2's three *observed* shapes match the
+  reconstruction byte-for-byte, but no fixture exercised `N int` / `N seq`
+  / a per-sig `but exactly N Sig` clause / `expect`, so those branches of
+  the format string are source-pinned rather than sampled.
 - **`some="yes"`** (the fourth multiplicity attribute, alongside
   `one`/`lone` which were both jar-verified) was read from the bytecode's
   symmetric `ldc` string constant but not independently exercised with a
@@ -538,11 +746,9 @@ wave" section:
   attribute's presence was confirmed structurally from the bytecode
   listing (§5). Low risk (identical code shape to `var` sig's
   already-pinned attribute-printing branch) but not empirically closed.
-- **`command=`'s exact grammar for every scope-decoration combination**
-  (`but N int` together with `steps`, multiple `but` clauses, etc.) — only
-  the three shapes this wave's fixtures happened to produce were observed
-  (§1's table). Very likely just `"Run "`/`"Check "` + `Command.
-  toString()` (consistent with everything seen, and with
-  `alloy6-temporal.md`'s independent `Command.toString()` pins), but not
-  exhaustively cross-checked against every scope-clause combination that
-  document already pins for `Command.toString()` in isolation.
+- ~~**`command=`'s exact grammar for every scope-decoration
+  combination**~~ — **reconstructed at mt-071** from `Command.toString()`'s
+  own bytecode (§1.2), which confirms the `"Run "`/`"Check "` +
+  `Command.toString()` guess and pins every branch's spacing and
+  separators. Residual, above: the un-sampled branches are source-pinned,
+  not observed.

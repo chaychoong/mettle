@@ -271,6 +271,9 @@ impl<'g> Resolver<'g> {
 
         // Register func/pred + assert + macro names (dup checks) before bodies.
         self.register_members();
+        // Fill each func's global label, now that the func arena exists (the
+        // sig pass above could not: funcs are registered after it).
+        self.compute_func_qualified_names();
         if self.has_errors() {
             return;
         }
@@ -500,12 +503,51 @@ impl<'g> Resolver<'g> {
     /// edges in source order (first reach wins), mirroring how the reference
     /// assigns labels during recursive module loading.
     fn compute_qualified_names(&mut self) {
-        let n = self.graph.modules.len();
-        // Alias-path prefixes propagate from the root using the **bare** path
-        // (`mesh/`, `a/b/`) — the `this/` root marker is not part of this
-        // path and must not cascade into opened-module prefixes
-        // (`mesh/Vertex`, never `this/mesh/Vertex`).
-        let mut prefix: Vec<Option<String>> = vec![None; n];
+        let prefix = self.module_prefixes();
+        for i in 0..self.world.sigs.len() {
+            let sig = SigId::from_index(i);
+            let m = self.world.sigs[sig].module;
+            let here = Self::qualify(&prefix, self.graph.root, m);
+            self.world.sigs[sig].qualified_name = format!("{here}{}", self.world.sigs[sig].name);
+        }
+    }
+
+    /// The func/pred twin of [`Self::compute_qualified_names`] (mt-071): the
+    /// reference labels a `fun`/`pred` exactly as it labels a sig, and the
+    /// instance-XML writer names a **macro skolem** `"$" + that label`
+    /// (`alloy6-instance-xml.md` §6). Separate from the sig pass only because
+    /// funcs are registered later in the pipeline.
+    fn compute_func_qualified_names(&mut self) {
+        let prefix = self.module_prefixes();
+        for i in 0..self.world.funcs.len() {
+            let func = crate::world::FuncId::from_index(i);
+            let m = self.world.funcs[func].module;
+            let here = Self::qualify(&prefix, self.graph.root, m);
+            self.world.funcs[func].qualified_name =
+                format!("{here}{}", self.world.funcs[func].name);
+        }
+    }
+
+    /// The label prefix a member declared in module `m` carries: the root
+    /// module's own members get the jar's literal `this/` relation-name marker
+    /// (translation-ref §16.3); an opened module's members use only their alias
+    /// path.
+    fn qualify(prefix: &[Option<String>], root: ModuleId, m: ModuleId) -> String {
+        let here = prefix[m.index()].clone().unwrap_or_default();
+        if m == root {
+            format!("this/{here}")
+        } else {
+            here
+        }
+    }
+
+    /// The alias-path prefix of every module instance, by preorder DFS over
+    /// `open` edges in source order (first reach wins) — the bare path
+    /// (`mesh/`, `a/b/`), without the root's `this/` marker, which must not
+    /// cascade into opened-module prefixes (`mesh/Vertex`, never
+    /// `this/mesh/Vertex`). `None` for an unreachable instance.
+    fn module_prefixes(&self) -> Vec<Option<String>> {
+        let mut prefix: Vec<Option<String>> = vec![None; self.graph.modules.len()];
         prefix[self.graph.root.index()] = Some(String::new());
         let mut stack = vec![self.graph.root];
         while let Some(m) = stack.pop() {
@@ -520,20 +562,7 @@ impl<'g> Resolver<'g> {
                 }
             }
         }
-        for i in 0..self.world.sigs.len() {
-            let sig = SigId::from_index(i);
-            let m = self.world.sigs[sig].module;
-            let here = prefix[m.index()].clone().unwrap_or_default();
-            // The root module's own sigs get the jar's literal `this/`
-            // relation-name marker (translation-ref §16.3); opened-module
-            // sigs use only their alias path.
-            let here = if m == self.graph.root {
-                format!("this/{here}")
-            } else {
-                here
-            };
-            self.world.sigs[sig].qualified_name = format!("{here}{}", self.world.sigs[sig].name);
-        }
+        prefix
     }
 
     fn alloc_builtin(&mut self, name: &str, parent: Option<SigId>, module: ModuleId) -> SigId {

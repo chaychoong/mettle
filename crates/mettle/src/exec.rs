@@ -26,6 +26,7 @@ use als_core::{
     BoundsResult, LoweredGoal, ScopedUniverse, SolveOptions, SolveVerdict, TemporalSolveConfig,
     TemporalTrace, TemporalVerdict,
 };
+use als_instance::{write_instance_xml, XmlRequest, XmlSolution};
 use als_syntax::ast::{CmdKind, Expect, ExprId, Para, ParaName};
 use als_types::{
     is_temporal_model, resolve_session, CmdTargetResolved, FilesystemLoader, ModuleGraph, ModuleId,
@@ -46,6 +47,11 @@ enum ParsedArgs<'a> {
         eval: Vec<&'a str>,
         /// `--repl`.
         repl: bool,
+        /// `--xml <PATH>`: write the command's instance XML there (mt-071).
+        /// Exclusive with `--repl`/`--eval`/`--state`: an export is a
+        /// one-shot, non-interactive artifact, and pretending otherwise would
+        /// leave a file whose contents depend on where a REPL session ended up.
+        xml: Option<&'a str>,
         /// `--state N`: the trace state `--eval`/`--repl` start at (mt-068).
         /// Kept signed and unnormalized — the pinned rule wraps and clamps it
         /// against the *solved* trace rather than rejecting anything (§(h)) —
@@ -93,6 +99,7 @@ fn parse_args(args: &[String]) -> Result<ParsedArgs<'_>, ExitCode> {
     let mut eval: Vec<&str> = Vec::new();
     let mut repl = false;
     let mut state: Option<i64> = None;
+    let mut xml: Option<&str> = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -108,6 +115,7 @@ fn parse_args(args: &[String]) -> Result<ParsedArgs<'_>, ExitCode> {
                 let v = option_value(args, &mut i, "--state", "a state index")?;
                 state = Some(number(v, "--state", "an integer")?);
             }
+            "--xml" => xml = Some(option_value(args, &mut i, "--xml", "an output path")?),
             "--command" => command_sel = Some(option_value(args, &mut i, "--command", "a value")?),
             "--conflicts" => {
                 let v = option_value(args, &mut i, "--conflicts", "a value")?;
@@ -150,12 +158,13 @@ fn parse_args(args: &[String]) -> Result<ParsedArgs<'_>, ExitCode> {
         },
         eval,
         repl,
+        xml,
         state,
     })
 }
 
 pub(crate) fn run_exec(args: &[String]) -> Result<(), ExitCode> {
-    let (path, command_sel, opts, eval, repl, state) = match parse_args(args)? {
+    let (path, command_sel, opts, eval, repl, xml, state) = match parse_args(args)? {
         ParsedArgs::Help => return Ok(()),
         ParsedArgs::Run {
             path,
@@ -163,9 +172,15 @@ pub(crate) fn run_exec(args: &[String]) -> Result<(), ExitCode> {
             opts,
             eval,
             repl,
+            xml,
             state,
-        } => (path, command_sel, opts, eval, repl, state),
+        } => (path, command_sel, opts, eval, repl, xml, state),
     };
+    if xml.is_some() && (repl || !eval.is_empty() || state.is_some()) {
+        eprintln!("mettle exec: --xml exports one solved command; it does not combine with --repl/--eval/--state");
+        crate::print_usage();
+        return Err(ExitCode::from(2));
+    }
 
     let graph = load(path)?;
     let session = resolve_graph(&graph)?;
@@ -197,6 +212,9 @@ pub(crate) fn run_exec(args: &[String]) -> Result<(), ExitCode> {
         },
     };
 
+    if let Some(xml_path) = xml {
+        return run_xml(world, &graph, &root_cmds, &selected, &opts, path, xml_path);
+    }
     if repl || !eval.is_empty() {
         return run_evaluator(
             &session,
@@ -338,6 +356,166 @@ fn run_evaluator(
     }
 }
 
+/// `--xml <PATH>` (mt-071): solve **one** command, print its verdict block
+/// exactly as a plain run would, then write that instance as Alloy instance XML
+/// — the reference jar's own `A4Solution.writeXML` byte shape
+/// (`docs/reference/alloy6-instance-xml.md`, via [`als_instance`]).
+///
+/// One command, like `--repl`/`--eval`: an instance XML file describes exactly
+/// one solved command, so a file with several needs `--command <sel>`. A
+/// command with **no** instance (UNSAT, a typed defer, an exhausted budget) is
+/// a loud failure with nothing written — never an empty or stale file. That
+/// matches the reference, whose writer throws `ErrorAPI("This solution is
+/// unsatisfiable.")` before opening the `<alloy>` root (§11 / evaluator
+/// contract §2).
+///
+/// A temporal command exports the whole lasso: one `<instance>` block per
+/// state, plus the extra unrolled blocks the `macros` mechanism can add (§7).
+fn run_xml(
+    world: &ResolvedWorld,
+    graph: &ModuleGraph,
+    root_cmds: &[(usize, &ResolvedCommand)],
+    selected: &[usize],
+    opts: &SolveOptions,
+    filename: &str,
+    xml_path: &str,
+) -> Result<(), ExitCode> {
+    let [pos] = selected else {
+        eprintln!(
+            "mettle exec: --xml exports one command's instance, but this file has {} commands",
+            root_cmds.len()
+        );
+        eprintln!("select one with `--command <index|label|target>`:");
+        for (pos, (_, cmd)) in root_cmds.iter().enumerate() {
+            eprintln!("  {}", command_header(world, graph, pos, cmd));
+        }
+        return Err(ExitCode::from(2));
+    };
+    let (idx, cmd) = root_cmds[*pos];
+
+    let mut out = String::new();
+    let _ = writeln!(out, "{}", command_header(world, graph, *pos, cmd));
+    let rendered = if is_temporal_model(world, graph, cmd) {
+        temporal_xml(world, graph, cmd, idx, opts, filename, &mut out)
+    } else {
+        static_xml(world, graph, cmd, idx, opts, filename, &mut out)
+    };
+    crate::write_stdout(out)?;
+
+    let xml = match rendered {
+        Ok(xml) => xml,
+        Err(failure) => {
+            if let Some(message) = failure.message {
+                eprintln!("mettle exec: {message}");
+            }
+            return Err(ExitCode::from(1));
+        }
+    };
+    if let Err(e) = std::fs::write(xml_path, xml) {
+        eprintln!("mettle exec: cannot write {xml_path}: {e}");
+        return Err(ExitCode::from(2));
+    }
+    eprintln!("mettle exec: wrote {xml_path}");
+    Ok(())
+}
+
+/// The static half of [`run_xml`]: solve, render the verdict block, export.
+fn static_xml(
+    world: &ResolvedWorld,
+    graph: &ModuleGraph,
+    cmd: &ResolvedCommand,
+    idx: usize,
+    opts: &SolveOptions,
+    filename: &str,
+    out: &mut String,
+) -> Result<String, NoInstance> {
+    let run = match run_pipeline(world, graph, cmd, idx, opts) {
+        Ok(run) => run,
+        Err(e) => {
+            let _ = writeln!(out, "CANNOT EXECUTE: {e}\n");
+            return Err(NoInstance { message: None });
+        }
+    };
+    render_verdict(cmd, &run, out);
+    let CommandRun {
+        mut ir,
+        scoped,
+        bounds,
+        goal,
+        verdict,
+        opts,
+    } = run;
+    let SolveVerdict::Sat(instance) = verdict else {
+        return Err(NoInstance {
+            message: Some(NO_XML_INSTANCE),
+        });
+    };
+    let request = XmlRequest {
+        world,
+        graph,
+        scoped: &scoped,
+        bounds: &bounds,
+        command: idx,
+        filename,
+        opts,
+        solution: XmlSolution::Static {
+            instance: &instance,
+            goal: &goal,
+        },
+    };
+    write_instance_xml(&mut ir, &request).map_err(|e| {
+        let _ = writeln!(out, "CANNOT EXPORT: {e}");
+        NoInstance { message: None }
+    })
+}
+
+/// The temporal half of [`run_xml`]: sweep, render the trace block, export the
+/// whole lasso.
+fn temporal_xml(
+    world: &ResolvedWorld,
+    graph: &ModuleGraph,
+    cmd: &ResolvedCommand,
+    idx: usize,
+    opts: &SolveOptions,
+    filename: &str,
+    out: &mut String,
+) -> Result<String, NoInstance> {
+    let run = match run_temporal_pipeline(world, graph, cmd, idx, opts) {
+        Ok(run) => run,
+        Err(e) => {
+            let _ = writeln!(out, "CANNOT EXECUTE: {e}\n");
+            return Err(NoInstance { message: None });
+        }
+    };
+    render_temporal_verdict(cmd, &run, out);
+    let TemporalRun {
+        mut ir,
+        scoped,
+        bounds,
+        verdict,
+        opts,
+    } = run;
+    let TemporalVerdict::Sat(trace) = verdict else {
+        return Err(NoInstance {
+            message: Some(NO_XML_INSTANCE),
+        });
+    };
+    let request = XmlRequest {
+        world,
+        graph,
+        scoped: &scoped,
+        bounds: &bounds,
+        command: idx,
+        filename,
+        opts,
+        solution: XmlSolution::Trace { trace: &trace },
+    };
+    write_instance_xml(&mut ir, &request).map_err(|e| {
+        let _ = writeln!(out, "CANNOT EXPORT: {e}");
+        NoInstance { message: None }
+    })
+}
+
 /// Why a command reached no evaluable instance. The verdict block is already in
 /// the caller's `out` either way; `message` is the extra stderr line a
 /// no-instance verdict earns (a `CANNOT EXECUTE` has already said everything).
@@ -349,6 +527,11 @@ struct NoInstance {
 /// (its writer refuses first); mettle can be asked directly, so it says so, in
 /// the reference's own words (evaluator contract §2, §5).
 const NO_INSTANCE: &str = "this command has no instance, so eval is not allowed.";
+
+/// The `--xml` twin: the reference's own writer refuses an unsatisfiable
+/// solution outright (`ErrorAPI("This solution is unsatisfiable.")`), so mettle
+/// refuses too rather than writing an instance-less file.
+const NO_XML_INSTANCE: &str = "this command has no instance, so there is nothing to export.";
 
 /// Solves a **static** command for the evaluator, rendering its verdict block
 /// into `out`. `Ok`'s flag is whether the verdict itself counts as a failure

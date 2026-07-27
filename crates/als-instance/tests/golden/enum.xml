@@ -1,0 +1,70 @@
+<alloy builddate="mettle <version>">
+
+<instance bitwidth="4" maxseq="3" mintrace="-1" maxtrace="-1" command="Run run$1 for 3" filename="model.als" tracelength="1" looplength="1">
+
+<sig label="seq/Int" ID="0" parentID="1" builtin="yes">
+</sig>
+
+<sig label="Int" ID="1" parentID="2" builtin="yes">
+</sig>
+
+<sig label="String" ID="3" parentID="2" builtin="yes">
+</sig>
+
+<sig label="this/Red" ID="4" parentID="5" one="yes">
+   <atom label="Red$0"/>
+</sig>
+
+<sig label="this/Green" ID="6" parentID="5" one="yes">
+   <atom label="Green$0"/>
+</sig>
+
+<sig label="this/Blue" ID="7" parentID="5" one="yes">
+   <atom label="Blue$0"/>
+</sig>
+
+<sig label="this/Color" ID="5" parentID="2" abstract="yes" enum="yes">
+</sig>
+
+<sig label="ordering/Ord" ID="8" parentID="2" one="yes" private="yes">
+   <atom label="ordering/Ord$0"/>
+</sig>
+
+<field label="First" ID="9" parentID="8" private="yes">
+   <tuple> <atom label="ordering/Ord$0"/> <atom label="Red$0"/> </tuple>
+   <types> <type ID="8"/> <type ID="5"/> </types>
+</field>
+
+<field label="Next" ID="10" parentID="8" private="yes">
+   <tuple> <atom label="ordering/Ord$0"/> <atom label="Red$0"/> <atom label="Green$0"/> </tuple>
+   <tuple> <atom label="ordering/Ord$0"/> <atom label="Green$0"/> <atom label="Blue$0"/> </tuple>
+   <types> <type ID="8"/> <type ID="5"/> <type ID="5"/> </types>
+</field>
+
+<sig label="univ" ID="2" builtin="yes">
+</sig>
+
+<skolem label="$ordering/first" ID="m0">
+   <tuple> <atom label="Red$0"/> </tuple>
+   <types> <type ID="5"/> </types>
+</skolem>
+
+<skolem label="$ordering/next" ID="m1">
+   <tuple> <atom label="Red$0"/> <atom label="Green$0"/> </tuple>
+   <tuple> <atom label="Green$0"/> <atom label="Blue$0"/> </tuple>
+   <types> <type ID="5"/> <type ID="5"/> </types>
+</skolem>
+
+<skolem label="$ordering/prev" ID="m2">
+   <tuple> <atom label="Green$0"/> <atom label="Red$0"/> </tuple>
+   <tuple> <atom label="Blue$0"/> <atom label="Green$0"/> </tuple>
+   <types> <type ID="5"/> <type ID="5"/> </types>
+</skolem>
+
+<skolem label="$ordering/last" ID="m3">
+   <tuple> <atom label="Blue$0"/> </tuple>
+   <types> <type ID="5"/> </types>
+</skolem>
+
+</instance>
+

@@ -63,6 +63,9 @@ impl Resolver<'_> {
         let id = FuncId::from_index(self.world.funcs.len());
         self.world.funcs.alloc(ResolvedFunc {
             name: name.to_owned(),
+            // Bare name for now; `compute_qualified_names` fills the alias path
+            // (the same two-step the sig arena uses).
+            qualified_name: name.to_owned(),
             module,
             span,
             is_pred,

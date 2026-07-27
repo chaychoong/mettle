@@ -1,0 +1,45 @@
+<alloy builddate="mettle <version>">
+
+<instance bitwidth="4" maxseq="3" mintrace="-1" maxtrace="-1" command="Run run$1 for 3" filename="model.als" tracelength="1" looplength="1">
+
+<sig label="seq/Int" ID="0" parentID="1" builtin="yes">
+</sig>
+
+<sig label="Int" ID="1" parentID="2" builtin="yes">
+</sig>
+
+<sig label="String" ID="3" parentID="2" builtin="yes">
+</sig>
+
+<sig label="this/A" ID="4" parentID="5">
+   <atom label="Root$1"/>
+</sig>
+
+<sig label="this/B" ID="6" parentID="5">
+   <atom label="Root$0"/>
+</sig>
+
+<sig label="this/Sing" ID="7" parentID="5" one="yes">
+   <atom label="Sing$0"/>
+</sig>
+
+<sig label="this/Optional" ID="8" parentID="5" lone="yes">
+</sig>
+
+<sig label="this/Priv" ID="9" parentID="5" private="yes">
+</sig>
+
+<sig label="this/Root" ID="5" parentID="2" abstract="yes">
+</sig>
+
+<sig label="univ" ID="2" builtin="yes">
+</sig>
+
+<sig label="this/SomeSub" ID="10">
+   <atom label="Root$1"/>
+   <type ID="4"/>
+   <type ID="6"/>
+</sig>
+
+</instance>
+

@@ -1,0 +1,119 @@
+<alloy builddate="mettle <version>">
+
+<instance bitwidth="4" maxseq="3" mintrace="3" maxtrace="3" command="Run run$1 for 3 but 3..3 steps" filename="model.als" tracelength="3" looplength="2">
+
+<sig label="seq/Int" ID="0" parentID="1" builtin="yes">
+</sig>
+
+<sig label="Int" ID="1" parentID="2" builtin="yes">
+</sig>
+
+<sig label="String" ID="3" parentID="2" builtin="yes">
+</sig>
+
+<sig label="this/A" ID="4" parentID="2" var="yes">
+   <atom label="A$2"/>
+</sig>
+
+<sig label="univ" ID="2" builtin="yes">
+</sig>
+
+<skolem label="$this/PastWitness" ID="m0">
+   <tuple> <atom label="A$2"/> </tuple>
+   <types> <type ID="4"/> </types>
+</skolem>
+
+</instance>
+<instance bitwidth="4" maxseq="3" mintrace="3" maxtrace="3" command="Run run$1 for 3 but 3..3 steps" filename="model.als" tracelength="3" looplength="2">
+
+<sig label="seq/Int" ID="0" parentID="1" builtin="yes">
+</sig>
+
+<sig label="Int" ID="1" parentID="2" builtin="yes">
+</sig>
+
+<sig label="String" ID="3" parentID="2" builtin="yes">
+</sig>
+
+<sig label="this/A" ID="4" parentID="2" var="yes">
+</sig>
+
+<sig label="univ" ID="2" builtin="yes">
+</sig>
+
+<skolem label="$this/PastWitness" ID="m0">
+   <types> <type ID="4"/> </types>
+</skolem>
+
+</instance>
+<instance bitwidth="4" maxseq="3" mintrace="3" maxtrace="3" command="Run run$1 for 3 but 3..3 steps" filename="model.als" tracelength="3" looplength="2">
+
+<sig label="seq/Int" ID="0" parentID="1" builtin="yes">
+</sig>
+
+<sig label="Int" ID="1" parentID="2" builtin="yes">
+</sig>
+
+<sig label="String" ID="3" parentID="2" builtin="yes">
+</sig>
+
+<sig label="this/A" ID="4" parentID="2" var="yes">
+   <atom label="A$2"/>
+</sig>
+
+<sig label="univ" ID="2" builtin="yes">
+</sig>
+
+<skolem label="$this/PastWitness" ID="m0">
+   <tuple> <atom label="A$2"/> </tuple>
+   <types> <type ID="4"/> </types>
+</skolem>
+
+</instance>
+<instance bitwidth="4" maxseq="3" mintrace="3" maxtrace="3" command="Run run$1 for 3 but 3..3 steps" filename="model.als" tracelength="3" looplength="2">
+
+<sig label="seq/Int" ID="0" parentID="1" builtin="yes">
+</sig>
+
+<sig label="Int" ID="1" parentID="2" builtin="yes">
+</sig>
+
+<sig label="String" ID="3" parentID="2" builtin="yes">
+</sig>
+
+<sig label="this/A" ID="4" parentID="2" var="yes">
+</sig>
+
+<sig label="univ" ID="2" builtin="yes">
+</sig>
+
+<skolem label="$this/PastWitness" ID="m0">
+   <types> <type ID="4"/> </types>
+</skolem>
+
+</instance>
+<instance bitwidth="4" maxseq="3" mintrace="3" maxtrace="3" command="Run run$1 for 3 but 3..3 steps" filename="model.als" tracelength="3" looplength="2">
+
+<sig label="seq/Int" ID="0" parentID="1" builtin="yes">
+</sig>
+
+<sig label="Int" ID="1" parentID="2" builtin="yes">
+</sig>
+
+<sig label="String" ID="3" parentID="2" builtin="yes">
+</sig>
+
+<sig label="this/A" ID="4" parentID="2" var="yes">
+   <atom label="A$2"/>
+</sig>
+
+<sig label="univ" ID="2" builtin="yes">
+</sig>
+
+<skolem label="$this/PastWitness" ID="m0">
+   <tuple> <atom label="A$2"/> </tuple>
+   <types> <type ID="4"/> </types>
+</skolem>
+
+</instance>
+
