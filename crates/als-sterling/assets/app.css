@@ -165,6 +165,23 @@ button:focus-visible, [type="checkbox"]:focus-visible, textarea:focus-visible {
 }
 
 .filters { display: flex; align-items: center; gap: calc(var(--step) * 1.5); }
+
+/* The view switch: one control, two states, no drop-down. */
+.views { display: flex; }
+.views button {
+  border-radius: 0;
+  font-size: 12px;
+  color: var(--ink-muted);
+  padding: 4px 12px;
+}
+.views button:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+.views button:last-child { border-radius: 0 var(--radius) var(--radius) 0; margin-left: -1px; }
+.views button[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  z-index: 1;
+}
 .toggle { display: flex; align-items: center; gap: 0.4em; color: var(--ink-muted); font-size: 13px; }
 .hidden-note { color: var(--ink-faint); font-size: 12px; }
 
@@ -319,6 +336,102 @@ tbody tr:hover td { background: var(--accent-soft); }
   border-radius: var(--radius);
   color: var(--ink-muted);
 }
+
+/* ---------- graph view ---------- */
+
+.graph {
+  display: block;
+  /* Natural size (set per drawing), scaled down only when the pane is narrower. */
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+  touch-action: none;
+  cursor: grab;
+  --wire: var(--ink-faint);
+  --wire-ink: var(--ink-muted);
+  --wire-back: var(--warn);
+}
+
+.graph.panning { cursor: grabbing; }
+
+/*
+ * Each node group carries its sig's hue as an inline `--hue`, and these two
+ * blocks are the only place that decides what a hue *looks* like — so light and
+ * dark stay one design with one variable between them.
+ *
+ * The `hsl()` calls sit on the rules that inherit `--hue` (the node's own
+ * subtree) rather than on `.graph`: a custom property is substituted where it
+ * is *declared*, so a `--node-fill` declared on the svg would resolve against a
+ * `--hue` that only exists further down, and collapse to an invalid value.
+ */
+.node rect {
+  fill: hsl(var(--hue) 72% 96%);
+  stroke: hsl(var(--hue) 45% 52%);
+  stroke-width: 1.25;
+}
+
+.node .atom { fill: hsl(var(--hue) 55% 26%); }
+.node .node-tags { fill: hsl(var(--hue) 45% 34%); }
+
+@media (prefers-color-scheme: dark) {
+  .node rect {
+    fill: hsl(var(--hue) 38% 19%);
+    stroke: hsl(var(--hue) 45% 58%);
+  }
+
+  .node .atom { fill: hsl(var(--hue) 65% 88%); }
+  .node .node-tags { fill: hsl(var(--hue) 40% 72%); }
+}
+
+/* An atom no visible sig lists — an integer, a filtered-out sig's atom. */
+.node.unowned rect { fill: var(--panel); stroke: var(--rule-strong); }
+.node.unowned .atom { fill: var(--ink-muted); }
+
+/* A solver-chosen witness: named by a skolem, not by the model's own text. */
+.node.witness rect { stroke-dasharray: 4 3; }
+
+.node .atom {
+  font: 12px var(--mono);
+  font-weight: 600;
+}
+
+.node .node-tags {
+  font: 9.5px var(--sans);
+  letter-spacing: 0.02em;
+}
+
+.node.unowned .node-tags { fill: var(--ink-faint); }
+
+.edge path {
+  fill: none;
+  stroke: var(--wire);
+  stroke-width: 1.4;
+}
+
+.edge.back path { stroke: var(--wire-back); stroke-dasharray: 6 4; }
+.edge.self path { stroke-dasharray: none; }
+.edge.temporal path { stroke-width: 1.8; }
+.edge.witness path { stroke-dasharray: 3 3; }
+
+/* A zero-arg `fun`'s relation — real, but not something the model wrote. */
+.edge.derived path,
+.edge.derived + .edge-label,
+.edge.derived .edge-label { opacity: 0.6; }
+
+.arrow { fill: var(--wire); }
+.arrow-back { fill: var(--wire-back); }
+
+.edge-label {
+  font: 10px var(--mono);
+  fill: var(--wire-ink);
+  /* The label sits on its own edge, so it is drawn with the page behind it. */
+  paint-order: stroke;
+  stroke: var(--page);
+  stroke-width: 3.5;
+  stroke-linejoin: round;
+}
+
+.edge.back .edge-label { fill: var(--wire-back); }
 
 /* ---------- evaluator ---------- */
 

@@ -19,9 +19,16 @@
  *    (`alloy6-temporal.md` §(h)); here the stepper is that index, and the pane
  *    is moved to it with the REPL's own `:state N` before an expression is
  *    evaluated — lazily, so merely stepping through a trace costs no traffic.
+ * 4. **The views are projections of one state, not modes.** `view.step` and
+ *    the builtins toggle are the single source of truth; graph and table are
+ *    two renderings of it, so switching views changes nothing but the
+ *    rendering — and everything else (stepper, buttons, evaluator) is
+ *    identical either way.
  */
 
-import { normalizeState, parseInstanceXml } from './instance.js';
+import { countHidden, normalizeState, parseInstanceXml } from './instance.js';
+import { renderGraph } from './graph.js';
+import { layoutGraph } from './layout.js';
 import { connectProvider } from './protocol.js';
 import { renderState } from './tables.js';
 
@@ -40,6 +47,7 @@ const dom = {
   history: document.getElementById('history'),
   prompt: document.getElementById('prompt'),
   expression: document.getElementById('expression'),
+  views: document.getElementById('views'),
   toasts: document.getElementById('toasts'),
 };
 
@@ -54,6 +62,20 @@ const view = {
   evaluatorState: 0,
   /** True between sending a `click` and the `data`/`error` that answers it. */
   busy: false,
+  /**
+   * `graph` or `table`. The graph opens first, as the reference GUI does —
+   * the picture is what an instance is usually read as, and the table is one
+   * click away for when it is not.
+   */
+  mode: 'graph',
+  /**
+   * The graph's pan/zoom, or `null` for "fit the drawing".
+   *
+   * Kept across a state step (comparing two states of a trace at the same
+   * magnification is the point of a stepper) and dropped when the datum
+   * changes, where the old window would be over a different drawing.
+   */
+  viewBox: null,
 };
 
 const provider = connectProvider(providerUrl(), {
@@ -93,6 +115,7 @@ function showDatum(datum) {
     // this page was looking still holds.
     view.step = 0;
     view.evaluatorState = 0;
+    view.viewBox = null;
   }
   try {
     view.instance = parseInstanceXml(datum.data ?? '');
@@ -201,14 +224,27 @@ function loopNote(instance) {
 }
 
 function renderInstance() {
+  for (const button of dom.views.querySelectorAll('button')) {
+    button.setAttribute('aria-pressed', String(button.dataset.view === view.mode));
+  }
   if (view.instance === null) {
     dom.instance.replaceChildren(notice('This datum did not parse as Alloy instance XML.'));
     dom.hiddenNote.textContent = '';
     return;
   }
-  const hidden = renderState(dom.instance, view.instance.states[view.step], {
-    showBuiltins: dom.showBuiltins.checked,
-  });
+  const state = view.instance.states[view.step];
+  const options = { showBuiltins: dom.showBuiltins.checked };
+  if (view.mode === 'graph') {
+    renderGraph(dom.instance, layoutGraph(state, options), {
+      viewBox: view.viewBox,
+      onViewBox: (box) => {
+        view.viewBox = box;
+      },
+    });
+  } else {
+    renderState(dom.instance, state, options);
+  }
+  const hidden = options.showBuiltins ? 0 : countHidden(state);
   dom.hiddenNote.textContent = hidden === 0 ? '' : `${hidden} builtin/private hidden`;
 }
 
@@ -303,7 +339,19 @@ function appendHistory(kind, text) {
 
 /* ---------- global affordances ---------- */
 
-dom.showBuiltins.addEventListener('change', renderInstance);
+dom.showBuiltins.addEventListener('change', () => {
+  // The filter changes what is drawn, so a pan/zoom taken over the old drawing
+  // no longer frames anything in particular.
+  view.viewBox = null;
+  renderInstance();
+});
+
+dom.views.addEventListener('click', (event) => {
+  const chosen = event.target.closest('button')?.dataset.view;
+  if (chosen === undefined || chosen === view.mode) return;
+  view.mode = chosen;
+  renderInstance();
+});
 
 document.addEventListener('keydown', (event) => {
   const typing = event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLInputElement;

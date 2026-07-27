@@ -17,12 +17,7 @@
 
 import { columnLabels, isHiddenRelation, isHiddenSig, shortLabel } from './instance.js';
 
-/**
- * Renders one state into `container`, replacing whatever was there.
- *
- * Returns how many sigs/relations were hidden by the builtin filter, so the
- * toolbar can say so rather than quietly dropping them.
- */
+/** Renders one state into `container`, replacing whatever was there. */
 export function renderState(container, state, { showBuiltins }) {
   const keep = (item, hidden) => showBuiltins || !hidden(item);
   const sigs = state.sigs.filter((sig) => keep(sig, isHiddenSig));
@@ -44,12 +39,6 @@ export function renderState(container, state, { showBuiltins }) {
     groups.push(notice('This state has nothing to show with the current filter.'));
   }
   container.replaceChildren(...groups);
-
-  const hiddenCount =
-    (state.sigs.length - sigs.length) +
-    (state.fields.length - fields.length) +
-    (state.skolems.length - skolems.length);
-  return hiddenCount;
 }
 
 function group(title, count, cards) {

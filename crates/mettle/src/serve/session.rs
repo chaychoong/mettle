@@ -630,9 +630,10 @@ fn provider_meta(generator: &str) -> ProviderMeta {
     ProviderMeta {
         name: "mettle".to_owned(),
         evaluator: true,
-        // The two views mt-075 builds. `script` (a D3 scripting pane) and
-        // `edit` are upstream affordances mettle does not offer, and claiming
-        // them would show a client an empty tab.
+        // The two views mt-075 built, both real as of its graph slice.
+        // `script` (a D3 scripting pane) and `edit` are upstream affordances
+        // mettle does not offer, and claiming them would show a client an
+        // empty tab.
         views: vec!["graph".to_owned(), "table".to_owned()],
         generators: vec![generator.to_owned()],
     }

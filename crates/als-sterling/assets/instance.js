@@ -211,6 +211,38 @@ export function isHiddenRelation(relation, sigsById) {
   return owner !== undefined && isHiddenSig(owner);
 }
 
+/**
+ * Whether a skolem is a **macro** skolem rather than a witness the solver
+ * chose.
+ *
+ * Two independent mechanisms share the `<skolem>` element (§6). One is the real
+ * thing: an existential's witness, named `$x`/`$cmd_x`. The other is
+ * bookkeeping the writer synthesizes for *every* reachable zero-arg relational
+ * `fun` in the model — `$ordering/next`, `$this/Best` — which is why a model
+ * that opens `util/ordering` has most of its atoms mentioned by some skolem.
+ * They are told apart by their ID: macros come from a separate `m<i>`
+ * namespace, ordinary skolems from the shared numeric one.
+ *
+ * The distinction is worth drawing precisely because of that reach: marking
+ * every atom a macro mentions as "a solver-chosen witness" would mark nearly
+ * all of them, and a marker that is always on says nothing.
+ */
+export function isMacroSkolem(relation) {
+  return relation.id.startsWith('m');
+}
+
+/**
+ * How many sigs and relations the builtin filter is currently keeping out of a
+ * state. Shared by both views, so the toolbar's count means the same thing in
+ * each.
+ */
+export function countHidden(state) {
+  const sigs = state.sigs.filter(isHiddenSig).length;
+  const relations = [...state.fields, ...state.skolems]
+    .filter((relation) => isHiddenRelation(relation, state.sigsById)).length;
+  return sigs + relations;
+}
+
 function flagsOf(element, names) {
   // The schema writes presence only (`attr="yes"`, never `attr="no"`, §3).
   return names.filter((name) => element.getAttribute(name) === 'yes');

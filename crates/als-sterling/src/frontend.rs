@@ -14,6 +14,14 @@
 //! are. [`ASSETS`] is the whole served surface except the index, which is
 //! [`index_html`] because it interpolates the model and command being served —
 //! the two facts the page can state before the socket is even open.
+//!
+//! The module graph, briefly: `app.js` owns the page and the one piece of state
+//! both views project (which datum, which trace state, which filter);
+//! `protocol.js` owns the socket; `instance.js` parses the instance XML;
+//! `layout.js` turns one state into graph geometry (deterministically — its own
+//! module docs state the invariant); `graph.js` and `tables.js` draw. The two
+//! parsing/geometry modules are pure, which is what lets
+//! `tests/frontend/layout-determinism.mjs` check the layout without a browser.
 
 /// The content type of every HTML response.
 pub const HTML: &str = "text/html; charset=utf-8";
@@ -69,6 +77,16 @@ pub const ASSETS: &[FrontendAsset] = &[
         content_type: JAVASCRIPT,
         body: include_str!("../assets/tables.js"),
     },
+    FrontendAsset {
+        path: "/layout.js",
+        content_type: JAVASCRIPT,
+        body: include_str!("../assets/layout.js"),
+    },
+    FrontendAsset {
+        path: "/graph.js",
+        content_type: JAVASCRIPT,
+        body: include_str!("../assets/graph.js"),
+    },
 ];
 
 /// The type a browser must see to run a file as an ES module.
@@ -109,6 +127,10 @@ fn escape(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// SVG's XML namespace — an identifier `createElementNS` compares, never a
+    /// resource anything fetches (see the offline test below).
+    const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
 
     #[test]
     fn the_shell_names_what_it_serves_and_loads_the_app() {
@@ -153,7 +175,13 @@ mod tests {
         // is exactly the failure this closes: every module the graph mentions
         // has to be in the table above.
         for asset in ASSETS {
-            for import in ["./instance.js", "./protocol.js", "./tables.js"] {
+            for import in [
+                "./instance.js",
+                "./protocol.js",
+                "./tables.js",
+                "./layout.js",
+                "./graph.js",
+            ] {
                 let served = import.trim_start_matches('.');
                 assert!(
                     !asset.body.contains(import) || ASSETS.iter().any(|a| a.path == served),
@@ -170,9 +198,14 @@ mod tests {
         // must render the same page. A CDN font or script would be invisible
         // in review and fatal offline.
         for asset in ASSETS {
+            // The one URL-shaped string that is not a reference: SVG's XML
+            // namespace, which `createElementNS` compares as an identifier and
+            // no browser ever fetches. Removed before the scan so the scan
+            // itself can stay a blunt substring search.
+            let body = asset.body.replace(SVG_NAMESPACE, "");
             for forbidden in ["http://", "https://", "//cdn", "@import url("] {
                 assert!(
-                    !asset.body.contains(forbidden),
+                    !body.contains(forbidden),
                     "{} references {forbidden}",
                     asset.path
                 );

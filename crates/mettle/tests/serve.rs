@@ -626,6 +626,7 @@ fn one_port_serves_both_the_app_and_the_provider() {
         r#"id="stepper""#,
         r#"id="actions""#,
         r#"id="show-builtins""#,
+        r#"id="views""#,
     ] {
         assert!(body.contains(anchor), "the shell is missing {anchor}");
     }
@@ -639,6 +640,8 @@ fn one_port_serves_both_the_app_and_the_provider() {
         ("/protocol.js", "text/javascript"),
         ("/instance.js", "text/javascript"),
         ("/tables.js", "text/javascript"),
+        ("/layout.js", "text/javascript"),
+        ("/graph.js", "text/javascript"),
     ] {
         let response = http_response(server.address, target);
         assert!(
