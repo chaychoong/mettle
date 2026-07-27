@@ -9,6 +9,20 @@
 
 > ⚠️ **Pre-1.0.** mettle is a feature-complete candidate under review. It is deliberately *not* "Alloy but better" — it aims to be **Alloy, exactly**, then earn the right to diverge. See [what it can and can't do yet](LIMITATIONS.md) and the [roadmap](docs/ROADMAP.md).
 
+## Try it
+
+No install, straight from GHCR — point it at any `.als` file:
+
+```sh
+# solve every command in a model
+docker run --rm -v "$PWD":/work ghcr.io/chaychoong/mettle exec /work/model.als
+
+# visualize one in the browser (then open http://localhost:4030)
+docker run --rm -p 4030:4030 -v "$PWD":/work ghcr.io/chaychoong/mettle serve /work/model.als --bind 0.0.0.0
+```
+
+Prefer a native binary? See [Install](#install) below.
+
 ## What you can run today
 
 - `mettle exec model.als` — every `run`/`check` command to a verdict, instances and counterexamples rendered — including Alloy 6 temporal models: lasso-trace search with the loop marked, state by state.

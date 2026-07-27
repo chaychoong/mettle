@@ -7,30 +7,25 @@ Thanks for looking under the hood. Two kinds of contribution matter most, in thi
 
 ## Workspace setup
 
-You need Rust (the exact toolchain is pinned) and, for the conformance tooling, a JDK.
-
-**Option A — nix (hermetic, recommended):**
+**We use nix.** One command, nothing else to install or configure:
 
 ```sh
-nix develop      # exact rustc 1.97.0 (from rust-toolchain.toml) + JDK 21 + tools
+nix develop      # exact rustc 1.97.0 + JDK 21 + every tool the scripts use
 ```
 
-**Option B — rustup:**
+**No nix?** The prerequisites are short — bring your own:
 
-```sh
-rustup show      # rustup auto-installs the pinned toolchain from rust-toolchain.toml
-# plus a JDK 21 from wherever you like, if you'll run the jar-backed tools
-```
+- **Rust** — [rustup](https://rustup.rs) picks the exact pinned toolchain up automatically from `rust-toolchain.toml`; nothing to configure.
+- **JDK 21** — only if you'll run the jar-backed conformance tooling; plain build/test doesn't need it.
+- `git`, `curl`, `python3` — for the asset-fetch script below.
 
-Then fetch the git-ignored assets (the reference jar and the test corpora — both SHA-verified, both deliberately never committed):
+**Conformance assets** (only needed for conformance work — everything builds and tests pass without them; jar/corpus tests skip cleanly with a note, which is exactly how CI runs). The reference jar and test corpora are deliberately never committed, so they arrive by script, SHA-verified:
 
 ```sh
 scripts/bootstrap.sh                    # jar into oracle/ + corpora into corpus/
 scripts/bootstrap.sh --with-alloy4fun   # optionally also the 374 MB alloy4fun dataset
 scripts/bootstrap.sh --verify           # check everything without fetching
 ```
-
-Everything builds and most tests run **without** the jar and corpora — tests that need them skip cleanly with a note (that's how CI runs). You only need them for conformance work.
 
 ## Build and run
 

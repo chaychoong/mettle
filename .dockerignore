@@ -1,0 +1,20 @@
+# Keeps the build context to source + manifests. Mirrors .gitignore's
+# never-committed dirs (oracle/, corpus/, scratchpad/, status/) plus
+# build/VCS output the image has no use for.
+/target
+/oracle
+/corpus
+/scratchpad
+/status
+/result
+.git
+.jj
+.github
+.claude
+
+# Not needed to compile the binary.
+docs/screenshots
+baselines
+
+.DS_Store
+*.rs.bk

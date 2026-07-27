@@ -8,7 +8,7 @@
 //! mettle parse <file.als> [--ast]
 //! mettle check <file.als>
 //! mettle exec <file.als> [--command <sel>] [--allow-overflow] [--conflicts N] [--encode-budget N]
-//! mettle serve <file.als> [--command <sel>] [--port N]
+//! mettle serve <file.als> [--command <sel>] [--port N] [--bind <addr>]
 //! mettle -h | --help
 //! mettle -V | --version
 //! ```
@@ -90,6 +90,7 @@ fn print_usage() {
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20[--repl] [--eval <EXPR>] [--state N]\n\
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20[--xml <PATH>]\n\
          \x20\x20\x20\x20\x20mettle serve <file.als> [--command <name|index>] [--port N]\n\
+         \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20[--bind <addr>]\n\
          \x20\x20\x20\x20\x20mettle -h | --help\n\
          \x20\x20\x20\x20\x20mettle -V | --version\n\
          \n\
@@ -123,7 +124,9 @@ fn print_usage() {
          \n\
          Options (serve):\n\
          \x20\x20--command <sel>        the command to visualize (required unless there is one)\n\
-         \x20\x20--port N               listen on 127.0.0.1:N (default 4030; 0 picks a free port)"
+         \x20\x20--port N               listen on <bind>:N (default 4030; 0 picks a free port)\n\
+         \x20\x20--bind <addr>          address to listen on (default 127.0.0.1; 0.0.0.0 for a\n\
+         \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20container/remote box — the socket is unauthenticated)"
     );
 }
 

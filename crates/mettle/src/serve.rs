@@ -71,7 +71,7 @@
 //!   sent as a boolean, following the `JSDoc` and Forge over the TypeScript
 //!   annotation.
 
-use std::net::TcpListener;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 use std::process::ExitCode;
 use std::sync::Mutex;
 
@@ -95,6 +95,14 @@ use session::{StaticArtifacts, StaticSession, TemporalArtifacts, TemporalSession
 /// ranges a developer machine usually has spoken for.
 const DEFAULT_PORT: u16 = 4030;
 
+/// The address `mettle serve` binds when `--bind` is not given: localhost
+/// only. `mettle serve` hands an unauthenticated socket the power to
+/// evaluate arbitrary expressions against a solved model; it is a developer
+/// tool on one machine by default. `--bind 0.0.0.0` (or any other address)
+/// opts in explicitly, which is what a container or a remote-dev box needs
+/// to reach it at all.
+const DEFAULT_BIND: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+
 /// The request path mettle's own frontend opens its provider socket on. Any
 /// path works (the server routes on the `Upgrade` header, not the path), so
 /// this is a convention, not a requirement.
@@ -108,6 +116,7 @@ enum ParsedArgs<'a> {
         path: &'a str,
         command_sel: Option<&'a str>,
         port: u16,
+        bind_addr: IpAddr,
     },
 }
 
@@ -115,6 +124,7 @@ fn parse_args(args: &[String]) -> Result<ParsedArgs<'_>, ExitCode> {
     let mut path: Option<&str> = None;
     let mut command_sel: Option<&str> = None;
     let mut port = DEFAULT_PORT;
+    let mut bind_addr = DEFAULT_BIND;
 
     let mut i = 0;
     while i < args.len() {
@@ -134,6 +144,17 @@ fn parse_args(args: &[String]) -> Result<ParsedArgs<'_>, ExitCode> {
                     return Err(ExitCode::from(2));
                 };
                 port = parsed;
+            }
+            "--bind" => {
+                let value = option_value(args, &mut i, "--bind", "an address")?;
+                let Ok(parsed) = value.parse::<IpAddr>() else {
+                    eprintln!(
+                        "mettle serve: --bind expects an IP address, got `{value}` \
+                         (e.g. 127.0.0.1, or 0.0.0.0 for a container/remote box)"
+                    );
+                    return Err(ExitCode::from(2));
+                };
+                bind_addr = parsed;
             }
             other if other.starts_with('-') => {
                 eprintln!("mettle serve: unknown option `{other}`");
@@ -160,6 +181,7 @@ fn parse_args(args: &[String]) -> Result<ParsedArgs<'_>, ExitCode> {
         path,
         command_sel,
         port,
+        bind_addr,
     })
 }
 
@@ -180,15 +202,16 @@ fn option_value<'a>(
     Ok(value.as_str())
 }
 
-/// `mettle serve <file.als> [--command <sel>] [--port N]`.
+/// `mettle serve <file.als> [--command <sel>] [--port N] [--bind <addr>]`.
 pub(crate) fn run_serve(args: &[String]) -> Result<(), ExitCode> {
-    let (path, command_sel, port) = match parse_args(args)? {
+    let (path, command_sel, port, bind_addr) = match parse_args(args)? {
         ParsedArgs::Help => return Ok(()),
         ParsedArgs::Serve {
             path,
             command_sel,
             port,
-        } => (path, command_sel, port),
+            bind_addr,
+        } => (path, command_sel, port, bind_addr),
     };
 
     let graph = exec::load(path)?;
@@ -201,7 +224,7 @@ pub(crate) fn run_serve(args: &[String]) -> Result<(), ExitCode> {
 
     // Bind before solving: a port collision should be reported in the second it
     // takes to notice, not after a long solve.
-    let listener = bind(port)?;
+    let listener = bind(bind_addr, port)?;
 
     let solved = SolveInputs {
         world,
@@ -381,13 +404,11 @@ fn select_one(
     }
 }
 
-/// Binds localhost only. `mettle serve` hands an unauthenticated socket the
-/// power to evaluate arbitrary expressions against a solved model; it is a
-/// developer tool on one machine, and it says so by never listening on a
-/// routable address.
-fn bind(port: u16) -> Result<TcpListener, ExitCode> {
-    TcpListener::bind(("127.0.0.1", port)).map_err(|e| {
-        eprintln!("mettle serve: cannot listen on 127.0.0.1:{port}: {e}");
+/// Binds `addr`, localhost by default (see [`DEFAULT_BIND`]); `--bind` opts
+/// into a routable address for a container or remote box.
+fn bind(addr: IpAddr, port: u16) -> Result<TcpListener, ExitCode> {
+    TcpListener::bind((addr, port)).map_err(|e| {
+        eprintln!("mettle serve: cannot listen on {addr}:{port}: {e}");
         if port != 0 {
             eprintln!(
                 "mettle serve: pass `--port N` for another port, or `--port 0` for any free one"
@@ -423,11 +444,22 @@ fn serve<S: ServeSession + Send>(
         );
     }
 
+    // `0.0.0.0`/`::` (from `--bind`, e.g. inside a container) is what the
+    // listener is bound to, not a URL a browser on the host can open — print
+    // an extra line with the loopback address that actually works there,
+    // alongside the (still accurate) bound address the tests and any script
+    // parse.
     crate::write_stdout(format!(
         "mettle serve: listening on http://{address}\n\
-         mettle serve: provider socket at ws://{address}{WS_PATH}\n\
-         mettle serve: press Ctrl-C to stop\n"
+         mettle serve: provider socket at ws://{address}{WS_PATH}\n"
     ))?;
+    if address.ip().is_unspecified() {
+        let open_at = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), address.port());
+        crate::write_stdout(format!(
+            "mettle serve: bound to all interfaces; open http://{open_at} on this machine\n"
+        ))?;
+    }
+    crate::write_stdout("mettle serve: press Ctrl-C to stop\n")?;
 
     let session = Mutex::new(session);
     // Events go to stderr so that the URL above stays the only thing on stdout

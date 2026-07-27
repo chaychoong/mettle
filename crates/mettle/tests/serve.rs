@@ -726,3 +726,76 @@ fn an_unsatisfiable_command_refuses_to_serve() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("nothing to visualize"), "{stderr}");
 }
+
+/// (11) `--bind 0.0.0.0` is what a container needs (mettle listens on
+/// loopback only by default): the listener really does come up on the
+/// unspecified address, and a client can still reach it — `connect()`
+/// resolving `0.0.0.0:PORT` to loopback, exactly as the OS does for the
+/// browser a `docker run -p` forwards from.
+#[test]
+fn bind_0_0_0_0_accepts_a_connection() {
+    let server = serve(&fixture("enumerable.als"), &["--bind", "0.0.0.0"]);
+    assert_eq!(
+        server.address.ip(),
+        std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
+    );
+
+    let mut client = connect(&server);
+    let reply = data(&mut client);
+    assert_eq!(entered(&reply)["format"], "alloy");
+}
+
+/// (11a) The unspecified address is not itself a URL a browser can open, so
+/// the extra banner line names one that is.
+#[test]
+fn bind_0_0_0_0_banner_names_a_url_a_browser_can_open() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_mettle"))
+        .arg("serve")
+        .arg(fixture("enumerable.als"))
+        .args(["--bind", "0.0.0.0"])
+        .args(["--port", "0"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    let stdout = child.stdout.take().expect("piped stdout");
+    let mut reader = BufReader::new(stdout);
+    let mut lines = String::new();
+    let mut line = String::new();
+    let found = loop {
+        line.clear();
+        let read = reader.read_line(&mut line).expect("read stdout");
+        assert!(
+            read > 0,
+            "server exited before printing the banner:\n{lines}"
+        );
+        lines.push_str(&line);
+        if line.contains("bound to all interfaces") {
+            break line.clone();
+        }
+        assert!(
+            lines.matches('\n').count() < 40,
+            "banner never arrived:\n{lines}"
+        );
+    };
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(found.contains("http://127.0.0.1:"), "{found}");
+}
+
+/// (12) `--bind` is validated like every other option: a value that is not an
+/// IP address is a usage error (exit 2), not a panic or a silent fallback.
+#[test]
+fn bind_garbage_is_a_usage_error() {
+    let out = Command::new(env!("CARGO_BIN_EXE_mettle"))
+        .arg("serve")
+        .arg(fixture("enumerable.als"))
+        .args(["--bind", "not-an-address"])
+        .args(["--port", "0"])
+        .output()
+        .expect("spawn");
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--bind expects an IP address"), "{stderr}");
+    assert!(stderr.contains("not-an-address"), "{stderr}");
+}

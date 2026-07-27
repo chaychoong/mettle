@@ -1,0 +1,119 @@
+name: Docker
+
+# Publishes ghcr.io/chaychoong/mettle for a tagged release, or on demand.
+#
+# Multi-arch without QEMU: Rust under emulation is painfully slow (a `cargo
+# build` under qemu-aarch64 can be 5-10x native), so each architecture is
+# built natively on its own GitHub-hosted runner instead of cross-compiled or
+# emulated on one. Each `build` job pushes its single-platform image *by
+# digest only* (no tag), then the `merge` job stitches the two digests into
+# one multi-arch manifest with `docker buildx imagetools create` and applies
+# the real tags to that. This is the standard digest-then-merge pattern from
+# the docker/build-push-action docs for exactly this "N native runners, one
+# tag" shape.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/chaychoong/mettle
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            arch: amd64
+          - runner: ubuntu-22.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+      # upload-artifact/download-artifact v4 talk to the Actions API, which
+      # needs its own read grant independent of `contents`.
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # `push-by-digest` publishes the layers with no tag attached; the merge
+      # job is what makes the digest reachable by a name.
+      - name: Build and push (by digest)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/${{ matrix.arch }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Save the digest for the merge job
+        run: |
+          mkdir -p /tmp/digests
+          digest='${{ steps.build.outputs.digest }}'
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      packages: write
+      actions: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # A tag push (`v1.2.3`) gets the pinned pair `1.2.3` + `latest` — the
+      # names the README's "Try it" one-liner reaches for. A manual
+      # `workflow_dispatch` run (no tag on
+      # the ref) still publishes, but under a commit-addressed tag rather
+      # than clobbering `latest` with a build that wasn't a release.
+      - name: Compute tags
+        id: tags
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            primary="${GITHUB_REF_NAME#v}"
+            echo "args=-t ${IMAGE}:${primary} -t ${IMAGE}:latest" >> "$GITHUB_OUTPUT"
+          else
+            primary="sha-${GITHUB_SHA::12}"
+            echo "args=-t ${IMAGE}:${primary}" >> "$GITHUB_OUTPUT"
+          fi
+          echo "primary=${primary}" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push the multi-arch manifest
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create ${{ steps.tags.outputs.args }} \
+            $(printf "${IMAGE}@sha256:%s " *)
+
+      - name: Inspect the published manifest
+        run: docker buildx imagetools inspect ${{ env.IMAGE }}:${{ steps.tags.outputs.primary }}
