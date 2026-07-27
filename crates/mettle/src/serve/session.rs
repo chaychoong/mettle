@@ -316,7 +316,9 @@ impl ServeSession for StaticSession<'_> {
         }
     }
 
-    fn click(&mut self, on_click: &str) -> Result<(), ClickRefused> {
+    /// `state` is ignored: a static command's instance is a single state, so
+    /// there is no position for a client to be looking at.
+    fn click(&mut self, on_click: &str, _state: Option<usize>) -> Result<(), ClickRefused> {
         if TEMPORAL_CLICKS.contains(&on_click) {
             return Err(temporal_defer(on_click));
         }
@@ -387,20 +389,51 @@ impl<'a> TemporalSession<'a> {
     /// The state "New Fork" forks *after* — the reference GUI's `current`
     /// field, which sends `fork(current + 1)`.
     ///
-    /// **Known gap, for mt-075.** The pinned Sterling `click` message carries
-    /// nothing but the verb string, so a client cannot tell the provider which
-    /// state its graph view is showing. mettle reads it from the **evaluator
-    /// pane** instead, which is not a workaround so much as the reference's own
-    /// arrangement: `VizGUI` and `OurConsole` share one `current` index
-    /// (alloy6-temporal.md §(h) — `setCurrentState` is called from the viz's
-    /// nav arrows), so "the state the evaluator is pointed at" *is* "the state
-    /// the user is looking at" in Alloy too. Today the only way to move it is
-    /// the evaluator's own `:state N`; when mt-075's trace stepper exists it
-    /// should move this same index, and if it ever needs to move it without an
-    /// evaluator round trip the protocol needs a payload the pinned shape does
-    /// not have — an ADR-0016-style amendment, decided then, not guessed now.
-    fn displayed_state(&self) -> usize {
+    /// Two sources, in this order (ADR-0016 Decision 2 amendment (d), mt-075):
+    ///
+    /// 1. **The client's own displayed state**, when the `click` payload
+    ///    carries one. mettle's frontend steps through a lasso client-side —
+    ///    the whole trace arrives in one datum — so its stepper is the only
+    ///    thing that knows where the user is looking, and the pinned payload
+    ///    (verb string only) could not say.
+    /// 2. **The evaluator pane's state**, otherwise. That is not a fallback so
+    ///    much as the reference's own arrangement — `VizGUI` and `OurConsole`
+    ///    share one `current` index (alloy6-temporal.md §(h)), so "where the
+    ///    evaluator is pointed" *is* "what the user is looking at" in Alloy
+    ///    too — and it is what a client that does not send the field (an
+    ///    external Sterling) keeps getting, moved with `:state N`.
+    ///
+    /// # Errors
+    /// A [`ClickRefused`] if the client names a state this trace does not
+    /// have: an index outside the displayed lasso is a client bug, and forking
+    /// at a guessed state would answer a question nobody asked.
+    fn fork_state(&self, requested: Option<usize>) -> Result<usize, ClickRefused> {
+        let Some(state) = requested else {
+            return Ok(self.evaluator_state());
+        };
+        let k = self.trace_length();
+        if state >= k {
+            return Err(ClickRefused {
+                code: "state-out-of-range",
+                message: format!(
+                    "state {state} is outside the trace on screen, which has {k} states."
+                ),
+            });
+        }
+        Ok(state)
+    }
+
+    /// Where the evaluator pane is pointed — the `None` half of
+    /// [`fork_state`](Self::fork_state), and what the button set reads.
+    fn evaluator_state(&self) -> usize {
         self.shown.evaluator.trace_state().unwrap_or(0)
+    }
+
+    /// The number of states in the trace on screen.
+    fn trace_length(&self) -> usize {
+        self.enumerator
+            .current()
+            .map_or(0, als_core::TemporalTrace::k)
     }
 
     /// Runs one enumerator step and, if it produced a trace, puts it on screen.
@@ -486,13 +519,13 @@ impl ServeSession for TemporalSession<'_> {
         match stale(datum_id, &self.shown.id) {
             Some(message) => message,
             // `:state N` moves where this evaluates, exactly as at the REPL
-            // prompt — and, as of mt-076, also moves what "New Fork" forks
-            // after (see `displayed_state`).
+            // prompt — and, for a client that sends no state of its own, also
+            // moves what "New Fork" forks after (see `fork_state`).
             None => repl::eval_line(&mut self.shown.evaluator, expression),
         }
     }
 
-    fn click(&mut self, on_click: &str) -> Result<(), ClickRefused> {
+    fn click(&mut self, on_click: &str, state: Option<usize>) -> Result<(), ClickRefused> {
         if self.budget_spent {
             return Err(ClickRefused {
                 code: "enumeration-budget",
@@ -515,7 +548,7 @@ impl ServeSession for TemporalSession<'_> {
             CLICK_NEXT_CONFIG => self.take(TraceStep::NextConfig, on_click),
             CLICK_NEW_INIT => self.take(TraceStep::Fork { hold: 0 }, on_click),
             CLICK_NEW_FORK => {
-                let hold = self.displayed_state() + 1;
+                let hold = self.fork_state(state)? + 1;
                 self.take(TraceStep::Fork { hold }, on_click)
             }
             _ => Err(ClickRefused::unknown(on_click)),
@@ -529,15 +562,15 @@ impl TemporalSession<'_> {
     ///
     /// "New Fork" is additionally hidden at the last state, where
     /// `current + 1 == k` and the answer is always exhaustion (probe P-076-6) —
-    /// the same "absent, never wrong" discipline, one state finer.
+    /// the same "absent, never wrong" discipline, one state finer. The state
+    /// read here is the *evaluator's*, the only one the server knows: a client
+    /// that steps through the trace itself (mt-075's frontend) owns the same
+    /// rule against its own displayed state, and says so where it applies it.
     fn buttons(&self) -> Vec<Button> {
         if self.budget_spent {
             return Vec::new();
         }
-        let k = self
-            .enumerator
-            .current()
-            .map_or(0, als_core::TemporalTrace::k);
+        let k = self.trace_length();
         let mut buttons = Vec::new();
         if !self.paths_exhausted {
             buttons.push(button(
@@ -556,11 +589,11 @@ impl TemporalSession<'_> {
             CLICK_NEW_INIT,
             "(Show a new initial state)",
         ));
-        if self.displayed_state() + 1 < k {
+        if self.evaluator_state() + 1 < k {
             buttons.push(button(
                 "New Fork",
                 CLICK_NEW_FORK,
-                "(Fork the trace after the state the evaluator is on)",
+                "(Fork the trace after the state you are on)",
             ));
         }
         buttons

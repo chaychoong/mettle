@@ -127,6 +127,16 @@ fn click(client: &mut Client, on_click: &str) -> serde_json::Value {
     )
 }
 
+/// A click carrying mt-075's optional displayed-state index.
+fn click_at(client: &mut Client, on_click: &str, state: usize) -> serde_json::Value {
+    request(
+        client,
+        &format!(
+            r#"{{"type":"click","version":1,"payload":{{"onClick":"{on_click}","state":{state}}}}}"#
+        ),
+    )
+}
+
 fn eval(client: &mut Client, datum_id: &str, expression: &str) -> String {
     let payload = serde_json::json!({
         "type": "eval",
@@ -462,6 +472,61 @@ fn a_temporal_command_enumerates_traces_and_configurations() {
     assert_eq!(refused["payload"]["code"], "no-more-instances");
 }
 
+/// (5c) mt-075's `click.state`: mettle's own frontend steps through a lasso
+/// client-side, so its stepper — not the evaluator pane — is what says where a
+/// "New Fork" forks. The field is optional, and its absence must still reach
+/// the pane-driven arrangement an external client depends on.
+#[test]
+fn new_fork_forks_at_the_state_the_client_says_it_is_showing() {
+    let server = serve(&fixture("temporal-enum.als"), &[]);
+    let mut client = connect(&server);
+    let first = entered(&data(&mut client)).clone();
+    let first_id = first["id"].as_str().expect("id").to_owned();
+    assert_eq!(
+        first["data"]
+            .as_str()
+            .expect("xml")
+            .matches("<instance")
+            .count(),
+        2,
+        "this fixture is a two-state lasso"
+    );
+
+    // Forking *after* the last state has nowhere to go (probe P-076-6). That
+    // this refuses is what proves the sent index was used at all: the session's
+    // own fallback sits at state 0, where the same verb succeeds below.
+    let refused = click_at(&mut client, "new-fork", 1);
+    assert_eq!(refused["type"], "error", "{refused}");
+    assert_eq!(refused["payload"]["code"], "no-more-instances");
+
+    // A state this trace does not have is refused as such, never guessed at.
+    let out_of_range = click_at(&mut client, "new-fork", 7);
+    assert_eq!(out_of_range["type"], "error", "{out_of_range}");
+    assert_eq!(out_of_range["payload"]["code"], "state-out-of-range");
+    assert!(
+        out_of_range["payload"]["message"]
+            .as_str()
+            .expect("message")
+            .contains("2 states"),
+        "the refusal says how many states there are: {out_of_range}"
+    );
+
+    // …and at state 0 the same verb forks.
+    let forked = entered(&click_at(&mut client, "new-fork", 0)).clone();
+    let forked_id = forked["id"].as_str().expect("id").to_owned();
+    assert_ne!(forked_id, first_id, "a fork mints a fresh datum");
+
+    // With the field omitted the provider reads its evaluator pane instead —
+    // the arrangement mt-072 shipped and an external Sterling still gets. The
+    // fresh datum's pane starts at state 0, so `:state 1` moves it, and
+    // "New Fork" then refuses exactly as the explicit state 1 did.
+    let moved = eval(&mut client, &forked_id, ":state 1");
+    assert!(moved.contains("state 1"), "{moved}");
+    let fallback = click(&mut client, "new-fork");
+    assert_eq!(fallback["type"], "error", "{fallback}");
+    assert_eq!(fallback["payload"]["code"], "no-more-instances");
+}
+
 /// (5b) Two clients at once — the shape a second browser tab produces. Both
 /// are served (thread per connection), and both see one shared session: an
 /// advance driven by one is visible to the other.
@@ -539,22 +604,72 @@ fn a_malformed_client_cannot_take_the_session_down() {
     assert_eq!(before, after, "the session must be unmoved");
 }
 
-/// (8) The page and the socket share one port, and the page names what it is
-/// serving.
+/// (8) The page and the socket share one port, and the page is the app —
+/// shell, stylesheet, and the ES modules it imports, all off this one origin
+/// (mt-075: an embedded frontend that reaches the network is not one).
 #[test]
-fn one_port_serves_both_the_page_and_the_provider() {
+fn one_port_serves_both_the_app_and_the_provider() {
     let file = fixture("enumerable.als");
     let server = serve(&file, &[]);
     let body = http_get(server.address, "/");
     assert!(body.starts_with("<!doctype html>"), "{body}");
     assert!(body.contains("enumerable.als"), "{body}");
-    assert!(body.contains("mt-075"), "the stub says where the UI is");
+    assert!(
+        body.contains(r#"<script type="module" src="/app.js">"#),
+        "the page must boot the app: {body}"
+    );
+    // The panes the app is made of, asserted by their own anchors rather than
+    // by prose that could drift.
+    for anchor in [
+        r#"id="instance""#,
+        r#"id="evaluator""#,
+        r#"id="stepper""#,
+        r#"id="actions""#,
+        r#"id="show-builtins""#,
+    ] {
+        assert!(body.contains(anchor), "the shell is missing {anchor}");
+    }
+    assert!(!body.contains("{{"), "an unfilled template slot: {body}");
+
+    // Every module the browser will fetch is served, with a type it will
+    // actually execute.
+    for (target, content_type) in [
+        ("/app.css", "text/css"),
+        ("/app.js", "text/javascript"),
+        ("/protocol.js", "text/javascript"),
+        ("/instance.js", "text/javascript"),
+        ("/tables.js", "text/javascript"),
+    ] {
+        let response = http_response(server.address, target);
+        assert!(
+            response.starts_with("HTTP/1.1 200 OK"),
+            "{target}: {response}"
+        );
+        assert!(
+            response.contains(&format!("Content-Type: {content_type}")),
+            "{target} must be served as {content_type}: {response}"
+        );
+    }
+
     // The same address upgrades.
     let mut client = connect(&server);
     assert_eq!(raw_request(&mut client, "ping"), "pong");
 }
 
 fn http_get(address: SocketAddr, target: &str) -> String {
+    let response = http_response(address, target);
+    assert!(
+        response.starts_with("HTTP/1.1 200 OK"),
+        "unexpected response: {response}"
+    );
+    response
+        .split_once("\r\n\r\n")
+        .map_or("", |(_, body)| body)
+        .to_owned()
+}
+
+/// The whole response, headers included.
+fn http_response(address: SocketAddr, target: &str) -> String {
     use std::io::{Read as _, Write as _};
     let mut stream = TcpStream::connect(address).expect("connect");
     stream
@@ -567,14 +682,7 @@ fn http_get(address: SocketAddr, target: &str) -> String {
     .expect("write request");
     let mut response = String::new();
     stream.read_to_string(&mut response).expect("read response");
-    assert!(
-        response.starts_with("HTTP/1.1 200 OK"),
-        "unexpected response: {response}"
-    );
     response
-        .split_once("\r\n\r\n")
-        .map_or("", |(_, body)| body)
-        .to_owned()
 }
 
 /// (9) A file with several commands needs `--command`, and the selection

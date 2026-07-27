@@ -220,6 +220,15 @@ unparsed) — any other format value produces a dispatched `sterlingError`
 and the datum is dropped `[VERIFIED: packages/sterling-connection/src/parse/parse.ts
 `formatIsSupported`]`.
 
+**mettle's own extension to this shape (mt-075, [ADR-0016](../adr/0016-rung5-remainder-serve-xml-packaging.md)
+Decision 2 amendment (d)):** the `click` payload carries an optional
+`state: number`, the index of the trace state the client is displaying.
+`new-fork` forks at `state + 1`; every other verb ignores it; **omitting it
+keeps the original behaviour** (the provider reads its evaluator pane's state),
+which is what an upstream Sterling — whose `newClickMsg` cannot populate a
+field it does not know about — keeps getting. Additive and invisible upstream,
+like the `error` message type (amendment (a)).
+
 There is **no protocol-level "next instance" verb**. Buttons are entirely
 provider-defined: the provider attaches whatever `Button`s it wants to a
 `Datum`, and when the user clicks one, Sterling sends back a `click`

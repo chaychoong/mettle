@@ -313,7 +313,7 @@ impl<'a, S: ServeSession + Send> Provider<'a, S> {
                 let result = session.eval(&eval.datum_id, &eval.expression);
                 Response::eval(eval.id, result).to_frame()
             }
-            Request::Click(click) => match session.click(&click.on_click) {
+            Request::Click(click) => match session.click(&click.on_click, click.state) {
                 Ok(()) => Response::data(connection.join(&session.datum())).to_frame(),
                 Err(refused) => Response::error(refused.code, refused.message).to_frame(),
             },

@@ -174,6 +174,27 @@ is documented as such. That trade removed eleven transitive crates (`http`,
 that hand-writes its own CDCL solver — the framing layer is worth a
 dependency, a fixed-GUID echo is not.
 
+### Amendment (mt-075, 2026-07-27 — as implemented, tech-lead approved)
+
+**(d) An optional `state` on the `click` payload.** mt-072 shipped "New Fork"
+reading the state to fork after from the **evaluator pane**, because §2.3's
+`click` payload carries nothing but a verb string and the reference's own
+`VizGUI`/`OurConsole` share one `current` index anyway. mt-075's frontend
+breaks that arrangement's one assumption: a temporal `data` payload is the
+*whole* lasso, so its trace stepper moves between states entirely client-side,
+with no evaluator round trip to observe. The payload therefore grows one
+optional integer field, `state` — **`new-fork` uses it as the displayed-state
+index (forking at `state + 1`, the pinned GUI semantics); every other verb
+ignores it; and its absence keeps the mt-072 behaviour exactly**, so an
+external Sterling, which will never send it, still gets the evaluator-pane
+reading. A `state` outside the displayed trace is a typed refusal
+(`state-out-of-range`), not a guess. Like amendment (a) this is additive on the
+wire and invisible to an upstream client, which builds its own `click` payload
+and would simply never populate the field. mettle's own frontend also keeps the
+pane in step, sending the REPL's `:state N` before it evaluates an expression at
+a stepped state — so the two indices agree in the direction the protocol cannot
+express, exactly as they do in the reference GUI.
+
 ## Decision 3 — frontend assets: owner fork (A/B/C), recommendation B
 
 How `mettle serve` gets a frontend, given the missing license grant:

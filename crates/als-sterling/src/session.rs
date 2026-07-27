@@ -98,9 +98,17 @@ pub trait ServeSession {
 
     /// Acts on a provider-defined action string.
     ///
+    /// `state` is the client's displayed trace-state index
+    /// ([`Click::state`](crate::protocol::Click::state), mt-075): `Some` from
+    /// mettle's own frontend, whose stepper is the only thing that knows where
+    /// in a lasso the user is looking, and `None` from any client that does not
+    /// send it — for which the session falls back to the state its evaluator
+    /// pane sits at. A verb that is not about a trace position ignores it.
+    ///
     /// # Errors
     /// A [`ClickRefused`] when the verb is unknown, not yet implemented, or
-    /// cannot be honoured right now (an exhausted enumeration). `Ok` means the
-    /// session advanced and the server should push the new datum.
-    fn click(&mut self, on_click: &str) -> Result<(), ClickRefused>;
+    /// cannot be honoured right now (an exhausted enumeration, a state outside
+    /// the displayed trace). `Ok` means the session advanced and the server
+    /// should push the new datum.
+    fn click(&mut self, on_click: &str, state: Option<usize>) -> Result<(), ClickRefused>;
 }

@@ -8,7 +8,11 @@
 //! from Rust's, spelled out per-field where only one differs — so this module
 //! is the single place mettle states the contract.
 //!
-//! **One deliberate extension.** §2.2's four message types give a provider no
+//! **Two deliberate extensions**, both recorded as amendments to ADR-0016
+//! Decision 2. The first is [`Click::state`], an optional field mettle's own
+//! frontend adds to the `click` payload, documented at the field itself. The
+//! second is the `error` message type: §2.2's four message types give a
+//! provider no
 //! way to say "I could not do that": a refused `click` or an unparseable frame
 //! would otherwise have to be answered with silence or a dropped connection,
 //! and mettle does neither (STYLE E5). [`OUTGOING_ERROR`] is a fifth,
@@ -277,6 +281,19 @@ pub struct Click {
     /// defines no context today.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<serde_json::Value>,
+    /// **mettle's extension** (ADR-0016 Decision 2 amendment (d), mt-075): the
+    /// index of the trace state the client is displaying.
+    ///
+    /// The pinned payload carries only a verb, which leaves a provider unable
+    /// to tell *where* in a lasso a "New Fork" was asked for — mettle's own
+    /// frontend steps through states client-side, so its stepper is the only
+    /// thing that knows. `new-fork` reads it; every other verb ignores it.
+    /// **Absent means the provider falls back to the state its evaluator pane
+    /// sits at**, which is the reference GUI's own shared-`current`
+    /// arrangement and is what an external Sterling — which never sends this
+    /// field — keeps getting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<usize>,
 }
 
 /// The `eval` request payload (§5).
@@ -430,6 +447,7 @@ mod tests {
                 id: Some("d0".to_owned()),
                 on_click: "next".to_owned(),
                 context: None,
+                state: None,
             }))
         );
         // `id` is optional in the upstream type, so a click with no active
@@ -440,8 +458,31 @@ mod tests {
                 id: None,
                 on_click: "next".to_owned(),
                 context: None,
+                state: None,
             }))
         );
+        // mettle's own frontend adds the displayed state (mt-075); a client
+        // that does not send it is the case above, and the two must not be
+        // confusable.
+        assert_eq!(
+            parse_request(
+                r#"{"type":"click","version":1,"payload":{"onClick":"new-fork","state":2}}"#
+            ),
+            Ok(Request::Click(Click {
+                id: None,
+                on_click: "new-fork".to_owned(),
+                context: None,
+                state: Some(2),
+            }))
+        );
+        // A state that is not a state index at all is a typed refusal, not a
+        // silently-dropped field.
+        assert!(matches!(
+            parse_request(
+                r#"{"type":"click","version":1,"payload":{"onClick":"new-fork","state":-1}}"#
+            ),
+            Err(ProtocolError::BadPayload { .. })
+        ));
         assert_eq!(
             parse_request(
                 r##"{"type":"eval","version":1,"payload":{"id":"e1","datumId":"d0","expression":"#A"}}"##
@@ -607,13 +648,13 @@ mod tests {
     fn a_click_request_round_trips_through_the_wire_spelling() {
         let click = Click {
             id: Some("mettle:2".to_owned()),
-            on_click: "next".to_owned(),
+            on_click: "new-fork".to_owned(),
             context: None,
+            state: Some(3),
         };
-        let frame = format!(
-            r#"{{"type":"click","version":1,"payload":{}}}"#,
-            serde_json::to_string(&click).expect("serializes")
-        );
+        let serialized = serde_json::to_string(&click).expect("serializes");
+        assert!(serialized.contains(r#""state":3"#), "{serialized}");
+        let frame = format!(r#"{{"type":"click","version":1,"payload":{serialized}}}"#);
         assert_eq!(parse_request(&frame), Ok(Request::Click(click)));
     }
 }

@@ -20,7 +20,8 @@
 //! - `handshake` (private) — the `Sec-WebSocket-Accept` derivation, hand-rolled
 //!   so that `tungstenite` can be taken for framing alone (see its
 //!   `Cargo.toml` justification).
-//! - [`frontend`] — the placeholder page, until mt-075.
+//! - [`frontend`] — mettle's own browser frontend (mt-075), embedded at
+//!   compile time: the app shell plus the ES modules and stylesheet it loads.
 //!
 //! # What the provider answers
 //!
@@ -46,7 +47,7 @@
 //! | [`CLICK_NEXT_TRACE`] | the next lasso trace, configuration held | implemented (mt-076), via `als_core`'s `TraceEnumerator` |
 //! | [`CLICK_NEXT_CONFIG`] | the next trace with a different configuration | implemented (mt-076) |
 //! | [`CLICK_NEW_INIT`] | re-solve from a different initial state (`fork(0)`) | implemented (mt-076) |
-//! | [`CLICK_NEW_FORK`] | fork at the current state (`fork(current+1)`) | implemented (mt-076) |
+//! | [`CLICK_NEW_FORK`] | fork at the current state (`fork(current+1)`) — the client's [`Click::state`](protocol::Click::state) when it sends one, else the evaluator pane's | implemented (mt-076/mt-075) |
 //!
 //! On a **temporal** session [`CLICK_NEXT`] and [`CLICK_NEXT_TRACE`] are the
 //! same operator, because the reference's own `fork(-3)` and `fork(-2)` are
@@ -61,7 +62,7 @@ pub mod protocol;
 pub mod server;
 pub mod session;
 
-pub use frontend::stub_index_html;
+pub use frontend::{index_html, FrontendAsset, ASSETS, HTML};
 pub use protocol::{
     parse_request, Button, Click, DataJoin, Datum, DatumMeta, ErrorPayload, EvalExpression,
     EvalResult, ProtocolError, ProviderMeta, Request, Response, PING, PONG, PROTOCOL_VERSION,

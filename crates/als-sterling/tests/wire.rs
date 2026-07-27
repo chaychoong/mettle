@@ -18,7 +18,7 @@ use std::sync::Mutex;
 use als_sterling::protocol::{DataJoin, ErrorPayload, EvalResult, ProviderMeta};
 use als_sterling::{
     Button, ClickRefused, Provider, ServeEvent, ServeSession, SessionDatum, StaticAssets,
-    CLICK_NEXT, CLICK_NEXT_TRACE,
+    CLICK_NEW_FORK, CLICK_NEXT, CLICK_NEXT_TRACE,
 };
 use tungstenite::{Message, WebSocket};
 
@@ -61,8 +61,16 @@ impl ServeSession for StubSession {
         format!("{datum_id}|{expression}|{}", self.index)
     }
 
-    fn click(&mut self, on_click: &str) -> Result<(), ClickRefused> {
+    fn click(&mut self, on_click: &str, state: Option<usize>) -> Result<(), ClickRefused> {
         match on_click {
+            // Stands in for a real fork: the point here is only that the
+            // client's displayed state (mt-075's optional `click.state`)
+            // reaches the session intact, and that its absence is a *different*
+            // value from any state a client could send.
+            CLICK_NEW_FORK => {
+                self.index = state.map_or(900, |state| state + 1);
+                Ok(())
+            }
             CLICK_NEXT if self.exhausted => Err(ClickRefused {
                 code: "no-more-instances",
                 message: "no more".to_owned(),
@@ -258,6 +266,28 @@ fn every_refused_click_answers_with_a_typed_error() {
             r#"{"type":"click","version":1,"payload":{"onClick":"next"}}"#,
         ));
         assert_eq!(exhausted["payload"]["code"], "no-more-instances");
+    });
+}
+
+/// mt-075's payload extension, at the wire level: the optional `state` a
+/// client sends reaches the session, and omitting it is distinguishable from
+/// sending any value (which is what keeps the provider's own fallback
+/// reachable for a client that never learned about the field).
+#[test]
+fn a_clicks_optional_state_reaches_the_session() {
+    on_wire(1, |addr| {
+        let mut client = connect(addr);
+        let with_state = json(&exchange(
+            &mut client,
+            r#"{"type":"click","version":1,"payload":{"onClick":"new-fork","state":3}}"#,
+        ));
+        assert_eq!(with_state["payload"]["enter"][0]["id"], "stub:4");
+
+        let without_state = json(&exchange(
+            &mut client,
+            r#"{"type":"click","version":1,"payload":{"onClick":"new-fork"}}"#,
+        ));
+        assert_eq!(without_state["payload"]["enter"][0]["id"], "stub:900");
     });
 }
 

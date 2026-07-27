@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{model}} — mettle</title>
+<link rel="stylesheet" href="/app.css">
+<script type="module" src="/app.js"></script>
+</head>
+<body>
+
+<header class="chrome">
+  <div class="identity">
+    <span class="wordmark">mettle</span>
+    <span class="model" title="{{model}}">{{model}}</span>
+  </div>
+  <code class="command" id="command">{{command}}</code>
+  <span class="status" id="status" data-state="connecting">connecting</span>
+</header>
+
+<nav class="toolbar">
+  <div class="actions" id="actions"></div>
+  <div class="filters">
+    <span class="hidden-note" id="hidden-note"></span>
+    <label class="toggle">
+      <input type="checkbox" id="show-builtins">
+      show builtins
+    </label>
+  </div>
+</nav>
+
+<nav class="stepper" id="stepper" hidden>
+  <span class="stepper-label">trace</span>
+  <div class="states" id="states" role="tablist" aria-label="trace states"></div>
+  <span class="loop-note" id="loop-note"></span>
+</nav>
+
+<main>
+  <section class="instance" id="instance" aria-live="polite"></section>
+  <aside class="evaluator" id="evaluator">
+    <div class="evaluator-head">
+      <h2>Evaluator</h2>
+      <span class="evaluator-state" id="evaluator-state"></span>
+    </div>
+    <div class="history" id="history">
+      <p class="entry note" id="hint">Expressions are evaluated against the instance on screen.
+On a trace, they are answered at the state the stepper is on; <code>:state N</code> moves both.</p>
+    </div>
+    <form class="prompt" id="prompt">
+      <textarea id="expression" rows="2" spellcheck="false" autocomplete="off"
+                placeholder="an expression — Enter to evaluate, Shift+Enter for a newline"></textarea>
+      <button type="submit">Evaluate</button>
+    </form>
+  </aside>
+</main>
+
+<div class="toasts" id="toasts" aria-live="assertive"></div>
+
+</body>
+</html>

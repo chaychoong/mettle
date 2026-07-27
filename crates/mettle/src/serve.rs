@@ -33,14 +33,14 @@
 //!   solved one — otherwise the first "New Trace" would redisplay it. That is
 //!   why the temporal path calls [`crate::exec::setup_temporal`] and drives the
 //!   sweep itself instead of calling `run_temporal_pipeline`.
-//! - **"New Fork" needs a current state, and the protocol has none.** `click`
-//!   carries only a verb string, so a client cannot say which state its graph
-//!   view is showing. mettle reads it from the evaluator pane instead — which
-//!   is the reference's own arrangement, since `VizGUI` and `OurConsole` share
-//!   one `current` index. Today the only way to move it is the evaluator's
-//!   `:state N`; a trace stepper (mt-075) should move the same index, and if it
-//!   ever needs to do so without an evaluator round trip the protocol needs a
-//!   payload the pinned shape does not have.
+//! - **"New Fork" needs a current state, and the pinned protocol has none.**
+//!   `click` carries only a verb string, so mt-072 read the state from the
+//!   evaluator pane — the reference's own arrangement, since `VizGUI` and
+//!   `OurConsole` share one `current` index. mt-075's frontend steps through a
+//!   lasso client-side, where no evaluator round trip happens at all, so the
+//!   payload grew an **optional `state`** field (ADR-0016 Decision 2 amendment
+//!   (d)): present, it *is* the displayed state; absent, the pane's state
+//!   still answers, which is what an external Sterling keeps getting.
 //!
 //! # Why the artifacts are borrowed, not owned
 //!
@@ -60,7 +60,8 @@
 //!   only reference provider, has no temporal state concept to compare against.
 //!   A session therefore starts at **state 0** and moves only when the user
 //!   says so, through the REPL's own `:state N` meta-command typed into the
-//!   evaluator pane. No new protocol, no guessing.
+//!   evaluator pane. No new protocol, no guessing — mt-075's frontend sends
+//!   that same meta-command to keep the pane on the state its stepper shows.
 //! - **Stale `datumId`.** Forge logs a mismatch and answers about its *current*
 //!   instance anyway ("reporting back inaccurate data!", §5). mettle refuses
 //!   instead and says which datum it is now on: an answer about a different
@@ -76,7 +77,7 @@ use std::sync::Mutex;
 
 use als_core::ir::Ir;
 use als_core::{enumerate, SolveOptions, TraceAdvance, TraceEnumerator, TraceStep, TranslateError};
-use als_sterling::{stub_index_html, Provider, ServeEvent, ServeSession, StaticAssets};
+use als_sterling::{index_html, Provider, ServeEvent, ServeSession, StaticAssets, HTML};
 use als_syntax::ast::CmdKind;
 use als_types::{is_temporal_model, ModuleGraph, ResolvedCommand, ResolvedWorld};
 
@@ -409,9 +410,18 @@ fn serve<S: ServeSession + Send>(
     })?;
 
     let mut assets = StaticAssets::default();
-    let index = stub_index_html(model, header);
+    // The shell is built per session (it names the model and command); the
+    // rest of the frontend is the same bytes for every run (mt-075).
+    let index = index_html(model, header);
     assets.add("/", HTML, index.clone().into_bytes());
     assets.add("/index.html", HTML, index.into_bytes());
+    for asset in als_sterling::ASSETS {
+        assets.add(
+            asset.path,
+            asset.content_type,
+            asset.body.as_bytes().to_vec(),
+        );
+    }
 
     crate::write_stdout(format!(
         "mettle serve: listening on http://{address}\n\
@@ -436,6 +446,3 @@ fn serve<S: ServeSession + Send>(
     Provider::new(&assets, &session, &report).accept_loop(listener);
     Ok(())
 }
-
-/// The one content type the stub page needs; mt-075 will add more.
-const HTML: &str = "text/html; charset=utf-8";
