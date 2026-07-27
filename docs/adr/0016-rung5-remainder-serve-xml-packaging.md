@@ -1,8 +1,12 @@
 # ADR-0016 — The Rung-5 remainder: instance XML, `mettle serve`/Sterling, packaging
 
-**Status:** Proposed (two owner forks explicitly open — see Decisions 3 and 5)
+**Status:** Proposed — both owner forks RESOLVED same day (see "Resolutions"
+at the end: Decision 3 → option C browser-first own frontend; Decision 5 →
+skip crates.io outright); formal blessing rides with the owner's new
+batch-all-human-tests-at-feature-complete cadence
 · **Date:** 2026-07-27 · **Beads:** mt-070 (this planning chunk), mt-071
-(instance-XML writer), mt-072 (`mettle serve` Sterling provider), mt-073
+(instance-XML writer), mt-072 (`mettle serve` provider backend), mt-075
+(first-party frontend), mt-076 (temporal trace enumeration), mt-073
 (release packaging), mt-074 (nix flake package output)
 
 ## Context
@@ -194,3 +198,38 @@ support (crates.io-backed) defers with it.
   (alongside the evaluator and temporal §(f) docs); its "Unpinned" tail is
   mt-071's probe debt, mirrored there, with the round-trip corners closed
   by mt-071's own differential verification.
+
+## Resolutions (2026-07-27, owner — same day as filing)
+
+The owner resolved both forks and reshaped the cadence in one exchange:
+
+1. **Decision 3 → option (C), browser-first.** mettle writes its **own
+   minimal frontend** (graph + table views, trace stepper, evaluator pane)
+   with a deliberate modern design pass, delivered in v1 as a web app
+   served by `mettle serve` and opened in the user's browser — **not** a
+   Tauri desktop app (owner floated Tauri; tech-lead recommendation
+   browser-first was adopted: the visualization work is identical web code
+   either way, and a Tauri shell can wrap the same frontend later as a
+   small additive bead without app-bundle/notarization/webview costs now).
+   **The pinned Sterling wire protocol is retained as `serve`'s protocol**
+   ([reference/sterling.md](../reference/sterling.md)) — already pinned,
+   fits exactly, and any external Sterling can still connect as free
+   interop; the license question evaporates for shipped code (nothing
+   upstream is embedded; a wire protocol is not copyrightable — the
+   ADR-0006 stdlib posture). mt-072's formerly-gating live-Sterling probe
+   demotes to a best-effort interop spot-check (the `backloop` dialect
+   adapter serves external Sterling clients only, never our own frontend).
+   New bead **mt-075** carries the frontend.
+2. **Decision 5 → skip crates.io outright, not just for v1.** mettle is a
+   binary product; the `als-*` crates are internal implementation, not a
+   library offering, so nothing needs the squatted name and no rename or
+   dispute is warranted. Revisit only if the project ever decides to ship
+   libraries — a fresh naming decision then.
+3. **Cadence: all human tests batch to one combined feature-complete
+   review** (owner, superseding per-rung gating from here forward — the
+   Rung-6 gate and the `check … for 1 steps` fork ride along to that
+   review; engineering gates continue every chunk unchanged). **The
+   feature-complete bar includes instance/trace enumeration** (the GUI's
+   Next / New Config / New Init / New Fork parity + temporal counting on
+   the scorecard) — new bead **mt-076**, cut into the set. Estimated
+   distance at resolution time: ~6–9 chunks across mt-071/072/075/076/073/074.
