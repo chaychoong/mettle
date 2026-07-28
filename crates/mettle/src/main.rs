@@ -44,8 +44,10 @@ use als_types::{FilesystemLoader, ModuleGraph, ResolveError};
 
 /// The Alloy version mettle's conformance is measured against — the pinned
 /// oracle jar (ADR-0002, `docs/reference/alloy6-reference.md`). mettle's own
-/// version is independent semver (1.0.0 = the drop-in bar); this constant is
-/// how `--version` states the target without mirroring its number.
+/// version is independent and zero-versioned by intention (owner, 2026-07-28:
+/// 0.x makes no production-readiness claim; the scorecard carries the maturity
+/// signal); this constant is how `--version` states the target without
+/// mirroring its number.
 const TRACKED_ALLOY_VERSION: &str = "6.2.0";
 
 fn main() -> ExitCode {
@@ -68,12 +70,9 @@ fn run(args: &[String]) -> Result<(), ExitCode> {
         // every other single-binary Rust CLI's convention); it prints and
         // exits 0 same as `-h`/`--help` below, never reaching subcommand
         // dispatch.
-        // The tracked Alloy version rides along (owner decision, 2026-07-28:
-        // mettle keeps its own semver — 1.0.0 stays reserved for the drop-in
-        // bar — and states the conformance target instead of mirroring it).
-        // The authority for that target is the pinned oracle (ADR-0002,
-        // docs/reference/alloy6-reference.md); update this string when the
-        // pin moves.
+        // The tracked Alloy version rides along — mettle states its
+        // conformance target instead of mirroring its number (owner,
+        // 2026-07-28; posture on TRACKED_ALLOY_VERSION above).
         Some("-V" | "--version") => write_stdout(format!(
             "mettle {} (tracking Alloy {TRACKED_ALLOY_VERSION})\n",
             env!("CARGO_PKG_VERSION")

@@ -1,13 +1,13 @@
 # mettle
 
-**A conformance-tested reimplementation of Alloy 6 as a single self-contained binary.** No JVM. mettle reads standard `.als` files — the same language as the reference Alloy Analyzer — finds instances and counterexamples, steps through temporal traces, and visualizes it all in your browser, from a first-class CLI. It tracks **Alloy 6.2.0** (the latest release of the reference implementation); mettle's own version number is independent, with 1.0.0 reserved for verified drop-in parity.
+**A conformance-tested reimplementation of Alloy 6 as a single self-contained binary.** No JVM. mettle reads standard `.als` files — the same language as the reference Alloy Analyzer — finds instances and counterexamples, steps through temporal traces, and visualizes it all in your browser, from a first-class CLI. It tracks **Alloy 6.2.0** (the latest release of the reference implementation); mettle itself is zero-versioned (0.x) by intention — the version number makes no production-readiness claim.
 
 <picture>
   <source srcset="docs/screenshots/graph-dark.png" media="(prefers-color-scheme: dark)">
   <img src="docs/screenshots/graph-light.png" alt="mettle's graph view: a file_system.als counterexample rendered as a layered graph with per-signature hues and a skolem witness, next to the evaluator pane">
 </picture>
 
-> ⚠️ **Pre-1.0.** mettle is a feature-complete candidate under review. It is deliberately *not* "Alloy but better" — it aims to be **Alloy, exactly**, then earn the right to diverge. See [what it can and can't do yet](LIMITATIONS.md) and the [roadmap](docs/ROADMAP.md).
+> ⚠️ **Zero-versioned by intention.** mettle stays 0.x because it is not (yet) meant as production-ready; the scorecard, not the version number, says how close it is. It is deliberately *not* "Alloy but better" — it aims to be **Alloy, exactly**, then earn the right to diverge. See [what it can and can't do yet](LIMITATIONS.md) and the [roadmap](docs/ROADMAP.md).
 
 ## Try it
 
