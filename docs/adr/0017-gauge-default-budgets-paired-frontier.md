@@ -94,3 +94,32 @@ banked deeper (census finding, unchanged).
   regression-free agreements on the table to defend a wall-time finding
   (mt-049's 40-minute 8M sweep) that predates the throughput campaign by three
   ADRs.
+
+## Amendment (mt-082, 2026-07-29): conflicts re-paired to 25k after the ADR-0018 encoder reshape
+
+The pairing rule turned out to bind sooner than expected, and not through a
+budget knob: [ADR-0018](0018-encoder-structural-sharing.md)'s structural
+sharing changed the CNF shape, moving five rows across the conflict-budget
+boundary and roughly halving the wall cost of conflicts (stage-1 588s→478s).
+Re-measuring the conflicts axis on the new encoder (10k/25k/50k at encode
+32M, same discipline as the original grid):
+
+| point | agreements | Δ vs 10k | wall | × wall | regressions |
+|---|---|---|---|---|---|
+| 10k | 421 | — | 478s | 1.0× | — |
+| **25k (new default)** | **428** | **+7** | **773s** | **1.62×** | **0** |
+| 50k | 435 | +14 | 1259s | 2.63× | 0 |
+
+DISAGREE 0 everywhere. The original decision's 25k rejection (+6 at 3.7×)
+no longer describes the instrument: the same point now costs 1.62× and its
+seven conversions include both recoverable ADR-0018 boundary rows
+(`ringlead[2]`, `etl_scd[5]`). **The default becomes conflicts 25k × encode
+32M.** 50k stays a per-run flag — its further +7 pushes the three-net
+battery near an hour, past the chunk-level cadence the instrument serves.
+The three durable ADR-0018 losses (`OLAPUsagePrefs[0]`,
+`elevator_spl_events[29]`, `life.als[1]`) remain over_budget even at 50k
+and are family-D solver-quality work, deprioritized per the census.
+
+The rule itself is sharpened by this episode: **re-pair the knobs whenever
+either budget default changes OR the encoder's CNF shape changes.** The
+defaults comment in `solve_gauge.rs` now says so.
