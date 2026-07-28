@@ -82,7 +82,7 @@ fn print_usage() {
          \x20\x20--symmetry N           stage-1 (verdict net) symmetry cap (default 20; 0 = no SBP)\n\
          \x20\x20--count-symmetry N     stage-2 (count net) symmetry on BOTH sides (default 0 = SB-0 yardstick)\n\
          \x20\x20--conflicts N          per-command SAT conflict budget (default 10000)\n\
-         \x20\x20--encode-budget N      per-command encode-effort budget (default 4000000)\n\
+         \x20\x20--encode-budget N      per-command encode-effort budget (default 32000000)\n\
          \x20\x20--primary-var-cap N    skip a command past this many primary vars (default 20000)\n\
          \x20\x20--count-cap N          enumerate at most N instances per command (default 10000)\n\
          \x20\x20--enum-budget N        total effort across one command's enumeration (default 250000000)\n\
@@ -122,16 +122,20 @@ fn parse_args() -> Option<Cli> {
         workspace_root: root.clone(),
         baselines_dir: root.join("baselines"),
         // Measured budgets that keep the two-corpus sweep tractable (mt-037,
-        // re-tuned mt-049). mt-049's solver `reduce_db` + env-cached grounding
-        // memoisation made each conflict and each encode cheaper, so the conflict
-        // budget was raised 5k → 10k (sweep ~16 min, converting more over_budget
-        // commands into verdicts) while the **encode budget stays 4M**: raising it
-        // is intractable for the default sweep — 8M timed out past 40 min and
-        // 24/50M grinds single commands for CPU-hours (the mt-037 grind mode).
-        // The 20k primary-var cap is likewise unchanged. Scale any of them up
-        // per-run via the flags for a deeper (slower) gauge.
+        // re-tuned mt-049, encode raised mt-079/ADR-0017). The pair was chosen
+        // on a measured grid, not in isolation — the knobs interact through the
+        // temporal step-sweep (more conflicts can reach a trace length that
+        // blows an unraised encode ceiling), so any future change here must
+        // re-measure the pair. At 32M×10k the full sweep is ~10 min at
+        // `--jobs 8` (2.2× the 4M wall) for +46 agreements and zero bucket
+        // regressions; raising conflicts past 10k instead scales superlinearly
+        // in wall for single-digit further gains (25k → +6 at 3.7×, 50k → +14
+        // at 7.3×). mt-049's old "8M timed out past 40 min" finding predates
+        // the mt-054..059 throughput campaign and no longer binds. The 20k
+        // primary-var cap is unchanged. Scale any of them up per-run via the
+        // flags for a deeper (slower) gauge.
         conflict_budget: 10_000,
-        encode_budget: 4_000_000,
+        encode_budget: 32_000_000,
         primary_var_cap: 20_000,
         allow_overflow: false,
         // SB-20 is the default-config verdict net (translation-ref §16.4); SB-0
