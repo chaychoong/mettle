@@ -114,9 +114,11 @@ That's the most valuable contribution you can make. mettle's whole claim is "All
 
 Shrinking the model is appreciated but optional — a big model that disagrees is still a real find. Every confirmed divergence gets root-caused and pinned by a regression test.
 
-## How it's built, and how you can trust it
+## How it's built, and whether you should use it
 
-This project is built primarily by an AI agent fleet under human review. The credible answer to "is this just unreviewed AI output?" is **published, reproducible evidence**, not authorship claims: the scorecard and every net above regenerate from a checkout with one script and the pinned jar; builds are deterministic (fixed solver build → byte-identical output); and the exact behavioral rules being matched live in a human-owned [Semantics Ledger](SEMANTICS_LEDGER.md), with every non-trivial decision recorded as an [ADR](docs/adr/).
+This project is built primarily by an AI agent fleet, with a human product owner steering and reviewing. The process itself is checked into the repo — [CLAUDE.md](CLAUDE.md), the [ADRs](docs/adr/), the human-owned [Semantics Ledger](SEMANTICS_LEDGER.md), the [task ledger](docs/TASKS.md) — if you're curious how it was run.
+
+Should you use it? The honest version: I dogfood mettle, and I like it better than the reference Analyzer — partly because I made it, and partly because it feels lighter. You might like it because it installs in seconds and runs anywhere without a JVM. But it *is* a reimplementation, and **there may be behavioral differences from real Alloy that we haven't found yet.** We work to close that gap continually — the scorecard and every net above regenerate from a checkout with one script against the pinned reference jar, and every confirmed divergence gets root-caused and pinned by a regression test — but the possibility is always there. Known gaps and deliberate divergences are in [LIMITATIONS.md](LIMITATIONS.md); if you find a new one, [that's the most valuable thing you can hand us](#found-a-difference-from-alloy).
 
 Note: the *product* contains no JVM. The *test infrastructure* deliberately runs the reference Alloy jar to regenerate the scorecard — that's the point.
 
