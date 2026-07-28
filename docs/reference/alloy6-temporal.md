@@ -295,7 +295,9 @@ repros happen to be constant-folding shapes (`fact { no Flag }` bounds
 `Flag` empty, so the negated assertion folds); B5/B2 pin the scope
 dependence — an identical formula NPEs at scope 1 and solves at scope 3.
 Root cause not chased past that empirical predicate; mechanism inside
-Pardinus still not claimed. This remains the same category as the repo's
+Pardinus still not claimed. **Reported upstream 2026-07-28:**
+[AlloyTools/org.alloytools.alloy#350](https://github.com/AlloyTools/org.alloytools.alloy/issues/350)
+(minimal repro only, per the owner's framing). This remains the same category as the repo's
 other pinned oracle quirks (the dead `-y` flag, the entry-point-dependent
 overflow default — see the `mettle-oracle-gotchas` memory note).
 
