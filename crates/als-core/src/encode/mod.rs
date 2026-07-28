@@ -57,6 +57,47 @@ use als_syntax::ArenaId;
 /// (`Vec` in `VarId` order) so it is a deterministic `BTreeMap` key (STYLE D2).
 type EnvKey = Vec<(VarId, Tuple)>;
 
+/// A dense identity for a **matrix value** (mt-081 structural sharing).
+///
+/// Two matrices receive the same `MatrixId` **iff** they are structurally
+/// equal — same arity, same candidate tuples, same cell value in each. The
+/// identity is established by full structural comparison in a `BTreeMap`, never
+/// by a hash: a hash collision would silently fuse two different relational
+/// values and emit a wrong formula, so the lossy shortcut is not available here.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+struct MatrixId(u32);
+
+/// The canonical content of a matrix: `(arity, cells in tuple order)`, where
+/// each cell is [`cell_key`]'d into a total order `Bool` itself does not have.
+type MatrixKey = (usize, Vec<(Tuple, u64)>);
+
+/// A total, injective encoding of a [`Bool`] (`Bool` is not `Ord`, and a cell
+/// key must order deterministically for the intern `BTreeMap`).
+fn cell_key(b: Bool) -> u64 {
+    match b {
+        Bool::Const(false) => 0,
+        Bool::Const(true) => 1,
+        // `Lit::code()` is `var << 1 | negated`, dense and injective, so no
+        // literal can alias a constant or another literal.
+        Bool::Lit(l) => 2 + l.code() as u64,
+    }
+}
+
+/// The operations whose results are shared through the structural value cache
+/// (mt-081). Tagged into one key space; `Transpose` is deliberately absent
+/// (it mints no gates, so sharing it could only cost interning effort).
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum ShareOp {
+    Union,
+    Intersect,
+    Diff,
+    Join,
+    Product,
+    Override,
+    Closure,
+    ReflexiveClosure,
+}
+
 /// The primary-variable map: `(relation, floating tuple) → SAT variable`.
 ///
 /// Only tuples in `upper ∖ lower` get a variable; lower tuples are constant-true
@@ -69,14 +110,21 @@ pub(crate) type PrimaryMap = BTreeMap<(RelId, Tuple), Var>;
 /// Borrows the lowered [`Ir`], the [`Bounds`], and the primary-variable map; owns
 /// the growing [`Cnf`] and the grounding environment.
 ///
-/// Produced matrices/bools/int-values are memoised by `(node id, the bindings of
-/// exactly that node's free variables)` (mt-049 env-cached grounding): a
-/// sub-expression that does not mention the innermost bound variable is encoded
-/// once and shared across every binding of it, instead of being re-grounded per
-/// binding — the shared gates are identical, so the SB-0 model set over primary
-/// variables is unchanged. A node whose free variables are the *whole* active
-/// environment is not cached (its key would be distinct per binding — no reuse,
-/// only overhead); [`FreeVars`] drives the decision.
+/// Work is shared at **two** levels, both of which reuse gates rather than
+/// minting a second identical set — so the SB-0 model set over the primary
+/// variables is unchanged either way.
+///
+/// 1. **By node** (mt-049 env-cached grounding): produced matrices/bools/
+///    int-values are memoised by `(node id, the bindings of exactly that node's
+///    free variables)`, [`FreeVars`] supplying the free-variable set. A
+///    sub-expression that does not mention the innermost bound variable is
+///    encoded once and shared across every binding of it, instead of being
+///    re-grounded per binding.
+/// 2. **By value** (mt-081 structural sharing): every matrix is interned to a
+///    [`MatrixId`] by exact content, and relational operations are keyed on
+///    `(operator, operand ids)`. This shares across arena nodes that are
+///    *structurally unrelated* — which is what `pred`/`fun` inlining produces,
+///    since `lower` re-walks each callee body into fresh nodes per call site.
 pub(crate) struct Encoder<'a> {
     ir: &'a Ir,
     bounds: &'a Bounds,
@@ -132,8 +180,37 @@ pub(crate) struct Encoder<'a> {
     lasso: Option<&'a crate::temporal::LassoSelector>,
     // Env-cached grounding memo (mt-049): keyed by `(node id, free-var bindings)`.
     // `BTreeMap` (STYLE D2): keys are ordered, iteration never escapes.
-    matrix_cache: BTreeMap<(RelExprId, EnvKey), Matrix>,
+    matrix_cache: BTreeMap<(RelExprId, EnvKey), MatrixId>,
     formula_cache: BTreeMap<(FormulaId, EnvKey), Bool>,
+    // Structural value sharing (mt-081): the node-keyed memo above can only
+    // share a sub-expression with *itself*; these two share a computed **value**
+    // across structurally-unrelated nodes. `lower` inlines every `pred`/`fun`
+    // call by re-walking the callee body into fresh arena nodes, so one model
+    // routinely holds hundreds of arena-distinct copies of the same expression
+    // (mt-080: 181 copies of `*co_pa`, 2,532 copies of `ident[·]`'s `e->e`),
+    // each of which the node-keyed memo must re-encode from scratch.
+    /// Content-interning table: canonical matrix content → its dense id.
+    matrix_intern: BTreeMap<MatrixKey, MatrixId>,
+    /// The interned values themselves, indexed by [`MatrixId`] — the single
+    /// place a matrix is stored. Every cache above and below holds an **id**,
+    /// not a matrix, so `n` arena nodes that denote one value cost `n` ids and
+    /// one matrix rather than `n` matrices (without this the widened memo held
+    /// a full matrix per `(node, binding)` and peaked at ~3 GB on
+    /// `c11_perturbed.als[7]`, whose arena carries 601,582 relation nodes).
+    matrix_by_id: Vec<Matrix>,
+    /// The shared results: `(op, operand ids) → the value first computed for
+    /// them`. Reusing that value reuses its Tseitin auxiliaries instead of
+    /// minting a second, identical set — the same soundness argument as the
+    /// mt-049 memo (identical gates over identical inputs denote the identical
+    /// function, so the model set over the primary variables is unchanged).
+    value_cache: BTreeMap<(ShareOp, MatrixId, MatrixId), MatrixId>,
+    /// A free relation's / a relational constant's matrix, built and interned
+    /// once instead of once per referencing arena node.
+    base_rel_cache: BTreeMap<RelId, MatrixId>,
+    /// Keyed by a local tag rather than [`RelConst`] itself: the IR enum needs
+    /// no `Ord` for its own sake, and adding one for a cache would be the
+    /// encoder leaking into the IR's derives.
+    base_const_cache: BTreeMap<u8, MatrixId>,
     /// Integer values carry their accumulated overflow flag (translation-ref
     /// §11.3): consumed at comparisons by the polarity guard, dropped at `Int[·]`.
     int_cache: BTreeMap<(IntExprId, EnvKey), (IntVal, Bool)>,
@@ -187,7 +264,69 @@ impl<'a> Encoder<'a> {
             matrix_cache: BTreeMap::new(),
             formula_cache: BTreeMap::new(),
             int_cache: BTreeMap::new(),
+            matrix_intern: BTreeMap::new(),
+            matrix_by_id: Vec::new(),
+            value_cache: BTreeMap::new(),
+            base_rel_cache: BTreeMap::new(),
+            base_const_cache: BTreeMap::new(),
         }
+    }
+
+    // ------------------------------------------------- structural sharing
+
+    /// Interns `m`, returning the id every structurally-equal matrix shares
+    /// (mt-081). The matrix itself is stored once, in [`Encoder::matrix_by_id`].
+    ///
+    /// The canonicalising walk is metered into [`Encoder::ops`] like any other
+    /// traversal: it is `O(cells)` work the encode budget must see, or a goal
+    /// could burn time interning matrices for operations that mint no gates.
+    fn intern_matrix(&mut self, m: Matrix) -> MatrixId {
+        self.ops += m.len() as u64 + 1;
+        let key: MatrixKey = (
+            m.arity(),
+            m.iter().map(|(t, b)| (t.clone(), cell_key(b))).collect(),
+        );
+        if let Some(&id) = self.matrix_intern.get(&key) {
+            return id;
+        }
+        // Ids are minted in first-encounter order, which is fixed by the
+        // traversal, so the whole table is a pure function of the input.
+        let id = MatrixId(u32::try_from(self.matrix_by_id.len()).unwrap_or(u32::MAX));
+        self.matrix_intern.insert(key, id);
+        self.matrix_by_id.push(m);
+        id
+    }
+
+    /// The matrix an id denotes.
+    fn matrix(&self, id: MatrixId) -> Matrix {
+        self.matrix_by_id[id.0 as usize].clone()
+    }
+
+    /// Runs `build` for `(op, ka, kb)`, or returns the value an earlier
+    /// structurally-identical call already produced (mt-081).
+    ///
+    /// A cache hit costs one `BTreeMap` lookup and nothing else — in particular
+    /// the operand matrices are materialised only on a **miss**, so a shared
+    /// operation never pays to reconstruct inputs it will not read. `kb == ka`
+    /// marks a unary operation; `op` separates the key spaces, so a unary entry
+    /// can never alias a binary one.
+    fn shared(
+        &mut self,
+        op: ShareOp,
+        ka: MatrixId,
+        kb: MatrixId,
+        build: impl FnOnce(&mut Self, &Matrix, &Matrix) -> Matrix,
+    ) -> MatrixId {
+        let key = (op, ka, kb);
+        if let Some(&hit) = self.value_cache.get(&key) {
+            return hit;
+        }
+        let a = self.matrix(ka);
+        let b = if kb == ka { a.clone() } else { self.matrix(kb) };
+        let m = build(self, &a, &b);
+        let out = self.intern_matrix(m);
+        self.value_cache.insert(key, out);
+        out
     }
 
     /// Encodes the goal formula and returns the top-level [`Bool`] plus the
@@ -375,81 +514,126 @@ impl<'a> Encoder<'a> {
 
     // ------------------------------------------------------------- relations
 
-    /// The memo key for a node given its free-variable set, or `None` when the
-    /// node should not be cached (mt-049).
+    /// The memo key for a node given its free-variable set (mt-049, widened by
+    /// mt-081).
     ///
-    /// A node is cacheable when its free variables are a **strict subset** of the
-    /// active environment (so the same encoded value is reused across the bindings
-    /// it does not depend on), or when the environment is empty (top level). When
-    /// its free variables *are* the whole environment, every binding yields a
-    /// distinct key — caching would only cost memory — so we skip it. `free` is
-    /// always a subset of the active bindings (all free vars are in scope at
-    /// encode time), so the strict-subset test reduces to a length comparison.
-    fn env_key(&self, free: &std::collections::BTreeSet<VarId>) -> Option<EnvKey> {
+    /// The key is the bindings of exactly the node's free variables, in `VarId`
+    /// order — everything the node's encoded value can depend on, and nothing
+    /// else. Two different full environments that agree on those variables
+    /// therefore share the entry.
+    ///
+    /// mt-049 originally declined to cache a node whose free variables were the
+    /// *whole* active environment, reasoning that every binding then yields a
+    /// distinct key so the entry could never be reused. The mt-080 probe
+    /// measured that reasoning false: a `pred`/`fun` argument is lowered once
+    /// and referenced from every occurrence of the parameter in the inlined
+    /// body, so the *same* `(node, binding)` pair is revisited thousands of
+    /// times under one binding (`RE->e` in `c11_perturbed.als` re-encoded 7,182
+    /// times across 3 bindings of `e`, never cached). Admitting those nodes cut
+    /// 7.1% of the encode effort on that model. The price is memory: the memo
+    /// now holds an entry per `(node, binding)` actually visited rather than
+    /// only per `(node, partial binding)`.
+    fn env_key(&self, free: &std::collections::BTreeSet<VarId>) -> EnvKey {
         if self.env.is_empty() {
-            return Some(Vec::new());
+            return Vec::new();
         }
-        if free.len() >= self.env.len() {
-            return None;
-        }
-        Some(
-            free.iter()
-                .map(|v| {
-                    let t = self.env.get(v).cloned().unwrap_or_else(|| {
-                        debug_assert!(false, "free var {v:?} unbound during encode");
-                        Tuple::new(Vec::new())
-                    });
-                    (*v, t)
-                })
-                .collect(),
-        )
+        free.iter()
+            .map(|v| {
+                let t = self.env.get(v).cloned().unwrap_or_else(|| {
+                    debug_assert!(false, "free var {v:?} unbound during encode");
+                    Tuple::new(Vec::new())
+                });
+                (*v, t)
+            })
+            .collect()
     }
 
     /// Encodes a relation expression to its boolean matrix.
     fn rel(&mut self, id: RelExprId) -> Result<Matrix, TranslateError> {
-        let key = self.env_key(self.freevars.rel(id)).map(|e| (id, e));
-        if let Some(k) = &key {
-            if let Some(m) = self.matrix_cache.get(k) {
-                return Ok(m.clone());
-            }
-        }
-        self.check_capacity(self.ir.rel_exprs[id].span)?;
-        let m = self.rel_uncached(id)?;
-        if let Some(k) = key {
-            self.matrix_cache.insert(k, m.clone());
-        }
-        Ok(m)
+        let v = self.rel_shared(id)?;
+        Ok(self.matrix(v))
     }
 
-    fn rel_uncached(&mut self, id: RelExprId) -> Result<Matrix, TranslateError> {
+    /// [`Encoder::rel`], yielding the value's [`MatrixId`] instead of a copy.
+    ///
+    /// Every matrix is interned **once**, where it is produced, and only its id
+    /// travels afterwards (mt-081). Re-deriving the id at each use site would
+    /// cost `O(cells)` per operand per operation — on an inlining-heavy model
+    /// that walk alone outgrows the encode budget it is meant to save.
+    fn rel_shared(&mut self, id: RelExprId) -> Result<MatrixId, TranslateError> {
+        let key = (id, self.env_key(self.freevars.rel(id)));
+        if let Some(&hit) = self.matrix_cache.get(&key) {
+            return Ok(hit);
+        }
+        self.check_capacity(self.ir.rel_exprs[id].span)?;
+        let hit = self.rel_uncached(id)?;
+        self.matrix_cache.insert(key, hit);
+        Ok(hit)
+    }
+
+    fn rel_uncached(&mut self, id: RelExprId) -> Result<MatrixId, TranslateError> {
         let node = &self.ir.rel_exprs[id];
         match &node.kind {
-            RelExprKind::Relation(rel) => Ok(self.relation_matrix(*rel)),
-            RelExprKind::Var(v) => Ok(self.var_matrix(*v)),
-            RelExprKind::Const(c) => Ok(self.const_matrix(*c)),
+            // A relation's and a constant's matrices depend on nothing but their
+            // own identity, so both the build and the interning are done once
+            // per relation/constant rather than once per referencing node.
+            RelExprKind::Relation(rel) => {
+                let rel = *rel;
+                if let Some(&hit) = self.base_rel_cache.get(&rel) {
+                    return Ok(hit);
+                }
+                let m = self.relation_matrix(rel);
+                let hit = self.intern_matrix(m);
+                self.base_rel_cache.insert(rel, hit);
+                Ok(hit)
+            }
+            RelExprKind::Var(v) => {
+                let m = self.var_matrix(*v);
+                Ok(self.intern_matrix(m))
+            }
+            RelExprKind::Const(c) => {
+                let c = *c;
+                let tag = match c {
+                    RelConst::None => 0u8,
+                    RelConst::Univ => 1,
+                    RelConst::Iden => 2,
+                };
+                if let Some(&hit) = self.base_const_cache.get(&tag) {
+                    return Ok(hit);
+                }
+                let m = self.const_matrix(c);
+                let hit = self.intern_matrix(m);
+                self.base_const_cache.insert(tag, hit);
+                Ok(hit)
+            }
             RelExprKind::Binary { op, lhs, rhs } => {
-                let a = self.rel(*lhs)?;
-                let b = self.rel(*rhs)?;
-                Ok(self.rel_binary(*op, &a, &b))
+                let (op, lhs, rhs) = (*op, *lhs, *rhs);
+                let ka = self.rel_shared(lhs)?;
+                let kb = self.rel_shared(rhs)?;
+                Ok(self.rel_binary(op, ka, kb))
             }
             RelExprKind::Unary { op, expr } => {
-                let a = self.rel(*expr)?;
-                Ok(self.rel_unary(*op, &a))
+                let (op, expr) = (*op, *expr);
+                let ka = self.rel_shared(expr)?;
+                Ok(self.rel_unary(op, ka))
             }
             RelExprKind::IfThenElse {
                 cond,
                 then_branch,
                 else_branch,
             } => {
-                let c = self.formula(*cond)?;
-                let t = self.rel(*then_branch)?;
-                let e = self.rel(*else_branch)?;
-                Ok(self.rel_ite(c, &t, &e))
+                let (cond, then_branch, else_branch) = (*cond, *then_branch, *else_branch);
+                let c = self.formula(cond)?;
+                let t = self.rel(then_branch)?;
+                let e = self.rel(else_branch)?;
+                let m = self.rel_ite(c, &t, &e);
+                Ok(self.intern_matrix(m))
             }
             RelExprKind::Comprehension { decls, body } => {
                 let decls = decls.clone();
                 let body = *body;
-                self.comprehension(&decls, body)
+                let m = self.comprehension(&decls, body)?;
+                Ok(self.intern_matrix(m))
             }
             RelExprKind::IntToAtom(ie) => {
                 let ie = *ie;
@@ -462,11 +646,14 @@ impl<'a> Encoder<'a> {
                 // independent, in every context. Allow mode keeps the wrapped
                 // atom; a non-capable cast (`Int[3]`) carries a constant-false
                 // flag, so the gate folds away.
-                if !self.allow_overflow && crate::overflow_guard::overflow_capable(self.ir, ie) {
-                    Ok(self.empty_on_overflow(&m, of))
+                let m = if !self.allow_overflow
+                    && crate::overflow_guard::overflow_capable(self.ir, ie)
+                {
+                    self.empty_on_overflow(&m, of)
                 } else {
-                    Ok(m)
-                }
+                    m
+                };
+                Ok(self.intern_matrix(m))
             }
             RelExprKind::Prime(_) => Err(TranslateError::LoweringUnsupported {
                 what: "temporal prime (`'`) reached the encoder — a lowering invariant \
@@ -534,25 +721,43 @@ impl<'a> Encoder<'a> {
         }
     }
 
-    fn rel_binary(&mut self, op: RelBinOp, a: &Matrix, b: &Matrix) -> Matrix {
-        match op {
-            RelBinOp::Union => self.union(a, b),
-            RelBinOp::Intersect => self.intersect(a, b),
-            RelBinOp::Diff => self.diff(a, b),
-            RelBinOp::Join => self.join(a, b),
-            RelBinOp::Product => self.product(a, b),
-            RelBinOp::Override => self.override_(a, b),
-        }
+    /// A binary relational operation, shared structurally (mt-081): a second
+    /// call with operands equal to an earlier call's reuses that result.
+    fn rel_binary(&mut self, op: RelBinOp, ka: MatrixId, kb: MatrixId) -> MatrixId {
+        let share = match op {
+            RelBinOp::Union => ShareOp::Union,
+            RelBinOp::Intersect => ShareOp::Intersect,
+            RelBinOp::Diff => ShareOp::Diff,
+            RelBinOp::Join => ShareOp::Join,
+            RelBinOp::Product => ShareOp::Product,
+            RelBinOp::Override => ShareOp::Override,
+        };
+        self.shared(share, ka, kb, |enc, a, b| match op {
+            RelBinOp::Union => enc.union(a, b),
+            RelBinOp::Intersect => enc.intersect(a, b),
+            RelBinOp::Diff => enc.diff(a, b),
+            RelBinOp::Join => enc.join(a, b),
+            RelBinOp::Product => enc.product(a, b),
+            RelBinOp::Override => enc.override_(a, b),
+        })
     }
 
-    fn rel_unary(&mut self, op: RelUnOp, a: &Matrix) -> Matrix {
+    fn rel_unary(&mut self, op: RelUnOp, ka: MatrixId) -> MatrixId {
         match op {
-            RelUnOp::Transpose => transpose(a),
-            RelUnOp::Closure => self.closure(a),
+            // Transposition mints no gates, so sharing it could only add a
+            // lookup; it is excluded from the value cache (the result is still
+            // interned, since its id travels on to the parent).
+            RelUnOp::Transpose => {
+                let m = transpose(&self.matrix(ka));
+                self.intern_matrix(m)
+            }
+            RelUnOp::Closure => self.shared(ShareOp::Closure, ka, ka, |enc, a, _| enc.closure(a)),
             RelUnOp::ReflexiveClosure => {
-                let c = self.closure(a);
-                let iden = self.const_matrix(RelConst::Iden);
-                self.union(&c, &iden)
+                self.shared(ShareOp::ReflexiveClosure, ka, ka, |enc, a, _| {
+                    let c = enc.closure(a);
+                    let iden = enc.const_matrix(RelConst::Iden);
+                    enc.union(&c, &iden)
+                })
             }
         }
     }
@@ -700,12 +905,33 @@ impl<'a> Encoder<'a> {
     }
 
     /// Transitive closure `^r` by iterated squaring (translation-ref §2.1):
-    /// `s₀ = r`, `s_{k+1} = s_k ∪ (s_k . s_k)`. After `⌈log₂ n⌉` rounds `s`
-    /// contains every path of length `1 … 2^k ≥ n-1`, i.e. the full closure over
-    /// an `n`-atom universe. Deterministic and finite.
+    /// `s₀ = r`, `s_{k+1} = s_k ∪ (s_k . s_k)`, so after `k` rounds `s` holds
+    /// every path of length `1 … 2^k`. Deterministic and finite.
+    ///
+    /// **Round count (mt-081).** The bound is `⌈log₂ m⌉` where `m` is the
+    /// operand's **support** — the number of distinct atoms occurring in its
+    /// candidate cells — not the universe size. Every path `^r` can contain
+    /// runs entirely through support atoms, and a *simple* path visits each at
+    /// most once, so no path longer than `m − 1` edges contributes a tuple the
+    /// shorter paths do not already give. `2^⌈log₂ m⌉ ≥ m > m − 1` rounds
+    /// therefore reach the fixpoint; every further squaring computes
+    /// `s ∪ s.s = s`, adding gates that denote nothing new. This mirrors
+    /// Kodkod's matrix-dimension bound; mettle previously used the whole
+    /// universe, which on `tso_transistency_perturbed*` meant 7 rounds over a
+    /// relation supported on 9 atoms (mt-080: 3 of 7 rounds pure waste, 28% of
+    /// that command's encode effort).
+    ///
+    /// A support of 0 or 1 atoms needs no rounds at all: `r` is empty, or its
+    /// only possible tuple is a self-loop, which squaring reproduces.
     fn closure(&mut self, r: &Matrix) -> Matrix {
         debug_assert_eq!(r.arity(), 2, "closure operand must be binary");
-        let rounds = log2_ceil(self.universe_len);
+        let rounds = log2_ceil(support_size(r));
+        debug_assert!(
+            rounds <= log2_ceil(self.universe_len),
+            "closure support {} exceeds the universe {}",
+            support_size(r),
+            self.universe_len
+        );
         let mut s = r.clone();
         for _ in 0..rounds {
             let sq = self.join(&s, &s);
@@ -718,17 +944,13 @@ impl<'a> Encoder<'a> {
 
     /// Encodes a formula to a single boolean value.
     fn formula(&mut self, id: FormulaId) -> Result<Bool, TranslateError> {
-        let key = self.env_key(self.freevars.formula(id)).map(|e| (id, e));
-        if let Some(k) = &key {
-            if let Some(&b) = self.formula_cache.get(k) {
-                return Ok(b);
-            }
+        let key = (id, self.env_key(self.freevars.formula(id)));
+        if let Some(&b) = self.formula_cache.get(&key) {
+            return Ok(b);
         }
         self.check_capacity(self.ir.formulas[id].span)?;
         let b = self.formula_uncached(id)?;
-        if let Some(k) = key {
-            self.formula_cache.insert(k, b);
-        }
+        self.formula_cache.insert(key, b);
         Ok(b)
     }
 
@@ -1024,17 +1246,13 @@ impl<'a> Encoder<'a> {
     /// (`Int[·]`) — matching Kodkod's `DefCond.ensureDef` firing only at
     /// comparisons.
     fn int(&mut self, id: IntExprId) -> Result<(IntVal, Bool), TranslateError> {
-        let key = self.env_key(self.freevars.int(id)).map(|e| (id, e));
-        if let Some(k) = &key {
-            if let Some(v) = self.int_cache.get(k) {
-                return Ok(v.clone());
-            }
+        let key = (id, self.env_key(self.freevars.int(id)));
+        if let Some(v) = self.int_cache.get(&key) {
+            return Ok(v.clone());
         }
         self.check_capacity(self.ir.int_exprs[id].span)?;
         let v = self.int_uncached(id)?;
-        if let Some(k) = key {
-            self.int_cache.insert(k, v.clone());
-        }
+        self.int_cache.insert(key, v.clone());
         Ok(v)
     }
 
@@ -1401,6 +1619,15 @@ fn transpose(a: &Matrix) -> Matrix {
     out
 }
 
+/// The number of distinct atoms occurring in a matrix's candidate cells — the
+/// closure's iteration bound (see [`Encoder::closure`]). Read off the sparse
+/// cell map's `BTreeMap` keys, so it is a pure function of the matrix (STYLE D1).
+fn support_size(m: &Matrix) -> usize {
+    let atoms: std::collections::BTreeSet<AtomId> =
+        m.tuples().flat_map(|t| t.atoms().iter().copied()).collect();
+    atoms.len()
+}
+
 /// `⌈log₂ n⌉` for `n ≥ 1` (0 for `n ≤ 1`) — the closure iteration count.
 fn log2_ceil(n: usize) -> u32 {
     if n <= 1 {
@@ -1423,4 +1650,403 @@ fn gate_intval(cell: Bool, konst: &IntVal) -> IntVal {
         })
         .collect();
     IntVal::from_bits(bits)
+}
+
+#[cfg(test)]
+mod tests {
+    // A test fixture that fails to build has nothing to assert; `expect` is the
+    // right failure mode here, so the crate-level ban is lifted for the module.
+    #![allow(clippy::expect_used)]
+
+    use std::collections::BTreeSet;
+    use std::fmt::Write as _;
+
+    use super::*;
+    use crate::bounds::Universe;
+    use crate::solve::SolveOptions;
+
+    /// A bare encoder over an `n`-atom universe with no relations bound — enough
+    /// to exercise the matrix-level operators directly.
+    fn bare_encoder(n: usize) -> (Ir, Bounds, PrimaryMap) {
+        let names: Vec<String> = (0..n).map(|i| format!("A${i}")).collect();
+        (
+            Ir::default(),
+            Bounds::new(Universe::new(names)),
+            BTreeMap::new(),
+        )
+    }
+
+    fn encoder<'a>(ir: &'a Ir, bounds: &'a Bounds, prim: &'a PrimaryMap) -> Encoder<'a> {
+        Encoder::new(
+            ir,
+            bounds,
+            prim,
+            Cnf::new(),
+            0,
+            bounds.universe.len(),
+            SolveOptions::default(),
+            None,
+            None,
+            None,
+        )
+    }
+
+    /// A binary matrix of constant-true cells for each edge in `edges`.
+    fn edge_matrix(edges: &[(usize, usize)]) -> Matrix {
+        let mut m = Matrix::empty(2);
+        for &(a, b) in edges {
+            m.set(
+                Tuple::new(vec![AtomId::from_index(a), AtomId::from_index(b)]),
+                Bool::TRUE,
+            );
+        }
+        m
+    }
+
+    /// Brute-force transitive closure by repeated relaxation — the oracle for
+    /// [`Encoder::closure`]'s squaring (deliberately a different algorithm).
+    fn brute_closure(edges: &[(usize, usize)]) -> BTreeSet<(usize, usize)> {
+        let mut set: BTreeSet<(usize, usize)> = edges.iter().copied().collect();
+        loop {
+            let mut grown = set.clone();
+            for &(a, b) in &set {
+                for &(c, d) in &set {
+                    if b == c {
+                        grown.insert((a, d));
+                    }
+                }
+            }
+            if grown.len() == set.len() {
+                return set;
+            }
+            set = grown;
+        }
+    }
+
+    fn closure_tuples(n: usize, edges: &[(usize, usize)]) -> BTreeSet<(usize, usize)> {
+        let (ir, bounds, prim) = bare_encoder(n);
+        let mut enc = encoder(&ir, &bounds, &prim);
+        let out = enc.closure(&edge_matrix(edges));
+        out.iter()
+            .filter(|(_, b)| matches!(b, Bool::Const(true)))
+            .map(|(t, _)| (t.atoms()[0].index(), t.atoms()[1].index()))
+            .collect()
+    }
+
+    /// `SplitMix64` — a seeded, portable generator, so the randomized cases are
+    /// the same on every machine and every run (STYLE D4/U5).
+    struct SplitMix64(u64);
+
+    impl SplitMix64 {
+        fn next(&mut self) -> u64 {
+            self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = self.0;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^ (z >> 31)
+        }
+    }
+
+    // ------------------------------------------------------- closure bound
+
+    #[test]
+    fn log2_ceil_is_the_smallest_covering_power_of_two() {
+        assert_eq!(log2_ceil(0), 0);
+        assert_eq!(log2_ceil(1), 0);
+        assert_eq!(log2_ceil(2), 1);
+        assert_eq!(log2_ceil(3), 2);
+        assert_eq!(log2_ceil(4), 2);
+        assert_eq!(log2_ceil(5), 3);
+        assert_eq!(log2_ceil(9), 4);
+    }
+
+    #[test]
+    fn support_size_counts_atoms_not_cells() {
+        // Two tuples over three distinct atoms.
+        assert_eq!(support_size(&edge_matrix(&[(0, 1), (1, 2)])), 3);
+        // A self-loop is one atom, however many cells precede it.
+        assert_eq!(support_size(&edge_matrix(&[(4, 4)])), 1);
+        // Negative space: the empty matrix has no support at all.
+        assert_eq!(support_size(&Matrix::empty(2)), 0);
+    }
+
+    /// Exhaustive: every binary relation over 1..=4 atoms. The squaring closure
+    /// must agree with the relaxation oracle tuple for tuple.
+    #[test]
+    fn closure_matches_brute_force_exhaustively() {
+        for n in 1..=4usize {
+            let cells = n * n;
+            for mask in 0u32..(1u32 << cells) {
+                let edges: Vec<(usize, usize)> = (0..cells)
+                    .filter(|i| mask & (1 << i) != 0)
+                    .map(|i| (i / n, i % n))
+                    .collect();
+                assert_eq!(
+                    closure_tuples(n, &edges),
+                    brute_closure(&edges),
+                    "closure mismatch at n={n} mask={mask:#x}"
+                );
+            }
+        }
+    }
+
+    /// Randomized, at sizes the exhaustive sweep cannot reach — including the
+    /// scope-9 shape the mt-080 probe measured on `tso_transistency_perturbed*`.
+    #[test]
+    fn closure_matches_brute_force_on_random_matrices() {
+        let mut rng = SplitMix64(0x5EED_0080_0081);
+        for n in [5usize, 7, 9, 12] {
+            for _ in 0..60 {
+                let density = rng.next() % 100;
+                let mut edges = Vec::new();
+                for a in 0..n {
+                    for b in 0..n {
+                        if rng.next() % 100 < density {
+                            edges.push((a, b));
+                        }
+                    }
+                }
+                assert_eq!(
+                    closure_tuples(n, &edges),
+                    brute_closure(&edges),
+                    "closure mismatch at n={n} edges={edges:?}"
+                );
+            }
+        }
+    }
+
+    /// The support bound is never *looser* than the old universe bound, so it can
+    /// only remove rounds — and it never removes a needed one (checked above).
+    #[test]
+    fn support_bound_never_exceeds_the_universe_bound() {
+        let m = edge_matrix(&[(0, 1), (1, 2), (2, 0)]);
+        assert!(log2_ceil(support_size(&m)) <= log2_ceil(64));
+        // A relation supported on 9 atoms needs 4 rounds, not the 7 a 71-atom
+        // universe would have demanded (mt-080, `tso_transistency_perturbed`).
+        let dense: Vec<(usize, usize)> = (0..9).flat_map(|a| (0..9).map(move |b| (a, b))).collect();
+        assert_eq!(log2_ceil(support_size(&edge_matrix(&dense))), 4);
+        assert_eq!(log2_ceil(71), 7);
+    }
+
+    // ---------------------------------------------------- content interning
+
+    #[test]
+    fn interning_identifies_exactly_the_structurally_equal() {
+        let (ir, bounds, prim) = bare_encoder(4);
+        let mut enc = encoder(&ir, &bounds, &prim);
+        let a = edge_matrix(&[(0, 1), (1, 2)]);
+        // Built independently, in a different insertion order.
+        let b = edge_matrix(&[(1, 2), (0, 1)]);
+        let ka = enc.intern_matrix(a.clone());
+        assert_eq!(ka, enc.intern_matrix(b));
+        // Negative space: one differing cell must not share an id.
+        let c = edge_matrix(&[(0, 1), (1, 3)]);
+        assert_ne!(ka, enc.intern_matrix(c));
+        // Negative space: a differing *cell value* at the same tuples.
+        let scratch = enc.cnf.fresh_var();
+        let mut d = Matrix::empty(2);
+        d.set(
+            Tuple::new(vec![AtomId::from_index(0), AtomId::from_index(1)]),
+            Bool::TRUE,
+        );
+        d.set(
+            Tuple::new(vec![AtomId::from_index(1), AtomId::from_index(2)]),
+            Bool::var(scratch),
+        );
+        assert_ne!(ka, enc.intern_matrix(d));
+        // Negative space: the same cells at a different arity.
+        let mut unary = Matrix::empty(1);
+        unary.set(Tuple::new(vec![AtomId::from_index(0)]), Bool::TRUE);
+        let ku = enc.intern_matrix(unary.clone());
+        assert_eq!(ku, enc.intern_matrix(unary));
+        assert_ne!(ku, ka);
+        // The id round-trips back to the value it was minted for.
+        let round: Vec<(Tuple, Bool)> =
+            enc.matrix(ka).iter().map(|(t, v)| (t.clone(), v)).collect();
+        let want: Vec<(Tuple, Bool)> = a.iter().map(|(t, v)| (t.clone(), v)).collect();
+        assert_eq!(round, want, "an id must denote the matrix it interned");
+    }
+
+    #[test]
+    fn a_cell_key_never_aliases_across_bool_shapes() {
+        assert_ne!(cell_key(Bool::TRUE), cell_key(Bool::FALSE));
+        let mut cnf = Cnf::new();
+        let v0 = cnf.fresh_var();
+        assert_ne!(cell_key(Bool::var(v0)), cell_key(Bool::TRUE));
+        assert_ne!(cell_key(Bool::var(v0)), cell_key(Bool::FALSE));
+        assert_ne!(
+            cell_key(Bool::Lit(als_solve::Lit::positive(v0))),
+            cell_key(Bool::Lit(als_solve::Lit::negative(v0)))
+        );
+    }
+
+    // --------------------------------------------------- value-cache sharing
+
+    /// Two structurally-identical joins share one result — the same cells, and
+    /// crucially the same Tseitin auxiliaries (no second, parallel gate set).
+    #[test]
+    fn identical_operations_share_one_result() {
+        let (ir, bounds, prim) = bare_encoder(4);
+        let mut enc = encoder(&ir, &bounds, &prim);
+        // Variable cells, so the join actually mints gates.
+        let mut a = Matrix::empty(2);
+        let mut b = Matrix::empty(2);
+        for i in 0..4u32 {
+            let v = enc.cnf.fresh_var();
+            a.set(
+                Tuple::new(vec![AtomId::from_index(0), AtomId::from_index(i as usize)]),
+                Bool::var(v),
+            );
+            let w = enc.cnf.fresh_var();
+            b.set(
+                Tuple::new(vec![AtomId::from_index(i as usize), AtomId::from_index(1)]),
+                Bool::var(w),
+            );
+        }
+        let ka = enc.intern_matrix(a);
+        let kb = enc.intern_matrix(b);
+        let first = enc.rel_binary(RelBinOp::Join, ka, kb);
+        let vars_after_first = enc.cnf.num_vars();
+        let clauses_after_first = enc.cnf.clauses().len();
+        let second = enc.rel_binary(RelBinOp::Join, ka, kb);
+        // The identical value, cell for cell and literal for literal.
+        assert_eq!(
+            first, second,
+            "a shared join must return the identical value"
+        );
+        let f: Vec<(Tuple, Bool)> = enc
+            .matrix(first)
+            .iter()
+            .map(|(t, v)| (t.clone(), v))
+            .collect();
+        let s: Vec<(Tuple, Bool)> = enc
+            .matrix(second)
+            .iter()
+            .map(|(t, v)| (t.clone(), v))
+            .collect();
+        assert_eq!(f, s, "a shared join must return the identical literals");
+        assert_eq!(
+            enc.cnf.num_vars(),
+            vars_after_first,
+            "sharing minted a variable"
+        );
+        assert_eq!(
+            enc.cnf.clauses().len(),
+            clauses_after_first,
+            "sharing emitted a clause"
+        );
+    }
+
+    /// Negative space: different operands, or the same operands under a
+    /// different operator, must never collide in the value cache.
+    #[test]
+    fn distinct_operations_never_share() {
+        let (ir, bounds, prim) = bare_encoder(4);
+        let mut enc = encoder(&ir, &bounds, &prim);
+        let ka = enc.intern_matrix(edge_matrix(&[(0, 1), (1, 2)]));
+        let kb = enc.intern_matrix(edge_matrix(&[(1, 2), (2, 3)]));
+        let union = enc.rel_binary(RelBinOp::Union, ka, kb);
+        let inter = enc.rel_binary(RelBinOp::Intersect, ka, kb);
+        assert_ne!(union, inter, "union and intersect collided");
+        assert_ne!(
+            enc.matrix(union).len(),
+            enc.matrix(inter).len(),
+            "union and intersect produced the same value"
+        );
+        // A unary entry must not alias the binary entry with the same operand.
+        let clo = enc.rel_unary(RelUnOp::Closure, ka);
+        let refl = enc.rel_unary(RelUnOp::ReflexiveClosure, ka);
+        assert_ne!(clo, refl, "^r and *r collided");
+        assert!(
+            enc.matrix(refl).len() > enc.matrix(clo).len(),
+            "*r lost iden"
+        );
+        // Order matters for a non-commutative operator.
+        let ab = enc.rel_binary(RelBinOp::Join, ka, kb);
+        let ba = enc.rel_binary(RelBinOp::Join, kb, ka);
+        assert_ne!(ab, ba, "a.b and b.a collided");
+    }
+
+    // ------------------------------------------------------ whole-pipeline
+
+    /// The mt-080 shape in miniature: one `pred` with a relation-valued
+    /// parameter, whose body closes over that parameter, called from many sites.
+    /// `lower` inlines each call into fresh arena nodes, so without structural
+    /// sharing the encoder computes the identical `^x` once per call site.
+    fn inlining_model(call_sites: usize, scope: usize) -> String {
+        let mut src = String::from("sig E { r: set E, q: set E }\n");
+        src.push_str("pred acyclic[x: E->E] { no iden & ^x }\n");
+        src.push_str("fun ident[e: univ] : univ->univ { iden & e->e }\n");
+        for i in 0..call_sites {
+            let _ = writeln!(
+                src,
+                "pred p{i} {{ acyclic[r] and acyclic[q] and (r & ident[E]) in q }}"
+            );
+        }
+        let calls: Vec<String> = (0..call_sites).map(|i| format!("p{i}")).collect();
+        let _ = writeln!(src, "run {{ {} }} for {scope}", calls.join(" and "));
+        src
+    }
+
+    /// Translates command 0 of `src` under `budget`, returning the CNF shape.
+    fn translate_at(
+        src: &str,
+        budget: Option<u64>,
+    ) -> Result<(u32, Vec<Vec<als_solve::Lit>>), TranslateError> {
+        let loader = als_types::MapLoader::new().with("root.als", src);
+        let graph = als_types::ModuleGraph::load("root.als", &loader).expect("load");
+        let world = als_types::resolve(&graph).expect("resolve").world;
+        let scoped = crate::compute_universe(&world, &graph, &world.commands[0]).expect("universe");
+        let mut ir = Ir::default();
+        let bounds = crate::compute_bounds(&world, &scoped, &mut ir);
+        let goal =
+            crate::lower_command(&world, &graph, &scoped, &bounds, &mut ir, 0).expect("lower");
+        let opts = SolveOptions {
+            encode_budget: budget,
+            ..SolveOptions::default()
+        };
+        let t = crate::solve::translate(&ir, &scoped, &goal, &bounds, None, opts)?;
+        Ok((t.cnf.num_vars(), t.cnf.clauses().to_vec()))
+    }
+
+    /// Structural sharing keeps a heavily-inlined model inside a budget that the
+    /// per-call-site re-encoding blows through.
+    ///
+    /// The bound is calibrated against the mt-080 probe, which measured 242
+    /// arena-distinct copies of the same handful of closures on
+    /// `tso_transistency_perturbed_minimality_check.als[6]` — 16.6M of 25.5M
+    /// encode ops spent recomputing values already in hand. Here the same shape
+    /// is reproduced with 24 call sites; with sharing the encode lands far under
+    /// the budget, without it the repeated `^x` alone runs past it.
+    #[test]
+    fn structural_sharing_keeps_an_inlining_heavy_model_in_budget() {
+        let src = inlining_model(24, 8);
+        assert!(
+            translate_at(&src, Some(400_000)).is_ok(),
+            "the inlining-heavy model must encode inside the mt-081 budget"
+        );
+        // Negative space: the budget is genuinely binding, not vacuous — the
+        // same model fails at a budget below what even the shared encode costs.
+        assert!(matches!(
+            translate_at(&src, Some(2_000)),
+            Err(TranslateError::CapacityExceeded { .. })
+        ));
+    }
+
+    /// Two independent translations of one model produce byte-identical CNF —
+    /// variable count, clause count, and every literal in order (STYLE D1/U4).
+    /// Sharing mints *fewer* auxiliaries than before, but always the same ones.
+    #[test]
+    fn translation_is_byte_identical_across_runs() {
+        for src in [
+            &inlining_model(6, 5)[..],
+            "sig A { f: set A }\nrun { some f and no iden & ^f } for 4\n",
+            "sig N { nxt: lone N }\nfact { all n: N | n in N.^nxt implies some n.nxt }\nrun { some nxt } for 5\n",
+        ] {
+            let first = translate_at(src, None).expect("translate");
+            let second = translate_at(src, None).expect("translate");
+            assert_eq!(first.0, second.0, "variable count drifted between runs");
+            assert_eq!(first.1, second.1, "CNF clauses drifted between runs");
+        }
+    }
 }
