@@ -1,4 +1,16 @@
-# The combined feature-complete review (v0.1.0)
+# The combined feature-complete review (v0.1.0) — DONE: BLESSED
+
+> **Verdict (owner, 2026-07-28): all parts pass.** Part 1 (fresh install →
+> visualized instance) passed via the brew channel; parts 2–3 (the temporal
+> walk and the frontend) passed on the fresh install using self-contained
+> demo models; part 4 was decided mid-review (Option B →
+> mt-077/[LEDGER-015](../SEMANTICS_LEDGER.md)). Findings raised and fixed
+> along the way: the favicon 404 (fixed, `d1d9047`); questions raised and
+> answered as expected-behavior: serve's multi-command disambiguation, the
+> empty final state of the counterexample trace. Consequences recorded:
+> [ADR-0015](adr/0015-rung6-temporal-architecture.md) → **Accepted**, Rungs
+> 5 and 6 exited ([ROADMAP.md](ROADMAP.md)), v0.1.1 cut with the mid-review
+> fixes. This doc is retired history from here.
 
 > The one batched human review that replaced per-rung gating (owner decision,
 > 2026-07-27, [ADR-0016](adr/0016-rung5-remainder-serve-xml-packaging.md)

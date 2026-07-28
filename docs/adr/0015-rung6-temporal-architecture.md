@@ -1,7 +1,12 @@
 # ADR-0015 — Rung-6 temporal architecture: bounded lasso solving on the existing engine
 
-**Status:** Proposed · **Date:** 2026-07-26 · **Beads:** mt-063/mt-064 (the
-pinned contract, [reference/alloy6-temporal.md](../reference/alloy6-temporal.md)),
+**Status:** Accepted (2026-07-28, owner-blessed at the combined
+feature-complete review, [REVIEW-v0.1.0.md](../REVIEW-v0.1.0.md) — the
+temporal walk passed as scripted; the `check … for 1 steps` fork attached
+to this rung was decided separately mid-review, owner Option B →
+mt-077/[LEDGER-015](../../SEMANTICS_LEDGER.md)) · **Date:** 2026-07-26 ·
+**Beads:** mt-063/mt-064 (the pinned contract,
+[reference/alloy6-temporal.md](../reference/alloy6-temporal.md)),
 mt-065–mt-069 (implementation, cut below)
 
 ## Context

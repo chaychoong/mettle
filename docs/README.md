@@ -4,7 +4,7 @@ Every doc in the project is reachable from here. Nothing is orphaned. Superseded
 
 ## Live state (always current)
 - **[STATE.md](STATE.md)** — where we are right now; read this first on pickup.
-- **[REVIEW-v0.1.0.md](REVIEW-v0.1.0.md)** — the pending combined feature-complete review: the owner's copy-paste test script (release channels, Rung-6 gate, frontend; the `check … for 1 steps` fork was decided early — LEDGER-015/mt-077). One-shot; folded into STATE and marked done after the review.
+- **[REVIEW-v0.1.0.md](REVIEW-v0.1.0.md)** — the combined feature-complete review, **done: blessed 2026-07-28** (all parts passed; ADR-0015 → Accepted, Rungs 5+6 exited; the `check … for 1 steps` fork decided mid-review — LEDGER-015/mt-077). Kept as the review record.
 - **[ROADMAP.md](ROADMAP.md)** — the North Star and the human-testable rungs.
 - **[TASKS.md](TASKS.md)** — beads-style task ledger.
 
