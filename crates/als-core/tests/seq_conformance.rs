@@ -470,3 +470,300 @@ fn seqrel_shift_lookup_is_empty_at_the_order_boundary() {
         "some i: sr/SeqIdx | not lone i.(sr/delete[(i0->A)+(i1->B)+(i2->C), i1])"
     ));
 }
+
+// --------------------- mt-085: the same defects in sequence ------------------
+// `util/sequence` carried the mt-084 pair a third time — `rest`'s and `insert`'s
+// shifted lookups were spelled `i.(ord/next) -> e in s.seqElems`, vacuously true
+// at the order boundary, and `insert` shifted on `gte`. Because this module's
+// operations are PREDS relating an input and an output `Seq` atom whose field is
+// `SeqIdx -> lone elem`, the vacuous term made the whole pred unsatisfiable
+// rather than merely wrong-valued.
+//
+// The jar round that pinned it (`scratchpad/probe/mt085/`) also found that these
+// preds are TOTAL nowhere: `rest` of an empty sequence, `add`/`insert` without
+// room, an overflowing `append`, and an out-of-range or inverted `subseq` window
+// are all UNSAT in the jar, where the clean-room comprehensions silently
+// truncated. Every expected value below is a jar constant from those probes
+// (`EvalProbe`, `for 3 but 5 Seq`). Jar-free at test time.
+
+/// Three named element atoms, three named `SeqIdx` handles reached through the
+/// root's own `open util/ordering[SeqIdx]` (Alloy shares one module instance per
+/// parameter, so `o/next` is `sq`'s own order), and one `H` atom holding the
+/// input/output `Seq` handles.
+const SEQUENCE_GROUND: &str = "open util/sequence[E] as sq\nopen util/ordering[SeqIdx] as o\n\
+     abstract sig E {}\none sig A, B, C extends E {}\n\
+     one sig H { s: one Seq, t: one Seq, r: one Seq }\n\
+     fun i0: SeqIdx { o/first }\n\
+     fun i1: SeqIdx { o/first.(o/next) }\n\
+     fun i2: SeqIdx { o/first.(o/next).(o/next) }\n";
+
+/// Solves a ground `util/sequence` body over a 3-atom `SeqIdx` order with room
+/// for five distinct `Seq` atoms — the probe scope.
+fn sequence_ground(body: &str) -> bool {
+    solve(&format!(
+        "{SEQUENCE_GROUND}run {{ {body} }} for 3 but 5 Seq\n"
+    ))
+}
+
+#[test]
+fn sequence_rest_shift_lookup_is_empty_at_the_order_boundary() {
+    // Probe mt085-p1 rows 0/1/2. Pre-fix all three were UNSAT: `none -> e in
+    // s.seqElems` is vacuously true, so the last index held A, B and C at once,
+    // which `seqElems: SeqIdx -> lone elem` forbids. Note row 2 — a single
+    // element is NOT immune here, contra the mt-084 P4 prediction, because the
+    // spurious `{i2->A}` also breaks the contiguous-prefix sig fact.
+    assert!(sequence_ground(
+        "H.s.seqElems = i0->A + i1->B + i2->C and sq/rest[H.s, H.r] and H.r.seqElems = i0->B + i1->C"
+    ));
+    assert!(sequence_ground(
+        "H.s.seqElems = i0->A + i1->B and sq/rest[H.s, H.r] and H.r.seqElems = i0->B"
+    ));
+    assert!(sequence_ground(
+        "H.s.seqElems = i0->A and sq/rest[H.s, H.r] and no H.r.seqElems"
+    ));
+    // Negative space (row 3): `rest` of an empty sequence is FALSE, not a
+    // no-op — the opposite polarity, and the pre-fix `isEmpty[s] => isEmpty[r]`
+    // branch made it SAT.
+    assert!(!sequence_ground("no H.s.seqElems and sq/rest[H.s, H.r]"));
+}
+
+#[test]
+fn sequence_insert_shifts_strictly_past_the_index() {
+    // Probe mt085-p1 rows 4/5/6/9 and mt085-p2 row 2. Pre-fix every one was
+    // UNSAT: `gte` put both the new element and the shifted old one at `idx`,
+    // and at `idx = ord/first` the `-> x in` lookup was additionally vacuous.
+    assert!(sequence_ground(
+        "H.s.seqElems = i0->A + i1->B and sq/insert[H.s, i0, C, H.r] \
+         and H.r.seqElems = i0->C + i1->A + i2->B"
+    ));
+    assert!(sequence_ground(
+        "H.s.seqElems = i0->A + i1->B and sq/insert[H.s, i1, C, H.r] \
+         and H.r.seqElems = i0->A + i1->C + i2->B"
+    ));
+    assert!(sequence_ground(
+        "H.s.seqElems = i0->A + i1->B and sq/insert[H.s, i2, C, H.r] \
+         and H.r.seqElems = i0->A + i1->B + i2->C"
+    ));
+    assert!(sequence_ground(
+        "no H.s.seqElems and sq/insert[H.s, i0, A, H.r] and H.r.seqElems = i0->A"
+    ));
+    assert!(sequence_ground(
+        "H.s.seqElems = i0->A and sq/insert[H.s, i1, B, H.r] and H.r.seqElems = i0->A + i1->B"
+    ));
+    // Duplicates are preserved, not collapsed (mt085-p2 row 3).
+    assert!(sequence_ground(
+        "H.s.seqElems = i0->A + i1->A and sq/insert[H.s, i0, A, H.r] \
+         and H.r.seqElems = i0->A + i1->A + i2->A"
+    ));
+}
+
+#[test]
+fn sequence_insert_and_add_need_room() {
+    // mt085-p1 row 7 and mt085-p2 rows 0/1: inserting anywhere into a FULL
+    // sequence is UNSAT — the jar does not truncate the way util/sequniv's
+    // `insert` does. Pre-fix, `insert` at a middle index of a full sequence was
+    // SAT with a silently truncated result.
+    assert!(!sequence_ground(
+        "H.s.seqElems = i0->A + i1->B + i2->C and sq/insert[H.s, i0, A, H.r]"
+    ));
+    assert!(!sequence_ground(
+        "H.s.seqElems = i0->A + i1->B + i2->C and sq/insert[H.s, i1, A, H.r]"
+    ));
+    assert!(!sequence_ground(
+        "H.s.seqElems = i0->A + i1->B + i2->C and sq/insert[H.s, i2, A, H.r]"
+    ));
+    // mt085-p1 row 8: an index past `afterLastIdx` is rejected outright.
+    assert!(!sequence_ground(
+        "H.s.seqElems = i0->A and sq/insert[H.s, i2, B, H.r]"
+    ));
+    // mt085-p1 row 14: `add` to a full sequence is UNSAT, not the no-op that
+    // dropping `none -> e` produced pre-fix. Row 13 is the positive control.
+    assert!(!sequence_ground(
+        "H.s.seqElems = i0->A + i1->B + i2->C and sq/add[H.s, A, H.r]"
+    ));
+    assert!(sequence_ground(
+        "H.s.seqElems = i0->A and sq/add[H.s, B, H.r] and H.r.seqElems = i0->A + i1->B"
+    ));
+}
+
+#[test]
+fn sequence_setat_extends_at_the_first_free_index() {
+    // mt085-p2 rows 18/19: `setAt`'s guard is `inds + afterLastIdx`, the same as
+    // `insert`'s — writing at the first FREE index appends. The pre-fix `idx in
+    // inds[s]` guard made both of these UNSAT.
+    assert!(sequence_ground(
+        "H.s.seqElems = i0->A + i1->B and sq/setAt[H.s, i2, C, H.r] \
+         and H.r.seqElems = i0->A + i1->B + i2->C"
+    ));
+    assert!(sequence_ground(
+        "no H.s.seqElems and sq/setAt[H.s, i0, A, H.r] and H.r.seqElems = i0->A"
+    ));
+    // Negative space (mt085-p1 row 16): one past that is still rejected, so the
+    // guard is not simply dropped.
+    assert!(!sequence_ground(
+        "H.s.seqElems = i0->A and sq/setAt[H.s, i2, B, H.r]"
+    ));
+    // Overwriting in place is unaffected (mt085-p1 row 15).
+    assert!(sequence_ground(
+        "H.s.seqElems = i0->A + i1->B + i2->C and sq/setAt[H.s, i1, A, H.r] \
+         and H.r.seqElems = i0->A + i1->A + i2->C"
+    ));
+}
+
+#[test]
+fn sequence_append_must_fit_end_to_end() {
+    // mt085-p1 rows 19/20: an append that would run past the last `SeqIdx` is
+    // UNSAT. Pre-fix both were SAT with a truncated result, and row 20 (a FULL
+    // first argument, whose `afterLastIdx` is empty so `#(ord/prevs[none])` is
+    // 0) silently restarted the second sequence at index 0 on top of the first.
+    assert!(!sequence_ground(
+        "H.s.seqElems = i0->A + i1->B and H.t.seqElems = i0->C + i1->A and sq/append[H.s, H.t, H.r]"
+    ));
+    assert!(!sequence_ground(
+        "H.s.seqElems = i0->A + i1->B + i2->C and H.t.seqElems = i0->A \
+         and sq/append[H.s, H.t, H.r]"
+    ));
+    // Positive controls: mt085-p1 row 18 and mt085-p2 row 5 fit exactly.
+    assert!(sequence_ground(
+        "H.s.seqElems = i0->A and H.t.seqElems = i0->B + i1->C and sq/append[H.s, H.t, H.r] \
+         and H.r.seqElems = i0->A + i1->B + i2->C"
+    ));
+    assert!(sequence_ground(
+        "H.s.seqElems = i0->A + i1->B and H.t.seqElems = i0->C and sq/append[H.s, H.t, H.r] \
+         and H.r.seqElems = i0->A + i1->B + i2->C"
+    ));
+}
+
+#[test]
+fn sequence_subseq_window_must_be_occupied_and_ordered() {
+    // mt085-p1 row 24 and mt085-p2 rows 9/11: an inverted window, a `to` past
+    // the end, and any window on an empty sequence are all UNSAT — pre-fix each
+    // was SAT, quietly yielding a clamped or empty result.
+    assert!(!sequence_ground(
+        "H.s.seqElems = i0->A + i1->B + i2->C and sq/subseq[H.s, H.r, i2, i0]"
+    ));
+    assert!(!sequence_ground(
+        "H.s.seqElems = i0->A + i1->B and sq/subseq[H.s, H.r, i0, i2]"
+    ));
+    assert!(!sequence_ground(
+        "no H.s.seqElems and sq/subseq[H.s, H.r, i0, i0]"
+    ));
+    // Positive controls (mt085-p1 rows 22/23, mt085-p2 row 8).
+    assert!(sequence_ground(
+        "H.s.seqElems = i0->A + i1->B + i2->C and sq/subseq[H.s, H.r, i1, i2] \
+         and H.r.seqElems = i0->B + i1->C"
+    ));
+    assert!(sequence_ground(
+        "H.s.seqElems = i0->A + i1->B + i2->C and sq/subseq[H.s, H.r, i1, i1] \
+         and H.r.seqElems = i0->B"
+    ));
+}
+
+#[test]
+fn sequence_copy_constrains_only_the_landing_range() {
+    // mt085-p2 rows 13/14/16: `copy` is a one-way constraint, not an equality —
+    // it pins `dest` where the copy lands and leaves the rest of `dest` free, so
+    // its output is deliberately NON-unique (row 14 is SAT, unlike every other
+    // operation's uniqueness probe). The pre-fix equality body made all of these
+    // UNSAT.
+    assert!(sequence_ground(
+        "H.s.seqElems = i0->A and sq/copy[H.s, H.r, i0] and H.r.seqElems = i0->A + i1->B"
+    ));
+    assert!(sequence_ground(
+        "H.s.seqElems = i0->A and (some disj r1, r2: Seq | sq/copy[H.s, r1, i0] and sq/copy[H.s, r2, i0])"
+    ));
+    assert!(sequence_ground(
+        "H.s.seqElems = i0->A and sq/copy[H.s, H.r, i1] and H.r.seqElems = i0->C + i1->A"
+    ));
+    // Negative space: "free outside the landing range" is not "free anywhere" —
+    // a wrong value INSIDE the range is still rejected (mt085-p7 row 11), and a
+    // copy that would run past the last index is UNSAT rather than truncated
+    // (mt085-p1 row 28).
+    assert!(!sequence_ground(
+        "H.s.seqElems = i0->A + i1->B and sq/copy[H.s, H.r, i0] and H.r.seqElems = i0->B + i1->A"
+    ));
+    assert!(!sequence_ground(
+        "H.s.seqElems = i0->A + i1->B + i2->C and sq/copy[H.s, H.r, i1]"
+    ));
+}
+
+#[test]
+fn sequence_hasdups_is_per_sequence() {
+    // mt085-p2 rows 25/26. Pre-fix `hasDups` went through a `Seq`-receiver
+    // `noDuplicates` whose body read the bare field `seqElems` — the WHOLE
+    // `Seq -> SeqIdx -> elem` relation, not `this.seqElems` — so a
+    // duplicate-free sequence still "had duplicates" as soon as a second `Seq`
+    // atom shared an element with it.
+    assert!(sequence_ground(
+        "H.s.seqElems = i0->A + i1->A and sq/hasDups[H.s]"
+    ));
+    assert!(!sequence_ground(
+        "H.s.seqElems = i0->A + i1->B + i2->C and sq/hasDups[H.s]"
+    ));
+}
+
+#[test]
+fn sequence_zero_ary_preds_are_global() {
+    // §7.5 and probe mt085-p3: `noDuplicates` / `allExist` /
+    // `allExistNoDuplicates` are 0-ARY, not `Seq`-receiver preds. The jar
+    // type-rejects every receiver-style call and accepts only the bare name, so
+    // pre-fix — where they were declared `pred Seq.noDuplicates ()` — the bodies
+    // below did not even resolve.
+    //
+    // `noDuplicates` binds every `Seq` atom (mt085-p3 rows 1/2, and row 6 with
+    // a single `Seq` atom in scope).
+    assert!(!sequence_ground(
+        "H.s.seqElems = i0->A + i1->A and sq/noDuplicates"
+    ));
+    assert!(sequence_ground("H.s.seqElems = i0->A + i1->A"));
+    assert!(sequence_ground(
+        "H.s.seqElems = i0->A + i1->B + i2->C and sq/noDuplicates"
+    ));
+}
+
+#[test]
+fn sequence_allexist_realises_every_sequence() {
+    // Probe mt085-p5, the exact-scope counting round: with `canonicalizeSeqs`
+    // supplying uniqueness, `allExist` supplies EXISTENCE — every sequence over
+    // (`SeqIdx`, `elem`) is realised by some `Seq` atom, so the model is
+    // satisfiable at exactly `sum_{j=0..k} n^j` atoms and UNSAT one below it.
+    // For k = 2 indices, n = 2 elems that count is 7; for n = 1 it is 3.
+    //
+    // These scopes must be `exactly` on all three sigs: `util/ordering` already
+    // pins `SeqIdx`, but a loose `elem` scope lets the solver shrink the
+    // universe and everything comes back SAT regardless (probe round 4).
+    let allexist = |scope: &str| {
+        solve(&format!(
+            "open util/sequence[E] as sq\nsig E {{}}\nrun {{ sq/allExist }} for 6 int, {scope}\n"
+        ))
+    };
+    assert!(allexist("exactly 2 SeqIdx, exactly 2 E, exactly 7 Seq"));
+    assert!(!allexist("exactly 2 SeqIdx, exactly 2 E, exactly 6 Seq"));
+    assert!(allexist("exactly 2 SeqIdx, exactly 1 E, exactly 3 Seq"));
+    assert!(!allexist("exactly 2 SeqIdx, exactly 1 E, exactly 2 Seq"));
+
+    // `allExistNoDuplicates` is the same closure restricted to duplicate-free
+    // sequences (5 of them at k = n = 2) AND `noDuplicates` on top — without the
+    // second conjunct, five duplicate-free atoms plus one duplicate-carrying one
+    // would satisfy `exactly 6 Seq`, which the jar reports UNSAT.
+    let aend = |scope: &str| {
+        solve(&format!(
+            "open util/sequence[E] as sq\nsig E {{}}\n\
+             run {{ sq/allExistNoDuplicates }} for 6 int, {scope}\n"
+        ))
+    };
+    assert!(aend("exactly 2 SeqIdx, exactly 2 E, exactly 5 Seq"));
+    assert!(!aend("exactly 2 SeqIdx, exactly 2 E, exactly 4 Seq"));
+    assert!(!aend("exactly 2 SeqIdx, exactly 2 E, exactly 6 Seq"));
+
+    // The control that makes the counts above meaningful: without the pred,
+    // 6 atoms are fine (`canonicalizeSeqs` only caps the count at 7) and 8 are
+    // not (mt085-p5 rows 16/17).
+    let plain = |scope: &str| {
+        solve(&format!(
+            "open util/sequence[E] as sq\nsig E {{}}\nrun {{}} for 6 int, {scope}\n"
+        ))
+    };
+    assert!(plain("exactly 2 SeqIdx, exactly 2 E, exactly 6 Seq"));
+    assert!(!plain("exactly 2 SeqIdx, exactly 2 E, exactly 8 Seq"));
+}
