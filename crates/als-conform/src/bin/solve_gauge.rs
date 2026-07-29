@@ -81,8 +81,8 @@ fn print_usage() {
          \x20\x20--from-buckets B1,B2   re-run only files with a command in these buckets (+ files absent from PATH)\n\
          \x20\x20--symmetry N           stage-1 (verdict net) symmetry cap (default 20; 0 = no SBP)\n\
          \x20\x20--count-symmetry N     stage-2 (count net) symmetry on BOTH sides (default 0 = SB-0 yardstick)\n\
-         \x20\x20--conflicts N          per-command SAT conflict budget (default 25000)\n\
-         \x20\x20--encode-budget N      per-command encode-effort budget (default 32000000)\n\
+         \x20\x20--conflicts N          per-command SAT conflict budget (default 100000)\n\
+         \x20\x20--encode-budget N      per-command encode-effort budget (default 64000000)\n\
          \x20\x20--primary-var-cap N    skip a command past this many primary vars (default 20000)\n\
          \x20\x20--count-cap N          enumerate at most N instances per command (default 10000)\n\
          \x20\x20--enum-budget N        total effort across one command's enumeration (default 250000000)\n\
@@ -123,20 +123,23 @@ fn parse_args() -> Option<Cli> {
         baselines_dir: root.join("baselines"),
         // Measured budgets that keep the two-corpus sweep tractable (mt-037,
         // re-tuned mt-049, encode raised mt-079/ADR-0017, conflicts re-paired
-        // mt-082 after the ADR-0018 encoder reshape). The pair is chosen on a
-        // measured grid, never one knob in isolation — the knobs interact
-        // through the temporal step-sweep, and an encoder change moves the
-        // same boundary (ADR-0018 shifted five rows across it), so any change
-        // to either knob OR the encoder's CNF shape warrants re-pairing. On
-        // the shared encoder, 32M×25k runs the full sweep in ~13 min at
-        // `--jobs 8` for +7 agreements over 25k's predecessor point with zero
-        // regressions (structural sharing roughly halved the wall cost of
-        // conflicts); 50k buys +7 more but pushes the three-net battery near
-        // an hour, so it stays a per-run flag. The 20k primary-var cap is
+        // mt-082 after the ADR-0018 encoder reshape, both knobs re-paired
+        // mt-087 after gate-level sharing reshaped the CNF again). The pair is
+        // chosen on a measured grid, never one knob in isolation — the knobs
+        // interact through the temporal step-sweep, and an encoder change
+        // moves the same boundaries, so any change to either knob OR the
+        // encoder's CNF shape warrants re-pairing. On the gate-sharing
+        // encoder (mt-087), conflicts became ~2× cheaper and far more
+        // productive: 100k×64M is a measured corner point — its row moves are
+        // exactly the union of the two single-axis points (100k converts 18
+        // conflicts-bound rows, 64M converts the 8 TransForm rows whose true
+        // spend mt-086 measured at ~48–51M), zero regressions, DISAGREE 0,
+        // full sweep ~12 min at `--jobs 8` — the same absolute wall the
+        // pre-sharing 25k×32M default cost. The 20k primary-var cap is
         // unchanged. Scale any of them up per-run via the flags for a deeper
         // (slower) gauge.
-        conflict_budget: 25_000,
-        encode_budget: 32_000_000,
+        conflict_budget: 100_000,
+        encode_budget: 64_000_000,
         primary_var_cap: 20_000,
         allow_overflow: false,
         // SB-20 is the default-config verdict net (translation-ref §16.4); SB-0

@@ -123,3 +123,38 @@ and are family-D solver-quality work, deprioritized per the census.
 The rule itself is sharpened by this episode: **re-pair the knobs whenever
 either budget default changes OR the encoder's CNF shape changes.** The
 defaults comment in `solve_gauge.rs` now says so.
+
+## Second amendment (mt-087, 2026-07-29): the corner point 100k × 64M after gate-level sharing
+
+mt-087's gate cache reshaped the CNF a second time (correctChord −79.9%
+clauses; sweep wall −70%), so the rule fired again — this time on a full
+two-axis grid, because mt-086 had banked the exact encode-spend
+thresholds of the 28 remaining capacity rows (the 8 cheapest sit at
+~48–51M, inside a 64M ceiling). All points fresh, `--jobs 8`, row-diffed
+against the incumbent B = 25k×32M (agree 458):
+
+| point | conflicts × encode | agree | Δ vs B | wall | regressions |
+|---|---|---|---|---|---|
+| A | 10k × 32M | 450 | −8 | 139s | 8 |
+| B (incumbent) | 25k × 32M | 458 | — | ~330s | — |
+| C | 50k × 32M | 465 | +7 | 344s | 0 |
+| D | 100k × 32M | 476 | +18 | 614s | 0 |
+| E | 25k × 64M | 466 | +8 | 324s | 0 |
+| **F (new default)** | **100k × 64M** | **484** | **+26** | **699s** | **0** |
+
+DISAGREE 0, self-check 0, panics 0 at every point. F's row moves are
+**exactly the union** of D's and E's — the two axes touch disjoint
+buckets (conflicts converts over_budget rows, encode converts capacity
+rows), so the corner is purely additive. D's 18 include
+`ceilingsAndFloors[4]` (mt-087's one disclosed regression, recovered),
+`life[1]` and `handshake[0]` (family-D rows the census deprioritized —
+the smaller CNF moved them into reach), and `correctChord[9]/[10]`. E's 8
+are precisely the TransForm rows mt-086's thresholds predicted.
+
+**The defaults become conflicts 100k × encode 64M.** The wall argument
+that capped the last two amendments inverted: gate sharing made conflicts
+~2× cheaper and each conflict more productive, so the corner's 699s costs
+the same absolute wall as the pre-sharing 25k×32M default (~650s) while
+carrying +26 agreements. The remaining over_budget 47 and capacity 20 are
+genuinely deeper water (capacity's floor is correctChord[0..5] at ~89M
+true spend and TransForm's 14 big rows at ~190M+).
