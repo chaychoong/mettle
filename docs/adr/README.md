@@ -24,5 +24,6 @@ Each ADR captures one non-trivial decision, its context, and its consequences. A
 | [0016](0016-rung5-remainder-serve-xml-packaging.md) | Rung-5 remainder: jar-exact instance-XML writer, `mettle serve` on Sterling's provider protocol, cargo-dist packaging | Proposed (both owner forks RESOLVED 2026-07-27: own browser-first frontend, nothing upstream embedded; crates.io skipped outright — blessing batched to the combined feature-complete review) |
 | [0017](0017-gauge-default-budgets-paired-frontier.md) | Gauge default budgets on a measured paired-knob frontier; pairing rule standing (amended mt-082: conflicts → 25k after the ADR-0018 encoder reshape) | Accepted (tech-lead, zero-regression measured) |
 | [0018](0018-encoder-structural-sharing.md) | Encoder structural sharing: value cache + support-bounded closure + widened memo (the family-C encode-cost fix) | Accepted (tech-lead, on the mt-080 profile) |
+| [0019](0019-optional-cadical-backend.md) | Optional CaDiCaL SAT backend behind the `Solver` trait — instrument first, `--solver` surface second; own CDCL stays default + yardstick | Accepted (owner-decided, 2026-07-29) |
 
 Template for new ADRs: **Context → Decision → Consequences → Alternatives considered**, with `Status:` and `Date:` headers, and a `Supersedes` / `Superseded by` line when relevant.
