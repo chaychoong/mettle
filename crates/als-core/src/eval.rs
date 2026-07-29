@@ -60,11 +60,6 @@ use crate::overflow_guard::shift_mask_width;
 /// [`Evaluator::eval_formula`] / [`Evaluator::eval_rel`] / [`Evaluator::eval_int`]
 /// are the documented three-sorted API and the future REPL substrate (Rung 5).
 #[derive(Debug)]
-#[allow(
-    clippy::struct_excessive_bools,
-    reason = "the four flags are distinct evaluation state (overflow mode, observed \
-              overflow, polarity, conditional context) — not a config bundle"
-)]
 pub struct Evaluator<'a> {
     ir: &'a Ir,
     instance: &'a Instance,
@@ -87,14 +82,13 @@ pub struct Evaluator<'a> {
     /// evaluation — diagnostic only (the accept value bakes the guard in).
     overflow: bool,
     /// Current formula polarity (translation-ref §11.3): `true` = positive.
-    /// Flipped by `Not` / `Implies` antecedent; drives the overflow-guard.
+    /// Flipped by `Not` only — an `Implies` antecedent does NOT flip it
+    /// (§10.7f, mt-090); drives the overflow-guard.
     pol_positive: bool,
     /// The enclosing-quantifier stack (innermost last), driving the §10.7c
     /// overflow classification — the same the encoder threads, so the two apply
     /// an identical guard and defer identically.
     quant_frames: Vec<crate::overflow_guard::QuantFrame>,
-    /// Whether under an `Implies` antecedent (the rule-6 defer precondition).
-    behind_implies: bool,
     /// The `Int`/`seq/Int` builtin relation ids, for recognizing a bare-`Int`
     /// quantifier domain (translation-ref §10.7c rule 0).
     int_sig: Option<RelId>,
@@ -134,7 +128,6 @@ impl<'a> Evaluator<'a> {
             overflow: false,
             pol_positive: true,
             quant_frames: Vec::new(),
-            behind_implies: false,
             int_sig,
             seq_int_sig,
             loop_state: None,
@@ -166,7 +159,6 @@ impl<'a> Evaluator<'a> {
         self.overflow = false;
         self.pol_positive = true;
         self.quant_frames.clear();
-        self.behind_implies = false;
         // The forbid-mode overflow guard is applied locally at each comparison
         // (translation-ref §11.3), so the goal's truth value already embeds it —
         // no top-level `∧ ¬overflow` conjunction (that would flip the
@@ -217,15 +209,10 @@ impl<'a> Evaluator<'a> {
                 consequent,
             } => {
                 let (antecedent, consequent) = (*antecedent, *consequent);
-                // `a ⟹ c` = `¬a ∨ c`: the antecedent is at flipped polarity and a
-                // rule-6 conditional context (translation-ref §10.7c).
-                self.pol_positive = !self.pol_positive;
-                let saved_bi = self.behind_implies;
-                self.behind_implies = true;
-                let a = self.eval_formula(antecedent);
-                self.behind_implies = saved_bi;
-                self.pol_positive = !self.pol_positive;
-                let a = a?;
+                // The antecedent keeps the implication's OWN polarity — the jar
+                // never rewrites `a ⟹ c` to `¬a ∨ c` for guard purposes
+                // (translation-ref §10.7f, mt-090). Mirrors the encoder exactly.
+                let a = self.eval_formula(antecedent)?;
                 let c = self.eval_formula(consequent)?;
                 Ok(!a || c)
             }
@@ -750,7 +737,8 @@ impl<'a> Evaluator<'a> {
     /// Applies the forbid-mode overflow guard to an integer comparison via the
     /// shared [`crate::overflow_guard`] classifier (translation-ref §10.7c),
     /// matching the encoder's `int_compare` so the two accept-sets coincide. Allow
-    /// mode passes the raw comparison; no comparison defers (rule 4 pinned mt-051).
+    /// mode passes the raw comparison; no comparison defers (§10.7c rules 0–3 are
+    /// the whole classifier — rule 4 is retracted, §10.7f/mt-090).
     fn int_compare_guard(
         &mut self,
         atom: bool,
@@ -802,12 +790,9 @@ impl<'a> Evaluator<'a> {
     /// positive polarity (`∨ of`), an exclusion false (`∧ ¬of`); negative polarity
     /// swaps them. Inert when the overflow did not fire.
     fn apply_int_guard(&mut self, atom: bool, of: bool, operand: IntExprId) -> bool {
-        use crate::overflow_guard::{classify, contains_int_ite, overflow_capable};
-        let capable = overflow_capable(self.ir, operand);
-        let behind_conditional = self.behind_implies || contains_int_ite(self.ir, operand);
         let mut free = BTreeSet::new();
         self.collect_int_vars(operand, &mut free);
-        let forall_dep = classify(&self.quant_frames, &free, capable, behind_conditional);
+        let forall_dep = crate::overflow_guard::classify(&self.quant_frames, &free);
         if !of {
             return atom;
         }

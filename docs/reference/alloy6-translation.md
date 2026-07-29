@@ -1973,16 +1973,29 @@ simpler than the first two passes of this section:
    guard behaves exactly per §11.3's ideal statement (P2, P7, P8, P9, P10,
    P12, P14, GAP1a, GAP1b, GAP2b — this is rule 0's "domain is literally
    `Int`" branch restated for the common single-quantifier case).
-4. **Comparison sits behind an int-ITE or an `implies` antecedent, and rule
+4. ~~**Comparison sits behind an int-ITE or an `implies` antecedent, and rule
    0/2's precondition (driver's own domain is not bare `Int`) would
-   otherwise apply** → ~~open; do not guess~~ **PINNED at mt-051 (§10.7e
-   FACT 5)**: the driver behaves as correctly classified (universal ⇒
+   otherwise apply** → open; do not guess / PINNED at mt-051 (§10.7e
+   FACT 5): the driver behaves as correctly classified (universal ⇒
    rescue); antecedent-position and int-ITE (either branch) only —
    consequents, `and`-wrapping, and bare negation get ordinary rule-0
-   treatment.
+   treatment.~~ **RETRACTED IN FULL at mt-090
+   ([§10.7f](#107f-mt-090-the-implies-antecedent-polarity-defect-rule-4-retracted-jar-verified-2026-07-30)).**
+   There is no escape and there never was: `DefCond.isUnivQuant` cannot see
+   any surrounding operator, and `env.negate()` fires only in
+   `visit(NotFormula)`, so an `implies` antecedent does not even flip
+   polarity. mt-051's antecedent cells cancelled a wrong polarity against a
+   wrong classification; its "int-ITE" cells were *relational* ITEs over
+   `Int[·]` casts (FACT 2/FACT 4 machinery, since `plus[..]` and an Alloy
+   number literal both translate to SETS). Rules 0–3 are the whole
+   classifier — nothing else is an input.
 5. **A single comparison whose two operands overflow with different
    classifications** (P13a/b) → **out of scope**, unchanged from §10.7b
    ("ambiguous by hand," ordering question never resolved).
+
+> **mt-090 note:** with rule 4 retracted, rules 0–3 are the entire classifier
+> and nothing defers. The paragraph below is kept for history; its rule-4
+> defer corner no longer exists.
 
 **Conservative typed-defer predicate**, corrected: mettle should implement
 rules 0–3 above as bug-compatible verdicts — this is now the entire pinned
@@ -2268,6 +2281,171 @@ bounds (FACT 2's value semantics apply; the decl-level ensureDef analog is
 not implemented), and `&`/`-`-nested casts (source-read as identical to
 union — all matrix ops merge — but not probe-confirmed).
 
+> **CORRECTION (mt-090, 2026-07-30): FACT 5 is RETRACTED in full.** Rule 4 —
+> the "int-ITE / `implies`-antecedent escape" — does not exist. Both halves
+> were confounded, each in its own way; see
+> [§10.7f](#107f-mt-090-the-implies-antecedent-polarity-defect-rule-4-retracted-jar-verified-2026-07-30)
+> for the source read, the 55-cell probe matrix and the corrected rule.
+> FACTs 1–4 are unaffected and stand.
+
+### 10.7f mt-090: the `implies`-antecedent polarity defect, rule 4 retracted (jar-verified 2026-07-30)
+
+**Mission.** `correctChord.als[28]` (`check LossOfPrincipal for 9`) was a
+latent wrong verdict — jar SAT, mettle UNSAT at an unlimited budget, found by
+the mt-089 CaDiCaL cross-check and minimized to a 3-line repro
+(`scratchpad/probe/mt089/min/card_overflow.als`). Harness: 55 cells across
+`scratchpad/probe/mt090/{p1_polarity,p2_ite,p3_intite}.als`, each run under
+BOTH `A4Options.noOverflow` settings in one JVM (`AllCmdProbe.java`, sat4j,
+symmetry 20, Alloy 6.2.0); raw output `p{1,2,3}_jar.txt`, mettle's before/after
+columns `prefix_mettle.txt` / `postfix_mettle.txt`.
+
+> **Ledger follow-up — DONE (tech lead, mt-090, 2026-07-30):** this retraction
+> contradicted text then standing in the human-owned Ledger — **LEDGER-005**'s
+> closing note ("that sub-corner is now closed: pinned at mt-051 … and the defer
+> retired") and **LEDGER-010**'s layer **(4)** (the ITE/`implies` "correctly
+> classified" escape). Both entries now carry dated mt-090 amendments (no-fork
+> delegation): no escape exists; rules 0–3 are the whole classifier, and
+> polarity flips only at `not`. Layers (1)–(3) of LEDGER-010 (FACTs 1–4) are
+> unaffected and re-confirmed by this section's matrix.
+
+#### The mechanism, from source
+
+Three lines of Kodkod/Alloy settle it, and the probe matrix then confirms every
+consequence:
+
+1. `FOL2BoolTranslator` calls `env.negate()` in **exactly one place** —
+   `visit(NotFormula)` (two calls, around the child's translation).
+   `visit(BinaryFormula)` handles `IMPLIES` as `f.implies(left, right)` with no
+   negation of either side, and `TranslateAlloyToKodkod.visit(ExprBinary)`
+   `case IMPLIES` builds a genuine Kodkod `IMPLIES` node (the source even
+   carries the comment `// [electrum] changed from !a || b`). **An `implies`
+   antecedent therefore does NOT flip the overflow guard's polarity.**
+2. `Environment.extend(v, type, value, envType)` stores
+   `negated ? flip(envType) : envType` — the binder's tag is already
+   polarity-normalized at extension time, and `negated` is inherited by the
+   child frame. So an *effective* quantifier kind is the right model for a
+   frame; §10.7c rule 0 is unchanged.
+3. `DefCond.isUnivQuant(env, e)` looks at nothing but the environment chain and
+   `e.vars()`. It cannot see an enclosing `implies`, an ITE, or any other
+   operator. **There is no structural escape to have.**
+
+mettle had implemented `a ⟹ c` as `¬a ∨ c` for guard purposes, flipping
+`pol_positive` across the antecedent. That is the ideal Milicevic/Jackson
+reading (§11.3) but not what the jar does.
+
+#### Why mt-051's rule 4 looked real — two independent confounds
+
+- **The `implies`-antecedent half cancelled.** In an antecedent, mettle's wrong
+  polarity (flipped) and rule 4's wrong classification (Defect-A driver forced
+  to "rescue") are two sign errors that multiply to the right answer. Every
+  mt-051 antecedent cell had a non-bare-`Int` ∀ driver, i.e. exactly the shape
+  where both errors are present and cancel. The cancellation breaks the moment
+  the driver is anything else — a constant (`#Node` under `for exactly`), a
+  bare-`Int` binder, or a binder the operand does not mention.
+- **The "int-ITE" half was never an int-ITE.** `plus`/`minus`/`lt`… in
+  `util/integer` are **funs returning the set `Int`**, and an Alloy NUMBER
+  literal is `IntConstant.constant(n).toExpression()` — also a set
+  (`TranslateAlloyToKodkod.java:839`). `visit(ExprITE)` dispatches on the
+  **then**-branch's translated type, so `(c => plus[n,7] else 0)` is a
+  *relational* `IfExpression` over `Int[·]` casts, and the observed behavior is
+  FACT 2 (an overflowed cast is the EMPTY set) plus FACT 4 (a constant-empty
+  matrix sheds its DefCond in the matrix fast paths) — `sum` of the emptied
+  branch is `0`, which is why `… >= 0` came out SAT and `… > 7` UNSAT — the
+  comparison operator flipping the verdict under an otherwise identical shape is
+  itself the tell that a *value*, not a classification, was moving. (Which
+  matrix fast path sheds the DefCond is inferred from the cells, not chased in
+  source — same caveat FACT 4 already carries.) Nothing was reclassified. A
+  **genuine** int-ITE (both branches IntExpressions, e.g. `#·` or an arithmetic
+  operator) shows no escape at all: f0/f3 below.
+
+#### The pinned rule, stated operationally for mettle
+
+Replaces §10.7c rule 4 and §10.7e FACT 5; rules 0–3 stand verbatim.
+
+- **P.** The guard's polarity is the count of enclosing **`not`**s, and nothing
+  else. A `check` negates its assertion (one `not`). An `implies` **antecedent**
+  does not flip; neither does a consequent, `and`, `or`, `iff`, a quantifier
+  body, or an ITE branch. (Alloy's formula-level `c => f else g` desugars to
+  `(c ⟹ f) ∧ (¬c ⟹ g)`, so the `else` branch is a consequent — unflipped — and
+  the *condition* does pick up a `not` in the second conjunct.)
+- **C.** The univ/exist classification is `DefCond.isUnivQuant` verbatim: walk
+  the frame stack innermost→outermost, skip any frame whose domain is not the
+  literal bare `Int`/`seq/Int` builtin, and at the first bare-`Int` frame whose
+  variable the operand mentions return that frame's effective kind; if the walk
+  is exhausted, **existential**. No operator anywhere in the formula is an
+  input to this decision.
+- **D.** Direction, unchanged: `∨ of` iff polarity and classification agree,
+  else `∧ ¬of` (this is `DefCond.ensureDef`'s two branches).
+
+#### The decisive probe matrix (jar forbid verdict; 55 cells, 20 → 2 divergences)
+
+Only the cells that moved or that fix a boundary are listed; the full 55-row
+table with the allow column is `scratchpad/probe/mt090/NOTES.md`.
+
+| # | shape (bitwidth 4; `#Node`/`#n.r` = 8 overflows) | jar | mettle before | after |
+|---|---|---|---|---|
+| a3 | `run { #Node < 0 => no Node }` — constant driver, antecedent, positive | SAT | **UNSAT** | SAT |
+| a4 | `check { #Node < 0 => no Node }` — mt-089's shape minus the quantifier | SAT | **UNSAT** | SAT |
+| a5 | a4 with the `>=` direction | SAT | **UNSAT** | SAT |
+| a10 | `check { not (#Node >= 0) => no Node }` — `not` inside the antecedent | SAT | **UNSAT** | SAT |
+| a11 | a4 at a NON-exact scope (driver no longer translation-constant) | SAT | **UNSAT** | SAT |
+| b2 | `check { all n: Node \| #n.r < 0 => no n }` — mt-089's exact shape, var-dependent driver | SAT | **UNSAT** | SAT |
+| c2 | `run { all n: Int \| plus[n,7] > 7 => no Node }` — bare-`Int` ∀ driver, antecedent | UNSAT | **SAT** | UNSAT |
+| c3 | c2 under a `check` | SAT | **UNSAT** | SAT |
+| c5 | `check { all n: {x: Int \| x > 0} \| plus[n,7] > 7 => no Node }` — comprehension ∀ | SAT | **UNSAT** | SAT |
+| d4 | `check { ((some Node) => #Node else 0) < 0 => no Node }` — int-ITE in an antecedent | SAT | **UNSAT** | SAT |
+| f0 | `run { all n: Node \| ((some n) => #n.r else 0) > 7 }` — GENUINE int-ITE, sig ∀ | UNSAT | **SAT** | UNSAT |
+| f3 | f0 with a comprehension domain | UNSAT | **SAT** | UNSAT |
+| f4 | f0's driver inside an antecedent | SAT | SAT | SAT |
+| f5 | f4 under a `check` | SAT | **UNSAT** | SAT |
+| g0 | `check { all m: Node \| all n: Node \| #n.r < 0 => no n }` — nested ∀ | SAT | **UNSAT** | SAT |
+| g3 | `check { not (#Node < 0 => no Node) }` — `not` around the whole implication | SAT | **UNSAT** | SAT |
+| g6 | `check { all n: Int \| #Node < 0 => no Node }` — bare-`Int` frame the driver does NOT mention | SAT | **UNSAT** | SAT |
+| g7 | g6 under a `run` | SAT | **UNSAT** | SAT |
+| d0/e1/e8 | `(c => plus[n,7] else 0)` compared raw-false — relational cast ITE | UNSAT | **SAT** | UNSAT |
+| **e0** | `run { all n: {x: Int \| x>=1 and x<=7} \| ((n>0) => plus[n,7] else 0) >= 0 }` (mt-051's P12 verbatim) | SAT | SAT | **UNSAT** |
+| **e6** | e0 with the arithmetic in the `else` branch | SAT | SAT | **UNSAT** |
+
+Agreeing controls that pin the boundaries and did not move: a0/a1/a2 (bare
+comparison, run / check / `not`), a6/a7 (consequent, both polarities), a8
+(antecedent-of-an-antecedent — EVEN depth, both models agree), a9 (`iff` does
+not flip), b0/b3/b4 (sig-∀ bare and consequent), c0 (the classic bare-`Int`
+rescue, I11), c1 (Defect A over a comprehension), c4 (P9's shape — the cell
+whose cancellation created rule 4), c6 (bare-`Int` ∃ in an antecedent), c7,
+d1/d2/d3, e2/e3/e4/e5/e7/e9, f1/f2, g1 (`some` binder over an antecedent), g2,
+g4 (comparison in a formula-ITE `else`), g5.
+
+#### Residual: e0/e6 are a DIFFERENT defect, not fixed here
+
+`e0`/`e6` are the only two of the 55 that mettle still gets wrong, and they
+regressed from "accidentally right" (rule 4 rescued them for the wrong reason)
+to "wrong for the honest reason". The root cause is at **lowering**, not in the
+guard: `sort_of` makes an int-position `if-then-else` an INT ITE when *either*
+branch is int-sorted (`lower.rs`, `ExprKind::IfThenElse` arm), whereas the jar
+dispatches on the **then** branch alone and treats both an Alloy NUMBER literal
+and a `util/integer` fun result as *sets*. So mettle builds an int-ITE that
+keeps the operand's accumulated overflow where the jar builds a relational ITE
+over `Int[·]` casts whose overflowed branch is the empty set, worth `0` after
+`sum`. Matching it needs (a) then-branch dispatch **with an Alloy number literal
+counted as a set** — the then-branch rule alone still gets `e6` wrong, since its
+`then` is the literal `0` — and (b) a *dynamic* constant-escape (the jar sheds
+the DefCond because the ground cast matrix folds to constant-empty), where
+mettle's FACT-4 escape is deliberately **structural** so the encoder and
+evaluator cannot drift. Both are outside mt-090; filed as a follow-up and pinned
+with the jar's verdicts as an `#[ignore]`d test
+(`eq_typing_conformance::part_c_mixed_branch_ite_is_relational_in_the_jar`).
+Blast radius is narrow: an overflow-capable `util/integer` arithmetic call or
+int literal inside an if-then-else that is itself in an integer position — when
+**both** branches are fun results mettle already agrees (probe h4), which is
+what isolates the cause. Zero corpus rows move.
+
+Also observed, not acted on: **g5** (`run { (#Node < 0) => (no Node) else (no
+Node) }`) is jar-UNSAT, which is only explicable if the shared condition node's
+translation is reused across the two polarities Alloy's ExprITE desugaring puts
+it at (`FOL2BoolCache` keys on node + free-variable bindings, not on
+`Environment.negated`). mettle agrees on g5 today; the general "shared
+subformula translated at two polarities" corner is unprobed.
+
 ### 10.8 mt-053 `univ`/`iden` live-universe probes (jar-verified 2026-07-21)
 
 Harness: `scratchpad/probe/mt053/run.sh` over `OracleShim` (Alloy 6.2.0,
@@ -2540,7 +2718,16 @@ arithmetic subterm forces its enclosing atomic formula to the truth value that
 satisfies a `run`/positive existential *by overflowing* is rejected (`AND ¬of`),
 while a `∀` is **not** falsified by an overflowing binding (`OR of`, the body
 holds vacuously there). Negative polarity (a `check`'s negated body, an `implies`
-antecedent, `not`) swaps the two. Decisive probes:
+antecedent, `not`) swaps the two.
+
+> **CORRECTION (mt-090, 2026-07-30):** "an `implies` antecedent" belongs to the
+> *ideal* rule only. The jar toggles `Environment.negated` in exactly one place
+> — `FOL2BoolTranslator.visit(NotFormula)` — and builds a genuine Kodkod
+> `IMPLIES` node, so in the jar the antecedent carries the implication's OWN
+> polarity. mettle implements the jar
+> ([§10.7f](#107f-mt-090-the-implies-antecedent-polarity-defect-rule-4-retracted-jar-verified-2026-07-30)).
+
+Decisive probes:
 
 - **Positive existential** (`plus[7,7] < 0`, I9): allow **SAT** (−2<0), forbid
   **UNSAT** — the overflowing witness is excluded (`AND ¬of`).

@@ -255,64 +255,92 @@ fn mult_test_threads_the_guard() {
     assert_eq!(solve(src, false), Ok(false));
 }
 
-// ---------------------------- Part C: rule-4 sliver (int-compare path) -------
+// -------------- Part C: the retracted rule-4 sliver (int-compare path) -------
+
+/// The `for 3 but 4 int` Part-C cell shape: a non-bare-`Int` (comprehension)
+/// domain over the whole positive range, so every binding overflows `plus[n,7]`.
+fn part_c_cell(body: &str) -> String {
+    format!(
+        "open util/integer\n\
+         run {{ all n: {{x: Int | x>=1 and x<=7}} | {body} }} for 3 but 4 int\n"
+    )
+}
 
 #[test]
-fn part_c_ite_and_implies_antecedent_rescue() {
-    // The int-compare path is UNCHANGED except rule 4 is now pinned (mt-051): a
-    // non-bare-Int ∀ driver reached through an int-ITE branch or an `implies`
-    // ANTECEDENT behaves as correctly classified (rescue); consequents and bare
-    // negation get ordinary Defect-A exclusion. Domain `{x:Int|x>=1 and x<=7}`
-    // (non-bare-Int), `for 3 but 4 int`. Probe Part C.
-    let dom = "{x: Int | x>=1 and x<=7}";
-    let cell = |body: &str| {
-        format!("open util/integer\nrun {{ all n: {dom} | {body} }} for 3 but 4 int\n")
-    };
+fn part_c_no_escape_from_defect_a() {
+    // **Rule 4 is RETRACTED (mt-090, translation-ref §10.7f).** There is no
+    // escape: `DefCond.isUnivQuant` cannot see any surrounding operator, and
+    // `env.negate()` fires only in `visit(NotFormula)`, so an `implies`
+    // antecedent does not even flip polarity. Every cell below is plain Defect A
+    // (comprehension domain ⇒ existential) at the polarity its `not`-count gives.
+    //
+    // Re-verified against the jar at mt-090 (`scratchpad/probe/mt090/p4_jar.txt`,
+    // probes h0/h4–h9), same spelling, same scopes.
 
-    // Direct-ctl: no wrapper — Defect-A exclude fires → UNSAT/UNSAT.
-    let direct = cell("plus[n,7] >= 0");
+    // h0 direct-ctl: no wrapper — exclude fires → UNSAT/UNSAT.
+    let direct = part_c_cell("plus[n,7] >= 0");
     assert_eq!(solve(&direct, true), Ok(false));
     assert_eq!(solve(&direct, false), Ok(false));
 
-    // ITE-P12 / real1 / real2 / both: the escape fires regardless of vacuity,
-    // branch position, or both branches carrying arithmetic → UNSAT/SAT.
-    for body in [
-        "(n>0 => plus[n,7] else 0) >= 0",
-        "(n>3 => plus[n,7] else 5) >= 0",
-        "(n<=3 => 5 else plus[n,7]) >= 0",
-        "(n>3 => plus[n,7] else plus[n,1]) >= 0",
-    ] {
-        let src = cell(body);
-        assert_eq!(solve(&src, true), Ok(false), "allow {body}");
-        assert_eq!(solve(&src, false), Ok(true), "forbid {body}");
-    }
-
-    // IMP-P9 / IMP-nested: arithmetic in the `implies` ANTECEDENT escapes →
-    // UNSAT/SAT.
+    // h5/h6 IMP-P9 / IMP-nested: forbid SAT, and mt-090 re-derives it WITHOUT an
+    // escape — the antecedent keeps the `run`'s positive polarity, the Defect-A
+    // existential classification forces it FALSE, and the implication is
+    // vacuously true. mt-051 read the same verdict as "antecedent ⇒ rescue"
+    // because a wrong polarity and a wrong classification cancelled here.
     for body in [
         "(plus[n,7]<0 implies (1=0))",
         "(n>=1 implies (plus[n,7]<0 implies (1=0)))",
     ] {
-        let src = cell(body);
+        let src = part_c_cell(body);
         assert_eq!(solve(&src, true), Ok(false), "allow {body}");
         assert_eq!(solve(&src, false), Ok(true), "forbid {body}");
     }
 
-    // IMP-conseq: arithmetic in the CONSEQUENT gets ordinary exclusion →
-    // UNSAT/UNSAT.
-    let conseq = cell("(n>3 implies plus[n,7]>=0)");
-    assert_eq!(solve(&conseq, true), Ok(false));
-    assert_eq!(solve(&conseq, false), Ok(false));
+    // h4 ITE-both: both branches are `util/integer` fun results, so BOTH tools
+    // build a relational if-then-else over `Int[·]` casts — the overflowed cast
+    // is empty (§10.7e FACT 2) and `sum ∅ = 0 >= 0` holds → forbid SAT. No
+    // classification changed; contrast h1/h2/h3 below.
+    let ite_both = part_c_cell("(n>3 => plus[n,7] else plus[n,1]) >= 0");
+    assert_eq!(solve(&ite_both, true), Ok(false));
+    assert_eq!(solve(&ite_both, false), Ok(true));
 
-    // AND-ctl: `and` (not `implies`) does not flip polarity → ordinary exclusion →
-    // UNSAT/UNSAT.
-    let and_ctl = cell("(n>=1 and plus[n,7]>=0)");
-    assert_eq!(solve(&and_ctl, true), Ok(false));
-    assert_eq!(solve(&and_ctl, false), Ok(false));
+    // h7 IMP-conseq / h8 AND-ctl / h9 V-not: ordinary exclusion → UNSAT/UNSAT.
+    for body in [
+        "(n>3 implies plus[n,7]>=0)",
+        "(n>=1 and plus[n,7]>=0)",
+        "!(plus[n,7] < 0)",
+    ] {
+        let src = part_c_cell(body);
+        assert_eq!(solve(&src, true), Ok(false), "allow {body}");
+        assert_eq!(solve(&src, false), Ok(false), "forbid {body}");
+    }
+}
 
-    // V-not: a bare `!` is NOT an escape context (the boundary that pins the
-    // escape to ITE + implies-antecedent) → UNSAT/UNSAT.
-    let v_not = cell("!(plus[n,7] < 0)");
-    assert_eq!(solve(&v_not, true), Ok(false));
-    assert_eq!(solve(&v_not, false), Ok(false));
+#[test]
+#[ignore = "mt-090 follow-up: int-position ITE with ONE int-literal branch is \
+            relational in the jar, an int-ITE in mettle (sort_of dispatches on \
+            either branch, the jar on the `then` branch, and an Alloy NUMBER \
+            literal translates to a SET)"]
+fn part_c_mixed_branch_ite_is_relational_in_the_jar() {
+    // Jar verdicts pinned at mt-090 (`scratchpad/probe/mt090/p4_jar.txt`, probes
+    // h1/h2/h3 — h1 is mt-051's P12 verbatim). All three are forbid **SAT**
+    // because the jar builds a RELATIONAL if-then-else over `Int[·]` casts: the
+    // overflowed branch is the empty set and `sum ∅ = 0`, so `>= 0` holds. mettle
+    // builds an int-ITE that keeps the accumulated overflow, so the Defect-A
+    // exclusion fires and it answers UNSAT.
+    //
+    // Fixing it needs BOTH (a) `Lowerer::sort_of` dispatching on the `then`
+    // branch with an Alloy number literal counted as a set, and (b) a DYNAMIC
+    // constant-escape (the jar sheds the DefCond because the ground cast matrix
+    // folds to constant-empty; mettle's §10.7e FACT-4 escape is deliberately
+    // structural so encoder and evaluator cannot drift). Both are out of mt-090.
+    for body in [
+        "(n>0 => plus[n,7] else 0) >= 0",
+        "(n>3 => plus[n,7] else 5) >= 0",
+        "(n<=3 => 5 else plus[n,7]) >= 0",
+    ] {
+        let src = part_c_cell(body);
+        assert_eq!(solve(&src, true), Ok(false), "allow {body}");
+        assert_eq!(solve(&src, false), Ok(true), "forbid {body}");
+    }
 }

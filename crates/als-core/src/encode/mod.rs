@@ -193,16 +193,14 @@ pub(crate) struct Encoder<'a> {
     /// Active grounding bindings: quantifier/comprehension var → its atom tuple.
     env: BTreeMap<VarId, Tuple>,
     /// Current formula polarity (translation-ref §11.3): `true` = positive (an
-    /// even number of enclosing negations). Flipped by `Not` and an `Implies`
-    /// antecedent; drives the forbid-mode overflow-guard direction.
+    /// even number of enclosing negations). Flipped by `Not` **only** — an
+    /// `Implies` antecedent does NOT flip it (§10.7f, mt-090); drives the
+    /// forbid-mode overflow-guard direction.
     pol_positive: bool,
     /// The enclosing-quantifier stack (innermost last), driving the §10.7c
     /// overflow classification. Each frame records the binder's effective kind
     /// and whether its domain is bare `Int`/`seq/Int`.
     quant_frames: Vec<crate::overflow_guard::QuantFrame>,
-    /// Whether the current node is under an `Implies` antecedent — the rule-6
-    /// defer precondition (translation-ref §10.7c).
-    behind_implies: bool,
     /// The `Int`/`seq/Int` builtin relation ids (from the bounds builder), for
     /// recognizing a bare-`Int` quantifier domain.
     int_sig: Option<RelId>,
@@ -304,7 +302,6 @@ impl<'a> Encoder<'a> {
             env: BTreeMap::new(),
             pol_positive: true,
             quant_frames: Vec::new(),
-            behind_implies: false,
             int_sig,
             seq_int_sig,
             lasso,
@@ -1057,15 +1054,12 @@ impl<'a> Encoder<'a> {
                 consequent,
             } => {
                 let (antecedent, consequent) = (*antecedent, *consequent);
-                // `a ⟹ c` = `¬a ∨ c`: the antecedent sits at flipped polarity and
-                // is a rule-6 conditional context (translation-ref §10.7c).
-                self.pol_positive = !self.pol_positive;
-                let saved_bi = self.behind_implies;
-                self.behind_implies = true;
-                let a = self.formula(antecedent);
-                self.behind_implies = saved_bi;
-                self.pol_positive = !self.pol_positive;
-                let a = a?;
+                // The antecedent keeps the implication's OWN polarity: the jar
+                // builds a Kodkod `IMPLIES` node and only `visit(NotFormula)`
+                // toggles the environment's negated flag, so `a ⟹ c` is NOT
+                // rewritten to `¬a ∨ c` for guard purposes (translation-ref
+                // §10.7f, mt-090).
+                let a = self.formula(antecedent)?;
                 let c = self.formula(consequent)?;
                 Ok(self.circ().implies(a, c))
             }
@@ -1547,7 +1541,8 @@ impl<'a> Encoder<'a> {
     /// (translation-ref §11.3). In allow mode the raw wrapped comparison is
     /// returned. In forbid mode each operand's accumulated overflow guards the
     /// atom per its polarity/quantifier-dependence (the §10.7c rules 0–3
-    /// classification, rule 4 pinned mt-051 — no comparison defers).
+    /// classification — the whole classifier now that rule 4 is retracted,
+    /// §10.7f/mt-090; no comparison defers).
     #[allow(
         clippy::too_many_arguments,
         reason = "one comparison needs both operands, both overflow flags, and both \
@@ -1636,15 +1631,8 @@ impl<'a> Encoder<'a> {
     /// (`∧ ¬of`); negative polarity swaps them. A constant-false overflow makes
     /// the guard inert.
     fn apply_overflow_guard(&mut self, atom: Bool, of: Bool, operand: IntExprId) -> Bool {
-        use crate::overflow_guard::{classify, contains_int_ite, overflow_capable};
-        let capable = overflow_capable(self.ir, operand);
-        let behind_conditional = self.behind_implies || contains_int_ite(self.ir, operand);
-        let forall_dep = classify(
-            &self.quant_frames,
-            self.freevars.int(operand),
-            capable,
-            behind_conditional,
-        );
+        let forall_dep =
+            crate::overflow_guard::classify(&self.quant_frames, self.freevars.int(operand));
         if matches!(of, Bool::Const(false)) {
             return atom;
         }

@@ -30,12 +30,16 @@
 //!   sheds its `DefCond` in the jar's matrix fast paths, so (B) is lost while (A)
 //!   still fires (the R-cardun/T5/T6 constant-escape trio).
 //!
-//! ## Rule 4 (the int-ITE / `implies`-antecedent sliver) — now pinned (mt-051)
-//! A non-bare-`Int` effective-∀ overflow-driver reached through an int-ITE branch
-//! or an `implies` **antecedent** behaves as **correctly classified** (rescue at
-//! positive polarity; the usual swap at negative) — probe Part C, boundary fixed
-//! by V-not (a bare `!` is **not** an escape). Consequents and bare negation get
-//! ordinary Defect-A treatment.
+//! ## Rule 4 (the int-ITE / `implies`-antecedent sliver) — RETRACTED (mt-090)
+//! §10.7f. There is no escape. The jar's `Environment.negate()` fires only in
+//! `FOL2BoolTranslator.visit(NotFormula)`, so an `implies` **antecedent** keeps
+//! the implication's own polarity, and `DefCond.isUnivQuant` never consults the
+//! surrounding operator at all. mt-051's supporting cells were confounded twice
+//! over: the antecedent cells cancelled a wrong polarity against a wrong
+//! classification, and the "int-ITE" cells were relational ITEs over `Int[·]`
+//! casts (`plus[..]` is a `fun` returning the SET `Int`), i.e. FACT-2/FACT-4
+//! machinery, not a classification escape. Probes f0/f3/f4 — genuine int-ITEs
+//! over `#·` branches — refute the escape directly.
 
 use std::collections::BTreeSet;
 
@@ -216,56 +220,24 @@ fn formula_const(ir: &Ir, bounds: &Bounds, id: crate::ir::FormulaId) -> bool {
     }
 }
 
-/// Whether an integer expression's subtree contains an int-ITE node — the
-/// syntactic half of the rule-4 "reachable through an int-ITE branch" escape.
-pub(crate) fn contains_int_ite(ir: &Ir, id: IntExprId) -> bool {
-    match &ir.int_exprs[id].kind {
-        IntExprKind::Const(_) | IntExprKind::Card(_) | IntExprKind::AtomToInt(_) => false,
-        IntExprKind::Neg(ie) => contains_int_ite(ir, *ie),
-        IntExprKind::Binary { lhs, rhs, .. } => {
-            contains_int_ite(ir, *lhs) || contains_int_ite(ir, *rhs)
-        }
-        IntExprKind::Sum { body, .. } => contains_int_ite(ir, *body),
-        IntExprKind::IfThenElse { .. } => true,
-    }
-}
-
 /// Classifies one overflowing operand at a comparison (translation-ref §10.7c's
 /// operational rule list), returning `forall_dep` = whether it classifies as
 /// depending on an effective-∀ (a **rescue**) rather than an existential (an
 /// **exclude**). `frames` is the enclosing-quantifier stack (innermost last);
-/// `free` is the operand's free-variable set; `capable` is [`overflow_capable`]
-/// of the operand; `behind_conditional` is true when the comparison is reached
-/// through an `implies` antecedent or the operand contains an int-ITE.
-pub(crate) fn classify(
-    frames: &[QuantFrame],
-    free: &BTreeSet<VarId>,
-    capable: bool,
-    behind_conditional: bool,
-) -> bool {
-    let mentions = |v: VarId| free.contains(&v);
+/// `free` is the operand's free-variable set.
+///
+/// This is `DefCond.isUnivQuant` verbatim in behavior, and it has **no other
+/// inputs**: neither an `implies` antecedent nor an int-ITE is an escape
+/// (§10.7f, mt-090 — the old rule 4 is retracted).
+pub(crate) fn classify(frames: &[QuantFrame], free: &BTreeSet<VarId>) -> bool {
     // The single per-variable rule (§10.7c rules 0–3): classify by the innermost
     // enclosing binder whose domain is bare `Int`/`seq/Int` and whose variable the
     // operand depends on — a bare-`Int` ∀ rescues, a bare-`Int` ∃ excludes. No
     // bare-`Int` binder ⇒ Defect A defaults the classification to **existential**
     // (exclude), regardless of nesting shape/depth/type.
-    let driver = frames.iter().rev().find(|f| f.bare_int && mentions(f.var));
-
-    // Rule 4 (§10.7c, pinned mt-051): when the classifier would default to
-    // existential *because* the operand's overflow-driving ∀ has a non-bare-`Int`
-    // domain (Defect A's precondition), and the comparison is reached through an
-    // int-ITE branch or an `implies` antecedent, the driver behaves as CORRECTLY
-    // classified — i.e. universal ⇒ rescue. Only when no bare-`Int` binder
-    // classifies the operand first (a bare `!` is NOT an escape — probe V-not).
-    if capable
-        && behind_conditional
-        && driver.is_none()
-        && frames
-            .iter()
-            .any(|f| !f.bare_int && f.effective_forall && mentions(f.var))
-    {
-        return true;
-    }
-
-    driver.is_some_and(|f| f.effective_forall)
+    frames
+        .iter()
+        .rev()
+        .find(|f| f.bare_int && free.contains(&f.var))
+        .is_some_and(|f| f.effective_forall)
 }
