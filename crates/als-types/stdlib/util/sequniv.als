@@ -44,8 +44,18 @@ fun last [s: Int -> univ]: lone (Int.s) { (lastIdx[s]).s }
 // Declared results below are dependent bounds on the caller's own `s`
 // (§7.7): each body computes a definite value that is provably a subset of
 // its declared bound.
+//
+// SHIFTING FUNS AND `seq/Int` (mt-084, jar-verified). Where a fun's body is an
+// index *comprehension*, the index binder is `seq/Int`, not `Int`: the jar
+// drops any result tuple whose index falls outside the seq index domain. The
+// clamp is per-fun, NOT a uniform post-intersection — the decisive pair is
+// `rest[{0->A,1->B,2->C,3->A,4->B}] = {0->B,1->C,2->A}` (index 3 dropped)
+// against `delete[<same>,0] = {0->B,1->C,2->A,3->B}` (index 3 kept), with
+// `setAt[{0..2},5,A]` keeping `5->A` as a second witness. So `rest`, `insert`,
+// `append` and `subseq` clamp; `delete` and `setAt` do not; `add`/`butlast`
+// take their index from `afterLastIdx`/`lastIdx` and are already bounded.
 fun rest [s: Int -> univ]: s {
-    { i: Int, x: univ | (i.(ui/next)).s = x }
+    { i: seq/Int, x: univ | (i.(ui/next)).s = x }
 }
 
 fun butlast [s: Int -> univ]: s {
@@ -66,23 +76,33 @@ fun setAt [s: Int -> univ, i: Int, e: univ]: s + (seq/Int -> e) {
     (s - (i -> univ)) + (i -> e)
 }
 
+// Everything at or past `i` shifts up by one, so the shifted term is keyed on
+// `gt` (strictly), not `gte` — at `gte` index `i` would carry both `e` and the
+// old `s[i-1]`, making the result non-functional (jar: `insert[0->A+1->B,1,C]`
+// = `{0->A, 1->C, 2->B}`). `i` itself is clamped like every other result index,
+// so an out-of-range `i` contributes nothing (jar: `insert[0->A+1->B,3,C]` =
+// `{0->A, 1->B}`), while a negative `i` still shifts (`insert[..,-1,C]` =
+// `{1->A, 2->B}`) — the clamp is on the index domain, not a guard on `i`.
 fun insert [s: Int -> univ, i: Int, e: univ]: s + (seq/Int -> e) {
-    { j: Int, x: univ | ui/lt[j, i] and j -> x in s }
-    + (i -> e)
-    + { j: Int, x: univ | ui/gte[j, i] and (ui/prev[j]).s = x }
+    { j: seq/Int, x: univ | ui/lt[j, i] and j -> x in s }
+    + ((i & seq/Int) -> e)
+    + { j: seq/Int, x: univ | ui/gt[j, i] and (ui/prev[j]).s = x }
 }
 
+// No `seq/Int` clamp here — jar-verified negative space: `delete` keeps
+// out-of-domain result indices (`delete[0->A+1->B+2->C,-1]` = `{-1->A, 0->B,
+// 1->C}`), unlike its mirror image `rest`.
 fun delete [s: Int -> univ, i: Int]: s {
     { j: Int, x: univ | ui/lt[j, i] and j -> x in s }
     + { j: Int, x: univ | ui/gte[j, i] and (ui/next[j]).s = x }
 }
 
 fun append [s1, s2: Int -> univ]: s1 + s2 {
-    s1 + { i: Int, x: univ |
+    s1 + { i: seq/Int, x: univ |
         some j: inds[s2] | j -> x in s2 and i = ui/add[afterLastIdx[s1], j] }
 }
 
 fun subseq [s: Int -> univ, from: Int, to: Int]: s {
-    { k: Int, x: univ |
+    { k: seq/Int, x: univ |
         some m: Int | ui/lte[from, m] and ui/lte[m, to] and m -> x in s and k = ui/sub[m, from] }
 }

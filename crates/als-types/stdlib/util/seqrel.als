@@ -52,8 +52,13 @@ fun lastIdxOf [s: SeqIdx -> elem, e: elem]: lone SeqIdx { indsOf[s, e] - indsOf[
 pred isEmpty [s: SeqIdx -> elem] { no s }
 pred hasDups [s: SeqIdx -> elem] { some e: elems[s] | not lone indsOf[s, e] }
 
+// The shifted lookup is spelled as an equality on the joined value, NOT as
+// `i.(ord/next) -> x in s` (mt-084): at the final index the step is empty, and
+// `none -> x in s` is vacuously true, which would put EVERY elem at that index.
+// Joining and comparing keeps it false there, matching the jar
+// (`rest[i0->A + i1->B + i2->C] = {i0->B, i1->C}`).
 fun rest [s: SeqIdx -> elem]: SeqIdx -> elem {
-    { i: SeqIdx, x: elem | i.(ord/next) -> x in s }
+    { i: SeqIdx, x: elem | (i.(ord/next)).s = x }
 }
 
 fun butlast [s: SeqIdx -> elem]: SeqIdx -> elem {
@@ -66,15 +71,19 @@ fun setAt [s: SeqIdx -> elem, i: SeqIdx, e: elem]: SeqIdx -> elem {
     (s - (i -> elem)) + (i -> e)
 }
 
+// `gt`, not `gte`: everything strictly past `i` shifts up one, so at `gte`
+// index `i` would carry both `e` and the old `s[prev(i)]` (jar:
+// `insert[i0->A + i1->B, i1, C] = {i0->A, i1->C, i2->B}`). Same joined-value
+// idiom as `rest` for the same vacuous-`in` reason.
 fun insert [s: SeqIdx -> elem, i: SeqIdx, e: elem]: SeqIdx -> elem {
     { j: SeqIdx, x: elem | ord/lt[j, i] and j -> x in s }
     + (i -> e)
-    + { j: SeqIdx, x: elem | ord/gte[j, i] and j.(ord/prev) -> x in s }
+    + { j: SeqIdx, x: elem | ord/gt[j, i] and (j.(ord/prev)).s = x }
 }
 
 fun delete [s: SeqIdx -> elem, i: SeqIdx]: SeqIdx -> elem {
     { j: SeqIdx, x: elem | ord/lt[j, i] and j -> x in s }
-    + { j: SeqIdx, x: elem | ord/gte[j, i] and j.(ord/next) -> x in s }
+    + { j: SeqIdx, x: elem | ord/gte[j, i] and (j.(ord/next)).s = x }
 }
 
 fun append [s1: SeqIdx -> elem, s2: SeqIdx -> elem]: SeqIdx -> elem {

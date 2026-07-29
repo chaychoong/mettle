@@ -276,3 +276,197 @@ fn sequniv_afterlastidx_is_min_unused() {
         "open util/sequniv as sq\nsig E {}\nrun { some e: E | sq/afterLastIdx[(0->e)+(1->e)+(2->e)] = 3 } for 3 but 4 Int\n"
     ));
 }
+
+// ------------------- mt-084: the shift funs' result index --------------------
+// The clean-room bodies let a shifted result index escape `seq/Int`: `rest`
+// produced a tuple at −1 and `insert`/`append` one past the end. Since a `seq X`
+// field is indexed by `seq/Int`, such a result can never equal one, which turned
+// `correctChord.als` rows [19]–[21]/[24] into spurious UNSAT and row [30] into a
+// spurious counterexample (a disequality against `insert[…]` became a tautology).
+// A second defect in the same fun: the shift term was keyed on `gte`, so index
+// `i` carried both `e` and the old `s[i−1]`.
+//
+// Every expected value below is a jar constant from the mt-084 P1/P2/P3 probes
+// (`EvalProbe` ground evaluation, `for 3 but 3 seq`), recorded in
+// `scratchpad/probe/mt084/NOTES.md`. Jar-free at test time.
+
+/// Preamble giving three named element atoms plus `ui/negate` for negative
+/// index literals (probe hygiene: never a bare `0-N`, which is set difference).
+const SEQUNIV_GROUND: &str = "open util/sequniv as sq\nopen util/integer as ui\n\
+     abstract sig E {}\none sig A, B, C extends E {}\n";
+
+/// Solves a ground `util/sequniv` body at `3 seq`, so `seq/Int` = {0,1,2} and
+/// `(0->A)+(1->B)+(2->C)` is a full sequence.
+fn sequniv_ground(body: &str) -> bool {
+    solve(&format!(
+        "{SEQUNIV_GROUND}run {{ {body} }} for 3 but 3 seq\n"
+    ))
+}
+
+#[test]
+fn sequniv_shift_funs_clamp_result_index_to_seq_int() {
+    // P2/P3: `rest`, `insert`, `append` and `subseq` drop any result tuple whose
+    // index leaves `seq/Int`.
+    assert!(sequniv_ground(
+        "sq/insert[(0->A)+(1->B)+(2->C), 0, C] = (0->C)+(1->A)+(2->B)"
+    ));
+    assert!(sequniv_ground(
+        "sq/rest[(0->A)+(1->B)+(2->C)] = (0->B)+(1->C)"
+    ));
+    assert!(sequniv_ground(
+        "sq/append[(0->A)+(1->B), (0->A)+(1->B)] = (0->A)+(1->B)+(2->A)"
+    ));
+    assert!(sequniv_ground(
+        "sq/subseq[(0->A)+(1->B)+(2->C), ui/negate[1], 2] = (1->A)+(2->B)"
+    ));
+    // Negative space — pre-fix each of these carried the escaped tuple and so
+    // was SAT, which is exactly what made the equalities above UNSAT.
+    assert!(!sequniv_ground(
+        "some i: Int | i in sq/insert[(0->A)+(1->B)+(2->C), 0, C].univ and i not in seq/Int"
+    ));
+    assert!(!sequniv_ground(
+        "some i: Int | i in sq/rest[(0->A)+(1->B)+(2->C)].univ and i not in seq/Int"
+    ));
+    assert!(!sequniv_ground(
+        "some i: Int | i in sq/append[(0->A)+(1->B), (0->A)+(1->B)].univ and i not in seq/Int"
+    ));
+}
+
+#[test]
+fn sequniv_delete_and_setat_do_not_clamp() {
+    // P3 negative space: the clamp is per-fun, NOT a blanket intersection of
+    // every sequniv result with `seq/Int -> univ`. `delete` and `setAt` keep
+    // out-of-domain result indices where `rest`/`insert` drop them.
+    assert!(sequniv_ground(
+        "sq/delete[(0->A)+(1->B)+(2->C), ui/negate[1]] = (ui/negate[1]->A)+(0->B)+(1->C)"
+    ));
+    assert!(sequniv_ground(
+        "sq/setAt[(0->A)+(1->B)+(2->C), 5, A] = (0->A)+(1->B)+(2->C)+(5->A)"
+    ));
+    // The decisive pair: same 5-tuple input, index 3 kept by `delete`…
+    assert!(sequniv_ground(
+        "sq/delete[(0->A)+(1->B)+(2->C)+(3->A)+(4->B), 0] = (0->B)+(1->C)+(2->A)+(3->B)"
+    ));
+    // …and dropped by its mirror image `rest`.
+    assert!(sequniv_ground(
+        "sq/rest[(0->A)+(1->B)+(2->C)+(3->A)+(4->B)] = (0->B)+(1->C)+(2->A)"
+    ));
+}
+
+#[test]
+fn sequniv_insert_shifts_strictly_past_the_index() {
+    // P2/P3: the shift term is `gt`, not `gte`.
+    assert!(sequniv_ground(
+        "sq/insert[(0->A)+(1->B), 1, C] = (0->A)+(1->C)+(2->B)"
+    ));
+    // Pre-fix index 1 held both `C` and the old `A`, so the result was not even
+    // a function and no `seq` field could equal it.
+    assert!(!sequniv_ground(
+        "some i: seq/Int | not lone i.(sq/insert[(0->A)+(1->B), 1, C])"
+    ));
+    // An out-of-range `i` contributes nothing, yet a negative `i` still shifts:
+    // the clamp is on the index domain, not a guard on `i`.
+    assert!(sequniv_ground(
+        "sq/insert[(0->A)+(1->B), 3, C] = (0->A)+(1->B)"
+    ));
+    assert!(sequniv_ground(
+        "sq/insert[(0->A)+(1->B), ui/negate[1], C] = (1->A)+(2->B)"
+    ));
+    // A gapped input pins the three-way body shape (nothing shifts into 2,
+    // because `s[1]` is empty).
+    assert!(sequniv_ground(
+        "sq/insert[(0->A)+(2->C), 1, B] = (0->A)+(1->B)"
+    ));
+}
+
+#[test]
+fn sequniv_shifted_result_is_assignable_to_a_seq_field() {
+    // mt-084 wrong-UNSAT polarity, probe P1 rows 6 and 7 (jar SAT, mettle UNSAT
+    // pre-fix): the two shapes `correctChord.als` builds a successor list with —
+    // `insert[list, 0, e]` (rows [20]/[21]/[24]) and `add[rest[list], e]`
+    // (row [19]). Both must be equatable with another `seq` field.
+    assert!(solve(
+        "open util/sequniv\nsig X {}\none sig P { f: seq X }\nsig Q { g: seq X }\n\
+         run { #P.f = 3 and (some q: Q, e: X | q.g = insert[P.f, 0, e]) } for 3 but 3 seq, 3 X, 2 Q\n"
+    ));
+    assert!(solve(
+        "open util/sequniv\nsig X {}\none sig P { f: seq X }\nsig Q { g: seq X }\n\
+         run { #P.f = 3 and (some q: Q, e: X | q.g = add[rest[P.f], e]) } for 3 but 3 seq, 3 X, 2 Q\n"
+    ));
+    // Probe P1 rows 0 and 1: inserting into a full sequence keeps it length 3,
+    // and can never make it length 4.
+    assert!(solve(
+        "open util/sequniv\nsig X {}\none sig P { f: seq X }\n\
+         run { #P.f = 3 and (some e: X | #insert[P.f, 0, e] = 3) } for 3 but 3 seq, 3 X\n"
+    ));
+    assert!(!solve(
+        "open util/sequniv\nsig X {}\none sig P { f: seq X }\n\
+         run { #P.f = 3 and (some e: X | #insert[P.f, 0, e] = 4) } for 3 but 3 seq, 3 X\n"
+    ));
+}
+
+#[test]
+fn sequniv_insert_result_can_equal_its_own_seq_field() {
+    // mt-084 wrong-SAT polarity (`correctChord.als` row [30]): that check asserts
+    // `field != insert[…]`, which pre-fix was a TAUTOLOGY — a 4-tuple result can
+    // never equal a 3-tuple `seq` field — so "a change is enabled" held even in a
+    // state where it should not, and the check reported a spurious counterexample.
+    // Stated positively here: the equality must be satisfiable (a constant list
+    // is its own 0-insert of its element). Pre-fix this was UNSAT.
+    assert!(solve(
+        "open util/sequniv\nsig X {}\none sig P { f: seq X }\n\
+         run { #P.f = 3 and (some e: X | P.f = insert[P.f, 0, e]) } for 3 but 3 seq, 3 X\n"
+    ));
+}
+
+// ---------------------- mt-084: the same defects in seqrel -------------------
+// `util/seqrel` indexes by an ordered `SeqIdx` sig, so nothing can escape the
+// index domain — but it carried the same `gte` shift defect PLUS a second one:
+// its shifted lookup was spelled `j.(ord/prev) -> x in s`, and at the boundary
+// the step is empty, making `none -> x in s` vacuously true and putting EVERY
+// element at that index. Values are jar constants from probe P4.
+
+/// Preamble reaching the three `SeqIdx` atoms through funs — mettle's evaluator
+/// cannot resolve module-qualified atom literals, so naming them this way is
+/// what let the same probe text run against both the jar and mettle.
+const SEQREL_GROUND: &str = "open util/seqrel[E] as sr\n\
+     abstract sig E {}\none sig A, B, C extends E {}\n\
+     fun i0: set sr/SeqIdx { sr/firstIdx }\n\
+     fun i1: set sr/SeqIdx { sr/SeqIdx - sr/firstIdx - sr/finalIdx }\n\
+     fun i2: set sr/SeqIdx { sr/finalIdx }\n";
+
+/// Solves a ground `util/seqrel` body over a 3-atom `SeqIdx` order.
+fn seqrel_ground(body: &str) -> bool {
+    solve(&format!("{SEQREL_GROUND}run {{ {body} }} for 3\n"))
+}
+
+#[test]
+fn seqrel_insert_shifts_strictly_past_the_index() {
+    assert!(seqrel_ground(
+        "sr/insert[(i0->A)+(i1->B), i1, C] = (i0->A)+(i1->C)+(i2->B)"
+    ));
+    assert!(seqrel_ground(
+        "sr/insert[(i0->A)+(i1->B), i0, C] = (i0->C)+(i1->A)+(i2->B)"
+    ));
+    assert!(seqrel_ground(
+        "sr/insert[(i0->A)+(i2->C), i1, B] = (i0->A)+(i1->B)"
+    ));
+}
+
+#[test]
+fn seqrel_shift_lookup_is_empty_at_the_order_boundary() {
+    assert!(seqrel_ground(
+        "sr/rest[(i0->A)+(i1->B)+(i2->C)] = (i0->B)+(i1->C)"
+    ));
+    assert!(seqrel_ground(
+        "sr/delete[(i0->A)+(i1->B)+(i2->C), i1] = (i0->A)+(i1->C)"
+    ));
+    // Negative space for the vacuous-`in` defect: pre-fix the boundary index
+    // held all three elements at once.
+    assert!(!seqrel_ground(
+        "some i: sr/SeqIdx | not lone i.(sr/rest[(i0->A)+(i1->B)+(i2->C)])"
+    ));
+    assert!(!seqrel_ground(
+        "some i: sr/SeqIdx | not lone i.(sr/delete[(i0->A)+(i1->B)+(i2->C), i1])"
+    ));
+}
