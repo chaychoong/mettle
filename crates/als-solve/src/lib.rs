@@ -7,8 +7,12 @@
 
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
+#[cfg(feature = "cadical")]
+mod cadical_backend;
 mod solver;
 
+#[cfg(feature = "cadical")]
+pub use cadical_backend::{Cadical, CadicalSolver};
 pub use solver::{block, Cdcl, CdclSolver};
 
 use std::fmt;

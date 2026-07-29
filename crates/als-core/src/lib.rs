@@ -13,6 +13,8 @@ mod encode;
 pub mod error;
 pub mod eval;
 mod freevars;
+#[cfg(feature = "cadical-instrument")]
+pub mod instrument;
 pub mod ir;
 pub mod lower;
 mod overflow_guard;
@@ -27,6 +29,10 @@ pub mod temporal_solve;
 pub use bounds_builder::{compute_bounds, BoundsResult};
 pub use error::TranslateError;
 pub use eval::{self_check, self_check_temporal, Evaluator, SelfCheckDetail, SelfCheckFailure};
+#[cfg(feature = "cadical-instrument")]
+pub use instrument::{
+    solve_goal_with_backend, InstrumentBackend, InstrumentOutcome, InstrumentVerdict,
+};
 pub use lower::{
     lower_command, lower_command_keeping_temporal, lower_fragment, lower_fragment_keeping_temporal,
     FragmentInput, GoalConjunct, LoweredFragment, LoweredGoal, Provenance,

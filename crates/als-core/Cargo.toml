@@ -8,6 +8,13 @@ repository.workspace = true
 [lints]
 workspace = true
 
+[features]
+# `cadical-instrument` (OFF by default, ADR-0019 / mt-089): compiles the
+# `instrument` module, which hands one translated CNF to either backend. Pure
+# addition -- no shipped path is conditional on it, so a default build is the
+# same crate it was.
+cadical-instrument = ["als-solve/cadical"]
+
 [dependencies]
 # als-syntax: translation reads the AST produced by the parser.
 als-syntax = { path = "../als-syntax" }

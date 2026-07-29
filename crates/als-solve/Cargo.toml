@@ -8,4 +8,33 @@ repository.workspace = true
 [lints]
 workspace = true
 
+[features]
+# `cadical` (OFF by default, ADR-0019 / mt-089): the optional second SAT
+# backend. Default builds -- the CLI, the gauge, packaging -- stay exactly the
+# zero-dependency, all-Rust build they were; nothing in the default path can
+# see this crate's contents, let alone its behavior.
+cadical = ["dep:cadical"]
+
 [dependencies]
+# cadical (OPTIONAL, feature `cadical`): Rust bindings for Armin Biere's
+# CaDiCaL, the state-of-the-art CDCL solver ADR-0019 selected as mettle's
+# second backend. Justification (STYLE: every dependency justified in writing):
+#   * License MIT, and the vendored CaDiCaL 1.9.5 sources are MIT too --
+#     compatible with distributing an MPL-2.0 binary.
+#   * Build surface is one build-dependency (`cc`) compiling the vendored C++
+#     with no autotools/CMake step, no submodule fetch, no system library: the
+#     crate ships CaDiCaL's `src/` inside the .crate file.
+#   * Its IPASIR surface covers the whole `Solver` seam we need --
+#     incremental `add_clause` between solves (the enumeration seam) and
+#     `limit("conflicts", n)` (the deterministic budget) -- with a safe,
+#     lifetime-clean Rust API, so mettle keeps `unsafe_code = "forbid"`.
+#   * Chosen over `rustsat-cadical`, which reaches the same solver through the
+#     RustSAT framework (and does expose conflict counters) but drags the
+#     `rustsat` core, `anyhow`, `thiserror`, `cpu-time` and friends into a
+#     crate whose entire point is having no dependencies; and over vendoring
+#     the C++ ourselves, which would put an FFI layer plus `unsafe` into a
+#     workspace that currently forbids it, for no gain over an MIT crate that
+#     already vendors the same sources.
+# Pinned exactly (`=`) because a SAT backend's version IS the measurement:
+# an instrument row means nothing if the solver silently moves under it.
+cadical = { version = "=0.1.16", optional = true }
