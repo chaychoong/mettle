@@ -1,6 +1,24 @@
 {
- "note": "Slow-file jar verdict supplement (mt-050, 2026-07-25): the portus files that timed out at the original 60s capture, re-captured at 1800s/7200s per-file JVM timeouts on the M-series box (JDK 21, LEDGER-001 defaults: symmetry 20, noOverflow=true, sat4j). Merged by the gauge after portus-63-verdict.json (sorted-name order), command entries override that file's file-level timeouts. ertms_1A captured at 7200s; correctChord absent if still timing out \u2014 see README triage.",
+ "note": "Slow-file jar verdict supplement (mt-050, 2026-07-25; correctChord added at mt-083, 2026-07-29): the portus files that timed out at the original 60s capture, re-captured with longer budgets on the M-series box (JDK 21/26, LEDGER-001 defaults: symmetry 20, noOverflow=true, sat4j). Merged by the gauge after portus-63-verdict.json (sorted-name order), command entries override that file's file-level timeouts. ertms_1A captured at 7200s per-file. correctChord captured PER-COMMAND (mt-069 PerCommandProbe pattern, one JVM per command, 900s/2700s tiers): 36 of 39 commands banked; the file-level sweep never finishes because a handful of pathological commands dominate serially, but most commands answer in seconds -- see baselines/README triage.",
  "files": [
+  {
+   "file": "corpus/portus-63/expert-models/3zltn65gds66b6f4q3lvbtgdkb6snmuu-alloy/fullsub2.als",
+   "outcome": {
+    "type": "commands",
+    "data": [
+     {
+      "index": 0,
+      "label": "SameFinalStates",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     }
+    ]
+   }
+  },
   {
    "file": "corpus/portus-63/expert-models/3zltn65gds66b6f4q3lvbtgdkb6snmuu-alloy/mesh.als",
    "outcome": {
@@ -23,6 +41,24 @@
       "expects": null,
       "outcome": {
        "type": "unsat",
+       "instance_count": null
+      }
+     }
+    ]
+   }
+  },
+  {
+   "file": "corpus/portus-63/expert-models/7d25ioxqmue65lp6ntzz735gpbg4fmgq-amazon-snapshot-spec/serializableSnapshotIsolation.als",
+   "outcome": {
+    "type": "commands",
+    "data": [
+     {
+      "index": 0,
+      "label": "run$1",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
        "instance_count": null
       }
      }
@@ -271,6 +307,918 @@
       "expects": null,
       "outcome": {
        "type": "sat",
+       "instance_count": null
+      }
+     }
+    ]
+   }
+  },
+  {
+   "file": "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/ERTMS/ertms_1A.als",
+   "outcome": {
+    "type": "commands",
+    "data": [
+     {
+      "index": 0,
+      "label": "S1",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 1,
+      "label": "S2",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 2,
+      "label": "S3",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 3,
+      "label": "S4",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 4,
+      "label": "S5",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 5,
+      "label": "S6",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 6,
+      "label": "S7",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 7,
+      "label": "S8",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 8,
+      "label": "S9",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 9,
+      "label": "trains_ok_states_ok",
+      "check": true,
+      "expects": false,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 10,
+      "label": "trains_ok_free_ok",
+      "check": true,
+      "expects": false,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 11,
+      "label": "trains_ok_occupied_ok",
+      "check": true,
+      "expects": false,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 12,
+      "label": "timers_auto_free_ok",
+      "check": true,
+      "expects": false,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 13,
+      "label": "timers_auto_occupied_ok",
+      "check": true,
+      "expects": false,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     }
+    ]
+   }
+  },
+  {
+   "file": "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als",
+   "outcome": {
+    "type": "commands",
+    "data": [
+     {
+      "index": 0,
+      "label": "B1",
+      "check": true,
+      "expects": false,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 1,
+      "label": "E1",
+      "check": true,
+      "expects": false,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 2,
+      "label": "O1",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 3,
+      "label": "T1",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 4,
+      "label": "I1",
+      "check": true,
+      "expects": false,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 5,
+      "label": "X1",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 6,
+      "label": "P1",
+      "check": true,
+      "expects": false,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 7,
+      "label": "EO1",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 8,
+      "label": "A1",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 9,
+      "label": "B1\"",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 10,
+      "label": "E1\"",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 11,
+      "label": "O1\"",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 12,
+      "label": "T1\"",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 13,
+      "label": "I1\"",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 14,
+      "label": "X1",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 15,
+      "label": "EO1\"",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 16,
+      "label": "A1\"",
+      "check": false,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 17,
+      "label": "A1\"\"",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 18,
+      "label": "B2",
+      "check": true,
+      "expects": false,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 19,
+      "label": "E2",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 20,
+      "label": "O2",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 21,
+      "label": "T2",
+      "check": true,
+      "expects": false,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 22,
+      "label": "I2",
+      "check": true,
+      "expects": false,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 23,
+      "label": "X2",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 24,
+      "label": "P2",
+      "check": true,
+      "expects": false,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 25,
+      "label": "EO2",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 26,
+      "label": "A2",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 27,
+      "label": "B3a",
+      "check": true,
+      "expects": false,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 28,
+      "label": "E3a",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 29,
+      "label": "O3a",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 30,
+      "label": "T3a",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 31,
+      "label": "I3a",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 32,
+      "label": "X3a",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 33,
+      "label": "P3a",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 34,
+      "label": "EO3a",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 35,
+      "label": "A3a",
+      "check": true,
+      "expects": true,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     }
+    ]
+   }
+  },
+  {
+   "file": "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/HotelLocking/HotelVar.als",
+   "outcome": {
+    "type": "commands",
+    "data": [
+     {
+      "index": 0,
+      "label": "BadSafety",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 1,
+      "label": "GoodSafety",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     }
+    ]
+   }
+  },
+  {
+   "file": "corpus/portus-63/expert-models/chord-pamela-zave/correctChord.als",
+   "outcome": {
+    "type": "commands",
+    "data": [
+     {
+      "index": 0,
+      "label": "AnyBetweenAny",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 1,
+      "label": "AnyIncludedInAny",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 2,
+      "label": "Untitled",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 3,
+      "label": "IncludedReversesBetween",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 4,
+      "label": "ChainedIntervals",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 5,
+      "label": "LocationOfUnskippedNode",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 6,
+      "label": "IsNetState",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 7,
+      "label": "ImperfectNetState",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 8,
+      "label": "Invar\"iant",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 9,
+      "label": "Invar\"iantEnsuresOrderedSuccessorLists",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 10,
+      "label": "Invar\"iantEnsuresNoDuplicates",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 11,
+      "label": "Invar\"iantEnsuresPrincipalsInRing",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 12,
+      "label": "Invar\"iantEnsuresOneOrderedRing",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 14,
+      "label": "Ideal",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 15,
+      "label": "Fail",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 16,
+      "label": "FailPreservesInvar\"iant",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 17,
+      "label": "Join",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 18,
+      "label": "JoinPreservesInvar\"iant",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 19,
+      "label": "StabilizeDead",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 20,
+      "label": "StabilizeToNextStep",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 21,
+      "label": "StabilizeWithListChange",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 23,
+      "label": "StabilizeFromDeadPredecessor",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 24,
+      "label": "ActiveStabilizeFromPredecessor",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 26,
+      "label": "ActiveRectify",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 27,
+      "label": "RectifyPreservesInvar\"iant",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 28,
+      "label": "LossOfPrincipal",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 29,
+      "label": "NonIdealImpliesChangeEnabled",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 30,
+      "label": "IdealImpliesNoChangeEnabled",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 31,
+      "label": "EffectiveStabilizeFromSuccessorIsEnabled",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 32,
+      "label": "EffectiveStabilizeFromSuccChangesState",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 33,
+      "label": "EffectiveStabilizeFromPredecessorIsEnabled",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 34,
+      "label": "EffectiveStabilizeFromPrdcChangesState",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 35,
+      "label": "EffectiveRectifyFromSuccIsEnabled",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 36,
+      "label": "EffectiveRectifyFromSuccChangesState",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 37,
+      "label": "EffectiveRectifyFromPrdcIsEnabled",
+      "check": false,
+      "expects": null,
+      "outcome": {
+       "type": "sat",
+       "instance_count": null
+      }
+     },
+     {
+      "index": 38,
+      "label": "EffectiveRectifyFromPrdcChangesState",
+      "check": true,
+      "expects": null,
+      "outcome": {
+       "type": "unsat",
        "instance_count": null
       }
      }
@@ -1007,586 +1955,6 @@
       "expects": null,
       "outcome": {
        "type": "sat",
-       "instance_count": null
-      }
-     }
-    ]
-   }
-  },
-  {
-   "file": "corpus/portus-63/expert-models/3zltn65gds66b6f4q3lvbtgdkb6snmuu-alloy/fullsub2.als",
-   "outcome": {
-    "type": "commands",
-    "data": [
-     {
-      "index": 0,
-      "label": "SameFinalStates",
-      "check": true,
-      "expects": null,
-      "outcome": {
-       "type": "unsat",
-       "instance_count": null
-      }
-     }
-    ]
-   }
-  },
-  {
-   "file": "corpus/portus-63/expert-models/7d25ioxqmue65lp6ntzz735gpbg4fmgq-amazon-snapshot-spec/serializableSnapshotIsolation.als",
-   "outcome": {
-    "type": "commands",
-    "data": [
-     {
-      "index": 0,
-      "label": "run$1",
-      "check": false,
-      "expects": null,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     }
-    ]
-   }
-  },
-  {
-   "file": "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/ElevatorSPL/elevator_spl_events.als",
-   "outcome": {
-    "type": "commands",
-    "data": [
-     {
-      "index": 0,
-      "label": "B1",
-      "check": true,
-      "expects": false,
-      "outcome": {
-       "type": "unsat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 1,
-      "label": "E1",
-      "check": true,
-      "expects": false,
-      "outcome": {
-       "type": "unsat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 2,
-      "label": "O1",
-      "check": true,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 3,
-      "label": "T1",
-      "check": true,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 4,
-      "label": "I1",
-      "check": true,
-      "expects": false,
-      "outcome": {
-       "type": "unsat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 5,
-      "label": "X1",
-      "check": true,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 6,
-      "label": "P1",
-      "check": true,
-      "expects": false,
-      "outcome": {
-       "type": "unsat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 7,
-      "label": "EO1",
-      "check": true,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 8,
-      "label": "A1",
-      "check": true,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 9,
-      "label": "B1\"",
-      "check": false,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 10,
-      "label": "E1\"",
-      "check": false,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 11,
-      "label": "O1\"",
-      "check": false,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 12,
-      "label": "T1\"",
-      "check": false,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 13,
-      "label": "I1\"",
-      "check": false,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 14,
-      "label": "X1",
-      "check": false,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 15,
-      "label": "EO1\"",
-      "check": false,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 16,
-      "label": "A1\"",
-      "check": false,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 17,
-      "label": "A1\"\"",
-      "check": true,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 18,
-      "label": "B2",
-      "check": true,
-      "expects": false,
-      "outcome": {
-       "type": "unsat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 19,
-      "label": "E2",
-      "check": true,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 20,
-      "label": "O2",
-      "check": true,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 21,
-      "label": "T2",
-      "check": true,
-      "expects": false,
-      "outcome": {
-       "type": "unsat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 22,
-      "label": "I2",
-      "check": true,
-      "expects": false,
-      "outcome": {
-       "type": "unsat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 23,
-      "label": "X2",
-      "check": true,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 24,
-      "label": "P2",
-      "check": true,
-      "expects": false,
-      "outcome": {
-       "type": "unsat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 25,
-      "label": "EO2",
-      "check": true,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 26,
-      "label": "A2",
-      "check": true,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 27,
-      "label": "B3a",
-      "check": true,
-      "expects": false,
-      "outcome": {
-       "type": "unsat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 28,
-      "label": "E3a",
-      "check": true,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 29,
-      "label": "O3a",
-      "check": true,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 30,
-      "label": "T3a",
-      "check": true,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 31,
-      "label": "I3a",
-      "check": true,
-      "expects": true,
-      "outcome": {
-       "type": "unsat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 32,
-      "label": "X3a",
-      "check": true,
-      "expects": null,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 33,
-      "label": "P3a",
-      "check": true,
-      "expects": null,
-      "outcome": {
-       "type": "unsat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 34,
-      "label": "EO3a",
-      "check": true,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 35,
-      "label": "A3a",
-      "check": true,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     }
-    ]
-   }
-  },
-  {
-   "file": "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/Systems/HotelLocking/HotelVar.als",
-   "outcome": {
-    "type": "commands",
-    "data": [
-     {
-      "index": 0,
-      "label": "BadSafety",
-      "check": true,
-      "expects": null,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 1,
-      "label": "GoodSafety",
-      "check": true,
-      "expects": null,
-      "outcome": {
-       "type": "unsat",
-       "instance_count": null
-      }
-     }
-    ]
-   }
-  },
-  {
-   "file": "corpus/portus-63/expert-models/7z32luflamhdcixvt6nwznnud4oi6dbr-MSV/CaseStudies/ERTMS/ertms_1A.als",
-   "outcome": {
-    "type": "commands",
-    "data": [
-     {
-      "index": 0,
-      "label": "S1",
-      "check": false,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 1,
-      "label": "S2",
-      "check": false,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 2,
-      "label": "S3",
-      "check": false,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 3,
-      "label": "S4",
-      "check": false,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 4,
-      "label": "S5",
-      "check": false,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 5,
-      "label": "S6",
-      "check": false,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 6,
-      "label": "S7",
-      "check": false,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 7,
-      "label": "S8",
-      "check": false,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 8,
-      "label": "S9",
-      "check": false,
-      "expects": true,
-      "outcome": {
-       "type": "sat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 9,
-      "label": "trains_ok_states_ok",
-      "check": true,
-      "expects": false,
-      "outcome": {
-       "type": "unsat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 10,
-      "label": "trains_ok_free_ok",
-      "check": true,
-      "expects": false,
-      "outcome": {
-       "type": "unsat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 11,
-      "label": "trains_ok_occupied_ok",
-      "check": true,
-      "expects": false,
-      "outcome": {
-       "type": "unsat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 12,
-      "label": "timers_auto_free_ok",
-      "check": true,
-      "expects": false,
-      "outcome": {
-       "type": "unsat",
-       "instance_count": null
-      }
-     },
-     {
-      "index": 13,
-      "label": "timers_auto_occupied_ok",
-      "check": true,
-      "expects": false,
-      "outcome": {
-       "type": "unsat",
        "instance_count": null
       }
      }

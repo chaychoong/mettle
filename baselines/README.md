@@ -170,7 +170,21 @@ Triage (2026-07-25, tech lead):
   rows above; the jar's UNSAT is the oracle.
 - **ertms_1A.als converted at 7200s** (14 commands, 14/14 expect-matches —
   merged into the supplement). **correctChord.als times out at 1800s AND at a final 7200s attempt**
-  (2026-07-25, M-series box — no further retries planned; the reference jar
-  itself cannot sweep this file's 39 commands in 2h): it stays
-  a file-level non-verdict: mettle commands there bucket as `jar_nonverdict`,
-  the honest "nothing to compare against" outcome.
+  (2026-07-25, M-series box — the reference jar cannot sweep this file's 39
+  commands in one 2h JVM). _Superseded 2026-07-29 (mt-083): the file-level
+  timeout was a serial-blotting artifact, not per-command hardness._
+
+Triage addendum (2026-07-29, mt-083 — correctChord banked per-command):
+- Re-captured with the mt-069 `PerCommandProbe` pattern (one JVM per command,
+  LEDGER-001 config: symmetry 20, noOverflow=true, sat4j; 900s tier-1 +
+  2700s tier-2): **36 of 39 commands banked** — most answer in 2–75s; the
+  file-level sweep only ever timed out because a handful of pathological
+  commands dominate a serial run. The remaining unbanked commands (jar
+  timeout at 2700s) keep the file-level non-verdict fallback per index.
+- No commands carry `expect`, so there are no expect-match cells.
+- **The banked verdicts exposed 5 real mettle wrong verdicts** (first-ever
+  comparisons for these rows; overflow-mode sensitivity ruled out by an
+  allow-overflow re-run of row 19, and mettle's verdict confirmed end-to-end
+  via `mettle exec`): rows 19/20/21/24 (`run Stabilize…` family, mettle UNSAT
+  vs jar SAT) and row 30 (`check IdealImpliesNoChangeEnabled`, mettle SAT vs
+  jar UNSAT). Filed as the mt-084 stop-the-line diagnosis bead.
