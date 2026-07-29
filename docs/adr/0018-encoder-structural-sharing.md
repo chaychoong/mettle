@@ -89,8 +89,29 @@ Three changes in `als-core::encode`, one review invariant each:
   existing memo see through inlining — but interning merges differing spans
   (diagnostics regression risk) and turns the IR tree into a DAG for every
   downstream tree-walker (free-vars, overflow guard, self-check).
-  **Deferred, not rejected**: evaluate once the value cache's sweep history
-  is established.
+  ~~**Deferred, not rejected**: evaluate once the value cache's sweep history
+  is established.~~ **REJECTED 2026-07-29 (mt-086), by measurement.** With the
+  value cache live, instrumented full encodes of all 28 remaining
+  encode-bound rows (TransForm ×22, correctChord[0..5]) show hash-consing
+  would recover only **0.5–4.4% of spend** — the residue chargeable on a
+  duplicate is just Var-leaf interning, the four kinds `shared()` does not
+  cover, and formula/int gates; a value-cache hit itself is a free id-keyed
+  probe, so there is no pre-lookup charge to reclaim. **Post-1b spend still
+  overshoots the 32M ceiling 1.6×–6.2× on every row: zero conversions.**
+  The instrument is calibrated: with the value cache disabled it reads
+  82.4% saveable on the same row (the pre-ADR-0018 world), and the two are
+  **substitutes, not complements** — value identity is coarser than
+  structural identity, so 1a strictly dominates (1b alone would have landed
+  `minimality_check[0]` at ~525k spend; 1a landed it at 428k). Secondary
+  wins are immaterial (largest lowering wall 0.5 s of a ~650 s sweep).
+  Against zero currency, the span-merge and DAG risks above stand
+  unchanged. Measurement artifacts: `scratchpad/probe/mt086/`. The one live
+  residue — the un-shared kinds (`Comprehension`/`IfThenElse`/`IntToAtom`/
+  `Transpose`) and the absent formula-side cache cost a measured **4.6% of
+  clauses on the correctChord family** — is spun off as a separate
+  encoder-local CNF-shape experiment (bead mt-087), which carries this
+  ADR's own caution: any CNF-shape change re-runs the ADR-0017 paired
+  budget grid, and shrinking a CNF has already moved rows backwards once.
 - **Ranking/level-variable acyclicity encodings.** Rejected outright: new
   primary variables would change the model set and break the SB-0
   counting-net contract (exact count parity with the jar).
