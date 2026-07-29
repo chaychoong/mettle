@@ -13,7 +13,28 @@
 //! **primary** variables before constructing any [`Circuit`], so every auxiliary
 //! sorts after every primary (ADR-0011 decision 3).
 
+use std::collections::BTreeMap;
+
 use als_solve::{Cnf, Lit, Var};
+
+/// The structural gate cache (mt-087): a canonical conjunction's operand list →
+/// the auxiliary literal that already defines it.
+///
+/// The key is the **full** operand list — ascending, duplicate-free
+/// [`Lit`]s — so a hit means the two gate requests are the identical boolean
+/// function of the identical inputs, and the earlier auxiliary already has the
+/// defining clauses. Reusing it emits no clause and mints no variable. Ids
+/// only, never a hash: a collision would fuse two different functions.
+/// `BTreeMap` and `Vec<Lit>` (dense `u32` newtype, derived `Ord`) keep the
+/// table a pure function of the traversal order (STYLE D2).
+///
+/// Disjunctions share this one namespace through De Morgan
+/// (`⋁ lᵢ = ¬⋀ ¬lᵢ`), so an `or` and the dual `and` reuse one gate. The two
+/// encodings are clause-for-clause identical up to the auxiliary's polarity —
+/// `z ↔ ⋁ lᵢ` emits `(z ∨ ¬lᵢ)` plus `(¬z ∨ l₁ ∨ … ∨ lₙ)`, and `w ↔ ⋀ ¬lᵢ`
+/// emits `(¬w ∨ ¬lᵢ)` plus `(w ∨ l₁ ∨ … ∨ lₙ)` with `z = ¬w` — so nothing is
+/// paid for the unification.
+pub type GateCache = BTreeMap<Vec<Lit>, Lit>;
 
 /// A boolean value in the circuit: a constant or a single literal.
 ///
@@ -55,12 +76,16 @@ pub struct Circuit<'a> {
     /// alone cannot see (a grounded walk over constant-heavy matrices burns
     /// time while minting nothing). A deterministic pure count (STYLE D1).
     ops: &'a mut u64,
+    /// The encoder's structural gate cache (mt-087), threaded through so a
+    /// second request for a gate this encode already built reuses it.
+    gates: &'a mut GateCache,
 }
 
 impl<'a> Circuit<'a> {
-    /// Wraps a CNF for gate construction, metering effort into `ops`.
-    pub fn new(cnf: &'a mut Cnf, ops: &'a mut u64) -> Self {
-        Self { cnf, ops }
+    /// Wraps a CNF for gate construction, metering effort into `ops` and
+    /// sharing gates through `gates`.
+    pub fn new(cnf: &'a mut Cnf, ops: &'a mut u64, gates: &'a mut GateCache) -> Self {
+        Self { cnf, ops, gates }
     }
 
     /// The negation of `b` — never mints a variable (`¬` is free on a literal).
@@ -84,10 +109,28 @@ impl<'a> Circuit<'a> {
     /// Simplifies against constants (`false` short-circuits, `true` drops out);
     /// an empty/one-element residue needs no gate. Otherwise mints `z` with
     /// clauses `(¬z ∨ lᵢ)` for each input and `(z ∨ ¬l₁ ∨ … ∨ ¬lₙ)`, so
-    /// `z ↔ ⋀ lᵢ`.
+    /// `z ↔ ⋀ lᵢ` — or reuses the auxiliary an earlier identical request
+    /// already defined ([`GateCache`]).
     #[must_use]
     pub fn and_many(&mut self, items: Vec<Bool>) -> Bool {
         *self.ops += items.len() as u64 + 1;
+        self.and_core(items)
+    }
+
+    /// Disjunction of many values (the De Morgan dual of [`Circuit::and_many`],
+    /// and encoded as exactly that so the two share one gate namespace).
+    #[must_use]
+    pub fn or_many(&mut self, items: Vec<Bool>) -> Bool {
+        *self.ops += items.len() as u64 + 1;
+        let negated = items.into_iter().map(|b| self.not(b)).collect();
+        let conj = self.and_core(negated);
+        self.not(conj)
+    }
+
+    /// The conjunction gate itself, **unmetered** — the public entry points
+    /// charge the request exactly once, so routing `or_many` through here does
+    /// not change what the encode budget sees.
+    fn and_core(&mut self, items: Vec<Bool>) -> Bool {
         let mut lits = Vec::with_capacity(items.len());
         for b in items {
             match b {
@@ -96,10 +139,24 @@ impl<'a> Circuit<'a> {
                 Bool::Lit(l) => lits.push(l),
             }
         }
+        // Canonical operand list: ascending (`Lit` is a dense `u32` newtype
+        // whose derived order *is* the code order) and duplicate-free, so two
+        // requests for the same conjunction key identically however their
+        // operands were ordered. `x ∧ x = x` justifies the dedup; `x ∧ ¬x =
+        // false` is caught in the same pass, since a variable's two literals
+        // have adjacent codes (`v<<1`, `v<<1|1`) and so land side by side.
+        lits.sort_unstable();
+        lits.dedup();
+        if lits.windows(2).any(|w| !w[0] == w[1]) {
+            return Bool::FALSE;
+        }
         match lits.len() {
             0 => Bool::TRUE,
             1 => Bool::Lit(lits[0]),
             _ => {
+                if let Some(&hit) = self.gates.get(&lits) {
+                    return Bool::Lit(hit);
+                }
                 let z = self.cnf.fresh_var();
                 let zpos = Lit::positive(z);
                 let mut big = Vec::with_capacity(lits.len() + 1);
@@ -109,36 +166,7 @@ impl<'a> Circuit<'a> {
                     big.push(!l);
                 }
                 self.cnf.add_clause(big);
-                Bool::Lit(zpos)
-            }
-        }
-    }
-
-    /// Disjunction of many values (the De Morgan dual of [`Circuit::and_many`]).
-    #[must_use]
-    pub fn or_many(&mut self, items: Vec<Bool>) -> Bool {
-        *self.ops += items.len() as u64 + 1;
-        let mut lits = Vec::with_capacity(items.len());
-        for b in items {
-            match b {
-                Bool::Const(true) => return Bool::TRUE,
-                Bool::Const(false) => {}
-                Bool::Lit(l) => lits.push(l),
-            }
-        }
-        match lits.len() {
-            0 => Bool::FALSE,
-            1 => Bool::Lit(lits[0]),
-            _ => {
-                let z = self.cnf.fresh_var();
-                let zpos = Lit::positive(z);
-                let mut big = Vec::with_capacity(lits.len() + 1);
-                big.push(!zpos);
-                for &l in &lits {
-                    self.cnf.add_clause(vec![zpos, !l]);
-                    big.push(l);
-                }
-                self.cnf.add_clause(big);
+                self.gates.insert(lits, zpos);
                 Bool::Lit(zpos)
             }
         }
@@ -224,8 +252,9 @@ mod tests {
         let x = cnf.fresh_var();
         let y = cnf.fresh_var();
         let mut ops = 0u64;
+        let mut gates = GateCache::new();
         let g = {
-            let mut c = Circuit::new(&mut cnf, &mut ops);
+            let mut c = Circuit::new(&mut cnf, &mut ops, &mut gates);
             build(&mut c, Bool::var(x), Bool::var(y))
         };
         match g {
@@ -278,7 +307,8 @@ mod tests {
     fn constants_fold() {
         let mut cnf = Cnf::new();
         let mut ops = 0u64;
-        let mut c = Circuit::new(&mut cnf, &mut ops);
+        let mut gates = GateCache::new();
+        let mut c = Circuit::new(&mut cnf, &mut ops, &mut gates);
         assert_eq!(c.and(Bool::TRUE, Bool::FALSE), Bool::FALSE);
         assert_eq!(c.or(Bool::TRUE, Bool::FALSE), Bool::TRUE);
         assert_eq!(c.not(Bool::TRUE), Bool::FALSE);

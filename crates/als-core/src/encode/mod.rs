@@ -42,7 +42,7 @@ use crate::ir::{
 };
 
 use crate::freevars::FreeVars;
-use circuit::Circuit;
+use circuit::{Circuit, GateCache};
 use int::{IntBuilder, IntVal};
 use matrix::Matrix;
 
@@ -84,8 +84,8 @@ fn cell_key(b: Bool) -> u64 {
 }
 
 /// The operations whose results are shared through the structural value cache
-/// (mt-081). Tagged into one key space; `Transpose` is deliberately absent
-/// (it mints no gates, so sharing it could only cost interning effort).
+/// (mt-081) — those a pair of operand [`MatrixId`]s fully determines, tagged
+/// into one key space. The rest are [`ExtKey`]'s.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 enum ShareOp {
     Union,
@@ -96,6 +96,30 @@ enum ShareOp {
     Override,
     Closure,
     ReflexiveClosure,
+}
+
+/// The structural key of a relational operation whose result is **not**
+/// determined by a pair of operand [`MatrixId`]s, so [`ShareOp`]'s key shape
+/// does not fit it (mt-087).
+///
+/// Each variant lists exactly what its builder reads, so a hit means the
+/// builder would recompute the identical matrix. Everything else the builders
+/// touch (bitwidth, the int-atom span, `allow_overflow`, the universe) is fixed
+/// for the whole encode. Ids only, like [`ShareOp`] — the `u64`s are
+/// [`cell_key`]s, which are injective over [`Bool`].
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum ExtKey {
+    /// `~r`: [`transpose`] permutes the operand's cells and reads nothing else.
+    Transpose(MatrixId),
+    /// `c implies t else e`: [`Encoder::rel_ite`] reads the condition literal
+    /// and the two branch matrices, nothing more.
+    Ite(u64, MatrixId, MatrixId),
+    /// `Int[ie]`: [`Encoder::int_to_atom`] reads only the value's bits. The
+    /// `Option` is the forbid-mode empty-on-overflow guard — `Some(overflow
+    /// flag)` when the node is overflow-capable and the guard therefore
+    /// applies, `None` when it does not, so a guarded and an unguarded cast of
+    /// the same value never share.
+    IntToAtom(Vec<u64>, Option<u64>),
 }
 
 /// The primary-variable map: `(relation, floating tuple) → SAT variable`.
@@ -110,9 +134,9 @@ pub(crate) type PrimaryMap = BTreeMap<(RelId, Tuple), Var>;
 /// Borrows the lowered [`Ir`], the [`Bounds`], and the primary-variable map; owns
 /// the growing [`Cnf`] and the grounding environment.
 ///
-/// Work is shared at **two** levels, both of which reuse gates rather than
+/// Work is shared at **three** levels, all of which reuse gates rather than
 /// minting a second identical set — so the SB-0 model set over the primary
-/// variables is unchanged either way.
+/// variables is unchanged whichever fires.
 ///
 /// 1. **By node** (mt-049 env-cached grounding): produced matrices/bools/
 ///    int-values are memoised by `(node id, the bindings of exactly that node's
@@ -125,6 +149,15 @@ pub(crate) type PrimaryMap = BTreeMap<(RelId, Tuple), Var>;
 ///    `(operator, operand ids)`. This shares across arena nodes that are
 ///    *structurally unrelated* — which is what `pred`/`fun` inlining produces,
 ///    since `lower` re-walks each callee body into fresh nodes per call site.
+///    [`ExtKey`] extends this to the kinds a pair of operand ids does not
+///    determine (`~`, relational `if`/`then`/`else`, `Int[·]`).
+/// 3. **By gate** (mt-087 structural gate sharing, [`circuit::GateCache`]):
+///    the boolean layer under both of the above. Levels 1 and 2 share
+///    *matrices*; two matrices that are already shared still drove two
+///    identical runs of `rel_compare`/`mult_test`/the integer network, each
+///    minting a parallel auxiliary. A conjunction is now keyed by its
+///    canonical operand literals, so the second request returns the first
+///    gate's auxiliary.
 pub(crate) struct Encoder<'a> {
     ir: &'a Ir,
     bounds: &'a Bounds,
@@ -204,6 +237,20 @@ pub(crate) struct Encoder<'a> {
     /// mt-049 memo (identical gates over identical inputs denote the identical
     /// function, so the model set over the primary variables is unchanged).
     value_cache: BTreeMap<(ShareOp, MatrixId, MatrixId), MatrixId>,
+    /// The same sharing for the kinds whose result a pair of operand ids does
+    /// not determine (mt-087): see [`ExtKey`]. `Comprehension` is deliberately
+    /// absent — a comprehension's matrix is a function of its body *formula*
+    /// and the bindings of its free variables, and the only key that captures
+    /// that without interning the IR is `(node id, env)`, which is exactly the
+    /// [`Encoder::matrix_cache`] memo already in place.
+    ext_cache: BTreeMap<ExtKey, MatrixId>,
+    /// Structural gate sharing (mt-087): a second request for a conjunction
+    /// this encode already built reuses its auxiliary instead of minting a
+    /// parallel one. This is the formula/int-side counterpart of
+    /// [`Encoder::value_cache`] — the matrix caches share *values*, but two
+    /// structurally identical matrices still drove two identical runs of
+    /// `rel_compare`/`mult_test`/the integer network before this existed.
+    gates: GateCache,
     /// A free relation's / a relational constant's matrix, built and interned
     /// once instead of once per referencing arena node.
     base_rel_cache: BTreeMap<RelId, MatrixId>,
@@ -267,6 +314,8 @@ impl<'a> Encoder<'a> {
             matrix_intern: BTreeMap::new(),
             matrix_by_id: Vec::new(),
             value_cache: BTreeMap::new(),
+            ext_cache: BTreeMap::new(),
+            gates: GateCache::new(),
             base_rel_cache: BTreeMap::new(),
             base_const_cache: BTreeMap::new(),
         }
@@ -326,6 +375,22 @@ impl<'a> Encoder<'a> {
         let m = build(self, &a, &b);
         let out = self.intern_matrix(m);
         self.value_cache.insert(key, out);
+        out
+    }
+
+    /// [`Encoder::shared`] for the kinds [`ExtKey`] covers (mt-087).
+    ///
+    /// Same contract: a hit is one `BTreeMap` lookup and costs no `ops`, a miss
+    /// costs exactly what the unshared build cost before. The key is built by
+    /// the caller because each variant reads a different set of already-derived
+    /// ids; `build` must read nothing the key does not name.
+    fn ext_shared(&mut self, key: ExtKey, build: impl FnOnce(&mut Self) -> Matrix) -> MatrixId {
+        if let Some(&hit) = self.ext_cache.get(&key) {
+            return hit;
+        }
+        let m = build(self);
+        let out = self.intern_matrix(m);
+        self.ext_cache.insert(key, out);
         out
     }
 
@@ -496,7 +561,7 @@ impl<'a> Encoder<'a> {
     /// A transient gate builder over the CNF (constructed per call; effort is
     /// metered into [`Encoder::ops`]).
     fn circ(&mut self) -> Circuit<'_> {
-        Circuit::new(&mut self.cnf, &mut self.ops)
+        Circuit::new(&mut self.cnf, &mut self.ops, &mut self.gates)
     }
 
     /// The encode-budget resource guard (see the [`Encoder::encode_budget`]
@@ -624,10 +689,12 @@ impl<'a> Encoder<'a> {
             } => {
                 let (cond, then_branch, else_branch) = (*cond, *then_branch, *else_branch);
                 let c = self.formula(cond)?;
-                let t = self.rel(then_branch)?;
-                let e = self.rel(else_branch)?;
-                let m = self.rel_ite(c, &t, &e);
-                Ok(self.intern_matrix(m))
+                let kt = self.rel_shared(then_branch)?;
+                let ke = self.rel_shared(else_branch)?;
+                Ok(self.ext_shared(ExtKey::Ite(cell_key(c), kt, ke), |enc| {
+                    let (t, e) = (enc.matrix(kt), enc.matrix(ke));
+                    enc.rel_ite(c, &t, &e)
+                }))
             }
             RelExprKind::Comprehension { decls, body } => {
                 let decls = decls.clone();
@@ -638,7 +705,6 @@ impl<'a> Encoder<'a> {
             RelExprKind::IntToAtom(ie) => {
                 let ie = *ie;
                 let (v, of) = self.int(ie)?;
-                let m = self.int_to_atom(&v);
                 // (A) Cast value semantics (translation-ref §10.7c ext, mt-051):
                 // the jar builds every `IntToExprCast` cell with `Int.eq(other,
                 // empty)` (`∧ ¬accumOverflow`), so in forbid mode an overflowed
@@ -646,14 +712,20 @@ impl<'a> Encoder<'a> {
                 // independent, in every context. Allow mode keeps the wrapped
                 // atom; a non-capable cast (`Int[3]`) carries a constant-false
                 // flag, so the gate folds away.
-                let m = if !self.allow_overflow
-                    && crate::overflow_guard::overflow_capable(self.ir, ie)
-                {
-                    self.empty_on_overflow(&m, of)
-                } else {
-                    m
-                };
-                Ok(self.intern_matrix(m))
+                let guarded =
+                    !self.allow_overflow && crate::overflow_guard::overflow_capable(self.ir, ie);
+                let key = ExtKey::IntToAtom(
+                    v.bits().iter().map(|&b| cell_key(b)).collect(),
+                    guarded.then(|| cell_key(of)),
+                );
+                Ok(self.ext_shared(key, |enc| {
+                    let m = enc.int_to_atom(&v);
+                    if guarded {
+                        enc.empty_on_overflow(&m, of)
+                    } else {
+                        m
+                    }
+                }))
             }
             RelExprKind::Prime(_) => Err(TranslateError::LoweringUnsupported {
                 what: "temporal prime (`'`) reached the encoder — a lowering invariant \
@@ -744,12 +816,11 @@ impl<'a> Encoder<'a> {
 
     fn rel_unary(&mut self, op: RelUnOp, ka: MatrixId) -> MatrixId {
         match op {
-            // Transposition mints no gates, so sharing it could only add a
-            // lookup; it is excluded from the value cache (the result is still
-            // interned, since its id travels on to the parent).
+            // Transposition mints no gates, so sharing it saves no clauses —
+            // but it still saves the `O(cells)` permute-and-intern walk, which
+            // the encode budget charges like any other traversal (mt-087).
             RelUnOp::Transpose => {
-                let m = transpose(&self.matrix(ka));
-                self.intern_matrix(m)
+                self.ext_shared(ExtKey::Transpose(ka), |enc| transpose(&enc.matrix(ka)))
             }
             RelUnOp::Closure => self.shared(ShareOp::Closure, ka, ka, |enc, a, _| enc.closure(a)),
             RelUnOp::ReflexiveClosure => {
@@ -2048,5 +2119,125 @@ mod tests {
             assert_eq!(first.0, second.0, "variable count drifted between runs");
             assert_eq!(first.1, second.1, "CNF clauses drifted between runs");
         }
+    }
+
+    // ---------------------------------------------------- gate-cache sharing
+
+    /// The structural gate cache (mt-087): a repeated conjunction reuses its
+    /// auxiliary, operand order does not matter, and the De Morgan dual shares
+    /// the same gate — while a *different* conjunction still mints its own.
+    #[test]
+    fn identical_gates_share_one_auxiliary() {
+        let (ir, bounds, prim) = bare_encoder(2);
+        let mut enc = encoder(&ir, &bounds, &prim);
+        let (x, y, z) = (
+            enc.cnf.fresh_var(),
+            enc.cnf.fresh_var(),
+            enc.cnf.fresh_var(),
+        );
+        let (bx, by, bz) = (Bool::var(x), Bool::var(y), Bool::var(z));
+
+        let first = enc.circ().and(bx, by);
+        let vars = enc.cnf.num_vars();
+        let clauses = enc.cnf.clauses().len();
+
+        assert_eq!(enc.circ().and(bx, by), first, "a repeat request re-gated");
+        assert_eq!(
+            enc.circ().and(by, bx),
+            first,
+            "operand order was not sorted"
+        );
+        // `¬(¬x ∨ ¬y)` is the same gate read through De Morgan.
+        let dual = {
+            let nx = enc.circ().not(bx);
+            let ny = enc.circ().not(by);
+            let or = enc.circ().or(nx, ny);
+            enc.circ().not(or)
+        };
+        assert_eq!(dual, first, "the De Morgan dual minted a parallel gate");
+        assert_eq!(enc.cnf.num_vars(), vars, "gate sharing minted a variable");
+        assert_eq!(
+            enc.cnf.clauses().len(),
+            clauses,
+            "gate sharing emitted a clause"
+        );
+        // Negative space: a different conjunction is a different gate.
+        let other = enc.circ().and(bx, bz);
+        assert_ne!(other, first, "distinct conjunctions collided");
+        assert!(enc.cnf.num_vars() > vars, "a fresh gate minted nothing");
+    }
+
+    /// Canonicalising the operand list also folds the two degenerate cases it
+    /// exposes: `x ∧ x = x` and `x ∧ ¬x = false`, neither of which needs a gate.
+    #[test]
+    fn duplicate_and_complementary_operands_fold() {
+        let (ir, bounds, prim) = bare_encoder(2);
+        let mut enc = encoder(&ir, &bounds, &prim);
+        let x = enc.cnf.fresh_var();
+        let bx = Bool::var(x);
+        let nx = enc.circ().not(bx);
+        let before = enc.cnf.num_vars();
+        assert_eq!(enc.circ().and(bx, bx), bx);
+        assert_eq!(enc.circ().and(bx, nx), Bool::FALSE);
+        assert_eq!(enc.circ().or(bx, nx), Bool::TRUE);
+        assert_eq!(
+            enc.cnf.num_vars(),
+            before,
+            "a folded gate minted a variable"
+        );
+    }
+
+    // ---------------------------------------------------- extended sharing
+
+    /// The mt-087 [`ExtKey`] cache: `~r` and a relational `if`/`then`/`else`
+    /// share on their operand values, and never across distinct ones.
+    #[test]
+    fn transpose_and_ite_share_on_their_operands() {
+        let (ir, bounds, prim) = bare_encoder(4);
+        let mut enc = encoder(&ir, &bounds, &prim);
+        let ka = enc.intern_matrix(edge_matrix(&[(0, 1), (1, 2)]));
+        let kb = enc.intern_matrix(edge_matrix(&[(2, 3)]));
+
+        let t1 = enc.rel_unary(RelUnOp::Transpose, ka);
+        let ops_after = enc.ops;
+        assert_eq!(enc.rel_unary(RelUnOp::Transpose, ka), t1, "~r re-derived");
+        assert_eq!(enc.ops, ops_after, "a shared ~r was charged effort");
+        assert_ne!(
+            enc.rel_unary(RelUnOp::Transpose, kb),
+            t1,
+            "~r collided across operands"
+        );
+
+        let c = Bool::var(enc.cnf.fresh_var());
+        let ite = |enc: &mut Encoder, c: Bool, kt, ke| {
+            enc.ext_shared(ExtKey::Ite(cell_key(c), kt, ke), |e| {
+                let (t, f) = (e.matrix(kt), e.matrix(ke));
+                e.rel_ite(c, &t, &f)
+            })
+        };
+        let i1 = ite(&mut enc, c, ka, kb);
+        let vars = enc.cnf.num_vars();
+        assert_eq!(ite(&mut enc, c, ka, kb), i1, "the same ITE re-gated");
+        assert_eq!(enc.cnf.num_vars(), vars, "a shared ITE minted a variable");
+        // Negative space: swapping the branches is a different value, and so is
+        // flipping the condition.
+        assert_ne!(ite(&mut enc, c, kb, ka), i1, "the ITE branches collided");
+        let nc = enc.circ().not(c);
+        assert_ne!(ite(&mut enc, nc, ka, kb), i1, "the ITE condition collided");
+    }
+
+    /// A model whose `pred` inlining produces many arena copies of one
+    /// `if`/`then`/`else` and one `~`: the whole-pipeline check that the two
+    /// extended keys fire, and that the goal still solves to the same answer.
+    #[test]
+    fn extended_sharing_survives_the_whole_pipeline() {
+        let src = "sig E { r: set E, q: set E }\n\
+                   fun pick[a: E->E, b: E->E] : E->E { (some a implies a else b) }\n\
+                   pred p[a: E->E, b: E->E] { ~(pick[a, b]) in ~a + ~b }\n\
+                   run { p[r, q] and p[r, q] and p[q, r] } for 4\n";
+        let first = translate_at(src, None).expect("translate");
+        let second = translate_at(src, None).expect("translate");
+        assert_eq!(first.0, second.0, "variable count drifted between runs");
+        assert_eq!(first.1, second.1, "CNF clauses drifted between runs");
     }
 }

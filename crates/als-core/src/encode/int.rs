@@ -659,7 +659,8 @@ mod tests {
         let mut cnf = Cnf::new();
         let mut ops = 0u64;
         let out = {
-            let mut circ = Circuit::new(&mut cnf, &mut ops);
+            let mut gates = crate::encode::circuit::GateCache::new();
+            let mut circ = Circuit::new(&mut cnf, &mut ops, &mut gates);
             let mut ib = IntBuilder::new(&mut circ, w);
             let av = IntVal::constant(a, w);
             let bv = IntVal::constant(b, w);
@@ -677,7 +678,8 @@ mod tests {
                 let mut cnf = Cnf::new();
                 let mut ops = 0u64;
                 let dr = {
-                    let mut circ = Circuit::new(&mut cnf, &mut ops);
+                    let mut gates = crate::encode::circuit::GateCache::new();
+                    let mut circ = Circuit::new(&mut cnf, &mut ops, &mut gates);
                     let mut ib = IntBuilder::new(&mut circ, w);
                     ib.div_rem(&IntVal::constant(a, w), &IntVal::constant(b, w))
                 };
@@ -711,7 +713,8 @@ mod tests {
                 let mut cnf = Cnf::new();
                 let mut ops = 0u64;
                 let (sum, sof, sub, subof, mul, mof) = {
-                    let mut circ = Circuit::new(&mut cnf, &mut ops);
+                    let mut gates = crate::encode::circuit::GateCache::new();
+                    let mut circ = Circuit::new(&mut cnf, &mut ops, &mut gates);
                     let mut ib = IntBuilder::new(&mut circ, w);
                     let av = IntVal::constant(a, w);
                     let bv = IntVal::constant(b, w);
@@ -744,7 +747,8 @@ mod tests {
             let mut cnf = Cnf::new();
             let mut ops = 0u64;
             let (v, of) = {
-                let mut circ = Circuit::new(&mut cnf, &mut ops);
+                let mut gates = crate::encode::circuit::GateCache::new();
+                let mut circ = Circuit::new(&mut cnf, &mut ops, &mut gates);
                 let mut ib = IntBuilder::new(&mut circ, w);
                 ib.negate(&IntVal::constant(a, w))
             };
@@ -808,7 +812,8 @@ mod tests {
         let mut cnf = Cnf::new();
         let mut ops = 0u64;
         let (v, of) = {
-            let mut circ = Circuit::new(&mut cnf, &mut ops);
+            let mut gates = crate::encode::circuit::GateCache::new();
+            let mut circ = Circuit::new(&mut cnf, &mut ops, &mut gates);
             let mut ib = IntBuilder::new(&mut circ, w);
             ib.shl(&IntVal::constant(a, w), &IntVal::constant(b, w))
         };
@@ -865,7 +870,8 @@ mod tests {
         let vars: Vec<Var> = (0..n).map(|_| cnf.fresh_var()).collect();
         let mut ops = 0u64;
         let eq = {
-            let mut circ = Circuit::new(&mut cnf, &mut ops);
+            let mut gates = crate::encode::circuit::GateCache::new();
+            let mut circ = Circuit::new(&mut cnf, &mut ops, &mut gates);
             let mut ib = IntBuilder::new(&mut circ, width);
             let mut acc = vec![Bool::FALSE];
             for &v in &vars {
@@ -907,7 +913,8 @@ mod tests {
         let mut cnf = Cnf::new();
         let mut ops = 0u64;
         let (lt1, lt2, eqn) = {
-            let mut circ = Circuit::new(&mut cnf, &mut ops);
+            let mut gates = crate::encode::circuit::GateCache::new();
+            let mut circ = Circuit::new(&mut cnf, &mut ops, &mut gates);
             let mut ib = IntBuilder::new(&mut circ, 4);
             let neg1 = IntVal::constant(-1, 4);
             let pos1 = IntVal::constant(1, 4);
@@ -928,7 +935,8 @@ mod tests {
         let mut cnf = Cnf::new();
         let mut ops = 0u64;
         let (val_is_neg8, overflow) = {
-            let mut circ = Circuit::new(&mut cnf, &mut ops);
+            let mut gates = crate::encode::circuit::GateCache::new();
+            let mut circ = Circuit::new(&mut cnf, &mut ops, &mut gates);
             let mut ib = IntBuilder::new(&mut circ, 4);
             let seven = IntVal::constant(7, 4);
             let one = IntVal::constant(1, 4);
@@ -945,7 +953,8 @@ mod tests {
         let mut cnf2 = Cnf::new();
         let mut ops2 = 0u64;
         let (val5, ovf2) = {
-            let mut circ = Circuit::new(&mut cnf2, &mut ops2);
+            let mut gates2 = crate::encode::circuit::GateCache::new();
+            let mut circ = Circuit::new(&mut cnf2, &mut ops2, &mut gates2);
             let mut ib = IntBuilder::new(&mut circ, 4);
             let (sum, ovf) = ib.add_signed(&IntVal::constant(2, 4), &IntVal::constant(3, 4));
             (ib.eq(&sum, &IntVal::constant(5, 4)), ovf)
