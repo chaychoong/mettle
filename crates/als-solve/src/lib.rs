@@ -10,7 +10,9 @@
 mod backend;
 #[cfg(feature = "cadical")]
 mod cadical_backend;
+mod clause_arena;
 mod solver;
+mod var_order;
 
 pub use backend::{Backend, LiveSolver};
 #[cfg(feature = "cadical")]

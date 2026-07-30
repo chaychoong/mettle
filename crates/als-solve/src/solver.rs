@@ -22,12 +22,19 @@
 //!   -highest decision level in the learned clause and assert its UIP literal.
 //! - **Restarts** on the **Luby** sequence ([`Luby`]) times a fixed base — a
 //!   deterministic schedule with no wall-clock component.
-//! - **Decision heuristic**: **integer VSIDS with phase saving**. Activities are
-//!   `u64` (not `f64`) precisely so the heuristic is bit-identical across
-//!   platforms (STYLE D1) — no IEEE-754 rounding to audit. Ties break to the
-//!   **lowest variable index** (STYLE D2: a total, deterministic order), and the
-//!   scan is a linear pass over the dense pool, which is ample for Rung-3 scope
-//!   3–5 models and obviously order-stable.
+//! - **Decision heuristic**: **integer VSIDS with phase saving**, ordered by an
+//!   indexed max-heap ([`VarOrder`], mt-092). Activities are `u64` (not `f64`)
+//!   precisely so the heuristic is bit-identical across platforms (STYLE D1) —
+//!   no IEEE-754 rounding to audit. Ties break to the **lowest variable index**
+//!   (STYLE D2: a total, deterministic order). Through mt-091 this was a linear
+//!   pass over the dense pool; the mt-092 profile priced that at 10–19% of solve
+//!   wall on hard rows, and the heap reproduces its argmax exactly (see
+//!   [`VarOrder`]'s docs for the equivalence argument).
+//! - **Clause storage**: one **flat arena** ([`ClauseArena`], mt-092) — every
+//!   clause's literals in a single contiguous buffer, addressed by an
+//!   `(offset, len)` header. `propagate` was measured at 68.7–72.7% of solve
+//!   wall and memory-bound on the old per-clause-`Vec` layout; this halves the
+//!   randomly-indexed header array and makes live clauses' literals contiguous.
 //! - **Clause database**: learned clauses are kept by default and periodically
 //!   thinned by a deterministic [`CdclSolver::reduce_db`] (mt-049). The reduction
 //!   is a pure function of the input CNF: its schedule is keyed only to a
@@ -39,10 +46,13 @@
 //!   permanent (deleting a blocking clause would corrupt enumeration; deleting a
 //!   learned resolvent is sound). A learned clause currently **locked** (the
 //!   reason for an assigned variable) is never deleted. Deletion is by
-//!   **tombstone**: the clause slot stays in the arena so every `ClauseRef`
-//!   (held by `reason`/`watches`/the enumeration seam) stays stable — the
-//!   clause's literals are freed and it is unwatched, so it stops costing
-//!   propagation time and memory without any relocating garbage collector.
+//!   **tombstone**: the clause's header slot stays in the arena so every
+//!   `ClauseRef` (held by `reason`/`watches`/the enumeration seam) stays stable,
+//!   and it is unwatched so it stops costing propagation time. Its **literal
+//!   storage is reclaimed** by the arena compaction that closes each reduction
+//!   (mt-092 moved the reclaim from dropping a per-clause `Vec` to sliding the
+//!   flat store down over the holes — see [`ClauseArena`] for the exact memory
+//!   contract, which is the same promise by a different mechanism).
 //!
 //! # Soundness of retained learned clauses across incremental solves
 //! Every learned clause is a **resolvent of the original clauses only** — it is
@@ -82,36 +92,9 @@
 // tightly-coupled state for no readability gain. Roughly a third of the length is
 // rustdoc (the algorithm/enumeration contract mt-033 consumes).
 
+use crate::clause_arena::{ClauseArena, ClauseRef};
+use crate::var_order::VarOrder;
 use crate::{Assignment, Cnf, Lit, Outcome, Solver, Var};
-
-/// Index of a clause in the [`CdclSolver`] clause arena.
-///
-/// Stable for the solver's whole lifetime: clauses are only ever appended
-/// (keep-all), so a `ClauseRef` never dangles and `reason`/watch entries stay
-/// valid without relocation (STYLE A1 — index-based arena).
-type ClauseRef = usize;
-
-/// A clause in the arena: its literals plus reduction bookkeeping.
-///
-/// The first two literals are the watched pair (for size ≥ 2). For a learned
-/// clause, `lits[0]` is always the asserting (UIP) literal.
-///
-/// `learnt` distinguishes a solver-learned resolvent (deletable by
-/// [`CdclSolver::reduce_db`]) from a **permanent** clause — an original problem
-/// clause or a blocking clause added through the public [`CdclSolver::add_clause`]
-/// enumeration seam, neither of which may ever be deleted (soundness /
-/// enumeration correctness). `lbd` is the learned clause's integer glue metric
-/// (distinct decision levels at learning time; lower = more useful), the
-/// reduction ranking key. A `deleted` clause is a **tombstone**: its slot stays
-/// so every `ClauseRef` remains valid, but its `lits` are freed and it is
-/// unwatched, so it no longer costs propagation or memory.
-#[derive(Debug)]
-struct Clause {
-    lits: Vec<Lit>,
-    learnt: bool,
-    lbd: u32,
-    deleted: bool,
-}
 
 /// Base restart interval in conflicts, multiplied by the Luby term. Fixed by
 /// the build (STYLE D4) — a small value keeps Rung-3 problems responsive.
@@ -143,8 +126,8 @@ const REDUCE_INC_DEFAULT: u64 = 300;
 #[derive(Debug)]
 pub struct CdclSolver {
     num_vars: usize,
-    /// The clause arena (problem + learned), append-only.
-    clauses: Vec<Clause>,
+    /// The flat clause arena (problem + learned); header slots are append-only.
+    clauses: ClauseArena,
     /// `watches[lit.code()]` = clauses watching `lit` (i.e. `lit` is one of the
     /// two watched literals). Processed when `!lit` is enqueued (STYLE D2: order
     /// within a list is a fixed function of insertion, so it is deterministic).
@@ -170,6 +153,10 @@ pub struct CdclSolver {
     // -- VSIDS --
     activity: Vec<u64>,
     var_inc: u64,
+    /// The decision order over [`Self::activity`]: an indexed max-heap holding
+    /// (at least) every unassigned variable. Replaces mt-032's linear scan and
+    /// yields the identical argmax (mt-092 — see [`VarOrder`]).
+    var_order: VarOrder,
 
     // -- analysis scratch (reused; invariant: all `false`/empty between calls) --
     seen: Vec<bool>,
@@ -212,7 +199,7 @@ impl CdclSolver {
         let num_vars = cnf.num_vars() as usize;
         let mut solver = Self {
             num_vars,
-            clauses: Vec::new(),
+            clauses: ClauseArena::new(),
             watches: vec![Vec::new(); 2 * num_vars],
             assign: vec![None; num_vars],
             level: vec![0; num_vars],
@@ -223,6 +210,7 @@ impl CdclSolver {
             prop_head: 0,
             activity: vec![0; num_vars],
             var_inc: 1,
+            var_order: VarOrder::new(num_vars),
             seen: vec![false; num_vars],
             conflicts_total: 0,
             decisions_total: 0,
@@ -332,7 +320,6 @@ impl CdclSolver {
         lits.swap(0, i0);
         // Bring a second non-false literal to index 1 if one exists.
         let second = (1..lits.len()).find(|&k| self.value_lit(lits[k]) != Some(false));
-        let cref = self.clauses.len();
         // If a second non-false literal exists, watch it; otherwise the clause is
         // unit under the current trail. Either way we watch lits[0]/lits[1] — in
         // the unit case lits[1] is a false literal, which keeps the two-watch
@@ -341,18 +328,18 @@ impl CdclSolver {
         if let Some(i1) = second {
             lits.swap(1, i1);
         }
-        self.watches[lits[0].code()].push(cref);
-        self.watches[lits[1].code()].push(cref);
-        let unit = lits[0];
         // Permanent: `install_clause` is only reached from the public
         // `add_clause` (original CNF or an enumeration blocking clause), never
         // for a learned resolvent. `reduce_db` never deletes a permanent clause.
-        self.clauses.push(Clause {
-            lits,
-            learnt: false,
-            lbd: 0,
-            deleted: false,
-        });
+        let cref = self.clauses.push(&lits, false, 0);
+        debug_assert_eq!(
+            self.clauses.lits(cref),
+            lits.as_slice(),
+            "the clause arena must round-trip the literals it was handed, in order"
+        );
+        self.watches[lits[0].code()].push(cref);
+        self.watches[lits[1].code()].push(cref);
+        let unit = lits[0];
         if second.is_none() && self.value_lit(unit).is_none() {
             // Unit: force its only non-false literal true at level 0.
             let ok = self.enqueue(unit, Some(cref));
@@ -456,7 +443,7 @@ impl CdclSolver {
                 self.conflicts_total += 1;
                 let (learnt, bt_level, lbd) = self.analyze(confl);
                 self.cancel_until(bt_level);
-                self.learn_and_assert(learnt, lbd);
+                self.learn_and_assert(&learnt, lbd);
                 self.decay_var_inc();
             } else {
                 // Learned-clause reduction (mt-049): a pure function of the
@@ -512,11 +499,10 @@ impl CdclSolver {
             while i < ws.len() {
                 self.props_total += 1;
                 let cref = ws[i];
-                // Ensure the now-false literal sits at index 1, the other at 0.
-                if self.clauses[cref].lits[0] == false_lit {
-                    self.clauses[cref].lits.swap(0, 1);
-                }
-                let other = self.clauses[cref].lits[0];
+                // Ensure the now-false literal sits at index 1, the other at 0,
+                // and read that other watch — one header fetch for all three
+                // (see `ClauseArena::watch_partner`; this is the hot path).
+                let other = self.clauses.watch_partner(cref, false_lit);
                 if self.value_lit(other) == Some(true) {
                     // Clause already satisfied by its other watch: keep watching.
                     ws[j] = cref;
@@ -525,19 +511,26 @@ impl CdclSolver {
                     continue;
                 }
                 // Hunt for a non-false literal in lits[2..] to watch instead.
-                let len = self.clauses[cref].lits.len();
-                let mut replaced = false;
-                for k in 2..len {
-                    let cand = self.clauses[cref].lits[k];
-                    if self.value_lit(cand) != Some(false) {
-                        self.clauses[cref].lits[1] = cand;
-                        self.clauses[cref].lits[k] = false_lit;
-                        self.watches[cand.code()].push(cref);
-                        replaced = true;
-                        break;
-                    }
+                // Borrowing the literals as a slice (rather than indexing the
+                // arena per literal) keeps the header fetch out of the loop —
+                // `value_of` is the free-function form of `value_lit` precisely
+                // so the `assign` borrow can coexist with the slice.
+                let replacement = {
+                    let assign = &self.assign;
+                    self.clauses
+                        .lits(cref)
+                        .iter()
+                        .enumerate()
+                        .skip(2)
+                        .find(|&(_, &cand)| value_of(assign, cand) != Some(false))
+                        .map(|(k, &cand)| (k, cand))
+                };
+                if let Some((k, cand)) = replacement {
+                    self.clauses.set_lit(cref, 1, cand);
+                    self.clauses.set_lit(cref, k, false_lit);
+                    self.watches[cand.code()].push(cref);
                 }
-                if replaced {
+                if replacement.is_some() {
                     // Migrated: drop from this list (do not advance `j`).
                     i += 1;
                     continue;
@@ -588,9 +581,9 @@ impl CdclSolver {
             // For the conflict clause include all literals; for a reason clause
             // skip index 0 (the literal it implied, i.e. `resolved`).
             let start = usize::from(resolved.is_some());
-            let len = self.clauses[confl].lits.len();
+            let len = self.clauses.len_of(confl);
             for k in start..len {
-                let q = self.clauses[confl].lits[k];
+                let q = self.clauses.lit(confl, k);
                 let v = q.var();
                 if !self.seen[v.index()] && self.level[v.index()] > 0 {
                     self.bump(v);
@@ -702,9 +695,9 @@ impl CdclSolver {
                 to_clear.truncate(rollback_from);
                 return false;
             };
-            let len = self.clauses[cref].lits.len();
+            let len = self.clauses.len_of(cref);
             for k in 1..len {
-                let q = self.clauses[cref].lits[k];
+                let q = self.clauses.lit(cref, k);
                 let v = q.var();
                 if self.seen[v.index()] || self.level[v.index()] == 0 {
                     continue; // already accounted for, or a level-0 fixed literal
@@ -751,22 +744,21 @@ impl CdclSolver {
     /// appended (marked `learnt`, so [`CdclSolver::reduce_db`] may later delete
     /// it), watched on its first two literals, and its UIP literal (index 0)
     /// enqueued with the clause as reason.
-    fn learn_and_assert(&mut self, learnt: Vec<Lit>, lbd: u32) {
+    fn learn_and_assert(&mut self, learnt: &[Lit], lbd: u32) {
         if learnt.len() == 1 {
             let ok = self.enqueue(learnt[0], None);
             debug_assert!(ok, "a learned unit asserts a fresh literal at level 0");
             return;
         }
-        let cref = self.clauses.len();
+        let asserting = learnt[0];
+        let cref = self.clauses.push(learnt, true, lbd);
+        debug_assert_eq!(
+            self.clauses.lits(cref),
+            learnt,
+            "the clause arena must round-trip the literals it was handed, in order"
+        );
         self.watches[learnt[0].code()].push(cref);
         self.watches[learnt[1].code()].push(cref);
-        let asserting = learnt[0];
-        self.clauses.push(Clause {
-            lits: learnt,
-            learnt: true,
-            lbd,
-            deleted: false,
-        });
         let ok = self.enqueue(asserting, Some(cref));
         debug_assert!(ok, "the asserting literal is unassigned after backjump");
     }
@@ -784,20 +776,24 @@ impl CdclSolver {
     /// variables are level-0 facts, so "locked" is precisely "reason of a level-0
     /// literal".
     ///
-    /// **Stability.** Deletion is a tombstone: the arena slot stays, keeping every
-    /// `ClauseRef` (in `reason`, in `watches`, held across the enumeration seam)
-    /// valid. The deleted clause's literals are freed and it is dropped from every
-    /// watch list, so it stops costing propagation time and memory.
+    /// **Stability.** Deletion is a tombstone: the arena's header slot stays,
+    /// keeping every `ClauseRef` (in `reason`, in `watches`, held across the
+    /// enumeration seam) valid. The deleted clause is dropped from every watch
+    /// list, so it stops costing propagation time, and the closing
+    /// [`ClauseArena::compact`] reclaims its literal storage — the same memory
+    /// promise mt-049 made when clauses each owned a `Vec`, by the mechanism
+    /// mt-092's flat arena needs. Compaction moves literals, never headers, so
+    /// it cannot invalidate a `ClauseRef`, and it copies each surviving clause's
+    /// literals unchanged, so it cannot move the search either.
     fn reduce_db(&mut self) {
         debug_assert_eq!(self.decision_level(), 0, "reduce_db must run at level 0");
         let mut candidates: Vec<ClauseRef> = Vec::new();
         for cref in 0..self.clauses.len() {
-            let c = &self.clauses[cref];
-            if !c.learnt || c.deleted {
+            if !self.clauses.is_learnt(cref) || self.clauses.is_deleted(cref) {
                 continue; // permanent or already a tombstone
             }
             // Locked: the reason of an assigned variable (MiniSat `locked`).
-            let uip = c.lits[0];
+            let uip = self.clauses.lit(cref, 0);
             let locked =
                 self.value_lit(uip) == Some(true) && self.reason[uip.var().index()] == Some(cref);
             if !locked {
@@ -807,20 +803,19 @@ impl CdclSolver {
         // Keep the most useful half: lowest LBD first, lowest ClauseRef to break
         // ties — a total, deterministic order (STYLE D2). The worst half is
         // deleted.
-        candidates.sort_by_key(|&c| (self.clauses[c].lbd, c));
+        candidates.sort_by_key(|&c| (self.clauses.lbd(c), c));
         let keep = candidates.len() / 2;
         for &cref in &candidates[keep..] {
-            let c = &mut self.clauses[cref];
-            c.deleted = true;
-            c.lits = Vec::new(); // reclaim the bulk of the memory
+            self.clauses.tombstone(cref);
         }
         // One pass over the watch lists drops every tombstoned clause, order
         // preserved (STYLE D2). Taken out to sidestep the borrow checker.
         let mut watches = std::mem::take(&mut self.watches);
         for list in &mut watches {
-            list.retain(|&cref| !self.clauses[cref].deleted);
+            list.retain(|&cref| !self.clauses.is_deleted(cref));
         }
         self.watches = watches;
+        self.clauses.compact();
     }
 
     /// Assigns `lit` true with the given reason, pushing it on the trail.
@@ -845,6 +840,10 @@ impl CdclSolver {
 
     /// Backtracks to `level`, unassigning everything above it (phases are kept —
     /// that is phase saving). Idempotent when already at or below `level`.
+    ///
+    /// Every unassigned variable is re-admitted to [`Self::var_order`], which is
+    /// what maintains that heap's membership invariant ("every unassigned
+    /// variable is in the heap") — see [`VarOrder`].
     fn cancel_until(&mut self, level: usize) {
         if self.decision_level() <= level {
             return;
@@ -856,6 +855,7 @@ impl CdclSolver {
             self.assign[v.index()] = None;
             self.reason[v.index()] = None;
             // `phase[v]` intentionally retained.
+            self.var_order.insert(var_key(v), &self.activity);
         }
         self.trail_lim.truncate(level);
         self.prop_head = self.trail.len();
@@ -864,29 +864,27 @@ impl CdclSolver {
     /// Picks the next decision literal: the unassigned variable of highest
     /// activity (ties → lowest index), branched on its saved phase.
     ///
-    /// Linear scan over the dense pool — deterministic by construction and more
-    /// than fast enough at Rung-3 scope (STYLE D2 note in the module docs).
-    fn pick_branch(&self) -> Option<Lit> {
-        let mut best: Option<usize> = None;
-        let mut best_act = 0u64;
-        for v in 0..self.num_vars {
-            if self.assign[v].is_none() {
-                let act = self.activity[v];
-                // Strict `>` with an ascending scan makes the lowest index win
-                // ties — a total, deterministic order (STYLE D2).
-                if best.is_none() || act > best_act {
-                    best = Some(v);
-                    best_act = act;
-                }
-            }
-        }
-        best.map(|v| {
-            let var = Var::from_index(v);
-            if self.phase[v] {
-                Lit::positive(var)
-            } else {
-                Lit::negative(var)
-            }
+    /// `None` means every variable is assigned, i.e. a `Sat` fixpoint. Through
+    /// mt-091 this was a linear scan over the dense pool; [`VarOrder`] computes
+    /// the identical argmax off a heap (mt-092) and its docs carry the
+    /// equivalence argument. The `assign` closure is the membership filter: the
+    /// heap holds every unassigned variable but may also hold variables
+    /// propagation has since assigned.
+    fn pick_branch(&mut self) -> Option<Lit> {
+        let assign = &self.assign;
+        let v = self
+            .var_order
+            .pop_unassigned(&self.activity, |v| assign[v as usize].is_none())?;
+        let v = v as usize;
+        debug_assert!(
+            self.assign[v].is_none(),
+            "a decision variable must be unassigned"
+        );
+        let var = Var::from_index(v);
+        Some(if self.phase[v] {
+            Lit::positive(var)
+        } else {
+            Lit::negative(var)
         })
     }
 
@@ -910,7 +908,7 @@ impl CdclSolver {
 
     /// The value of a literal under the current assignment.
     fn value_lit(&self, lit: Lit) -> Option<bool> {
-        self.assign[lit.var().index()].map(|b| b == lit.is_positive())
+        value_of(&self.assign, lit)
     }
 
     /// Current decision level = number of decisions on the trail.
@@ -922,6 +920,10 @@ impl CdclSolver {
     /// increment would grow the range past the cap. Integer-exact (STYLE D1).
     fn bump(&mut self, var: Var) {
         self.activity[var.index()] = self.activity[var.index()].saturating_add(self.var_inc);
+        // The activity only ever grew, so the heap needs a sift *up* — and if
+        // the rescale below fires it rebuilds anyway, so ordering the two this
+        // way is free.
+        self.var_order.increase(var_key(var), &self.activity);
         if self.activity[var.index()] > VAR_ACT_RESCALE_CAP {
             self.rescale_activities();
         }
@@ -941,12 +943,41 @@ impl CdclSolver {
     /// Shifts every activity (and the increment) down, bounding the `u64` range
     /// while preserving order well enough for the heuristic (low bits only lost;
     /// the lowest-index tie-break is exact regardless).
+    ///
+    /// The shift is monotone but **not injective** — previously-distinct
+    /// activities can collapse to equal, handing the decision to the index
+    /// tie-break — so the decision heap has to be re-heapified against the new
+    /// values rather than sifted. That is the one corner where a heap could
+    /// silently disagree with the old linear scan, and rebuilding is what makes
+    /// it agree by construction (see [`VarOrder`]'s rescale note).
     fn rescale_activities(&mut self) {
         for a in &mut self.activity {
             *a >>= VAR_ACT_RESCALE_SHIFT;
         }
         self.var_inc = (self.var_inc >> VAR_ACT_RESCALE_SHIFT).max(1);
+        self.var_order.rebuild(&self.activity);
     }
+}
+
+/// The value of a literal under `assign` — the free-function form of
+/// [`CdclSolver::value_lit`].
+///
+/// It exists as a free function so `propagate`'s replacement hunt can hold a
+/// borrowed slice of the clause arena *and* read the assignment at the same
+/// time; a `&self` method would borrow the whole solver and conflict.
+fn value_of(assign: &[Option<bool>], lit: Lit) -> Option<bool> {
+    assign[lit.var().index()].map(|b| b == lit.is_positive())
+}
+
+/// A variable's key in [`VarOrder`] — its dense index, narrowed to the `u32` the
+/// heap stores.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "the pool is capped at u32::MAX/2 vars by Cnf::fresh_var (STYLE I1), so a \
+              dense in-range index always fits u32"
+)]
+fn var_key(var: Var) -> u32 {
+    var.index() as u32
 }
 
 /// The reluctant-doubling generator for the **Luby** restart sequence
@@ -1166,13 +1197,31 @@ mod tests {
         let mut s = CdclSolver::new(&cnf);
         s.set_reduce_schedule(1, 1);
         assert_eq!(s.solve(), Outcome::Unsat, "PHP(7,6) is UNSAT");
+        let slots = 0..s.clauses.len();
         assert!(
-            s.clauses.iter().any(|c| c.deleted),
+            slots.clone().any(|c| s.clauses.is_deleted(c)),
             "reduce_db must have tombstoned at least one learned clause"
         );
         assert!(
-            s.clauses.iter().all(|c| !c.deleted || c.learnt),
+            slots
+                .clone()
+                .all(|c| !s.clauses.is_deleted(c) || s.clauses.is_learnt(c)),
             "only learned clauses may ever be tombstoned"
+        );
+        assert!(
+            slots
+                .clone()
+                .all(|c| s.clauses.is_deleted(c) == s.clauses.lits(c).is_empty()),
+            "a tombstone has no reachable literals and a live clause has some"
+        );
+        // Every surviving watch entry still resolves through the arena — the
+        // ClauseRef-stability contract compaction must not have broken.
+        assert!(
+            s.watches
+                .iter()
+                .flatten()
+                .all(|&c| c < s.clauses.len() && !s.clauses.is_deleted(c)),
+            "watch lists reference only live, in-range clauses after compaction"
         );
     }
 
