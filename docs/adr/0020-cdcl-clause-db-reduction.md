@@ -216,6 +216,23 @@ arithmetic limit of making `propagate` and `pick_branch` both free is
 tier-based retention), which is a search-quality change and a **separate
 future bead**, specced only if the grid after 1a+1b justifies it.
 
+## Grid outcome (2026-07-30, addendum — the prediction scored)
+
+Stages 1a+1b landed same day and the ADR-0017 re-pair grid ran on the new
+solver ([ADR-0017 third amendment](0017-gauge-default-budgets-paired-frontier.md)):
+**the defaults move to conflicts 250k × 64M at agree 502 — +18 over this
+ADR's 484 starting point, against the +13 base case: prediction beaten.**
+(Stage 1b's net +2 at the old default, then +16 from the re-pair; zero
+regressions, zero verdict flips, DISAGREE 0 at every measured point; the
+three stage-1b disclosed regressions all recovered by the new default.)
+The 1M point reaches 507 (+23 — numerically the retracted upside, but at
+4× the accepted wall) and stays a per-run flag. The campaign continues:
+remaining defer mass at the new defaults is over_budget 29 + capacity 20,
+and the volume lever (shorter learned clauses) remains the only route to
+the deep tail. The parking fallback was not needed.
+
+## Alternatives considered
+
 **Park the conversion campaign at 484.** Rejected: the census proved 24 of the
 47 over_budget rows convert on budget alone — the barrier is the wall cost of
 conflicts, and the instrument measured a 9–49× per-row wall gap to a

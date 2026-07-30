@@ -158,3 +158,39 @@ the same absolute wall as the pre-sharing 25k×32M default (~650s) while
 carrying +26 agreements. The remaining over_budget 47 and capacity 20 are
 genuinely deeper water (capacity's floor is correctChord[0..5] at ~89M
 true spend and TransForm's 14 big rows at ~190M+).
+
+## Third amendment (mt-092, 2026-07-30): conflicts re-paired to 250k after the solver-side wall work
+
+The pairing rule fired on a new trigger class: a **solver** change (mt-092 —
+flat clause arena, heap decision order, blocking literals; [ADR-0020](0020-cdcl-clause-db-reduction.md))
+rather than an encoder reshape. The rule's wording extends accordingly:
+re-pair on any budget-default change, encoder CNF-shape change, **or
+solver search/wall change**.
+
+The grid (sequential, `--jobs 8`, row-diffed against the mt-092 stage-1b
+sweep at the incumbent 100k×64M = 486 agree; artifacts
+`scratchpad/mt092grid/`):
+
+| point | agree | Δ | regressions | wall |
+|---|---|---|---|---|
+| 100k × 64M (incumbent) | 486 | — | — | ~650s |
+| **250k × 64M** | **502** | **+16** | **0** | **973s** |
+| 1M × 64M | 507 | +21 | 0 | 3,874s |
+
+**The defaults become conflicts 250k × encode 64M.** Pre-mt-092 this exact
+point cost 1,556s and was rejected at mt-088's HOLD precisely because
+solver work was coming; post-mt-092 it costs 973s (~1.5× the incumbent)
+for +16 agreements with zero regressions, zero verdict flips, and
+DISAGREE 0 — inside the knee mt-082 accepted (1.62×). The 250k move also
+recovers all three stage-1b disclosed regressions (firewire[1],
+elevator_spl_events[4]/[22]) alongside the G1-band conversions. 1M stays
+a per-run flag: +5 more at 4× the chosen wall is family-D deep water
+(ertms_1A[9] converts there — the mt-092 headline row — but the band is
+thin). ADR-0020's scored prediction (+13 base at a re-paired default)
+is beaten at +16; its +23 upside was already retracted at stage 0 as
+requiring the volume lever.
+
+Re-baseline at the new default: fresh no-flag stage-1 row-identical to
+the 250k grid point; SB-0/SB-20 count nets mismatch-free (counting is
+enum-effort-bound, not conflict-bound — unchanged by this move); the
+sweep-baseline artifact recaptured at 250000/64M.
