@@ -29,3 +29,15 @@ pedantic = { level = "warn", priority = -1 }
 [profile.dist]
 inherits = "release"
 lto = "thin"
+
+# Optimize the solve-path crates even in dev/test builds (mt-091): the debug
+# `solve_corpus` gauntlet is dominated by unoptimized encode/solve codegen, not
+# by the assertions it exists to arm. `opt-level` is independent of
+# `debug-assertions`/`overflow-checks`, which stay ON in these profiles — the
+# armed-invariant coverage is unchanged (canary: `debug_assertions_are_armed…`
+# in als-core's solve_corpus test). Deliberately NOT applied to als-syntax: the
+# mt-014 deep-nesting depth guard is calibrated against debug frame sizes.
+[profile.dev.package.als-core]
+opt-level = 2
+[profile.dev.package.als-solve]
+opt-level = 2

@@ -381,3 +381,15 @@ fn corpus_solve() {
     // instead of a moving target across re-runs.
     assert!(panics.is_empty(), "panics (mettle bugs): {panics:?}");
 }
+
+/// The mt-091 canary: the per-package `opt-level` override in the workspace
+/// `Cargo.toml` speeds this suite up, but it must never disarm the library's
+/// `debug_assert!`s — that armed coverage is this suite's whole point in a
+/// debug gauntlet. `als_core::DEBUG_ASSERTIONS_ARMED` reports the LIBRARY's
+/// compile-time setting (a test binary's own `cfg!` reflects only the test
+/// profile); the two must agree in every profile — armed together in dev/test,
+/// disarmed together under `--release`.
+#[test]
+fn debug_assertions_are_armed_in_the_library_whenever_they_are_here() {
+    assert_eq!(als_core::DEBUG_ASSERTIONS_ARMED, cfg!(debug_assertions));
+}
