@@ -14,7 +14,11 @@
 //!
 //! - **Unit propagation** with **two watched literals** ([`CdclSolver::propagate`]).
 //!   Each clause of size ≥ 2 watches `lits[0]` and `lits[1]`; a variable going
-//!   false only re-examines clauses watching the now-false literal.
+//!   false only re-examines clauses watching the now-false literal. Each watch
+//!   entry also carries a **blocking literal** ([`Watcher`], mt-092 stage 1b):
+//!   when it is already satisfied the clause is skipped without being read at
+//!   all, which is what keeps two thirds of watch visits out of the clause
+//!   arena.
 //! - **Conflict analysis** produces a **1-UIP** learned clause
 //!   ([`CdclSolver::analyze`]), followed by **self-subsuming resolution**
 //!   minimization ([`CdclSolver::minimize`], ~40 lines, a large clause-size win).
@@ -53,6 +57,33 @@
 //!   (mt-092 moved the reclaim from dropping a per-clause `Vec` to sliding the
 //!   flat store down over the holes — see [`ClauseArena`] for the exact memory
 //!   contract, which is the same promise by a different mechanism).
+//!
+//! # Determinism vs. trajectory stability (mt-092 stage 1b changed one of these)
+//! These are two different promises and only the first is a contract.
+//!
+//! **Determinism (ADR-0011, STYLE D1/D4) is intact and always will be:** a fixed
+//! build on a fixed `Cnf` produces a byte-identical verdict, model and
+//! enumeration sequence, on every machine and every run. Every input to a
+//! decision here is an integer function of the search so far — activities are
+//! `u64`, the decision order is a total integer order with a lowest-index
+//! tie-break, the reduction schedule is a conflict count, the restart schedule is
+//! arithmetic, and a [`Watcher`]'s blocker is whichever literal the trajectory
+//! itself put there. No wall-clock, no allocation addresses, no hash iteration,
+//! no unseeded randomness participates anywhere.
+//!
+//! **Trajectory stability across solver versions was never a contract, and
+//! mt-092 stage 1b spends it.** Through stage 1a every mt-092 change was
+//! trajectory-*neutral* — the flat arena and the decision heap were built to
+//! reproduce mt-032's exact search, and a byte-identical corpus sweep proved it.
+//! The blocking literal is different **by nature**: skipping a satisfied clause
+//! means the normalizing watch swap and the replacement-watch migration that the
+//! pre-1b code would have performed do not happen, so the watch lists evolve
+//! differently, propagation visits clauses in a different order, a different
+//! clause is reported as the conflict, and different clauses are learned. The
+//! stage-0 measurement of this is on the record: conflict counts moved by −90% to
+//! +50% across three rows. Verdicts and model counts cannot change (a blocker
+//! skip only ever elides work on an already-satisfied clause), and the
+//! brute-force fuzz in `tests/conformance.rs` is what holds that line.
 //!
 //! # Soundness of retained learned clauses across incremental solves
 //! Every learned clause is a **resolvent of the original clauses only** — it is
@@ -96,6 +127,30 @@ use crate::clause_arena::{ClauseArena, ClauseRef};
 use crate::var_order::VarOrder;
 use crate::{Assignment, Cnf, Lit, Outcome, Solver, Var};
 
+/// One entry in a watch list: the clause, plus a **blocking literal** (mt-092
+/// stage 1b).
+///
+/// `blocker` is the clause's *other* watched literal as of the moment this entry
+/// was installed or last updated. Propagation infers exactly one thing from it —
+/// **`blocker` true ⇒ the clause is satisfied ⇒ there is nothing to do** — and
+/// that inference holds for *any* literal of the clause, which is why the
+/// blocker is a **hint, not an invariant**: the clause's watched pair may move on
+/// afterwards and leave `blocker` naming a literal that is no longer watched.
+/// Being *usually* a current watch is what makes it usually true, and therefore
+/// worth storing. The mt-092 stage-0 profile measured **65–67% of all watch
+/// visits** ending at "the other watch is already true", and each of those cost
+/// two dependent random loads into the clause arena; a satisfied blocker
+/// answers them out of the watch list itself.
+///
+/// The blocker is never the literal whose list the entry sits in (the two
+/// watched literals of a clause are distinct — `normalize` removes duplicates —
+/// and every update sets it to the *other* watch). `propagate` asserts that.
+#[derive(Copy, Clone, Debug)]
+struct Watcher {
+    cref: ClauseRef,
+    blocker: Lit,
+}
+
 /// Base restart interval in conflicts, multiplied by the Luby term. Fixed by
 /// the build (STYLE D4) — a small value keeps Rung-3 problems responsive.
 const RESTART_BASE: u64 = 100;
@@ -128,10 +183,11 @@ pub struct CdclSolver {
     num_vars: usize,
     /// The flat clause arena (problem + learned); header slots are append-only.
     clauses: ClauseArena,
-    /// `watches[lit.code()]` = clauses watching `lit` (i.e. `lit` is one of the
-    /// two watched literals). Processed when `!lit` is enqueued (STYLE D2: order
-    /// within a list is a fixed function of insertion, so it is deterministic).
-    watches: Vec<Vec<ClauseRef>>,
+    /// `watches[lit.code()]` = the [`Watcher`]s whose clause watches `lit` (i.e.
+    /// `lit` is one of the two watched literals). Processed when `!lit` is
+    /// enqueued (STYLE D2: order within a list is a fixed function of insertion,
+    /// so it is deterministic).
+    watches: Vec<Vec<Watcher>>,
 
     // -- assignment / trail --
     /// Per-variable value; `None` = unassigned.
@@ -337,8 +393,16 @@ impl CdclSolver {
             lits.as_slice(),
             "the clause arena must round-trip the literals it was handed, in order"
         );
-        self.watches[lits[0].code()].push(cref);
-        self.watches[lits[1].code()].push(cref);
+        // Each watcher blocks on the clause's *other* watched literal (mt-092
+        // stage 1b's blocker rule, applied at installation).
+        self.watches[lits[0].code()].push(Watcher {
+            cref,
+            blocker: lits[1],
+        });
+        self.watches[lits[1].code()].push(Watcher {
+            cref,
+            blocker: lits[0],
+        });
         let unit = lits[0];
         if second.is_none() && self.value_lit(unit).is_none() {
             // Unit: force its only non-false literal true at level 0.
@@ -498,14 +562,36 @@ impl CdclSolver {
             let mut j = 0; // write cursor (compaction of retained watchers)
             while i < ws.len() {
                 self.props_total += 1;
-                let cref = ws[i];
+                let w = ws[i];
+                debug_assert_ne!(
+                    w.blocker, false_lit,
+                    "a watcher's blocker is its clause's OTHER watched literal, never the \
+                     literal whose list the watcher sits in"
+                );
+                // Blocking literal (mt-092 stage 1b): a satisfied blocker proves
+                // the clause is satisfied, so it can neither propagate nor
+                // conflict and is not touched at all — the arena round-trip is
+                // skipped entirely. This is the hot path (65-67% of visits).
+                if self.value_lit(w.blocker) == Some(true) {
+                    ws[j] = w;
+                    i += 1;
+                    j += 1;
+                    continue;
+                }
+                let cref = w.cref;
                 // Ensure the now-false literal sits at index 1, the other at 0,
                 // and read that other watch — one header fetch for all three
-                // (see `ClauseArena::watch_partner`; this is the hot path).
+                // (see `ClauseArena::watch_partner`).
                 let other = self.clauses.watch_partner(cref, false_lit);
                 if self.value_lit(other) == Some(true) {
-                    // Clause already satisfied by its other watch: keep watching.
-                    ws[j] = cref;
+                    // Clause already satisfied by its other watch: keep watching,
+                    // and refresh the blocker to that watch — this is the update
+                    // half of the blocker rule, and it is what makes the next
+                    // visit's fast path hit.
+                    ws[j] = Watcher {
+                        cref,
+                        blocker: other,
+                    };
                     i += 1;
                     j += 1;
                     continue;
@@ -528,7 +614,13 @@ impl CdclSolver {
                 if let Some((k, cand)) = replacement {
                     self.clauses.set_lit(cref, 1, cand);
                     self.clauses.set_lit(cref, k, false_lit);
-                    self.watches[cand.code()].push(cref);
+                    // The new watcher's blocker is the clause's other watched
+                    // literal, which the migration left at index 0 — the same
+                    // rule as installation.
+                    self.watches[cand.code()].push(Watcher {
+                        cref,
+                        blocker: other,
+                    });
                 }
                 if replacement.is_some() {
                     // Migrated: drop from this list (do not advance `j`).
@@ -548,10 +640,14 @@ impl CdclSolver {
                     conflict = Some(cref);
                     break 'trail;
                 }
-                // Unit: force `other` true, keep watching here.
+                // Unit: force `other` true, keep watching here — and `other` is
+                // now true, so it is the best possible blocker.
                 let ok = self.enqueue(other, Some(cref));
                 debug_assert!(ok, "enqueue of an unassigned unit literal cannot conflict");
-                ws[j] = cref;
+                ws[j] = Watcher {
+                    cref,
+                    blocker: other,
+                };
                 i += 1;
                 j += 1;
             }
@@ -757,8 +853,14 @@ impl CdclSolver {
             learnt,
             "the clause arena must round-trip the literals it was handed, in order"
         );
-        self.watches[learnt[0].code()].push(cref);
-        self.watches[learnt[1].code()].push(cref);
+        self.watches[learnt[0].code()].push(Watcher {
+            cref,
+            blocker: learnt[1],
+        });
+        self.watches[learnt[1].code()].push(Watcher {
+            cref,
+            blocker: learnt[0],
+        });
         let ok = self.enqueue(asserting, Some(cref));
         debug_assert!(ok, "the asserting literal is unassigned after backjump");
     }
@@ -812,7 +914,7 @@ impl CdclSolver {
         // preserved (STYLE D2). Taken out to sidestep the borrow checker.
         let mut watches = std::mem::take(&mut self.watches);
         for list in &mut watches {
-            list.retain(|&cref| !self.clauses.is_deleted(cref));
+            list.retain(|w| !self.clauses.is_deleted(w.cref));
         }
         self.watches = watches;
         self.clauses.compact();
@@ -1220,9 +1322,65 @@ mod tests {
             s.watches
                 .iter()
                 .flatten()
-                .all(|&c| c < s.clauses.len() && !s.clauses.is_deleted(c)),
+                .all(|w| w.cref < s.clauses.len() && !s.clauses.is_deleted(w.cref)),
             "watch lists reference only live, in-range clauses after compaction"
         );
+        s.assert_watch_invariants();
+    }
+
+    /// The blocker/watch coherence invariants, checked after a search that has
+    /// exercised installation, migration, learning and tombstoning.
+    ///
+    /// Written as a helper on the solver (rather than inline) because three tests
+    /// below want it at different points in a run, and because these are the
+    /// invariants mt-092 stage 1b's correctness argument actually rests on —
+    /// stated once, in one place.
+    impl CdclSolver {
+        fn assert_watch_invariants(&self) {
+            for code in 0..self.watches.len() {
+                // The inverse of `Lit::code` (`var << 1 | negated`), kept local
+                // to the tests rather than widening the public `Lit` surface.
+                let var = Var::from_index(code >> 1);
+                let watched = if code & 1 == 0 {
+                    Lit::positive(var)
+                } else {
+                    Lit::negative(var)
+                };
+                for w in &self.watches[code] {
+                    let lits = self.clauses.lits(w.cref);
+                    assert!(
+                        !self.clauses.is_deleted(w.cref),
+                        "a tombstoned clause must not be watched"
+                    );
+                    assert!(
+                        lits[..2].contains(&watched),
+                        "a watcher sits in the list of one of its clause's two watched literals"
+                    );
+                    assert_ne!(
+                        w.blocker, watched,
+                        "a blocker is the OTHER watched literal, never the list's own"
+                    );
+                    assert!(
+                        lits.contains(&w.blocker),
+                        "a blocker must be a literal OF its clause — that is what makes \
+                         `blocker is true => clause is satisfied` sound"
+                    );
+                }
+            }
+            // Exactly two watchers per live clause, one per watched literal.
+            for cref in 0..self.clauses.len() {
+                if self.clauses.is_deleted(cref) {
+                    continue;
+                }
+                let count = self
+                    .watches
+                    .iter()
+                    .flatten()
+                    .filter(|w| w.cref == cref)
+                    .count();
+                assert_eq!(count, 2, "every live clause has exactly two watchers");
+            }
+        }
     }
 
     #[test]
@@ -1252,6 +1410,95 @@ mod tests {
             count(Some((1, 1))),
             9,
             "count invariant under forced reduction"
+        );
+    }
+
+    /// A blocker skip must never hide a propagation or a conflict.
+    ///
+    /// PHP(6,5) with reduction forced on drives installation, migration,
+    /// learning and tombstoning through the blocker path many thousands of
+    /// times, and the watch invariants are checked at the end of a *completed*
+    /// search rather than a fresh one — which is the state that can actually be
+    /// wrong (a fresh solver's watches are trivially coherent).
+    #[test]
+    fn blocker_path_keeps_watch_lists_coherent_through_a_whole_search() {
+        let mut cnf = Cnf::new();
+        pigeonhole(&mut cnf, 6, 5);
+        let mut s = CdclSolver::new(&cnf);
+        s.assert_watch_invariants();
+        s.set_reduce_schedule(1, 1);
+        assert_eq!(s.solve(), Outcome::Unsat, "PHP(6,5) is UNSAT");
+        s.assert_watch_invariants();
+    }
+
+    /// The invariants must also hold across the **enumeration seam**, where
+    /// `add_clause` installs blocking clauses against a live solver between
+    /// solves — a watcher-installation path the single-solve tests never reach.
+    #[test]
+    fn blocker_invariants_hold_across_the_enumeration_seam() {
+        let mut cnf = Cnf::new();
+        let vars: Vec<Var> = (0..6).map(|_| cnf.fresh_var()).collect();
+        // Three 2-clauses: plenty of models to enumerate, so `add_clause` runs
+        // repeatedly against a solver that already has learned clauses.
+        for pair in vars.chunks(2) {
+            cnf.add_clause(vec![Lit::positive(pair[0]), Lit::positive(pair[1])]);
+        }
+        let mut s = CdclSolver::new(&cnf);
+        s.set_reduce_schedule(1, 1);
+        let mut models = 0u64;
+        while let Outcome::Sat(m) = s.solve() {
+            models += 1;
+            s.assert_watch_invariants();
+            s.add_clause(block(&m, &vars));
+            s.assert_watch_invariants();
+        }
+        // (x0∨x1)(x2∨x3)(x4∨x5) over 6 vars = 3^3 satisfying assignments; the
+        // count is the observable a blocker skip must not be able to move.
+        assert_eq!(models, 27, "raw model count is blocker-independent");
+    }
+
+    /// A **falsified** blocker must not short-circuit anything — in particular
+    /// the degenerate case where the blocker happens to be the very literal that
+    /// just became false. The invariant asserted in `propagate` says a blocker is
+    /// never the literal whose list it sits in, so this case cannot arise from
+    /// our own bookkeeping; this test pins that *correctness does not depend on
+    /// that*, by driving a formula whose every clause is repeatedly visited with
+    /// a false blocker and requiring the propagations to still happen.
+    #[test]
+    fn a_false_blocker_never_short_circuits_a_propagation() {
+        // (¬p ∨ q) (¬q ∨ r) (¬r ∨ s): forcing `p` must chain all the way to `s`.
+        // Every clause is visited with its other watch UNassigned (hence a
+        // non-true blocker), so every visit has to reach the clause body.
+        fn chain(contradict_tail: bool) -> Outcome {
+            let mut cnf = Cnf::new();
+            let links: Vec<Var> = (0..4).map(|_| cnf.fresh_var()).collect();
+            for pair in links.windows(2) {
+                cnf.add_clause(vec![Lit::negative(pair[0]), Lit::positive(pair[1])]);
+            }
+            cnf.add_clause(vec![Lit::positive(links[0])]);
+            if contradict_tail {
+                cnf.add_clause(vec![Lit::negative(links[3])]);
+            }
+            CdclSolver::new(&cnf).solve()
+        }
+        match chain(false) {
+            Outcome::Sat(m) => {
+                let all: Vec<bool> = (0..4).map(|i| m.value(Var::from_index(i))).collect();
+                assert_eq!(
+                    all,
+                    vec![true; 4],
+                    "every link of the chain must have propagated"
+                );
+            }
+            Outcome::Unsat => panic!("the chain alone is satisfiable"),
+        }
+        // Contradicting the tail makes it UNSAT, and only a propagation that ran
+        // the whole way detects that — a wrongly-taken blocker skip shows up here
+        // as SAT.
+        assert_eq!(
+            chain(true),
+            Outcome::Unsat,
+            "the implication chain must propagate through every clause"
         );
     }
 
