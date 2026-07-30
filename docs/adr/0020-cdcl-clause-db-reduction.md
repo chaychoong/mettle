@@ -163,7 +163,58 @@ re-enters at the next paired grid on its own merits.
   park with the tail disclosed. The grid decides; the estimate above is the
   prediction it is scored against.
 
-## Alternatives considered
+## Stage-0 outcome (2026-07-30, addendum — the profile ran same day)
+
+The attribution profile (`scratchpad/probe/mt092/NOTES.md`; opus delegate,
+predictions-first, accounting closed to 0.00% residue, probe overhead
+controlled at +0.7–0.8% with identical conflict counts) names the first-order
+term, and it is none of the revision note's top suspects:
+
+- **`propagate` is first-order, unanimously: 68.7 / 70.2 / 72.7%** of solve
+  wall on ertms_1A[9] / elevator_spl_events[0] / handshake[0]. The cost is
+  memory-bound arena round-trips: 3.3k–44k watch visits per conflict at
+  12–24 ns each, **65–67% of them ending at "other watch already true"**
+  (blocker-avoidable), with ns/visit tracking arena size.
+- **`pick_branch` is second at 10–19%** — the linear-scan model is exact
+  (`pick_iters = decisions × num_vars`, 0.87–0.91 ns/iter) but
+  decisions/conflict is only 1.18–2.38, so it never dominates.
+- **Suspect 2 was false as written**: `CdclSolver::minimize`/`lit_redundant`
+  already implement MiniSat's recursive minimization (3.0× length cut on
+  ertms). Its rationale survives as the **volume lever**: post-minimization
+  learned lengths of 34/74/126 drive re-propagation volume (visits ≈ trail
+  pops × 3.3; ertms assigns ~10% of the formula per conflict).
+- **Suspect 4 is measured dead**: `reduce_db` + restarts ≤ 0.2% of wall.
+- **The context's "blocking literals are cache engineering" line was wrong,
+  measured**: a throwaway blocker prototype (verdicts jar-agreeing, self-checks
+  clean) buys a steady 1.13–1.46× per conflict but **changes the search
+  trajectory** — the conflict count moves 0.1×–1.5× (handshake −90%, elevator
+  +50%) — and the campaign's budget is denominated in conflicts.
+
+**Stage-1 scope (tech-lead decision at the gate), ordered so every move stays
+attributable:**
+
+1. **Stage 1a, one chunk:** flat clause arena (`Vec<Lit>` + offset/len; est.
+   1.2–1.4×) **plus** a deterministic max-heap `pick_branch` reproducing the
+   exact linear-scan argmax (integer key, lowest-index ties; +1.11–1.24×).
+   Both are **trajectory-neutral by construction**, so the acceptance
+   criterion is strict: **byte-identical stage-1 sweep, identical per-row
+   conflict counts, lower wall** (~1.35–1.7× cumulative expected). Constraint
+   6 does not fire.
+2. **Stage 1b, its own chunk:** blocking literals, treated as a **search
+   change** — full row-diffed sweep, regressions zero-or-disclosed
+   (constraint 4), instance re-pins disclosed (constraint 6). Combined with
+   1a it approaches the measured wall-side ceiling (~1.9–2.3×).
+3. **One ADR-0017 paired-grid re-pair after 1a+1b**, deciding the new
+   defaults; per-step acceptance runs (not per-step grids) carry the
+   attributability.
+
+**Yield estimate rescored:** the **+13 base case stands but now depends on
+stage 1b** (1a alone lands under the ~2× the G1 band needs); it is judged at
+the grid as before. The **+23 upside is retracted as a wall-side goal** — the
+arithmetic limit of making `propagate` and `pick_branch` both free is
+5.8–8.2×, so the G2 band requires the volume lever (learned-clause shrinking /
+tier-based retention), which is a search-quality change and a **separate
+future bead**, specced only if the grid after 1a+1b justifies it.
 
 **Park the conversion campaign at 484.** Rejected: the census proved 24 of the
 47 over_budget rows convert on budget alone — the barrier is the wall cost of
