@@ -59,6 +59,27 @@ cargo build --release -p als-conform
 
 `solve-gauge` output is deterministic: capture reports as `> report.txt 2> progress.txt` (stdout is the report, stderr is the live heartbeat — never merge them). A useful iteration loop is `--only <file>` to re-run a single model.
 
+### The optional CaDiCaL backend
+
+Everything above builds and tests the default, all-Rust solver. The optional second backend ([ADR-0019](docs/adr/0019-optional-cadical-backend.md)) is behind off-by-default cargo features, so it needs its own passes — and CI runs both (`ci.yml`'s `cadical` job, plus the cross-target battery on tags):
+
+```sh
+cargo test --workspace --all-features                        # the only pass that RUNS the backend's tests
+cargo build --release -p mettle --features cadical           # ships `--solver cadical` in the binary
+cargo build --release -p als-conform --features cadical-instrument
+
+# the oracle-independent check: one encoding, both solvers, non-zero exit on any
+# verdict difference. --rows takes a newline-separated list of `path[idx]` keys,
+# or `-` to read them from stdin — so a slice comes straight out of a sweep report:
+python3 -c "import json,sys; d=json.load(open(sys.argv[1])); [print(r['key']) for r in d['per_command'] if r['verdict_bucket'].startswith('agree_')]" report.json \
+  | ./target/release/backend-instrument --rows - --cross --conflicts 100000 --jobs 8
+
+# the cross-target determinism battery, locally (compare its output across machines)
+./scripts/backend-determinism.sh ./target/release/mettle
+```
+
+The gauge deliberately has **no** `--solver` flag: the scorecard, the counting nets and the sweep baselines are own-CDCL by construction (ADR-0019 §2). Never capture a baseline from anything else.
+
 ## House rules (the short version)
 
 The binding rubrics are **[STYLE.md](STYLE.md)** and **[PORTING_RULES.md](PORTING_RULES.md)** — read them before writing code. The rules that surprise people:

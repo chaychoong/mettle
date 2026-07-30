@@ -100,6 +100,7 @@ fn parse_args(args: &[String]) -> Result<ParsedArgs<'_>, ExitCode> {
     let mut repl = false;
     let mut state: Option<i64> = None;
     let mut xml: Option<&str> = None;
+    let mut backend = als_core::Backend::default();
 
     let mut i = 0;
     while i < args.len() {
@@ -117,6 +118,10 @@ fn parse_args(args: &[String]) -> Result<ParsedArgs<'_>, ExitCode> {
             }
             "--xml" => xml = Some(option_value(args, &mut i, "--xml", "an output path")?),
             "--command" => command_sel = Some(option_value(args, &mut i, "--command", "a value")?),
+            "--solver" => {
+                let v = option_value(args, &mut i, "--solver", "a solver name")?;
+                backend = crate::parse_solver("exec", v)?;
+            }
             "--conflicts" => {
                 let v = option_value(args, &mut i, "--conflicts", "a value")?;
                 conflicts = Some(number(v, "--conflicts", "a non-negative integer")?);
@@ -154,6 +159,7 @@ fn parse_args(args: &[String]) -> Result<ParsedArgs<'_>, ExitCode> {
             allow_overflow,
             conflict_budget: conflicts,
             encode_budget,
+            backend,
             ..SolveOptions::default()
         },
         eval,

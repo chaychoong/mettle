@@ -8,7 +8,8 @@
 //! mettle parse <file.als> [--ast]
 //! mettle check <file.als>
 //! mettle exec <file.als> [--command <sel>] [--allow-overflow] [--conflicts N] [--encode-budget N]
-//! mettle serve <file.als> [--command <sel>] [--port N] [--bind <addr>]
+//!                         [--solver <name>]
+//! mettle serve <file.als> [--command <sel>] [--port N] [--bind <addr>] [--solver <name>]
 //! mettle -h | --help
 //! mettle -V | --version
 //! ```
@@ -22,7 +23,10 @@
 //! `compute_universe` → `compute_bounds` → `lower_command` → `solve_goal`
 //! pipeline and prints the verdict (and any SAT instance / counterexample).
 //! `serve` (mt-072, [`serve`]) solves **one** command and then answers the
-//! Sterling provider protocol about it on a local port until Ctrl-C.
+//! Sterling provider protocol about it on a local port until Ctrl-C. Both
+//! solving subcommands take `--solver <name>` (mt-089, ADR-0019): the default
+//! `mettle` backend is the deterministic yardstick, and an optional stronger one
+//! can be selected where a build has it ([`parse_solver`], [`solver_help`]).
 //! Parse/lex/resolve errors render to stderr as a rustc-style caret-and-label
 //! block (mt-013, [`diagnostics`]) with exit code 1; usage or I/O problems
 //! exit with code 2.
@@ -35,6 +39,7 @@ mod exec;
 mod repl;
 mod serve;
 
+use std::fmt::Write as _;
 use std::io::{self, Write as _};
 use std::process::ExitCode;
 
@@ -96,15 +101,19 @@ fn run(args: &[String]) -> Result<(), ExitCode> {
 }
 
 fn print_usage() {
+    // Built once and interpolated twice: `--solver`'s valid names depend on how
+    // this binary was compiled (see [`solver_help`]), and both subcommands that
+    // take the flag list the same set.
+    let solver = solver_help();
     eprintln!(
         "usage: mettle parse <file.als> [--ast]\n\
          \x20\x20\x20\x20\x20mettle check <file.als> [--strict]\n\
          \x20\x20\x20\x20\x20mettle exec <file.als> [--command <name|index>] [--allow-overflow]\n\
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20[--conflicts N] [--encode-budget N]\n\
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20[--repl] [--eval <EXPR>] [--state N]\n\
-         \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20[--xml <PATH>]\n\
+         \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20[--xml <PATH>] [--solver <name>]\n\
          \x20\x20\x20\x20\x20mettle serve <file.als> [--command <name|index>] [--port N]\n\
-         \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20[--bind <addr>]\n\
+         \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20[--bind <addr>] [--solver <name>]\n\
          \x20\x20\x20\x20\x20mettle -h | --help\n\
          \x20\x20\x20\x20\x20mettle -V | --version\n\
          \n\
@@ -135,13 +144,80 @@ fn print_usage() {
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20(one command; not combinable with --repl/--eval/--state)\n\
          \x20\x20--state N              evaluate at trace state N (temporal commands; N wraps\n\
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20through the loop, negatives clamp to 0; `:state N` moves in --repl)\n\
+         {solver}\n\
          \n\
          Options (serve):\n\
          \x20\x20--command <sel>        the command to visualize (required unless there is one)\n\
          \x20\x20--port N               listen on <bind>:N (default 4030; 0 picks a free port)\n\
          \x20\x20--bind <addr>          address to listen on (default 127.0.0.1; 0.0.0.0 for a\n\
-         \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20container/remote box — the socket is unauthenticated)"
+         \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20container/remote box — the socket is unauthenticated)\n\
+         {solver}"
     );
+}
+
+/// Resolves a `--solver <name>` value for subcommand `sub`, or renders the usage
+/// error and returns exit code 2 (ADR-0019 stage 2, mt-089).
+///
+/// Three outcomes, deliberately distinct (the mt-006 no-silent-default rule): a
+/// known name resolves; a name mettle *has* but this build compiled out says so
+/// and names the build flag that fixes it; anything else is a typo and gets the
+/// list of what this binary actually offers. Never a fallback to the default —
+/// a solver the user did not ask for is a wrong answer to the question they did.
+fn parse_solver(sub: &str, value: &str) -> Result<als_solve::Backend, ExitCode> {
+    if let Some(backend) = als_solve::Backend::parse(value) {
+        return Ok(backend);
+    }
+    if als_solve::Backend::COMPILED_OUT.contains(&value) {
+        eprintln!(
+            "mettle {sub}: solver `{value}` is not in this build (compiled without the \
+             `{value}` cargo feature)\n\
+             mettle {sub}: build from source with `cargo build --release -p mettle \
+             --features {value}`, or pick one of: {}",
+            als_solve::Backend::AVAILABLE.join(", ")
+        );
+    } else {
+        eprintln!(
+            "mettle {sub}: unknown solver `{value}`; available: {}",
+            als_solve::Backend::AVAILABLE.join(", ")
+        );
+    }
+    Err(ExitCode::from(2))
+}
+
+/// The `--solver` help lines, built from what this build can actually select so
+/// the text never promises a backend the binary does not have.
+fn solver_help() -> String {
+    let mut help = format!(
+        "\x20\x20--solver <name>        SAT backend, one of: {} (default: {})\n",
+        als_solve::Backend::AVAILABLE.join(", "),
+        als_solve::Backend::default().name()
+    );
+    if !als_solve::Backend::COMPILED_OUT.is_empty() {
+        let _ = writeln!(
+            help,
+            "\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\
+             not in this build: {} (rebuild with the matching cargo feature)",
+            als_solve::Backend::COMPILED_OUT.join(", ")
+        );
+    }
+    // The honesty the alternative backend owes the user, stated here as well as
+    // in LIMITATIONS (ADR-0019 §4): what it gives up, and the one budget flag
+    // whose meaning narrows under it.
+    help.push_str(
+        "\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\
+         `mettle` is the deterministic yardstick: a fixed build gives\n\
+         \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\
+         byte-identical answers everywhere, and it is what the conformance\n\
+         \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\
+         scorecard measures. Any other backend searches harder but is only\n\
+         \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\
+         deterministic per build (which instance/trace you see, and the\n\
+         \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\
+         enumeration order, are its own); with `cadical`, --conflicts still\n\
+         \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\
+         caps each solve but the conflicts it spent are not observable.",
+    );
+    help
 }
 
 /// Writes `text` to stdout, treating a closed pipe (`mettle parse … | head`)

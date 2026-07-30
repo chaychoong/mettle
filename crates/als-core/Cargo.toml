@@ -9,11 +9,18 @@ repository.workspace = true
 workspace = true
 
 [features]
-# `cadical-instrument` (OFF by default, ADR-0019 / mt-089): compiles the
-# `instrument` module, which hands one translated CNF to either backend. Pure
-# addition -- no shipped path is conditional on it, so a default build is the
-# same crate it was.
-cadical-instrument = ["als-solve/cadical"]
+# `cadical` (OFF by default, ADR-0019 / mt-089 stage 2): compiles the optional
+# CaDiCaL backend into als-solve, which makes `SolveOptions::backend` selectable
+# as `Backend::Cadical` on every solve path (verdict, enumeration, temporal).
+# The DEFAULT of that field is the own CDCL regardless, so a build with this
+# feature on still behaves identically unless a caller asks for the other
+# backend -- the feature widens what is *selectable*, never what is default.
+cadical = ["als-solve/cadical"]
+# `cadical-instrument` (OFF by default, ADR-0019 / mt-089 stage 1): compiles the
+# `instrument` module, which hands one translated CNF to either backend and
+# cross-checks them. Pure addition -- no shipped path is conditional on it, so a
+# default build is the same crate it was.
+cadical-instrument = ["cadical"]
 
 [dependencies]
 # als-syntax: translation reads the AST produced by the parser.

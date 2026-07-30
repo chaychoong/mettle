@@ -1050,3 +1050,131 @@ fn an_unmarked_subset_sig_stays_free() {
     assert_sat("sig B {}\nsig A in B {}\nrun { no A } for 3\n");
     assert_sat("sig B {}\nsig A in B {}\nrun { #A = 2 } for 3\n");
 }
+
+// ===================== the optional CaDiCaL backend ======================
+// ADR-0019 / mt-089 stage 2. These run only under `--features cadical`
+// (`cargo test --workspace --all-features`, and CI's `cadical` job), because a
+// default build has no second backend to compare against — which is the point:
+// the default path is unchanged by construction, not by discipline.
+
+/// Verdicts are backend-independent truths (ADR-0019 §4): every verdict golden
+/// above must come out the same under the alternative backend, on the same
+/// models, with no jar and no baseline involved. A difference here would be a
+/// bug in one of the two solvers or in the wiring between them.
+#[cfg(feature = "cadical")]
+#[test]
+fn cadical_agrees_with_the_own_cdcl_on_every_verdict_shape() {
+    let models: &[(&str, bool)] = &[
+        // (model, expected SAT) — a spread of encoder features, each already
+        // jar-pinned by a golden above.
+        (
+            "sig A { r: set A }\nrun { some a: A | a in a.r } for 3\n",
+            true,
+        ),
+        (
+            "sig A { r: set A }\nrun { some a: A | a in a.^r } for 3\n",
+            true,
+        ),
+        (
+            "sig A { r: set A }\nfact { all a: A | a not in a.^r }\nrun { #r = 3 } for 3\n",
+            true,
+        ),
+        (
+            "sig A { r: set A }\nfact { all a: A | a in a.^r }\nrun { no r and some A } for 3\n",
+            false,
+        ),
+        ("sig A {}\nrun { #A = 2 } for 3\n", true),
+        ("sig A {}\nrun { #A = 4 } for 3\n", false),
+        // A `check` whose counterexample exists (polarity: SAT = counterexample).
+        ("sig A {}\nassert Bogus { no A }\ncheck Bogus for 3\n", true),
+        // Integers, so the int encoding participates rather than only structure.
+        (
+            "sig A { n: one Int }\nrun { some a: A | a.n = 3 } for 3 but 4 int\n",
+            true,
+        ),
+    ];
+    for (src, expect_sat) in models {
+        let with = |backend| {
+            let loader = MapLoader::new().with("root.als", src);
+            let graph = ModuleGraph::load("root.als", &loader).expect("load");
+            let world = resolve(&graph).expect("resolve").world;
+            let scoped = compute_universe(&world, &graph, &world.commands[0]).expect("universe");
+            let mut ir = Ir::default();
+            let bounds = compute_bounds(&world, &scoped, &mut ir);
+            let goal = lower_command(&world, &graph, &scoped, &bounds, &mut ir, 0).expect("lower");
+            let opts = SolveOptions {
+                backend,
+                ..SolveOptions::default()
+            };
+            match solve_goal(&ir, &scoped, &goal, &bounds, &opts).expect("solve") {
+                SolveVerdict::Sat(_) => true,
+                SolveVerdict::Unsat => false,
+                SolveVerdict::Unknown => unreachable!("unbudgeted solve returned Unknown"),
+            }
+        };
+        let own = with(als_core::Backend::Cdcl);
+        let cadical = with(als_core::Backend::Cadical);
+        assert_eq!(own, *expect_sat, "the own solver moved on:\n{src}");
+        assert_eq!(
+            own, cadical,
+            "CROSS-BACKEND VERDICT DIFFERENCE — a bug, always:\n{src}"
+        );
+    }
+}
+
+/// Enumeration under the alternative backend is **exact**: the set of distinct
+/// instances is a property of the encoding plus the blocking clauses, not of the
+/// solver, so the SB-0 count must match the own solver's (jar-pinned) count. The
+/// *order* is the backend's own and is deliberately not asserted (ADR-0019 §1).
+#[cfg(feature = "cadical")]
+#[test]
+fn cadical_enumerates_the_same_number_of_instances() {
+    let count_with = |src: &str, backend| {
+        let loader = MapLoader::new().with("root.als", src);
+        let graph = ModuleGraph::load("root.als", &loader).expect("load");
+        let world = resolve(&graph).expect("resolve").world;
+        let scoped = compute_universe(&world, &graph, &world.commands[0]).expect("universe");
+        let mut ir = Ir::default();
+        let bounds = compute_bounds(&world, &scoped, &mut ir);
+        let goal = lower_command(&world, &graph, &scoped, &bounds, &mut ir, 0).expect("lower");
+        let opts = SolveOptions { backend, ..sb0() };
+        enumerate(&ir, &scoped, &goal, &bounds, &opts)
+            .expect("enumerate")
+            .count()
+    };
+    for src in [
+        "sig A {}\nrun { some A } for 3\n",
+        "sig A {}\nrun { #A = 2 } for 3\n",
+        "sig A { r: set A }\nrun { #r = 1 } for 2\n",
+    ] {
+        let own = count_with(src, als_core::Backend::Cdcl);
+        let cadical = count_with(src, als_core::Backend::Cadical);
+        assert_eq!(
+            own, cadical,
+            "enumeration under CaDiCaL was not exact ({own} vs {cadical}):\n{src}"
+        );
+    }
+}
+
+/// Negative space: a cumulative enumeration-effort budget cannot be charged to a
+/// backend with no counters, so asking for that combination is refused loudly
+/// rather than becoming an unbounded enumeration (ADR-0019 addendum 3).
+#[cfg(feature = "cadical")]
+#[test]
+#[should_panic(expected = "needs a backend with effort counters")]
+fn an_effort_budget_is_refused_on_a_backend_without_counters() {
+    let src = "sig A {}\nrun { some A } for 3\n";
+    let loader = MapLoader::new().with("root.als", src);
+    let graph = ModuleGraph::load("root.als", &loader).expect("load");
+    let world = resolve(&graph).expect("resolve").world;
+    let scoped = compute_universe(&world, &graph, &world.commands[0]).expect("universe");
+    let mut ir = Ir::default();
+    let bounds = compute_bounds(&world, &scoped, &mut ir);
+    let goal = lower_command(&world, &graph, &scoped, &bounds, &mut ir, 0).expect("lower");
+    let opts = SolveOptions {
+        backend: als_core::Backend::Cadical,
+        enum_effort_budget: Some(1_000),
+        ..sb0()
+    };
+    let _ = enumerate(&ir, &scoped, &goal, &bounds, &opts);
+}

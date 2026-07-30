@@ -74,3 +74,79 @@ is Alloy-shaped, not foreign to it.
   without a strong-solver instrument we cannot tell which tail rows any
   amount of textbook upgrading can reach, and the owner values offering users
   the powerful option directly.
+
+## Addendum — stage-2 decisions (2026-07-30, tech lead)
+
+The decision above stands unchanged, and its text is left as written. These are
+the choices stage 2 (the shipped surface) had to make inside it.
+
+1. **Naming: `--solver mettle | cadical`, default `mettle`.** The own solver
+   gets the product's own name because it *is* the product's answer — Alloy's
+   own surface names backends after the solver (`sat4j`, `minisat`), and
+   `--solver cdcl` would have named an algorithm every backend implements. Exact
+   match only: no case folding, no prefixes, no aliases, so a recorded command
+   means one thing forever. An unresolvable name is a hard usage error (exit 2)
+   listing what this build has — the mt-006 no-silent-default rule — and a name
+   that exists in the source but was compiled out gets a *different* message
+   naming the cargo feature that fixes it, because "typo" and "not built in" are
+   different problems with different fixes.
+
+2. **Feature posture: OFF in everything we ship, opt-in from source.** The
+   `cadical` feature on the `mettle` crate is off by default, so the release
+   artifacts, the container image and the nix package remain the all-Rust,
+   zero-C-toolchain builds ADR-0016 designed. This ADR contemplated shipping it
+   enabled "if the release matrix + flake can build the C++ dep on all four
+   targets" — and that condition is **not yet demonstrated**. Verified locally
+   (host `aarch64-apple-darwin` only): the feature builds in release, the
+   `--solver cadical` surface works end to end, and the C++ compiles from the
+   vendored sources with no system library. Not verified, and therefore not
+   claimed: the other three targets, the `rust:1.97.0-slim` Docker builder
+   (needs `g++`, and `distroless/cc` may not carry `libstdc++`), and the
+   sandboxed nix build (needs a C++ compiler in `nativeBuildInputs`). The
+   evidence to flip this is now collected automatically:
+   `.github/workflows/backend-determinism.yml` builds the feature on all four
+   release runners and fails if any cannot, on every `v*` tag. Flipping the
+   default is a follow-up bead once that has actually run — not a claim made in
+   advance of its own experiment.
+
+3. **Budget mapping: `--conflicts` binds, spend is unobservable.** CaDiCaL's
+   `limit("conflicts", n)` is per-solve-relative (`lim.conflicts =
+   stats.conflicts + inc.conflicts` at each solve's start), which is exactly the
+   own solver's `solve_within` contract, so the flag means the same thing on both
+   and needs no reinterpretation. `u64::MAX` (no budget) is passed as CaDiCaL's
+   own unlimited sentinel `-1` rather than saturating to `i32::MAX`, so a caller
+   who asked for no budget can never be told "budget exhausted". What has no
+   analogue is the *counter*: nothing in the crate, its C shim, or the vendored
+   C++ exposes conflicts/decisions/propagations as a value (`Stats` is private to
+   `Internal`; the C API's only statistics call prints). So
+   `LiveSolver::effort()` is `Option`, the cumulative enumeration-effort budget
+   is **refused** on an effort-less backend instead of being charged zero, and the
+   gap is disclosed in `--help` and LIMITATIONS.
+
+4. **Enumeration works; counting stays own-CDCL.** Enumeration under CaDiCaL is
+   exact by the same argument it is exact under the own solver (a sound solver
+   plus the same blocking clauses over the same primary variables), so `serve`'s
+   "next" and the trace enumerator work under `--solver cadical` — with the order,
+   the first instance, and a temporal command's locked configuration all being
+   the backend's own (LEDGER-014). Counting is fenced structurally rather than by
+   convention: the conformance gauge has **no** `--solver` flag, so no baseline
+   or scorecard number can be produced on anything but the yardstick.
+
+5. **The cross-backend arm lives in the instrument, not the gauge.**
+   `backend-instrument --cross` (dev-side, `cadical-instrument` feature) encodes
+   each worklist row **once** and decides that one CNF with both backends,
+   exiting non-zero on any verdict difference or self-check failure. Translating
+   once is the point: "same bounds, same numbering, same SBP, same budget" is then
+   true by construction rather than by re-derivation. Putting it here rather than
+   in `solve-gauge` keeps the scorecard instrument single-backend by construction
+   (decision 4) while giving the check a home that already has worklists,
+   parallelism and per-row artifacts.
+
+6. **FP discipline lives in the build definition, so every build shares it.** `.cargo/config.toml` sets
+   `CXXFLAGS=-ffp-contract=off` (not forced, so a packager's own flags win),
+   which the `cc` crate appends to every C++ compile. The crate's `build.rs`
+   pins only `-O3 -DNDEBUG -std=c++17`, and CaDiCaL's restart policy compares
+   `double` EMAs, so FMA contraction was a live cross-architecture divergence
+   licence; this withdraws it. No `-ffast-math` anywhere. This does not *make*
+   the backend cross-platform byte-identical — it removes the one cause we can
+   name, and the battery measures what is left.

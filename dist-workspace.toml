@@ -15,8 +15,18 @@ ci = "github"
 installers = ["shell", "homebrew"]
 # Target platforms to build apps for (Rust target-triple syntax). All four
 # are native GA GitHub runners (macOS arm64/x86_64, Ubuntu arm64/x86_64) --
-# the workspace is zero-C-dep, so no cross toolchain is needed for any of
-# them (ADR-0016).
+# the workspace is zero-C-dep AS BUILT HERE, so no cross toolchain is needed
+# for any of them (ADR-0016).
+#
+# "As built here" is now load-bearing (ADR-0019 / mt-089): the optional
+# `cadical` feature on the mettle crate pulls in a C++ SAT solver compiled from
+# vendored sources. It is deliberately NOT enabled below -- no `features` key --
+# so every artifact this config produces stays the all-Rust binary the sentence
+# above describes. Flipping it on is gated on the cross-target battery
+# (.github/workflows/backend-determinism.yml) demonstrating that all four of
+# these targets can build the C++ and on the Dockerfile/flake gaining the
+# toolchain; until that has actually run on a tag, the feature stays off and
+# `--solver cadical` is a source-build opt-in.
 targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu"]
 # Path that installers should place binaries in
 install-path = "CARGO_HOME"

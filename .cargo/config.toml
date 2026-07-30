@@ -1,0 +1,33 @@
+# Workspace cargo configuration.
+#
+# The single entry here exists for the optional CaDiCaL backend (ADR-0019,
+# mt-089). CaDiCaL's search is not pure integer arithmetic the way mettle's own
+# CDCL deliberately is: its restart policy compares floating-point EMAs of clause
+# glue (`cadical/src/ema.hpp`, `restart.cpp`), so *which* answer a run finds can
+# depend on double rounding. Nothing in the crate's `build.rs` pins FP semantics
+# — it sets `-O3 -DNDEBUG -std=c++17` and nothing else — and both GCC and Clang
+# default to contracting `a*b+c` into an FMA where the hardware has one, which is
+# exactly the licence that makes the same source produce different doubles on
+# aarch64 than on x86_64.
+#
+# `-ffp-contract=off` withdraws that licence, so the vendored C++ evaluates its
+# EMAs in the order it wrote them. It is honored because the `cc` crate appends
+# `CXXFLAGS` to every C++ invocation (the crate's build script even declares
+# `cargo:rerun-if-env-changed=CXXFLAGS`), and it is set HERE rather than only in
+# CI so that a local build, a `cargo install`, a `nix build` and a release build
+# all compile the backend the same way. No `-ffast-math` is added anywhere, and
+# none must be.
+#
+# This does NOT make the CaDiCaL backend byte-identical across platforms — it
+# removes one known source of divergence, and the cross-target battery
+# (`.github/workflows/backend-determinism.yml`) is what measures whether any
+# remain. The own CDCL's determinism contract does not depend on any of this: it
+# has no floating point at all (STYLE D1).
+#
+# Not forced: an explicit `CXXFLAGS` in the environment wins, so a packager who
+# needs their own flags is not fought with. Nothing is compiled from C or C++ at
+# all unless the `cadical` feature is on, so on a default build this is inert
+# (which is also why the MSVC toolchain, which would reject the flag, never sees
+# it — there is no Windows target and no C++ in a default build).
+[env]
+CXXFLAGS = { value = "-ffp-contract=off", force = false }

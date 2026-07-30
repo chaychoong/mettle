@@ -11,11 +11,21 @@
 //! ```text
 //! backend-instrument --rows worklist.txt --backend cadical \
 //!     --conflicts 100000 --encode 64000000 --wall 600 --jobs 8 --out rows.json
+//! backend-instrument --rows worklist.txt --cross --conflicts 100000 --jobs 8
 //! ```
+//!
+//! `--cross` is the **cross-backend arm** (ADR-0019 §4, mt-089 stage 2): every
+//! row is encoded once and decided by *both* backends, and any verdict
+//! difference fails the run. That check needs no jar, no baseline and no
+//! reference of any kind — the two solvers are each other's oracle — and it is
+//! what caught the mt-090 latent wrong verdict on its first outing. Point it at
+//! any worklist: a calibration set, the defer tail, a corpus sample.
 //!
 //! A row is a gauge key: `<workspace-relative path>[<command index>]`. Each row
 //! is classified into exactly one of the buckets the solve gauge uses, so the
-//! table lines up with the mt-088 census it is measured against.
+//! table lines up with the mt-088 census it is measured against. `--rows -` reads
+//! the worklist from stdin, so a slice can be piped straight out of a sweep
+//! artifact (see CONTRIBUTING).
 //!
 //! Determinism: the report is sorted by row key and carries no wall-clock
 //! **in the verdicts** — the `*_ms` fields are measurements, printed and
@@ -28,7 +38,8 @@ use std::sync::Mutex;
 
 use als_conform::solve_gauge::baseline::{load_baselines, Baseline, JarVerdict};
 use als_core::instrument::{
-    solve_goal_with_backend, InstrumentBackend, InstrumentOutcome, InstrumentVerdict,
+    cross_check_goal, solve_goal_with_backend, CrossAgreement, InstrumentBackend,
+    InstrumentOutcome, InstrumentVerdict,
 };
 use als_core::ir::Ir;
 use als_core::{compute_bounds, compute_universe, lower_command, SolveOptions, TranslateError};
@@ -38,6 +49,10 @@ use als_types::{is_temporal_model, FilesystemLoader, ModuleGraph};
 struct Config {
     rows: Vec<(String, usize)>,
     backend: InstrumentBackend,
+    /// `--cross`: decide each row with BOTH backends and fail on any verdict
+    /// difference. Supersedes `--backend` for what runs (both do), and reports
+    /// the own CDCL as the row's headline verdict — it is the yardstick.
+    cross: bool,
     conflicts: u64,
     encode: u64,
     wall_secs: Option<f32>,
@@ -66,6 +81,15 @@ struct Row {
     agreement: &'static str,
     outcome: Option<InstrumentOutcome>,
     secs: f64,
+    /// `--cross` only: the *other* backend's answer and how the two relate.
+    cross: Option<CrossArm>,
+}
+
+/// The second arm of a `--cross` row.
+struct CrossArm {
+    verdict: InstrumentVerdict,
+    outcome: InstrumentOutcome,
+    agreement: CrossAgreement,
 }
 
 fn main() {
@@ -85,6 +109,34 @@ fn main() {
             std::process::exit(1);
         }
     }
+    // Two findings are bugs rather than measurements, and the exit code says so
+    // (a CI job or a shell `&&` must be able to tell): a cross-backend verdict
+    // difference on one identical CNF, and a SAT answer that fails its own
+    // self-check. Everything else — defers, over-budget rows, jar
+    // disagreements — is data this tool exists to collect, so it exits 0.
+    let disagree = rows
+        .iter()
+        .filter(|r| {
+            r.cross
+                .as_ref()
+                .is_some_and(|c| c.agreement == CrossAgreement::Disagree)
+        })
+        .count();
+    let self_check = rows.iter().filter(|r| row_self_check_failed(r)).count();
+    if disagree + self_check > 0 {
+        eprintln!(
+            "backend-instrument: FAILED — {disagree} cross-backend verdict difference(s), \
+             {self_check} self-check failure(s)"
+        );
+        std::process::exit(1);
+    }
+}
+
+/// Whether either arm of a row reported a self-check failure — a mettle bug
+/// whichever backend found the instance.
+fn row_self_check_failed(row: &Row) -> bool {
+    let failed = |o: Option<&InstrumentOutcome>| o.is_some_and(|o| o.self_check_fail.is_some());
+    failed(row.outcome.as_ref()) || failed(row.cross.as_ref().map(|c| &c.outcome))
 }
 
 /// Parses `argv`; every flag is required to be well-formed (a typo in a budget
@@ -93,6 +145,7 @@ fn main() {
 fn parse_args() -> Result<Config, String> {
     let mut rows_path: Option<PathBuf> = None;
     let mut backend = InstrumentBackend::Cadical;
+    let mut cross = false;
     let mut conflicts: u64 = 100_000;
     let mut encode: u64 = 64_000_000;
     let mut wall_secs: Option<f32> = Some(600.0);
@@ -126,6 +179,7 @@ fn parse_args() -> Result<Config, String> {
             "--symmetry" => {
                 symmetry = Some(value()?.parse().map_err(|_| "--symmetry: not a number")?);
             }
+            "--cross" => cross = true,
             "--allow-overflow" => allow_overflow = true,
             "--jobs" => jobs = value()?.parse().map_err(|_| "--jobs: not a number")?,
             "--root" => root = PathBuf::from(value()?),
@@ -135,8 +189,19 @@ fn parse_args() -> Result<Config, String> {
         }
     }
     let rows_path = rows_path.ok_or("--rows is required")?;
-    let text = std::fs::read_to_string(&rows_path)
-        .map_err(|e| format!("reading {}: {e}", rows_path.display()))?;
+    // `--rows -` reads stdin, so a worklist can be piped straight from whatever
+    // produced it (a jq/python filter over a sweep artifact, a `grep` over a
+    // report) without a temp file in between. That is the difference between the
+    // cross-backend arm being reused and being re-derived every session.
+    let text = if rows_path == Path::new("-") {
+        let mut buf = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)
+            .map_err(|e| format!("reading rows from stdin: {e}"))?;
+        buf
+    } else {
+        std::fs::read_to_string(&rows_path)
+            .map_err(|e| format!("reading {}: {e}", rows_path.display()))?
+    };
     let mut rows = Vec::new();
     for line in text.lines() {
         let line = line.trim();
@@ -149,6 +214,7 @@ fn parse_args() -> Result<Config, String> {
     Ok(Config {
         rows,
         backend,
+        cross,
         conflicts,
         encode,
         wall_secs,
@@ -231,6 +297,7 @@ fn measure_row(
         agreement: agreement(verdict, jar),
         outcome,
         secs: started.elapsed().as_secs_f64(),
+        cross: None,
     };
 
     let Some((graph, world)) = resolve(&cfg.root.join(relpath)) else {
@@ -262,6 +329,31 @@ fn measure_row(
         Ok(g) => g,
         Err(e) => return finish(&format!("mettle_defer:lower:{e}"), None, None),
     };
+    let bucket_of = |verdict: InstrumentVerdict| match verdict {
+        InstrumentVerdict::Unknown => "mettle_defer:over_budget".to_owned(),
+        v => format!("answered_{}", v.name()),
+    };
+    if cfg.cross {
+        return match cross_check_goal(&ir, &scoped, &goal, &bounds, &opts, cfg.wall_secs) {
+            Ok(cross) => {
+                let mut row = finish(
+                    &bucket_of(cross.cdcl.verdict),
+                    Some(cross.cdcl.verdict),
+                    Some(cross.cdcl),
+                );
+                row.cross = Some(CrossArm {
+                    verdict: cross.cadical.verdict,
+                    outcome: cross.cadical,
+                    agreement: cross.agreement,
+                });
+                row
+            }
+            Err(TranslateError::CapacityExceeded { .. }) => {
+                finish("mettle_defer:capacity", None, None)
+            }
+            Err(_) => finish("mettle_defer:encode", None, None),
+        };
+    }
     match solve_goal_with_backend(
         &ir,
         &scoped,
@@ -271,13 +363,11 @@ fn measure_row(
         cfg.backend,
         cfg.wall_secs,
     ) {
-        Ok(outcome) => {
-            let bucket = match outcome.verdict {
-                InstrumentVerdict::Unknown => "mettle_defer:over_budget".to_owned(),
-                v => format!("answered_{}", v.name()),
-            };
-            finish(&bucket, Some(outcome.verdict), Some(outcome))
-        }
+        Ok(outcome) => finish(
+            &bucket_of(outcome.verdict),
+            Some(outcome.verdict),
+            Some(outcome),
+        ),
         Err(TranslateError::CapacityExceeded { .. }) => finish("mettle_defer:capacity", None, None),
         Err(_) => finish("mettle_defer:encode", None, None),
     }
@@ -313,20 +403,37 @@ fn resolve(path: &Path) -> Option<(ModuleGraph, als_types::ResolvedWorld)> {
 fn print_table(cfg: &Config, rows: &[Row]) {
     println!(
         "backend={} conflicts={} encode={} wall={:?} rows={}",
-        cfg.backend.name(),
+        if cfg.cross {
+            "cross(cdcl+cadical)"
+        } else {
+            cfg.backend.name()
+        },
         cfg.conflicts,
         cfg.encode,
         cfg.wall_secs,
         rows.len()
     );
+    // In `--cross` mode two extra columns carry the second arm: its verdict and
+    // the agreement, which is the whole point of the run.
     println!(
-        "{:<72} {:<26} {:<10} {:>9} {:>12} {:>12} {:>10}",
-        "row", "bucket", "jar", "secs", "vars", "clauses", "conflicts"
+        "{:<72} {:<26} {:<10} {:>9} {:>12} {:>12} {:>10}{}",
+        "row",
+        "bucket",
+        "jar",
+        "secs",
+        "vars",
+        "clauses",
+        "conflicts",
+        if cfg.cross {
+            format!(" {:<10} {:<13}", "cadical", "cross")
+        } else {
+            String::new()
+        }
     );
     for row in rows {
         let outcome = row.outcome.as_ref();
         println!(
-            "{:<72} {:<26} {:<10} {:>9.1} {:>12} {:>12} {:>10}",
+            "{:<72} {:<26} {:<10} {:>9.1} {:>12} {:>12} {:>10}{}",
             row.key,
             row.bucket,
             match row.jar {
@@ -341,8 +448,19 @@ fn print_table(cfg: &Config, rows: &[Row]) {
             outcome
                 .and_then(|o| o.conflicts_used)
                 .map_or_else(|| "-".to_owned(), |c| c.to_string()),
+            row.cross.as_ref().map_or_else(String::new, |c| format!(
+                " {:<10} {:<13}",
+                c.verdict.name(),
+                c.agreement.name()
+            )),
         );
     }
+    print_summary(cfg, rows);
+}
+
+/// The run's bottom line: what got answered, and the two findings that are bugs
+/// rather than data (jar disagreement, self-check failure, cross-backend split).
+fn print_summary(cfg: &Config, rows: &[Row]) {
     let answered = rows.iter().filter(|r| r.verdict.is_some()).count();
     let stuck = rows
         .iter()
@@ -355,10 +473,15 @@ fn print_table(cfg: &Config, rows: &[Row]) {
         .collect();
     let self_check: Vec<&str> = rows
         .iter()
+        .filter(|r| row_self_check_failed(r))
+        .map(|r| r.key.as_str())
+        .collect();
+    let cross_disagree: Vec<&str> = rows
+        .iter()
         .filter(|r| {
-            r.outcome
+            r.cross
                 .as_ref()
-                .is_some_and(|o| o.self_check_fail.is_some())
+                .is_some_and(|c| c.agreement == CrossAgreement::Disagree)
         })
         .map(|r| r.key.as_str())
         .collect();
@@ -375,6 +498,25 @@ fn print_table(cfg: &Config, rows: &[Row]) {
     for key in self_check {
         println!("  SELF-CHECK FAIL: {key}");
     }
+    if cfg.cross {
+        let comparable = rows
+            .iter()
+            .filter(|r| {
+                r.cross
+                    .as_ref()
+                    .is_some_and(|c| c.agreement != CrossAgreement::Incomparable)
+            })
+            .count();
+        println!(
+            "cross-backend: {} of {} rows comparable · {} CROSS-DISAGREE",
+            comparable,
+            rows.len(),
+            cross_disagree.len()
+        );
+        for key in cross_disagree {
+            println!("  CROSS-DISAGREE: {key}");
+        }
+    }
 }
 
 /// Writes the JSON artifact by hand — this bin has no serde dependency and the
@@ -384,7 +526,15 @@ fn write_json(path: &Path, cfg: &Config, rows: &[Row]) -> std::io::Result<()> {
 
     let mut s = String::new();
     s.push_str("{\n");
-    let _ = writeln!(s, "  \"backend\": \"{}\",", cfg.backend.name());
+    let _ = writeln!(
+        s,
+        "  \"backend\": \"{}\",",
+        if cfg.cross {
+            "cross"
+        } else {
+            cfg.backend.name()
+        }
+    );
     let _ = writeln!(s, "  \"conflicts\": {},", cfg.conflicts);
     let _ = writeln!(s, "  \"encode_budget\": {},", cfg.encode);
     let _ = writeln!(
@@ -402,7 +552,7 @@ fn write_json(path: &Path, cfg: &Config, rows: &[Row]) -> std::io::Result<()> {
                 "    {{\"key\": \"{}\", \"bucket\": \"{}\", \"verdict\": \"{}\", ",
                 "\"jar\": \"{}\", \"agreement\": \"{}\", \"secs\": {:.2}, ",
                 "\"vars\": {}, \"clauses\": {}, \"encode_ms\": {}, \"solve_ms\": {}, ",
-                "\"conflicts_used\": {}, \"self_check_fail\": {}}}{}\n"
+                "\"conflicts_used\": {}, \"self_check_fail\": {}{}}}{}\n"
             ),
             row.key,
             row.bucket,
@@ -428,6 +578,12 @@ fn write_json(path: &Path, cfg: &Config, rows: &[Row]) -> std::io::Result<()> {
                     || "null".to_owned(),
                     |f| format!("\"{}\"", f.escape_debug())
                 ),
+            row.cross.as_ref().map_or_else(String::new, |c| format!(
+                ", \"cadical_verdict\": \"{}\", \"cadical_solve_ms\": {}, \"cross\": \"{}\"",
+                c.verdict.name(),
+                c.outcome.solve_ms,
+                c.agreement.name()
+            )),
             if i + 1 == rows.len() { "" } else { "," },
         );
     }

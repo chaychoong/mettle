@@ -105,6 +105,8 @@ cargo build --release
 
 `cargo install` from crates.io is deliberately not a channel.
 
+The optional CaDiCaL SAT backend (`mettle exec --solver cadical`) is **not** in the released binaries — it needs a C++ toolchain, which none of these channels assume. Build it in with `cargo build --release -p mettle --features cadical`; the default all-Rust solver stays the default either way. Why, and what changes when you use it: [ADR-0019](docs/adr/0019-optional-cadical-backend.md) and [LIMITATIONS.md](LIMITATIONS.md).
+
 ## Found a difference from Alloy?
 
 That's the most valuable contribution you can make. mettle's whole claim is "Alloy, exactly" — so **any** model where mettle and the Alloy Analyzer disagree (different verdict, different error, mettle accepts something Alloy rejects or vice versa, a trace or evaluator answer that differs) is a bug here, however small.

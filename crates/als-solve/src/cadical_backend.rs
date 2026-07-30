@@ -35,6 +35,10 @@ use std::fmt;
 
 use crate::{Assignment, Cnf, Lit, Outcome, Solver, Var};
 
+/// CaDiCaL's own "no conflict limit" sentinel: `Internal::limit_conflicts`
+/// treats any negative value as unlimited (`limit.cpp`).
+const UNLIMITED_CONFLICTS: i32 = -1;
+
 /// The DIMACS literal for `lit`: variable `i` becomes `i + 1`, negated
 /// literals get a minus sign.
 ///
@@ -156,6 +160,14 @@ impl CadicalSolver {
     /// three-way answer [`CdclSolver::solve_within`](crate::CdclSolver::solve_within)
     /// gives.
     ///
+    /// The limit is **per call**, exactly like the own solver's: CaDiCaL
+    /// re-derives its internal ceiling as `stats.conflicts + inc.conflicts` at
+    /// the start of every `solve` (`limit.cpp`/`internal.cpp`), so N here means
+    /// "N more conflicts in this solve", not "N over the solver's life".
+    /// [`u64::MAX`] means *unbudgeted* and is passed through as CaDiCaL's own
+    /// unlimited sentinel (`-1`) rather than saturating to `i32::MAX`: a
+    /// caller that asked for no budget must never be told "budget exhausted".
+    ///
     /// # Panics
     /// Panics if CaDiCaL rejects the `"conflicts"` limit name, which would mean
     /// the binding's IPASIR limit interface changed under us (STYLE I3).
@@ -165,7 +177,11 @@ impl CadicalSolver {
         reason = "the budget is clamped to i32::MAX before the cast"
     )]
     pub fn solve_within(&mut self, conflict_limit: u64) -> Option<Outcome> {
-        let limit = conflict_limit.min(i32::MAX as u64) as i32;
+        let limit = if conflict_limit == u64::MAX {
+            UNLIMITED_CONFLICTS
+        } else {
+            conflict_limit.min(i32::MAX as u64) as i32
+        };
         assert!(
             self.inner.set_limit("conflicts", limit).is_ok(),
             "CaDiCaL rejected the \"conflicts\" limit — binding interface changed"

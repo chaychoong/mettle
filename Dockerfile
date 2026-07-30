@@ -1,10 +1,17 @@
 # mettle container image.
 #
 # Two stages: build with the exact pinned rustc (rust-toolchain.toml), then
-# ship only the built binary on a minimal runtime base. The workspace is
-# zero-C-dep (dist-workspace.toml, ADR-0016) -- als-solve's SAT solver is
-# pure Rust -- so the runtime image only needs to satisfy dynamic glibc/libgcc
+# ship only the built binary on a minimal runtime base. This build is zero-C-dep
+# (dist-workspace.toml, ADR-0016) -- als-solve's default SAT solver is pure
+# Rust -- so the runtime image only needs to satisfy dynamic glibc/libgcc
 # linkage, not a solver's own native library.
+#
+# The optional `cadical` feature (ADR-0019 / mt-089) would change that: it
+# compiles a vendored C++ solver, which this builder stage has no g++ for and
+# whose libstdc++ the distroless/cc runtime base does not carry. Enabling it here
+# therefore means BOTH an `apt-get install -y g++` in the builder AND a runtime
+# base that ships libstdc++ (debian:bookworm-slim, per the note further down).
+# Neither is done, because the image ships the default build.
 
 # --- builder -----------------------------------------------------------
 # Pinned to the exact compiler in rust-toolchain.toml: a different rustc is a

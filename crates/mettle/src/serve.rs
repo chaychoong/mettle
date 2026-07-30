@@ -117,6 +117,9 @@ enum ParsedArgs<'a> {
         command_sel: Option<&'a str>,
         port: u16,
         bind_addr: IpAddr,
+        /// The solve options the session's first solve and every later advance
+        /// use — today only `--solver` moves them off the defaults (mt-089).
+        opts: SolveOptions,
     },
 }
 
@@ -125,6 +128,7 @@ fn parse_args(args: &[String]) -> Result<ParsedArgs<'_>, ExitCode> {
     let mut command_sel: Option<&str> = None;
     let mut port = DEFAULT_PORT;
     let mut bind_addr = DEFAULT_BIND;
+    let mut opts = SolveOptions::default();
 
     let mut i = 0;
     while i < args.len() {
@@ -134,6 +138,10 @@ fn parse_args(args: &[String]) -> Result<ParsedArgs<'_>, ExitCode> {
                 return Ok(ParsedArgs::Help);
             }
             "--command" => command_sel = Some(option_value(args, &mut i, "--command", "a value")?),
+            "--solver" => {
+                let value = option_value(args, &mut i, "--solver", "a solver name")?;
+                opts.backend = crate::parse_solver("serve", value)?;
+            }
             "--port" => {
                 let value = option_value(args, &mut i, "--port", "a port number")?;
                 let Ok(parsed) = value.parse::<u16>() else {
@@ -182,6 +190,7 @@ fn parse_args(args: &[String]) -> Result<ParsedArgs<'_>, ExitCode> {
         command_sel,
         port,
         bind_addr,
+        opts,
     })
 }
 
@@ -202,16 +211,18 @@ fn option_value<'a>(
     Ok(value.as_str())
 }
 
-/// `mettle serve <file.als> [--command <sel>] [--port N] [--bind <addr>]`.
+/// `mettle serve <file.als> [--command <sel>] [--port N] [--bind <addr>]
+/// [--solver <name>]`.
 pub(crate) fn run_serve(args: &[String]) -> Result<(), ExitCode> {
-    let (path, command_sel, port, bind_addr) = match parse_args(args)? {
+    let (path, command_sel, port, bind_addr, opts) = match parse_args(args)? {
         ParsedArgs::Help => return Ok(()),
         ParsedArgs::Serve {
             path,
             command_sel,
             port,
             bind_addr,
-        } => (path, command_sel, port, bind_addr),
+            opts,
+        } => (path, command_sel, port, bind_addr, opts),
     };
 
     let graph = exec::load(path)?;
@@ -233,6 +244,7 @@ pub(crate) fn run_serve(args: &[String]) -> Result<(), ExitCode> {
         idx,
         filename: path,
         header: &header,
+        opts,
     };
     // The two shapes differ only in what they own; from `serve` down they are
     // the same session behind the same trait.
@@ -319,6 +331,8 @@ struct SolveInputs<'a> {
     /// attribute mt-071 writes, so serve's XML matches `--xml`'s byte for byte.
     filename: &'a str,
     header: &'a str,
+    /// The options both solve paths lower and solve with (`--solver`).
+    opts: SolveOptions,
 }
 
 impl SolveInputs<'_> {
@@ -326,12 +340,7 @@ impl SolveInputs<'_> {
     fn lower(&self) -> Result<(Ir, exec::LoweredCommand), ExitCode> {
         let mut ir = Ir::default();
         let lowered = exec::lower_for_solve(
-            self.world,
-            self.graph,
-            self.cmd,
-            self.idx,
-            &SolveOptions::default(),
-            &mut ir,
+            self.world, self.graph, self.cmd, self.idx, &self.opts, &mut ir,
         )
         .map_err(|e| {
             eprintln!("mettle serve: CANNOT EXECUTE: {e}");
@@ -344,11 +353,10 @@ impl SolveInputs<'_> {
     /// implementation. The sweep itself is the trace enumerator's (mt-076).
     fn setup_temporal(&self) -> Result<TemporalArtifacts, ExitCode> {
         let setup =
-            exec::setup_temporal(self.world, self.graph, self.cmd, &SolveOptions::default())
-                .map_err(|e| {
-                    eprintln!("mettle serve: CANNOT EXECUTE: {e}");
-                    ExitCode::from(1)
-                })?;
+            exec::setup_temporal(self.world, self.graph, self.cmd, &self.opts).map_err(|e| {
+                eprintln!("mettle serve: CANNOT EXECUTE: {e}");
+                ExitCode::from(1)
+            })?;
         Ok(TemporalArtifacts {
             ir: setup.ir,
             scoped: setup.scoped,

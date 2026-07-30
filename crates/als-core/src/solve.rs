@@ -21,7 +21,7 @@
 
 use std::collections::BTreeMap;
 
-use als_solve::{block, Assignment, CdclSolver, Cnf, Outcome, Var};
+use als_solve::{block, Assignment, Backend, Cnf, LiveSolver, Outcome, Var};
 
 use crate::bounds::{Bounds, Tuple, TupleSet, Universe};
 use crate::bounds_builder::BoundsResult;
@@ -101,12 +101,23 @@ pub struct SolveOptions {
     /// enumerates the raw (SB-0) count. Callers that compare against the jar apply
     /// that override before handing the options here.
     pub symmetry: u32,
+    /// Which SAT backend decides the CNF (ADR-0019, mt-089). The default
+    /// [`Backend::Cdcl`] is the own deterministic CDCL: the conformance
+    /// yardstick, the only backend the byte-identical determinism contract binds
+    /// (STYLE D1), and the only one the scorecard, the counting nets and the
+    /// sweep baselines are ever measured on. Selecting another backend
+    /// (`mettle exec --solver <name>`) trades that contract for search power
+    /// knowingly: verdicts are backend-independent truths — a difference is a
+    /// bug, which is what the cross-backend check exists to catch — but the
+    /// *instance chosen*, the *enumeration order*, and the effort a budget buys
+    /// are all the backend's own.
+    pub backend: Backend,
 }
 
 impl Default for SolveOptions {
     /// The jar-matching defaults: forbid overflow (LEDGER-001), no effort budgets,
-    /// and **symmetry 20** (translation-ref §16.4) — the one field that is not its
-    /// type's own default.
+    /// the own CDCL backend, and **symmetry 20** (translation-ref §16.4) — the one
+    /// field that is not its type's own default.
     fn default() -> Self {
         Self {
             allow_overflow: false,
@@ -114,6 +125,7 @@ impl Default for SolveOptions {
             encode_budget: None,
             enum_effort_budget: None,
             symmetry: 20,
+            backend: Backend::default(),
         }
     }
 }
@@ -447,7 +459,7 @@ pub fn solve_temporal_goal_checked(
     if t.trivially_unsat {
         return Ok(TemporalSolution::Unsat);
     }
-    let mut solver = CdclSolver::new(&t.cnf);
+    let mut solver = LiveSolver::new(opts.backend, &t.cnf);
     Ok(
         match solver.solve_within(opts.conflict_budget.unwrap_or(u64::MAX)) {
             None => TemporalSolution::Unknown,
@@ -578,7 +590,7 @@ pub fn solve_goal(
     if t.trivially_unsat {
         return Ok(SolveVerdict::Unsat);
     }
-    let mut solver = CdclSolver::new(&t.cnf);
+    let mut solver = LiveSolver::new(opts.backend, &t.cnf);
     Ok(
         match solver.solve_within(opts.conflict_budget.unwrap_or(u64::MAX)) {
             None => SolveVerdict::Unknown,
@@ -609,10 +621,19 @@ pub fn solve_goal(
 /// of the whole enumeration (summed across every instance solve), not any one
 /// verdict. It never truncates the count silently: running out ends
 /// enumeration in loud exhaustion ([`InstanceEnumerator::exhausted`]) instead
-/// of a wrong number.
+/// of a wrong number. That budget is **own-CDCL only**: it is charged from the
+/// solver's own counters, which no other backend exposes (see
+/// [`enumerate`]'s negative-space assert and [`Backend::reports_effort`]).
+///
+/// Under a non-default [`SolveOptions::backend`] the enumeration is still
+/// **exact** — every distinct projection appears exactly once and the sequence
+/// ends at a true `Unsat`, because that only needs a sound solver plus the same
+/// blocking clauses — but its **order** is the backend's own, and so is which
+/// instance comes first (ADR-0019 §1/§4). A count taken there is therefore
+/// never compared against a jar baseline (ADR-0019 §2).
 #[derive(Debug)]
 pub struct InstanceEnumerator<'a> {
-    solver: CdclSolver,
+    solver: LiveSolver,
     primary_vars: Vec<Var>,
     layout: Vec<RelDecode>,
     universe: Universe,
@@ -670,8 +691,17 @@ impl Iterator for InstanceEnumerator<'_> {
                 self.done = true;
                 return None;
             }
-            let effort =
-                |s: &CdclSolver| s.total_conflicts() + s.total_decisions() + s.total_props();
+            // Every backend a budget is allowed on reports its effort
+            // (`enumerate` refused the rest), so the `else` is genuinely
+            // unreachable — and says so rather than charging a fake zero, which
+            // would quietly turn a bounded enumeration into an unbounded one
+            // (STYLE I3).
+            let effort = |s: &LiveSolver| {
+                let Some(spent) = s.effort() else {
+                    unreachable!("a budgeted enumeration needs a backend with effort counters")
+                };
+                spent
+            };
             let before = effort(&self.solver);
             let Some(outcome) = self.solver.solve_within(remaining) else {
                 // Budget exhausted mid-enumeration: stop short, loudly.
@@ -718,6 +748,14 @@ impl Iterator for InstanceEnumerator<'_> {
 /// # Errors
 /// As [`solve_goal`] — a [`TranslateError`] for a construct outside the encoder
 /// slice.
+///
+/// # Panics
+/// Panics if [`SolveOptions::enum_effort_budget`] is set on a backend that
+/// reports no effort ([`Backend::reports_effort`]) — an internal API misuse, not
+/// a user input: the budget would be silently charged nothing and a bounded
+/// enumeration would become an unbounded one. No CLI path can reach it (only the
+/// conformance gauge sets that budget, and the gauge is own-CDCL by construction,
+/// ADR-0019 §2).
 pub fn enumerate<'a>(
     ir: &'a Ir,
     scoped: &'a ScopedUniverse,
@@ -725,6 +763,11 @@ pub fn enumerate<'a>(
     bounds: &BoundsResult,
     opts: &SolveOptions,
 ) -> Result<InstanceEnumerator<'a>, TranslateError> {
+    assert!(
+        opts.enum_effort_budget.is_none() || opts.backend.reports_effort(),
+        "enum_effort_budget needs a backend with effort counters, but `{}` has none",
+        opts.backend.name()
+    );
     let t = translate(ir, scoped, goal, bounds, None, *opts)?;
     // A trivially-UNSAT goal (the encoded `Bool` folded to constant-false) gets an
     // empty clause, so the solver reports UNSAT on the first `next()` and the
@@ -733,7 +776,7 @@ pub fn enumerate<'a>(
     if t.trivially_unsat {
         cnf.add_clause(vec![]);
     }
-    let solver = CdclSolver::new(&cnf);
+    let solver = LiveSolver::new(opts.backend, &cnf);
     Ok(InstanceEnumerator {
         solver,
         primary_vars: t.primary_vars,

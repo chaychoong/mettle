@@ -51,7 +51,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use als_solve::{block, CdclSolver, Cnf, Lit, Outcome, Var};
+use als_solve::{block, Cnf, Lit, LiveSolver, Outcome, Var};
 use als_types::{is_temporal_model, ModuleGraph, ResolvedWorld, StepsMax};
 
 use crate::bounds::{Tuple, TupleSet, Universe};
@@ -142,7 +142,7 @@ type TraceKey = (usize, usize, Vec<StateKey>);
 /// incremental.
 struct Stage {
     k: usize,
-    solver: CdclSolver,
+    solver: LiveSolver,
     /// Everything a blocking clause covers: every primary variable plus the
     /// lasso selector's. The selector **must** be in here — probe P-076-4 found
     /// two solutions whose per-state contents are identical and which differ
@@ -210,7 +210,7 @@ pub struct TraceEnumerator<'a> {
 }
 
 impl std::fmt::Debug for TraceEnumerator<'_> {
-    /// Hand-written because a [`CdclSolver`]'s internals are not worth printing
+    /// Hand-written because a [`LiveSolver`]'s internals are not worth printing
     /// and the borrowed world would dwarf everything that matters.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TraceEnumerator")
@@ -238,7 +238,10 @@ impl<'a> TraceEnumerator<'a> {
     ///
     /// # Panics
     /// Debug builds assert that `command_index` really is a temporal command;
-    /// dispatch is the caller's job.
+    /// dispatch is the caller's job. Asserts, in any build, that a set
+    /// [`enum_effort_budget`](crate::SolveOptions::enum_effort_budget) has a
+    /// backend that can be charged for it — the same negative-space guard
+    /// [`enumerate`](crate::enumerate) states, for the same reason.
     pub fn new(
         world: &'a ResolvedWorld,
         graph: &'a ModuleGraph,
@@ -252,6 +255,11 @@ impl<'a> TraceEnumerator<'a> {
         debug_assert!(
             is_temporal_model(world, graph, command),
             "TraceEnumerator on a static command — dispatch is the caller's job"
+        );
+        assert!(
+            cfg.opts.enum_effort_budget.is_none() || cfg.opts.backend.reports_effort(),
+            "enum_effort_budget needs a backend with effort counters, but `{}` has none",
+            cfg.opts.backend.name()
         );
         let range = command.steps_range();
         let StepsMax::Bounded(max) = range.max else {
@@ -543,7 +551,7 @@ impl<'a> TraceEnumerator<'a> {
         blocking_vars.extend_from_slice(lasso.vars());
         let mut stage = Stage {
             k,
-            solver: CdclSolver::new(&cnf),
+            solver: LiveSolver::new(self.cfg.opts.backend, &cnf),
             blocking_vars,
             layout: t.layout,
             universe: t.universe,
@@ -669,14 +677,22 @@ enum Charged {
 /// against the remaining budget — the same three terms
 /// [`crate::solve::InstanceEnumerator`] charges, and for the same reason: the
 /// propagation term is what actually tracks wall time on a big-but-easy CNF.
-fn solve_charged(solver: &mut CdclSolver, remaining: &mut Option<u64>) -> Charged {
+fn solve_charged(solver: &mut LiveSolver, remaining: &mut Option<u64>) -> Charged {
     let Some(left) = *remaining else {
         return Charged::Outcome(solver.solve());
     };
     if left == 0 {
         return Charged::OutOfBudget;
     }
-    let effort = |s: &CdclSolver| s.total_conflicts() + s.total_decisions() + s.total_props();
+    // Every backend a budget is allowed on reports its effort
+    // (`TraceEnumerator::new` refused the rest), so the `else` is genuinely
+    // unreachable — and says so rather than charging a fake zero (STYLE I3).
+    let effort = |s: &LiveSolver| {
+        let Some(spent) = s.effort() else {
+            unreachable!("a budgeted enumeration needs a backend with effort counters")
+        };
+        spent
+    };
     let before = effort(solver);
     let Some(outcome) = solver.solve_within(left) else {
         return Charged::OutOfBudget;

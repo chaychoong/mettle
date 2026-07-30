@@ -1,0 +1,139 @@
+name: backend determinism
+
+# The cross-target determinism battery for the optional CaDiCaL backend
+# (ADR-0019 / mt-089 stage 2). It answers two questions no single machine can:
+#
+#   1. Can the vendored C++ actually be built on all four release targets? That
+#      is the precondition for ever shipping `--solver cadical` enabled by
+#      default, and it is the reason `[features]` in `crates/mettle/Cargo.toml`
+#      is off today — a claim we cannot demonstrate is not a claim we make.
+#   2. Does the alternative backend give the same bytes on every target? mettle's
+#      own CDCL must (STYLE D1, and the `mettle` rows here are that control);
+#      CaDiCaL was never promised to, and `-ffp-contract=off` (see
+#      `.cargo/config.toml`) is the one known divergence we have already closed.
+#      Whatever remains is measured here, not guessed at.
+#
+# A `cadical`-row difference across targets therefore does NOT fail this
+# workflow: it is the measurement. A `mettle`-row difference DOES fail it, and so
+# does a target that cannot build.
+
+on:
+  # Tags are the point: a release should exercise the same four targets
+  # cargo-dist builds, at the moment it builds them.
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+  # Cheap insurance on the code that could move the answer.
+  pull_request:
+    paths:
+      - "crates/als-solve/**"
+      - "crates/mettle/tests/fixtures/determinism/**"
+      - "scripts/backend-determinism.sh"
+      - ".cargo/config.toml"
+      - ".github/workflows/backend-determinism.yml"
+
+jobs:
+  hash:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # Every target reports, even if one cannot build: "which targets can build
+      # the C++" is exactly the question, so a single failure must not cancel the
+      # rest of the answer.
+      fail-fast: false
+      matrix:
+        include:
+          # The four cargo-dist targets (dist-workspace.toml), each on the native
+          # GA runner cargo-dist itself uses — no cross-compilation, so the C++
+          # is built by the same toolchain that will build it at release time.
+          - target: aarch64-apple-darwin
+            runner: macos-14
+          - target: x86_64-apple-darwin
+            runner: macos-13
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # The repo pin, as in ci.yml.
+          toolchain: 1.97.0
+      - name: report the C++ toolchain
+        # Recorded rather than assumed: if a runner image's compiler changes, the
+        # hashes may move with it, and this line is how that gets diagnosed
+        # instead of argued about.
+        run: |
+          cc --version || true
+          c++ --version || true
+      - name: build with the cadical backend
+        run: cargo build --release -p mettle --features cadical
+      - name: run the battery
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          ./scripts/backend-determinism.sh ./target/release/mettle \
+            | tee "hashes-${{ matrix.target }}.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hashes-${{ matrix.target }}
+          path: hashes-${{ matrix.target }}.txt
+
+  compare:
+    name: compare across targets
+    needs: hash
+    # `always()`: a target that failed to build is a finding to report, not a
+    # reason to skip the comparison of the ones that did.
+    if: always()
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: hashes-*
+          merge-multiple: true
+      - name: diff the hash tables
+        run: |
+          set -u
+          ls -1 hashes-*.txt || { echo "no target produced hashes"; exit 1; }
+          echo "== per-target reports =="
+          for f in hashes-*.txt; do echo "--- $f"; cat "$f"; done
+
+          # Strip the comment header (it names the target on purpose) and compare
+          # the solver/model/hash rows.
+          for f in hashes-*.txt; do grep -v '^#' "$f" | sort > "rows-$(basename "$f")"; done
+          first=$(ls -1 rows-hashes-*.txt | head -1)
+
+          status=0
+          echo "== own-CDCL control (must be identical everywhere) =="
+          grep '^mettle ' "$first" > /tmp/own-first.txt
+          for f in rows-hashes-*.txt; do
+            grep '^mettle ' "$f" > /tmp/own-this.txt
+            if ! diff -u /tmp/own-first.txt /tmp/own-this.txt; then
+              echo "DETERMINISM CONTRACT VIOLATION: $f differs on the own CDCL"
+              status=1
+            fi
+          done
+          [ "$status" -eq 0 ] && echo "own CDCL: byte-identical across every target that built"
+
+          echo "== cadical measurement (a difference is data, not a failure) =="
+          grep '^cadical ' "$first" > /tmp/cad-first.txt || true
+          for f in rows-hashes-*.txt; do
+            grep '^cadical ' "$f" > /tmp/cad-this.txt || true
+            if diff -q /tmp/cad-first.txt /tmp/cad-this.txt >/dev/null 2>&1; then
+              echo "  $f: identical to $first"
+            else
+              echo "  $f: DIFFERS from $first (expected-possible; see ADR-0019 §1)"
+              diff -u /tmp/cad-first.txt /tmp/cad-this.txt || true
+            fi
+          done
+
+          # Every target must have produced a report; a missing one means the
+          # build failed, which is the answer to question (1) above.
+          count=$(ls -1 rows-hashes-*.txt | wc -l)
+          echo "targets reporting: $count of 4"
+          if [ "$count" -ne 4 ]; then
+            echo "NOT ALL TARGETS BUILT the cadical backend — the shipped default stays off"
+            status=1
+          fi
+          exit "$status"
