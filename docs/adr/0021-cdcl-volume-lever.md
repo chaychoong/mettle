@@ -175,6 +175,44 @@ stats probe, NOTES with scored predictions, the adversarial review record,
 and the disclosed un-budgeted block-walk MEDIUM — measured irrelevant to the
 ertms regression but the first knob if a future variant is close).
 
+## Stage-3 outcome and campaign close (2026-08-20, addendum — REJECTED at net −6; the campaign closes 0-for-3 at agree 502)
+
+Tier-based retention (Oh core/tier2/local with LBD refreshed on use, one
+configuration pinned before measurement per constraint 4) was implemented
+correctly — a second independent adversarial review found no correctness
+defect, and the one real defect it did find pre-verdict (a level-0 counting
+convention mismatch between refresh-time and learn-time LBD) was fixed before
+measuring; DISAGREE 0, self-check 0, panics 0, zero verdict flips everywhere.
+**The full row-diff came back net −6 (agree 502 → 496): 2 conversions (the
+same `elevator_spl_events[18]/[21]` stage 2 converted) against 8 regressions —
+and the regressions are NOT confined to the big rows the trio predicted
+(`handshake[1]` ×2, `hanoi[0]`, `life[1]` are small), so the disclosed
+structural flaw (the core tier is an uncapped ratchet: LBD only falls, core is
+never aged or deleted, and low-level conflicts immortalize clauses wholesale)
+prices negative across the size spectrum.** Notable fragility, disclosed by
+the delegate: fixing the LBD convention defect *worsened* ertms by 65% —
+a more coherent metric feeds the ratchet harder — so the pinned configuration
+is unsafe by construction, and any future retention attempt must age its core
+tier (as CaDiCaL does).
+
+**Campaign close.** All three stages were implemented well, measured honestly,
+and rejected by the corpus: −2, −2, −6. The "Park the campaign at 502"
+alternative is now the outcome, reached by measurement rather than
+prediction. The scored yield (+5/+12) is retracted. What the campaign
+actually bought: three model corrections (the trail-saving mechanism claim,
+the trajectory-neutrality claim, and §(b)'s volume-tracks-length thesis —
+all measured false), three banked implementations with A/B harnesses
+(`scratchpad/probe/mt093/stage{1,2,3}*`), the `lits[0]` hazard
+documentation, and the sharpest standing lesson: **this solver's corpus
+prices trajectory perturbations at zero to negative; the durable tail's
+22-of-24 answerability (mt-092 cross-run) remains real but is not reachable
+by single-technique trajectory changes at the standing budgets.** No re-pair
+runs (nothing changed); the scorecard stands at agree 502. Plausible future
+routes, deliberately NOT specced here: an aged-core retention variant, the
+deferred vivification re-profile, or accepting the tail as CaDiCaL territory
+(`--solver cadical` exists for exactly this). Each would be a new owner-level
+decision with this record in front of it.
+
 ## Constraints (inherited from ADR-0020, restated as binding)
 
 1. Determinism by construction: every new order (saved-trail replay order,
