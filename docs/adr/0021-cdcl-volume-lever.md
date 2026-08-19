@@ -127,6 +127,54 @@ future technique that holds reasons across a backjump. **Stages 2 (shrink) and
 retention) are the measured §(b) channel, not this one — and the yield
 estimate stands, now resting entirely on them.
 
+## Stage-2 outcome (2026-08-19, addendum — REJECTED by measurement, reverted; the §(b) thesis itself is now measured false)
+
+All-UIP shrinking (Fleury & Biere SAT 2021, implemented as a deliberately
+conservative monotone variant — a block is replaced only when it collapses to
+a level-local UIP with no foreign lower-level literal, so the pass can never
+lengthen a clause) was implemented in full (opus delegate, predictions-first,
+plus an independent adversarial opus review: ten attack claims, ~16M fuzzed
+block attempts, no correctness defect), and **reverted the same day on the
+full row-diff: agree 502 → 500** (2 conversions — `elevator_spl_events[18]`
+and `[21]` — vs 4 regressions — both `handshake.als[1]` rows, `HotelVar[0]`,
+`correctChord[10]`; DISAGREE 0, self-check 0, panics 0, zero verdict flips).
+The same net −2 as stage 1, by a different mechanism. Three model corrections,
+the third the one that matters:
+
+1. **The pass's direct effect is far below this ADR's prediction.** Directly
+   removed literals: −2.46% / −4.65% / −0.49% on the profiled trio, against
+   the predicted −10…−30%. The conservative abort rule holds the success rate
+   to 3.7–12.9% of attempted blocks (the permissive published variant is where
+   the rest lives, at the price of a real size-accounting soundness argument).
+2. **Yet mean learned length across arms fell −25…−37%** — the per-clause cut
+   compounds (a shorter clause is a shorter *reason* for the next
+   minimization), with the two cheap rows agreeing closely on length while
+   their conflict counts scattered wildly (+203% / −21%): a systematic
+   mechanism, not a lottery. The length lever works.
+3. **And it did not buy volume: §(b)'s causal claim — per-conflict propagation
+   volume tracks post-minimization learned-clause length — is measured FALSE
+   on the same three rows it was derived from.** Length fell −37/−35/−25%
+   while props/conflict moved −0.5/−1.4/**+25.1%** (ertms: the *opposite*
+   sign). Wall per conflict did fall on the cheap rows (−23%/−10%) but by
+   cheaper watch *visits* (shorter clauses to scan), not fewer of them.
+   (Metric caveat: the stage-0 profile counted trail pops, the A/B counted
+   watch visits — different numbers, but visits are what wall tracks:
+   props/conflict and wall/conflict moved together within half a point.)
+
+Consequence for the campaign: **the "volume lever" framing is dead** — both
+stages that pulled it netted −2, and the causal model behind it failed a
+direct test. What survives of the Context is the un-refuted outer fact: the
+mt-092 cross-run's 22-of-24, i.e. the tail is answerable within the same
+conflict budget by a better search. Stage 3 (tier retention) targets search
+quality directly (which clauses to *keep*, LBD refreshed on use) and does not
+rest on §(b); whether to run it is re-framed as an owner decision in
+STATE/TASKS rather than assumed, since this ADR's yield estimate (+5/+12) was
+priced partly on the now-dead model. Banked residue:
+`scratchpad/probe/mt093/stage2/` (991-line patch, A/B binaries with the
+stats probe, NOTES with scored predictions, the adversarial review record,
+and the disclosed un-budgeted block-walk MEDIUM — measured irrelevant to the
+ertms regression but the first knob if a future variant is close).
+
 ## Constraints (inherited from ADR-0020, restated as binding)
 
 1. Determinism by construction: every new order (saved-trail replay order,
