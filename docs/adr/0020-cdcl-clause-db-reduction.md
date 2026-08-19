@@ -231,6 +231,25 @@ remaining defer mass at the new defaults is over_budget 29 + capacity 20,
 and the volume lever (shorter learned clauses) remains the only route to
 the deep tail. The parking fallback was not needed.
 
+## Deep-tail cross-run (2026-08-19, addendum — constraint 5 discharged, bead closed)
+
+The disclosed deep-tail cross-run ran on the mt-092 solver:
+`backend-instrument --cross` over all 29 `over_budget` rows at the 250k×64M
+defaults — one translate per row, own arm at 1M conflicts, CaDiCaL arm as the
+check (900s wall). **Exit 0: CROSS-DISAGREE 0, DISAGREE 0, self-check
+failures 0.** The own arm answered 5 of 29, exactly the five rows the re-pair
+grid converted at its 1M point — the instrument reproduces the sweep's
+trajectory through a separate harness — and all five are three-way agreements
+(own CDCL = CaDiCaL = jar). On the 24 own-arm exhausts, CaDiCaL answered 22
+(fullsub2[0] and correctChord[13] stay unknown), every answer matching the jar
+where the jar has a verdict — correctChord[28], the mt-090 row, answers SAT on
+the new trajectory — and correctChord[22]/[25] answer where the jar's banking
+could not, reproducing mt-089's table shape. Artifacts:
+`scratchpad/probe/mt092/cross-tail29-1M.{txt,json}` + the NOTES section. With
+constraint 5 discharged the bead closes; the volume-lever case is sharpened —
+CaDiCaL converts 22 of the 24 stuck rows within the same 1M conflicts on
+identical CNFs, so the durable tail's barrier is search quality, not encoding.
+
 ## Alternatives considered
 
 **Park the conversion campaign at 484.** Rejected: the census proved 24 of the
