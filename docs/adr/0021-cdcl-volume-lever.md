@@ -98,6 +98,35 @@ families. Explicitly out of scope: the 20 `capacity` rows (encode-bound; a
 different lever) and fullsub2[0]/correctChord[13] (the rows even CaDiCaL
 cannot answer at 1M — quoted as genuinely hard, LIMITATIONS territory).
 
+## Stage-1 outcome (2026-08-19, addendum — REJECTED by measurement, reverted)
+
+Trail saving was implemented in full (opus delegate, predictions-first;
+tech-lead reviewed the diff and independently re-ran tests/clippy), measured,
+and **reverted the same day on the full row-diff: agree 502 → 500** (3
+conversions vs 5 regressions at the standing defaults; DISAGREE 0,
+self-check 0, panics 0 throughout — correctness was never at risk). Two model
+corrections come with the rejection, both now load-bearing for the remaining
+stages:
+
+1. **This ADR's stage-1 mechanism claim was wrong.** The published algorithm
+   never advances the propagation head past replayed literals (doing so would
+   be unsound), so trail saving cannot cut the §(b) re-propagation volume; its
+   only direct saving is early conflict detection, which a replay-off control
+   measured at ~0 (6 of 2,333 / 20 of 139,624 conflicts). The −73%/−18%
+   calibration conflict drops were trajectory lottery — and the corpus-wide
+   lottery nets negative.
+2. **The survey's trajectory-neutrality claim is disproven** for this solver,
+   as this ADR suspected: replayed literals land at the current level in saved
+   order with saved reasons, all three of which feed `analyze`.
+
+The stage's yield-irrelevant residue is banked: the implementation survives as
+`scratchpad/probe/mt093/stage1-trail-saving.patch` (with A/B artifacts and
+NOTES), and the newly documented `lits[0]`-across-backjumps hazard binds any
+future technique that holds reasons across a backjump. **Stages 2 (shrink) and
+3 (tier retention) proceed unchanged** — their mechanisms (clause length,
+retention) are the measured §(b) channel, not this one — and the yield
+estimate stands, now resting entirely on them.
+
 ## Constraints (inherited from ADR-0020, restated as binding)
 
 1. Determinism by construction: every new order (saved-trail replay order,
