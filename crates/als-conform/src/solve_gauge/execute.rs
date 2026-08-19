@@ -23,6 +23,8 @@ use super::count::{
 use super::count_baseline::CountBaseline;
 use super::detect::lower_defer_class;
 use super::parallel::parallel_fold;
+use super::sweep_baseline::command_key;
+use super::telemetry::{self, TelemetryEvent, TelemetrySink};
 use super::{workspace_relpath, GaugeConfig};
 
 /// The number of primary variables the bounds imply (`Σ upper − lower`).
@@ -88,6 +90,12 @@ pub(super) struct ResolvedFile {
 pub(super) struct CmdItem {
     pub(super) file: std::sync::Arc<ResolvedFile>,
     pub(super) idx: usize,
+    /// This item's position in the flat, file-sorted/index-ascending queue
+    /// [`command_items`] builds — the same position `report.per_command`
+    /// folds into and, under `--progress-jsonl` (mt-094), the row index a
+    /// `row_start` telemetry event names. Dispatch order (LPT) can differ
+    /// from this; `pos` is what stays fixed regardless.
+    pub(super) pos: usize,
 }
 
 /// One command's fully-computed gauge result (no shared state touched).
@@ -197,6 +205,7 @@ pub(super) fn command_items(resolved: &[Option<std::sync::Arc<ResolvedFile>>]) -
     for file in resolved.iter().flatten() {
         for &idx in &file.command_indices {
             items.push(CmdItem {
+                pos: items.len(),
                 file: std::sync::Arc::clone(file),
                 idx,
             });
@@ -214,6 +223,7 @@ pub(super) fn compute_command(
     cfg: &GaugeConfig,
     baseline: &baseline::Baseline,
     count_baseline: Option<&CountBaseline>,
+    telemetry: Option<&TelemetrySink>,
     send: &mut dyn FnMut(&str),
 ) -> CmdGaugeResult {
     let file = &item.file;
@@ -235,6 +245,16 @@ pub(super) fn compute_command(
     };
 
     send(&format!("  {rel}[{idx}] …"));
+    // mt-094: this is the same "a row truly began" moment the heartbeat
+    // above marks — `send` is the pre-existing stderr/status channel,
+    // `telemetry` (when attached) is the structured mirror of it.
+    if let Some(sink) = telemetry {
+        sink.emit(&TelemetryEvent::RowStart(telemetry::RowStartEvent {
+            ts_ms: telemetry::now_ms(),
+            i: item.pos,
+            key: command_key(rel, idx),
+        }));
+    }
     let started = std::time::Instant::now();
     let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
         classify_command(

@@ -16,6 +16,7 @@ use std::time::Duration;
 
 use als_conform::{
     refresh_counts, run_gauge, GaugeConfig, SweepBaselineFile, SweepConfig, SweepEntry,
+    TelemetrySink,
 };
 
 fn workspace_root() -> PathBuf {
@@ -70,8 +71,8 @@ fn test1_count_smoke_matches_jar() {
         return;
     }
 
-    let report =
-        run_gauge(&test1_config(), &mut |_| {}).unwrap_or_else(|e| panic!("run_gauge failed: {e}"));
+    let report = run_gauge(&test1_config(), None, &mut |_| {})
+        .unwrap_or_else(|e| panic!("run_gauge failed: {e}"));
 
     assert_eq!(report.commands, 2, "test1.als has two commands");
     // Both commands reach the net and match the jar's SB-0 count exactly:
@@ -165,7 +166,8 @@ fn leader_als_counts_match_its_real_jar_baseline() {
         capture_commit: None,
     };
 
-    let report = run_gauge(&cfg, &mut |_| {}).unwrap_or_else(|e| panic!("run_gauge failed: {e}"));
+    let report =
+        run_gauge(&cfg, None, &mut |_| {}).unwrap_or_else(|e| panic!("run_gauge failed: {e}"));
 
     assert_eq!(report.commands, 4, "leader.als has four commands");
     // Three commands solve SAT at default budgets (run$1, example, liveness);
@@ -333,7 +335,7 @@ fn an_artifact_never_changes_the_report() {
     let dir = scratch_dir("inert");
 
     // No artifact yet — the canonical report.
-    let canonical = run_gauge(&fixtures_config(&dir, 1), &mut |_| {}).expect("canonical run");
+    let canonical = run_gauge(&fixtures_config(&dir, 1), None, &mut |_| {}).expect("canonical run");
     assert!(canonical.commands >= 2, "fixtures have commands to sweep");
     let canonical_text = canonical.render_text();
     let canonical_json = canonical.to_json().expect("json");
@@ -358,7 +360,8 @@ fn an_artifact_never_changes_the_report() {
         .collect();
     write_artifact(&dir, entries);
 
-    let with_artifact = run_gauge(&fixtures_config(&dir, 1), &mut |_| {}).expect("run w/ artifact");
+    let with_artifact =
+        run_gauge(&fixtures_config(&dir, 1), None, &mut |_| {}).expect("run w/ artifact");
     assert_eq!(
         with_artifact.commands, canonical.commands,
         "no command disappears"
@@ -395,7 +398,7 @@ fn an_artifact_never_changes_the_report() {
 #[test]
 fn lpt_scheduling_never_moves_a_byte_at_any_job_count() {
     let dir = scratch_dir("lpt");
-    let seed = run_gauge(&fixtures_config(&dir, 1), &mut |_| {}).expect("seed run");
+    let seed = run_gauge(&fixtures_config(&dir, 1), None, &mut |_| {}).expect("seed run");
 
     // Deliberately inverted costs, so LPT schedules the queue backwards.
     let n = seed.per_command.len() as u64;
@@ -420,7 +423,7 @@ fn lpt_scheduling_never_moves_a_byte_at_any_job_count() {
     let baseline_text = seed.render_text();
     for jobs in [1, 2, 4] {
         let cfg = fixtures_config(&dir, jobs);
-        let r = run_gauge(&cfg, &mut |_| {}).expect("lpt run");
+        let r = run_gauge(&cfg, None, &mut |_| {}).expect("lpt run");
         assert_eq!(
             r.render_text(),
             baseline_text,
@@ -445,7 +448,7 @@ fn capture_then_delta_reports_no_change() {
 
     let mut capture_cfg = fixtures_config(&dir, 2);
     capture_cfg.capture_sweep = Some(out.clone());
-    let captured = run_gauge(&capture_cfg, &mut |_| {}).expect("capture run");
+    let captured = run_gauge(&capture_cfg, None, &mut |_| {}).expect("capture run");
     assert!(out.is_file(), "the artifact was written");
 
     let text = std::fs::read_to_string(&out).expect("artifact readable");
@@ -457,7 +460,7 @@ fn capture_then_delta_reports_no_change() {
     // Re-run with --delta against what we just captured: nothing moved.
     let mut delta_cfg = fixtures_config(&dir, 1);
     delta_cfg.delta = true;
-    let rerun = run_gauge(&delta_cfg, &mut |_| {}).expect("delta run");
+    let rerun = run_gauge(&delta_cfg, None, &mut |_| {}).expect("delta run");
     let delta = rerun.delta.as_ref().expect("delta computed");
     assert!(
         delta.is_clean(),
@@ -499,7 +502,7 @@ fn capture_is_refused_for_every_kind_of_incomplete_run() {
         ("--from-report", &from_report),
         ("--from-buckets", &from_buckets),
     ] {
-        let err = run_gauge(cfg, &mut |_| {}).expect_err("capture must be refused");
+        let err = run_gauge(cfg, None, &mut |_| {}).expect_err("capture must be refused");
         match err {
             als_conform::ConformError::SweepCaptureRefused { reason } => {
                 assert!(
@@ -514,7 +517,7 @@ fn capture_is_refused_for_every_kind_of_incomplete_run() {
 
     // The same config without a filter writes normally — the refusal is about
     // the filter, not about capture being broken.
-    let ok = run_gauge(&narrowed, &mut |_| {}).expect("unfiltered capture");
+    let ok = run_gauge(&narrowed, None, &mut |_| {}).expect("unfiltered capture");
     assert!(out.is_file());
     assert!(ok.commands > 0);
 
@@ -548,8 +551,10 @@ fn a_command_the_baseline_cannot_compare_is_never_enumerated() {
     let dir = scratch_dir("presettled");
 
     // No count baseline at all → every command is a miss.
-    let skipped = run_gauge(&counting_config(&dir, false), &mut |_| {}).expect("skipping run");
-    let counted = run_gauge(&counting_config(&dir, true), &mut |_| {}).expect("enumerating run");
+    let skipped =
+        run_gauge(&counting_config(&dir, false), None, &mut |_| {}).expect("skipping run");
+    let counted =
+        run_gauge(&counting_config(&dir, true), None, &mut |_| {}).expect("enumerating run");
 
     // Stage 1 is untouched by the stage-2 reordering.
     assert_eq!(skipped.verdict_buckets, counted.verdict_buckets);
@@ -648,7 +653,7 @@ fn a_recorded_count_is_still_enumerated_and_compared() {
         only: vec!["test1.als".to_owned()],
         ..fixtures_config(&dir, 1)
     };
-    let report = run_gauge(&cfg, &mut |_| {}).expect("comparing run");
+    let report = run_gauge(&cfg, None, &mut |_| {}).expect("comparing run");
 
     assert_eq!(
         report.count_buckets.get("count_match"),
@@ -678,7 +683,7 @@ fn stale_artifact_is_fatal_only_when_it_could_reach_the_answer() {
     // --delta is the sole consumer whose answer depends on artifact content.
     let mut delta_cfg = fixtures_config(&dir, 1);
     delta_cfg.delta = true;
-    let err = run_gauge(&delta_cfg, &mut |_| {}).expect_err("must hard-error under --delta");
+    let err = run_gauge(&delta_cfg, None, &mut |_| {}).expect_err("must hard-error under --delta");
     match err {
         als_conform::ConformError::SweepBaselineConfigMismatch { field, .. } => {
             assert_eq!(field, "conflict_budget");
@@ -688,7 +693,7 @@ fn stale_artifact_is_fatal_only_when_it_could_reach_the_answer() {
 
     // Any other run can only have used it for scheduling hints: warn, carry on.
     let mut warnings = Vec::new();
-    let report = run_gauge(&fixtures_config(&dir, 1), &mut |line: &str| {
+    let report = run_gauge(&fixtures_config(&dir, 1), None, &mut |line: &str| {
         warnings.push(line.to_owned());
     })
     .expect("a plain run must not be failed by an artifact it cannot use");
@@ -697,6 +702,53 @@ fn stale_artifact_is_fatal_only_when_it_could_reach_the_answer() {
         warnings.iter().any(|w| w.contains("conflict_budget")),
         "the mismatch must still be surfaced: {warnings:?}"
     );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// mt-094: attaching a `--progress-jsonl` telemetry sink is an observability
+/// side channel and must not move a single byte of the deterministic report
+/// -- with or without a sink, and at any `--jobs` count, the rendered text
+/// and JSON stay byte-identical.
+#[test]
+fn telemetry_sink_does_not_move_the_report() {
+    let dir = scratch_dir("telemetry");
+    let bare = run_gauge(&fixtures_config(&dir, 1), None, &mut |_| {}).expect("bare run");
+    let bare_text = bare.render_text();
+    let bare_json = bare.to_json().expect("bare json");
+
+    for jobs in [1, 4] {
+        let jsonl_path = dir.join(format!("progress-{jobs}.jsonl"));
+        let sink = TelemetrySink::create(&jsonl_path).expect("open telemetry sink");
+        let report = run_gauge(&fixtures_config(&dir, jobs), Some(&sink), &mut |_| {})
+            .expect("telemetry run");
+        assert_eq!(
+            report.render_text(),
+            bare_text,
+            "a telemetry sink must not change the text report (jobs={jobs})"
+        );
+        assert_eq!(
+            report.to_json().expect("telemetry json"),
+            bare_json,
+            "a telemetry sink must not change the JSON report (jobs={jobs})"
+        );
+
+        // The sink actually wrote something real: a run_start, at least one
+        // row_done per command, and a run_done.
+        drop(sink);
+        let lines: Vec<String> = std::fs::read_to_string(&jsonl_path)
+            .expect("read jsonl")
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        assert!(lines.iter().any(|l| l.contains("\"run_start\"")));
+        assert!(lines.iter().any(|l| l.contains("\"run_done\"")));
+        let row_done_count = lines.iter().filter(|l| l.contains("\"row_done\"")).count();
+        assert_eq!(
+            row_done_count, report.commands,
+            "one row_done per swept command (jobs={jobs})"
+        );
+    }
 
     std::fs::remove_dir_all(&dir).ok();
 }

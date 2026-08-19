@@ -7,11 +7,19 @@
 //! This is the only place in the crate allowed to print or call
 //! `process::exit` (STYLE E3) -- `als_conform` the library never does.
 
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
-use als_conform::{EnumerationCap, OracleConfig};
+use als_conform::{EnumerationCap, OracleConfig, WatchServer};
+
+/// Absolute workspace root (`crates/als-conform/../..`), for resolving
+/// `conform watch`'s default baseline path the same way `solve-gauge` finds
+/// its default `--baselines` dir.
+fn workspace_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
 
 struct Args {
     inputs: Vec<PathBuf>,
@@ -47,6 +55,7 @@ fn print_usage() {
     eprintln!(
         "usage: conform [OPTIONS] <file.als|dir>...\n\
          \x20\x20\x20conform bench [<corpus-dir>] [OPTIONS]   (mt-024: conformance + speed report; conform bench --help)\n\
+         \x20\x20\x20conform watch <progress.jsonl> [OPTIONS]  (mt-094: live solve-gauge dashboard; conform watch --help)\n\
          \n\
          Options:\n\
          \x20\x20--jar PATH             reference jar (default oracle/org.alloytools.alloy.dist.jar)\n\
@@ -261,10 +270,112 @@ fn bench_main(args: &[String]) -> ExitCode {
     }
 }
 
+// ---------------------------------------------------------------------------
+// `watch` subcommand (mt-094): a live dashboard over a solve-gauge
+// `--progress-jsonl` run.
+// ---------------------------------------------------------------------------
+
+/// `baselines/corpus-sweep-sb20.json`, relative to the workspace root —
+/// `solve-gauge`'s default sweep-symmetry-20 artifact, and the one
+/// `--capture-sweep` refreshes by default (ADR-0016/mt-057).
+fn default_watch_baseline() -> PathBuf {
+    workspace_root().join("baselines/corpus-sweep-sb20.json")
+}
+
+fn print_watch_usage() {
+    eprintln!(
+        "usage: conform watch <progress.jsonl> [OPTIONS]\n\
+         \n\
+         Serves a live dashboard (mt-094) of a `solve-gauge --progress-jsonl <progress.jsonl>` run:\n\
+         a grid of every row's progress, polling the file roughly once a second. Safe to start\n\
+         BEFORE the sweep -- the page reads \"waiting for run\" until the file has a run_start event.\n\
+         \n\
+         <progress.jsonl>        the file passed to `solve-gauge --progress-jsonl` (need not exist yet)\n\
+         \n\
+         Options:\n\
+         \x20\x20--port N              listen port on 127.0.0.1 (default 4031)\n\
+         \x20\x20--baseline PATH       sweep baseline for historical wall times\n\
+         \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20(default <workspace>/baselines/corpus-sweep-sb20.json; missing is fine, just no history)"
+    );
+}
+
+fn watch_missing_value(flag: &str) -> ExitCode {
+    eprintln!("conform watch: missing value for {flag}");
+    print_watch_usage();
+    ExitCode::from(2)
+}
+
+fn watch_main(args: &[String]) -> ExitCode {
+    let mut port: u16 = 4031;
+    let mut baseline: Option<PathBuf> = None;
+    let mut jsonl: Option<PathBuf> = None;
+
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--port" => {
+                let Some(n) = it.next().and_then(|v| v.parse().ok()) else {
+                    return watch_missing_value("--port");
+                };
+                port = n;
+            }
+            "--baseline" => {
+                let Some(v) = it.next() else {
+                    return watch_missing_value("--baseline");
+                };
+                baseline = Some(PathBuf::from(v));
+            }
+            "-h" | "--help" => {
+                print_watch_usage();
+                return ExitCode::SUCCESS;
+            }
+            other if other.starts_with("--") => {
+                eprintln!("conform watch: unknown option {other}");
+                print_watch_usage();
+                return ExitCode::from(2);
+            }
+            other if jsonl.is_none() => jsonl = Some(PathBuf::from(other)),
+            other => {
+                eprintln!("conform watch: unexpected extra argument {other}");
+                print_watch_usage();
+                return ExitCode::from(2);
+            }
+        }
+    }
+
+    let Some(jsonl) = jsonl else {
+        print_watch_usage();
+        return ExitCode::from(2);
+    };
+    // `WatchServer` always resolves against SOME baseline path; a missing
+    // file just means `/data` never gets a `hist_ms` to report (read_prior
+    // degrades any unusable file to "no baseline" rather than failing).
+    let baseline = baseline.unwrap_or_else(default_watch_baseline);
+
+    let listener = match TcpListener::bind(("127.0.0.1", port)) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("conform watch: failed to bind 127.0.0.1:{port}: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    eprintln!(
+        "conform watch: http://127.0.0.1:{port}  (jsonl: {}, baseline: {})",
+        jsonl.display(),
+        baseline.display()
+    );
+    let server = WatchServer::new(jsonl, baseline);
+    server.accept_loop(&listener);
+    ExitCode::SUCCESS
+}
+
 fn main() -> ExitCode {
     let raw_args: Vec<String> = std::env::args().collect();
     if raw_args.get(1).map(String::as_str) == Some("bench") {
         return bench_main(&raw_args[2..]);
+    }
+    if raw_args.get(1).map(String::as_str) == Some("watch") {
+        return watch_main(&raw_args[2..]);
     }
 
     let Some(args) = parse_args() else {

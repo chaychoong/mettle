@@ -68,6 +68,8 @@ pub(crate) mod parallel;
 pub mod refresh;
 mod report;
 pub mod sweep_baseline;
+pub mod telemetry;
+pub mod watch;
 
 use std::collections::BTreeMap;
 use std::panic;
@@ -83,6 +85,7 @@ use execute::{command_items, compute_command, resolve_phase, CmdGaugeResult, Cmd
 use parallel::{lpt_order, parallel_fold_ordered};
 pub use report::{PerCommand, SolveGaugeReport};
 use sweep_baseline::{command_key, load_sweep_baselines, mode_key, SweepConfig};
+use telemetry::{RowId, RunDoneEvent, RunStartEvent, TelemetryEvent, TelemetrySink};
 
 /// Default corpus roots (mirrors [`crate::DEFAULT_CORPUS_ROOTS`] but relative to
 /// the workspace root the gauge is handed).
@@ -211,6 +214,14 @@ pub(crate) fn workspace_relpath(path: &Path, workspace_root: &Path) -> String {
 /// stays render-free (STYLE E3); the bin points `progress` at stderr (and tees a
 /// status file), tests pass a no-op.
 ///
+/// `telemetry` (mt-094) is an optional per-row JSONL sink for `conform watch`'s
+/// live dashboard — an observability side channel, like `progress`, that never
+/// influences the returned report: every call site below is additive next to
+/// something that already runs for another reason (the phase-B completion
+/// hook, the per-command start heartbeat), so the report is byte-identical
+/// with `telemetry: None` and with a sink attached, at any `--jobs` count. See
+/// [`telemetry`]'s module doc.
+///
 /// # Errors
 /// A genuine **tool** failure: a count-baseline whose header disagrees with the
 /// run's config (`--count` cache mode), or — under `--count --live-jar` — the
@@ -221,8 +232,12 @@ pub(crate) fn workspace_relpath(path: &Path, workspace_root: &Path) -> String {
 /// partition the processed commands.
 pub fn run_gauge(
     cfg: &GaugeConfig,
+    telemetry: Option<&TelemetrySink>,
     progress: &mut dyn FnMut(&str),
 ) -> Result<SolveGaugeReport, ConformError> {
+    // Telemetry-only: seeds `run_done`'s `total_secs`. Never enters the report
+    // (STYLE D1/D4) -- the deterministic timing story stays `millis`/`emit_slowest`.
+    let run_started = std::time::Instant::now();
     let baseline = load_baselines(&cfg.baselines_dir);
 
     // Cache stage 2 loads (and config-validates) the count baselines up front;
@@ -283,15 +298,21 @@ pub fn run_gauge(
     ));
     let cb_ref = count_baseline.as_ref();
     let work = |item: &CmdItem, send: &mut dyn FnMut(&str)| {
-        compute_command(item, cfg, &baseline, cb_ref, send)
+        compute_command(item, cfg, &baseline, cb_ref, telemetry, send)
     };
-    let mut noop = |_: usize, _: &CmdGaugeResult| {};
+    // mt-094: `on_result` fires on the coordinator thread in **completion**
+    // order (`parallel.rs`'s module doc) — the natural `row_done` hook. It
+    // never touches `report`/`jar_todo`/`timings` (those are folded
+    // separately, in position order, below), so telemetry cannot move a byte
+    // of the deterministic fold.
+    let mut on_result = |i: usize, r: &CmdGaugeResult| emit_row_done(telemetry, i, r);
     // mt-057 (2): dispatch longest-first so the tail starts instead of finishing
     // last. Results still come back indexed by their position in `items`, which
     // is (file-sorted, index-ascending) — so this cannot move a byte (STYLE D5).
     // mt-059: hints are read per **mode** — a stage-1 recording says nothing
     // about what the same command costs when a counting run enumerates it.
     let mode = mode_key(&sweep_config(cfg));
+    emit_run_start(telemetry, cfg, &mode, &items);
     let order = lpt_order(&items, |it| {
         sweep.command_millis(&it.file.rel, it.idx, &mode)
     });
@@ -302,7 +323,7 @@ pub fn run_gauge(
         cfg.fail_fast,
         progress,
         |it| command_key(&it.file.rel, it.idx),
-        &mut noop,
+        &mut on_result,
         work,
         command_trigger,
     );
@@ -354,7 +375,75 @@ pub fn run_gauge(
     if let Some(out) = &cfg.capture_sweep {
         write_sweep_capture(cfg, &report, &millis, out, progress)?;
     }
+    emit_run_done(telemetry, run_started, &report);
     Ok(report)
+}
+
+/// mt-094: the `run_done` telemetry event. A no-op when no sink is attached.
+fn emit_run_done(
+    telemetry: Option<&TelemetrySink>,
+    run_started: std::time::Instant,
+    report: &SolveGaugeReport,
+) {
+    let Some(sink) = telemetry else { return };
+    sink.emit(&TelemetryEvent::RunDone(RunDoneEvent {
+        ts_ms: telemetry::now_ms(),
+        total_secs: run_started.elapsed().as_secs_f64(),
+        verdict_buckets: report.verdict_buckets.clone(),
+    }));
+}
+
+/// mt-094: the `run_start` telemetry event — the run's config plus the whole
+/// grid, in [`command_items`]'s file-sorted/index-ascending order (never
+/// LPT dispatch order, which is a scheduling detail the grid must not show).
+/// A no-op when no sink is attached.
+fn emit_run_start(
+    telemetry: Option<&TelemetrySink>,
+    cfg: &GaugeConfig,
+    mode: &str,
+    items: &[CmdItem],
+) {
+    let Some(sink) = telemetry else { return };
+    let rows: Vec<RowId> = items
+        .iter()
+        .enumerate()
+        .map(|(i, it)| RowId {
+            i,
+            key: command_key(&it.file.rel, it.idx),
+        })
+        .collect();
+    sink.emit(&TelemetryEvent::RunStart(RunStartEvent {
+        ts_ms: telemetry::now_ms(),
+        mode: mode.to_owned(),
+        solver: JAR_SOLVER.to_owned(),
+        jobs: cfg.jobs,
+        conflict_budget: cfg.conflict_budget,
+        encode_budget: cfg.encode_budget,
+        primary_var_cap: cfg.primary_var_cap,
+        symmetry: cfg.symmetry,
+        count: cfg.count,
+        count_symmetry: cfg.count_symmetry,
+        rows,
+    }));
+}
+
+/// mt-094: the `row_done` telemetry event for one folded command result — the
+/// `on_result` hook [`parallel::parallel_fold_ordered`] calls in completion
+/// order (never folded into `report` itself). A no-op when no sink is
+/// attached.
+fn emit_row_done(telemetry: Option<&TelemetrySink>, i: usize, r: &CmdGaugeResult) {
+    let Some(sink) = telemetry else { return };
+    let c = &r.record;
+    sink.emit(&TelemetryEvent::RowDone(telemetry::RowDoneEvent {
+        ts_ms: telemetry::now_ms(),
+        i,
+        key: command_key(&c.rel, c.idx),
+        bucket: c.verdict_bucket.clone(),
+        secs: r.secs,
+        disagreement: c.disagreement.clone(),
+        self_check_fail: c.self_check_fail.clone(),
+        panic_line: c.panic_line.clone(),
+    }));
 }
 
 /// The run's pinned sweep-baseline header — the fields that decide what a bucket

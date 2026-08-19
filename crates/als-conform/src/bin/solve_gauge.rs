@@ -95,7 +95,8 @@ fn print_usage() {
          \x20\x20--refresh-counts OUT   refresh mode: write a count baseline for every .als to OUT (jar; no stage 1)\n\
          \x20\x20--resume               refresh mode: skip files already present in OUT\n\
          \x20\x20--status-file PATH     owner-facing status monitor path (default: <workspace>/status/<tool>.txt)\n\
-         \x20\x20--no-status            disable the status monitor"
+         \x20\x20--no-status            disable the status monitor\n\
+         \x20\x20--progress-jsonl PATH  write per-row JSONL progress telemetry to PATH (mt-094; for `conform watch`)"
     );
 }
 
@@ -107,6 +108,9 @@ struct Cli {
     no_status: bool,
     refresh_out: Option<PathBuf>,
     resume: bool,
+    /// mt-094: per-row JSONL progress telemetry, for `conform watch`'s live
+    /// dashboard. Absent ⇒ exactly today's behavior (no sink is opened).
+    progress_jsonl: Option<PathBuf>,
 }
 
 /// Parses arguments, or `None` to print usage/help.
@@ -167,6 +171,7 @@ fn parse_args() -> Option<Cli> {
     let mut no_status = false;
     let mut refresh_out: Option<PathBuf> = None;
     let mut resume = false;
+    let mut progress_jsonl: Option<PathBuf> = None;
 
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -208,6 +213,7 @@ fn parse_args() -> Option<Cli> {
             "--resume" => resume = true,
             "--status-file" => status_file = Some(PathBuf::from(it.next()?)),
             "--no-status" => no_status = true,
+            "--progress-jsonl" => progress_jsonl = Some(PathBuf::from(it.next()?)),
             "-h" | "--help" => return None,
             other if other.starts_with("--") => {
                 eprintln!("solve-gauge: unknown option {other}");
@@ -240,6 +246,7 @@ fn parse_args() -> Option<Cli> {
         no_status,
         refresh_out,
         resume,
+        progress_jsonl,
     })
 }
 
@@ -332,12 +339,30 @@ fn run_refresh(cli: &Cli) -> ExitCode {
 /// The gauge path (stage 1 + optional stage 2).
 fn run_gauge_mode(cli: &Cli) -> ExitCode {
     let mut status = make_status(cli, "solve-gauge", "solve-gauge.txt");
+
+    // mt-094: opened once, up front, so a failure to open it is reported like
+    // any other bad flag rather than silently discarding a run's telemetry.
+    let telemetry = match &cli.progress_jsonl {
+        Some(path) => match als_conform::solve_gauge::telemetry::TelemetrySink::create(path) {
+            Ok(sink) => Some(sink),
+            Err(e) => {
+                eprintln!(
+                    "solve-gauge: failed to open --progress-jsonl {}: {e}",
+                    path.display()
+                );
+                status.done("FAILED: progress-jsonl open");
+                return ExitCode::from(2);
+            }
+        },
+        None => None,
+    };
+
     let result = {
         let mut progress = |line: &str| {
             eprintln!("{line}");
             status.heartbeat(line);
         };
-        run_gauge(&cli.cfg, &mut progress)
+        run_gauge(&cli.cfg, telemetry.as_ref(), &mut progress)
     };
 
     let report = match result {
