@@ -10,6 +10,7 @@ Run this before ending any working session, so the next one (or a cold clone) pi
 
 ## 2. Make the docs true
 - [ ] **[STATE.md](STATE.md)** updated: `Last updated` date, current rung, what exists, **In flight** (running agents → how to resume, else "None"), **Next chunk** (concrete enough that a bare "proceed" is unambiguous), recent decisions, open questions.
+- [ ] **STATE.md pruned** (owner rule, 2026-08-19): keep at most this session's entries plus the previous session's final entry in the `Last updated` chain — older entries duplicate the TASKS beads and live in git history. The file should stay well under ~50KB.
 - [ ] **[TASKS.md](TASKS.md)** beads match reality: statuses (✔/◐/▢/⛔) accurate, new beads added, dependencies noted, the next-on-"proceed" bead marked.
 - [ ] Decisions made this session are recorded — a new/updated **[ADR](adr/)** for architecture/process calls; a **[SEMANTICS_LEDGER.md](../SEMANTICS_LEDGER.md)** entry for any pinned behavior (status proposed/verified/approved). *Nothing decided lives only in chat.*
 - [ ] **[LIMITATIONS.md](../LIMITATIONS.md)** still honest (nothing newly supported left as "can't"; nothing claimed that isn't true).
