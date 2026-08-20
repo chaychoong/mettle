@@ -636,6 +636,11 @@ impl<'a, 'g> Cx<'a, 'g> {
                 return t;
             }
         }
+        if !at_name {
+            if let Some((_, t)) = self.env_get_qualified(qn) {
+                return t;
+            }
+        }
         if let Some(t) = self.builtin_value(&segs) {
             return t;
         }
@@ -1532,6 +1537,18 @@ impl<'a, 'g> Cx<'a, 'g> {
                 return R::ok(t);
             }
         }
+        // An evaluator atom/skolem label carrying a module alias (`so/Ord$0`)
+        // is a global keyed by its WHOLE text, so it resolves here rather than
+        // through module-qualified lookup — and it must resolve BEFORE the
+        // `$`-leniency below, which would otherwise hand back a bare `univ`
+        // with no recorded choice and leave lowering with nothing to replay
+        // (mt-098).
+        if !at_name {
+            if let Some((joined, t)) = self.env_get_qualified(qn) {
+                self.record_name(e, NameChoice::Var(joined));
+                return R::ok(t);
+            }
+        }
         if let Some(t) = self.builtin_value(&segs) {
             if let Some(bv) = builtin_value_choice(&segs) {
                 self.record_name(e, NameChoice::Builtin(bv));
@@ -2334,6 +2351,19 @@ impl<'a, 'g> Cx<'a, 'g> {
                         });
                         return out;
                     }
+                }
+                // …and an evaluator atom label carrying a module alias matches
+                // the environment by its whole text (mt-098).
+                if let Some((joined, t)) = self.env_get_qualified(qn) {
+                    out.push(Reading {
+                        ty: t,
+                        weight: 0,
+                        reason: format!("var {joined}"),
+                        fin: Fin::Leaf,
+                        head_expr: e,
+                        head_choice: Some(CandOrigin::Var(joined)),
+                    });
+                    return out;
                 }
                 if let Some(t) = self.builtin_value(&segs) {
                     out.push(Reading {
@@ -3183,6 +3213,33 @@ impl<'a, 'g> Cx<'a, 'g> {
             .rev()
             .find(|(n, _)| n == name)
             .map(|(_, t)| t.clone())
+    }
+
+    /// An **evaluator-input** atom or skolem name whose label contains a module
+    /// alias (`so/Ord$0`), matched against the environment by its WHOLE text.
+    ///
+    /// The reference registers each solved atom under its verbatim label —
+    /// `world.addGlobal(atom.label, atom)`, evaluator contract §0 step 6 — and
+    /// an atom of a sig in an opened module carries that module's alias in its
+    /// label. Alloy's global table is keyed by the entire string, so such a name
+    /// resolves by **exact match**, not by module-qualified lookup: the jar
+    /// evaluates `so/Ord$0` to `{so/Ord$0}` while `so/Ord` (the sig, never
+    /// registered) is `The name "so/Ord" cannot be found` (mt-098 probes).
+    ///
+    /// Restricted to fragment (evaluator) input by `ast_override`, and to names
+    /// that are actually registered globals, so ordinary model resolution — where
+    /// `a/b` genuinely means "b in module a" — is untouched.
+    fn env_get_qualified(&self, qn: &QualName) -> Option<(String, Type)> {
+        if self.ast_override.is_none() || qn.segments.len() < 2 {
+            return None;
+        }
+        let joined = qn
+            .segments
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect::<Vec<_>>()
+            .join("/");
+        self.env_get(&joined).map(|t| (joined, t))
     }
 
     /// Whether byte offsets `end` (exclusive end of the first formula) and

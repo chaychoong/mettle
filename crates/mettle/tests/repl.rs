@@ -734,3 +734,118 @@ fn evaluating_leaves_the_command_output_untouched() {
     );
     assert_eq!(stderr(&plain), stderr(&evaluated));
 }
+
+// ---- mt-098: module-qualified atom literals round-trip ---------------------
+//
+// The evaluator prints an atom of a sig in an OPENED module under its
+// module-qualified label (`so/Ord$0`), and the reference accepts exactly that
+// text back as input: it registers each atom under its verbatim label
+// (contract §0 step 6, `world.addGlobal(atom.label, atom)`) and the global
+// table is keyed by the whole string, so the name resolves by exact match
+// rather than by module-qualified lookup. mettle used to print such a label and
+// then reject it — the round-trip defect mt-084 filed.
+//
+// Cells jar-verified at mt-098 against the pinned GUI evaluator path
+// (`scratchpad/probe/mt098/`, `Probe.java` from mt-061).
+
+#[test]
+fn mt098_qualified_atom_literals_evaluate() {
+    // Every module-qualified atom the fixture's universe contains, plus a bare
+    // sig atom, an enum atom, a `one sig` atom and a String atom as controls.
+    // Jar: all eight `EVAL_OK` with these exact values.
+    assert_cells(
+        "qualified.als",
+        &[],
+        &[
+            ("A$0", "{A$0}"),
+            ("so/Ord$0", "{so/Ord$0}"),
+            ("tw/Ord$0", "{tw/Ord$0}"),
+            // `enum` implicitly opens `util/ordering` with no alias, so this
+            // third instance's atom is qualified by the bare module name.
+            ("ordering/Ord$0", "{ordering/Ord$0}"),
+            ("Red$0", "{Red$0}"),
+            ("S$0", "{S$0}"),
+            ("\"hi\"", "{\"hi\"}"),
+            // Reflexivity controls: the label denotes what it looks like, and
+            // two different aliases' atoms are genuinely different atoms.
+            ("so/Ord$0 = so/Ord$0", "true"),
+            ("so/Ord$0 = tw/Ord$0", "false"),
+        ],
+    );
+}
+
+#[test]
+fn mt098_every_printed_atom_is_legal_input() {
+    // The round-trip property itself, over the WHOLE universe: evaluate `univ`,
+    // then feed each atom it printed back and assert it comes back as itself.
+    // Expected rendering is per-kind — a sig/enum/String atom is a singleton
+    // tupleset, an int atom renders as a bare numeral (LIMITATIONS: "a bare
+    // numeral only for genuinely `int`-typed input").
+    let out = exec_eval("qualified.als", &[], &["univ"]);
+    assert!(out.status.success(), "univ failed: {}", stderr(&out));
+    let univ = results(&out).pop().expect("a univ line");
+    let atoms: Vec<String> = univ
+        .trim_start_matches('{')
+        .trim_end_matches('}')
+        .split(", ")
+        .map(str::to_owned)
+        .collect();
+    assert!(
+        atoms.iter().any(|a| a.contains('/')),
+        "fixture must contain a module-qualified atom, got {univ}"
+    );
+
+    let cells: Vec<(String, String)> = atoms
+        .iter()
+        .map(|a| {
+            let want = if a.parse::<i64>().is_ok() {
+                a.clone()
+            } else {
+                format!("{{{a}}}")
+            };
+            (a.clone(), want)
+        })
+        .collect();
+    let borrowed: Vec<(&str, &str)> = cells
+        .iter()
+        .map(|(e, w)| (e.as_str(), w.as_str()))
+        .collect();
+    assert_cells("qualified.als", &[], &borrowed);
+}
+
+#[test]
+fn mt098_atom_lookalikes_are_rejected() {
+    // Negative space. The jar rejects each of these with
+    // `ErrorSyntax: The name "…" cannot be found.`; mettle rejects them too,
+    // with its own message (LIMITATIONS: evaluator error text is mettle's
+    // except where the message states an evaluator rule). What is pinned here
+    // is the REJECTION — the fix must not have made every `alias/Name$N`
+    // resolve, only the labels the instance actually minted.
+    for expr in [
+        "so/Ord$1",  // a real alias, an index that does not exist
+        "zz/Ord$0",  // an alias that does not exist
+        "A$9",       // a real sig, an index beyond the scope
+        "so/Nope$0", // a real alias, a sig that does not exist
+    ] {
+        let out = exec_eval("qualified.als", &[], &[expr]);
+        assert!(
+            !out.status.success(),
+            "`{expr}` should be rejected but produced: {}",
+            stdout(&out)
+        );
+    }
+}
+
+#[test]
+fn mt098_qualified_lookup_does_not_leak_into_the_model() {
+    // The fix is gated to evaluator fragments, so a module-qualified name in a
+    // MODEL still means "that name in that module" — `so/first` is the ordering
+    // fun, not some global. If the gate ever broke, this would still pass, so
+    // the real proof is the byte-identical alloy4fun resolve gauge recorded in
+    // `scratchpad/probe/mt098/NOTES.md`; this keeps a cheap tripwire in CI.
+    assert_cells(
+        "qualified.als",
+        &[],
+        &[("so/first", "{A$0}"), ("so/next", "{A$0->A$1}")],
+    );
+}

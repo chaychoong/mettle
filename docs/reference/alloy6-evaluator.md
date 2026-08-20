@@ -176,6 +176,27 @@ no separate "formula mode" vs. "expression mode."
   registers it as a module global bound to the `ExprVar` for that atom.
   Reflexivity-controlled: `A$0 = A$0` → `true` (E-02). Renders as a
   singleton set `{A$0}` (E-01).
+- **A MODULE-QUALIFIED atom name** (`so/Ord$0`) — an atom of a sig declared in
+  an *opened* module — is accepted too, and by the same mechanism: §0 step 6
+  registers the label **verbatim**, alias and slash included, and the global
+  table is keyed by the whole string, so the name resolves by **exact match**
+  and never through module-qualified lookup (mt-098, probes E-50–E-58; fixture `scratchpad/probe/mt098/m2_surface.als`, banked as `crates/mettle/tests/fixtures/repl/qualified.als`).
+  Consequences, all jar-verified:
+  - **Every atom label the instance prints is legal input.** Two aliases of one
+    module give two distinct atoms (`so/Ord$0 = tw/Ord$0` → `false`), and
+    `enum` implicitly opens `util/ordering` with *no* alias, so a third,
+    bare-module-qualified atom (`ordering/Ord$0`) can exist alongside them.
+  - **Nothing else that looks like one is.** `so/Ord$1` (real alias, no such
+    index), `zz/Ord$0` (no such alias), `A$9` (index beyond scope) and
+    `so/Nope$0` are each `ErrorSyntax`, `The name "…" cannot be found.`
+  - **The sig's own qualified name is NOT reachable**: `so/Ord` is likewise
+    "cannot be found", because only atoms and skolems are ever `addGlobal`'d.
+    That asymmetry is the proof the mechanism is an exact global-table hit
+    rather than ordinary name resolution.
+
+  mettle implements this as `Cx::env_get_qualified`, consulted by
+  `resolve_name`/`infer_name`/`spine_head` and gated on fragment (evaluator)
+  input, so a module-qualified name in a *model* still means what it says.
 - **A skolem name** (`$foo_x`, from `run foo { some x: A | ... }`):
   likewise a registered global (`ans.getAllSkolems()`). E-24: `$foo_x` →
   `{A$0}`. Naming convention (`$<cmdlabel>_<varname>`) matches the existing
@@ -463,6 +484,16 @@ everything with `scratchpad/probe/mt061/probes.sh`.
 | E-47 | Var.als#0, state=0 | `A` | `{A$0}` |
 | E-48 | Var.als#0, state=1 | `A` | `{}` |
 | E-49 | Base.als#0 | `"hello"` (no such string atom in this instance) | `ErrorFatal`, "String literal ... does not exist in this instance." |
+| E-50 | Qual.als#0 | `so/Ord$0` | `{so/Ord$0}` — a module-qualified atom label IS legal input (mt-098) |
+| E-51 | Qual.als#0 | `tw/Ord$0` | `{tw/Ord$0}` — a second alias of the same module |
+| E-52 | Qual.als#0 | `ordering/Ord$0` | `{ordering/Ord$0}` — `enum` opens `util/ordering` with no alias |
+| E-53 | Qual.als#0 | `so/Ord$0 = tw/Ord$0` | `false` — two aliases' atoms are distinct atoms |
+| E-54 | Qual.als#0 | `so/Ord$0 = so/Ord$0` | `true` — reflexivity control |
+| E-55 | Qual.als#0 | `so/Ord$1` | `ErrorSyntax`, "The name \"so/Ord$1\" cannot be found." |
+| E-56 | Qual.als#0 | `zz/Ord$0`, `so/Nope$0` | `ErrorSyntax`, same shape — no such alias / no such sig |
+| E-57 | Qual.als#0 | `A$9` | `ErrorSyntax`, same shape — index beyond scope |
+| E-58 | Qual.als#0 | `so/Ord` (the SIG by qualified name) | `ErrorSyntax`, "cannot be found" — only atoms/skolems are `addGlobal`'d |
+| E-59 | Qual.als#0 | `3` (a bare numeral literal) | `{3}` — the Expression path, **NOT** a bare numeral; mettle renders `3` (divergence recorded in LIMITATIONS, mt-098) |
 
 ## 7. Unpinned corners (be honest)
 
