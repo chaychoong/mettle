@@ -410,12 +410,73 @@ The final Kodkod goal is the conjunction of, in order:
 3. the **command formula**: for `run p` the pred body (params existentially
    quantified for a `run` of a function/pred with params); for `run {block}` the
    block; for `check a` the assertion body **negated** (`assertBody.not()`); for
-   `check {block}` the block negated.
+   `check {block}` the block negated. **(3a)** — see below for `run` on a **fun**,
+   where the body is NOT part of the command.
 4. a reflexive `r = r` for every bounded relation, so Kodkod grows relations that
    the formula never mentions (a solving detail, not a semantic constraint).
 
 For a `check`, **SAT means a counterexample was found** (the assertion can be
 violated within scope); **UNSAT means the assertion holds** up to that scope.
+
+#### 2.5(3a) `run` on a **fun**: parameters quantified, body IGNORED (jar-verified 2026-08-20, mt-097)
+
+`run f` where `f` is a **fun** (not a pred) existentially quantifies the fun's
+parameters over their declared bounds — respecting each parameter's declared
+multiplicity — and asserts **nothing at all about the result**. The fun's body
+never enters the command formula.
+
+Probes `scratchpad/probe/mt097/{c_runfun,c2_predcontrol}.als` (20 cells, both
+`noOverflow` settings, sat4j, symmetry 0). Each pairs a `run <fun>` with its
+hand-written desugaring, so the two must agree iff the rule holds:
+
+| cell | body | jar |
+|---|---|---|
+| c3 | `some x: A \| some f_empty[x]` (`f_empty` returns `x - x`) | UNSAT |
+| **c4** | `run f_empty` | **SAT** — so there is no `some <result>` conjunct |
+| c7 | `some f_noarg_empty` (`f_noarg_empty` returns `none`) | UNSAT |
+| **c8** | `run f_noarg_empty` | **SAT** |
+| c11 / c12 | the desugaring and `run f_ident`, both at `for 0 A` | both **UNSAT** — the parameters *are* quantified |
+| `f_lone` / `f_set` at `for 0 A` | `lone`/`set` parameters | SAT |
+| `f_one` / plain `x: A` at `for 0 A` | `one` / implicit-`one` parameters | UNSAT |
+
+The **pred/fun asymmetry** is what makes the rule meaningful and is pinned by
+its own controls: `run p_false` with a contradictory pred body is **UNSAT**,
+while `run f_empty` with an always-empty fun result is **SAT**.
+
+**mettle** drops its former `run` on a fun typed defer: `Lowerer::run_pred`
+already shared the parameter/receiver quantification and skolemization path for
+both (`Para::Fun` was already destructured), so a fun target now substitutes
+`FormulaKind::Const(true)` for the body. Skipping the body is also *necessary* —
+a fun's body is an expression, which `lower_formula` cannot consume. Jar-free
+tests: `recording_tail_conformance.rs` (family C). Corpus effect: `INSLabel.als[1]`
+(`run Lookup for 3`) converts and agrees (jar UNSAT).
+
+#### 3.7a Macro arguments resolve in the USE's context, not the module's (mt-097)
+
+`CompModule`'s macro expansion is textual and per-call-site, and Alloy resolves a
+macro application's **arguments** in the context the application sits in, before
+recursing into the body. For a macro applied **inside another macro's body**, the
+arguments are the *enclosing* macro's parameters, so their resolutions belong to
+the enclosing macro's per-site nested table — not to any module-level table.
+
+mettle records this correctly (`resolve::expr::expand_macro` resolves the
+argument expressions in its own `sub` context, so the nested `body_choices`
+carry them), but the **lowerer** used to replay them through a freshly built
+module context (`Lowerer::ctx` always uses `world.choices`), which dropped the
+nested table: the argument name had no recorded resolution and the command
+deferred typed. `Lowerer::bind_macro` now lowers arguments in the **caller's**
+context, keeping `mc.arg_module` as the module id. For a top-level macro use the
+caller's context *is* the module context, so the change is inert there.
+
+Probes `scratchpad/probe/mt097/b_macro.als` (7 cells, 7/7 agreement): a macro
+applied inside another macro's body (`overlap`'s body applies `range` to
+`overlap`'s own parameters), a macro applied with **receiver** syntax whose
+receiver is a parameter of the enclosing macro (`t.upd[x]` inside `take`), the
+same with a `let` value binding between the layers, and the three direct-use
+controls. Corpus effect: `overlapping-ranges.als[0]`, `philosophers.als[0]` and
+`philosophers.als[1]` convert and agree. This is an `als-core` change only — no
+resolver or recorded-choice behaviour moves, so the mt-040 additive-recording
+guarantee holds by construction.
 
 ---
 

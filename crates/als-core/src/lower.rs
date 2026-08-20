@@ -741,15 +741,12 @@ impl<'a> Lowerer<'a> {
                         span,
                     });
                 }
-                let f = &self.world.funcs[func];
-                if !f.is_pred {
-                    return Err(TranslateError::LoweringUnsupported {
-                        what: "`run` on a fun".to_owned(),
-                        span,
-                    });
-                }
                 // Existentially quantify the params over their bounds, then the
-                // body (translation-ref §2.5(3)).
+                // body (translation-ref §2.5(3)). A `run` on a **fun** quantifies
+                // the params identically but IGNORES the body (§2.5(3a), mt-097
+                // probes c3/c4, c7/c8): the jar asserts nothing about the fun's
+                // result, so `run f` is satisfiable exactly when the parameter
+                // declarations are.
                 self.run_pred(func, span)
             }
             CmdTargetResolved::Unresolved => Err(TranslateError::LoweringUnsupported {
@@ -763,6 +760,14 @@ impl<'a> Lowerer<'a> {
     /// quantified over their declaration bounds (translation-ref §2.5(3)); each
     /// top-level existential (receiver + params) skolemizes at depth 0 (§15). A
     /// receiver param (`pred A.p`) ranges over its sig `A`.
+    ///
+    /// **`run f` on a FUN uses the same parameter quantification and drops the
+    /// body** (§2.5(3a), mt-097): the jar asserts nothing about a fun's result,
+    /// so the command is satisfiable exactly when the parameter declarations are.
+    /// Jar-pinned by the pred/fun pair — a contradictory *pred* body is UNSAT
+    /// (`p_false`) while an always-empty *fun* result is SAT (`f_empty`) — and
+    /// the parameters' declared multiplicities are respected (`x: A`/`x: one A`
+    /// at an empty scope UNSAT, `x: lone A`/`x: set A` SAT).
     #[allow(clippy::too_many_lines)]
     fn run_pred(&mut self, func: FuncIdx, span: Span) -> Result<FormulaId, TranslateError> {
         let module = self.world.funcs[func].module;
@@ -882,7 +887,14 @@ impl<'a> Lowerer<'a> {
                 pushed += 1;
             }
         }
-        let body_f = self.lower_formula(ctx, body);
+        // A fun's body is an EXPRESSION, and the jar never constrains it — the
+        // command is `some <params> | true` (mt-097 §2.5(3a)). A pred's body is
+        // the formula it asserts.
+        let body_f = if self.world.funcs[func].is_pred {
+            self.lower_formula(ctx, body)
+        } else {
+            Ok(self.mk_formula(FormulaKind::Const(true), span))
+        };
         for _ in 0..pushed {
             self.binders.pop();
         }
@@ -1959,7 +1971,7 @@ impl<'a> Lowerer<'a> {
             }
             Some(ExprChoice::Name(NameChoice::Macro(mc))) => {
                 let mc = mc.clone();
-                self.replay_macro_formula(&mc, span)
+                self.replay_macro_formula(ctx, &mc, span)
             }
             Some(ExprChoice::Spine(SpineChoice::Call(cc))) => {
                 let cc = cc.clone();
@@ -1970,7 +1982,7 @@ impl<'a> Lowerer<'a> {
             }
             Some(ExprChoice::Spine(SpineChoice::Macro(mc))) => {
                 let mc = mc.clone();
-                self.replay_macro_formula(&mc, span)
+                self.replay_macro_formula(ctx, &mc, span)
             }
             _ => Err(TranslateError::LoweringUnsupported {
                 what: "unrecognized formula-position spine".to_owned(),
@@ -2463,7 +2475,7 @@ impl<'a> Lowerer<'a> {
             }
             NameChoice::Call0(func) => self.inline_fun(ctx, *func, &[], true, span),
             NameChoice::Builtin(bv) => self.lower_builtin_value(*bv, span),
-            NameChoice::Macro(mc) => self.replay_macro_rel(mc, span),
+            NameChoice::Macro(mc) => self.replay_macro_rel(ctx, mc, span),
             NameChoice::EmptyArity(k) => Ok(self.none_of_arity(*k, span)),
         }
     }
@@ -2586,7 +2598,9 @@ impl<'a> Lowerer<'a> {
                 let ie = self.lower_int(ctx, arg)?;
                 Ok(self.mk_rel(RelExprKind::IntToAtom(ie), span))
             }
-            Some(ExprChoice::Spine(SpineChoice::Macro(mc))) => self.replay_macro_rel(&mc, span),
+            Some(ExprChoice::Spine(SpineChoice::Macro(mc))) => {
+                self.replay_macro_rel(ctx, &mc, span)
+            }
             Some(ExprChoice::Spine(SpineChoice::Empty(k))) => Ok(self.none_of_arity(k, span)),
             _ => Err(TranslateError::LoweringUnsupported {
                 what: "relation-position spine without a recorded resolution".to_owned(),
@@ -3753,10 +3767,11 @@ impl<'a> Lowerer<'a> {
     /// module + nested choice table.
     fn replay_macro_formula(
         &mut self,
+        caller: Ctx,
         mc: &als_types::MacroChoice,
         span: Span,
     ) -> Result<FormulaId, TranslateError> {
-        let pushed = self.bind_macro(mc, span)?;
+        let pushed = self.bind_macro(caller, mc, span)?;
         let ctx = Ctx {
             module: mc.body_module,
             choices: &mc.body_choices,
@@ -3772,10 +3787,11 @@ impl<'a> Lowerer<'a> {
 
     fn replay_macro_rel(
         &mut self,
+        caller: Ctx,
         mc: &als_types::MacroChoice,
         span: Span,
     ) -> Result<RelExprId, TranslateError> {
-        let pushed = self.bind_macro(mc, span)?;
+        let pushed = self.bind_macro(caller, mc, span)?;
         let ctx = Ctx {
             module: mc.body_module,
             choices: &mc.body_choices,
@@ -3789,12 +3805,30 @@ impl<'a> Lowerer<'a> {
         r
     }
 
+    /// Binds a macro's parameters to its lowered arguments.
+    ///
+    /// `caller` is the context the macro USE sits in, and the arguments are
+    /// lowered in it — not in a freshly-built module context. That distinction
+    /// is the whole of mt-097 family B: a macro applied inside **another
+    /// macro's body** has arguments that are the outer macro's parameters, and
+    /// the checker recorded their choices in the outer macro's *nested* table
+    /// (`expand_macro` resolves the argument expressions in its own `sub`
+    /// context before recursing). Rebuilding a module-level context here dropped
+    /// that table, so the argument name had no recorded resolution and lowering
+    /// deferred — `overlapping-ranges[0]`, `philosophers[0]`/`[1]`. For a
+    /// top-level macro use the caller's context IS the module context, so this
+    /// is identical to the old behaviour there.
     fn bind_macro(
         &mut self,
+        caller: Ctx,
         mc: &als_types::MacroChoice,
         span: Span,
     ) -> Result<usize, TranslateError> {
-        let arg_ctx = self.ctx(mc.arg_module);
+        let arg_ctx = Ctx {
+            module: mc.arg_module,
+            choices: caller.choices,
+            ast: caller.ast,
+        };
         let params = self.world.macros[mc.macro_id].params.clone();
         if params.len() != mc.args.len() {
             return Err(TranslateError::LoweringUnsupported {
