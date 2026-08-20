@@ -244,15 +244,34 @@ enum TemporalPosture {
 pub enum LoweredFragment {
     /// A formula: renders `true`/`false`.
     Formula(FormulaId),
-    /// A genuinely `int`-typed expression (`#e`, `sum x: B | e`): renders as a
-    /// bare numeral. `plus[3,4]` and friends are **not** here — they are
-    /// `Int`-*set*-typed and render `{7}` (evaluator contract §1).
+    /// An expression whose Kodkod translation is an `IntExpression` (`#e`,
+    /// `sum x: B | e`, a shift): renders as a bare numeral. `plus[3,4]`, a
+    /// numeral literal and `int[e]` are **not** here — they translate to
+    /// `Expression`s and render `{7}`/`{3}` (evaluator contract §3).
     Int(IntExprId),
     /// A relational expression: renders `{tuple, …}`.
     Rel(RelExprId),
 }
 
-/// One evaluator fragment to lower against an already-solved command.
+/// Which top-level dispatch a fragment's **root** takes — the one place the
+/// reference's two fragment consumers genuinely differ (mt-099).
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum FragmentRoot {
+    /// The evaluator console. `CompModule.parseOneExpressionFromString`
+    /// re-resolves the parsed body against its own type
+    /// (`scratchpad/src794/CompModule.java:988-990`), which re-wraps an
+    /// `Expression`-translating root in `Int[·]`, and `A4Solution.eval` then
+    /// renders bare only what came back an `IntExpression`
+    /// (`scratchpad/src794/A4Solution.java:1064-1070`). See
+    /// [`Lowerer::fragment_sort`].
+    Evaluator,
+    /// A `fun` body the instance writer evaluates directly (`A4SolutionWriter`
+    /// builds the `Expr` itself and never goes through the evaluator's
+    /// re-resolve), so the root takes the ordinary in-expression sort.
+    Value,
+}
+
+/// One standalone fragment to lower against an already-solved command.
 #[derive(Copy, Clone, Debug)]
 pub struct FragmentInput<'a> {
     /// The module the fragment was resolved *as* (its names are in scope).
@@ -269,6 +288,8 @@ pub struct FragmentInput<'a> {
     /// skolem names (evaluator contract §0 step 6), which the resolver bound
     /// like lexical variables and the lowerer therefore looks up like ones.
     pub globals: &'a [(String, RelExprId)],
+    /// Which dispatch the fragment's root takes.
+    pub root: FragmentRoot,
 }
 
 /// Lowers one standalone evaluator fragment into `ir`, alongside (and after)
@@ -363,7 +384,11 @@ fn lower_fragment_with<'a>(
     };
     // The same three-way split `lower_command` applies inside a command body,
     // here applied to the fragment's root: the input *is* the expression.
-    let value = match lowerer.sort_of(ctx, input.expr) {
+    let sort = match input.root {
+        FragmentRoot::Evaluator => lowerer.fragment_sort(ctx, input.expr),
+        FragmentRoot::Value => lowerer.sort_of(ctx, input.expr),
+    };
+    let value = match sort {
         Sort::Formula => LoweredFragment::Formula(lowerer.lower_formula(ctx, input.expr)?),
         Sort::Int => LoweredFragment::Int(lowerer.lower_int(ctx, input.expr)?),
         Sort::Rel => LoweredFragment::Rel(lowerer.lower_rel(ctx, input.expr)?),
@@ -4029,6 +4054,144 @@ impl<'a> Lowerer<'a> {
             ExprKind::Num(_) => Sort::Rel,
             _ => self.sort_of(ctx, then_branch),
         }
+    }
+
+    /// The sort the **evaluator console's own top-level dispatch** gives a
+    /// fragment's root (evaluator contract §3, probes E-60–E-79).
+    ///
+    /// A different question from [`Self::sort_of`]'s, which routes coercions
+    /// *inside* an expression and is the solve path's classifier too — hence a
+    /// separate walk rather than an edit to that one. Here the question is only
+    /// "does this root translate to a Kodkod `IntExpression`", because that is
+    /// the sole branch of `A4Solution.eval` that renders a bare numeral; an
+    /// `Expression` becomes an `A4TupleSet` and prints `{n}`.
+    ///
+    /// Three int-*typed* forms translate to an `Expression` and so render
+    /// `{n}` here where [`Self::sort_of`] says `Int`:
+    ///
+    /// - a **numeral literal** — `visit(ExprConstant)` NUMBER is
+    ///   `IntConstant.constant(n).toExpression()`, the same fact mt-095 pinned
+    ///   for the ITE dispatch (probes E-60–E-64; out-of-range literals wrap
+    ///   two's-complement and still render `{n}`, E-63/E-64);
+    /// - **`int[e]` / `sum[e]` / `int e` / `sum e`** — `CAST2INT`, which the
+    ///   evaluator's re-resolve re-wraps as `Int[int[e]]` (probes E-70–E-73).
+    ///
+    /// And symmetrically, a user-written **`Int[e]`** is *dropped* by that same
+    /// re-resolve, so it is transparent rather than relational (E-74/E-75) —
+    /// `Int[#A]` renders bare `1`.
+    ///
+    /// `let` is transparent because the reference's `visit(ExprLet)` substitutes
+    /// (the body's own translation is the result), so a body that is just the
+    /// bound name takes the binding's shape (E-76/E-77).
+    ///
+    /// Only the rendered *shape* moves: [`Self::lower_rel`] and
+    /// [`Self::lower_int`] each open with the coercion guard for the other sort,
+    /// so both dispatches compute the same value.
+    fn fragment_sort(&self, ctx: Ctx, e: ExprId) -> Sort {
+        self.fragment_sort_in(ctx, e, &mut Vec::new())
+    }
+
+    /// [`Self::fragment_sort`] carrying the enclosing `let` bindings, innermost
+    /// last, so a body that is just a bound name can be followed to its value.
+    fn fragment_sort_in(&self, ctx: Ctx, e: ExprId, lets: &mut Vec<(String, ExprId)>) -> Sort {
+        match &self.ast_of(ctx).exprs[e].kind {
+            ExprKind::Num(_) => Sort::Rel,
+            ExprKind::Unary { op, expr } => match op {
+                UnOp::Card => Sort::Int,
+                UnOp::IntOf | UnOp::SumOf => Sort::Rel,
+                UnOp::Not
+                | UnOp::No
+                | UnOp::Some
+                | UnOp::Lone
+                | UnOp::One
+                | UnOp::Always
+                | UnOp::Eventually
+                | UnOp::After
+                | UnOp::Before
+                | UnOp::Historically
+                | UnOp::Once => Sort::Formula,
+                _ => self.fragment_sort_in(ctx, *expr, lets),
+            },
+            ExprKind::Binary {
+                op: BinOp::Join, ..
+            } => self.fragment_spine_sort(ctx, e, lets),
+            ExprKind::BoxJoin { .. } => self.fragment_spine_sort(ctx, e, lets),
+            ExprKind::Name(_) | ExprKind::AtName(_) => self.fragment_name_sort(ctx, e, lets),
+            ExprKind::IfThenElse { then_branch, .. } => {
+                // The else branch never votes (mt-095): `visit(ExprITE)` reads
+                // the then branch's translated class and coerces the else one to
+                // match. Probe E-78: `(some A => int[3] else 0)` is `{3}`.
+                self.fragment_sort_in(ctx, *then_branch, lets)
+            }
+            ExprKind::Let { bindings, body } => {
+                let depth = lets.len();
+                for b in bindings {
+                    lets.push((b.name.text.clone(), b.value));
+                }
+                let sort = self.fragment_sort_in(ctx, *body, lets);
+                lets.truncate(depth);
+                sort
+            }
+            ExprKind::Block(exprs) if exprs.len() == 1 => {
+                self.fragment_sort_in(ctx, exprs[0], lets)
+            }
+            // Everything left — a formula, a comprehension, an arrow, a
+            // `sum`/other quantifier, a string or constant — is classified the
+            // same either way, so there is one rule for it, not two.
+            _ => self.sort_of(ctx, e),
+        }
+    }
+
+    fn fragment_name_sort(&self, ctx: Ctx, e: ExprId, lets: &[(String, ExprId)]) -> Sort {
+        match self.choice(ctx, e) {
+            Some(ExprChoice::Name(NameChoice::Var(v))) => {
+                // Innermost wins, and the binding is classified against only the
+                // bindings *outside* it — which also makes the recursion
+                // terminate under shadowing (`let x = 1 | let x = x | x`).
+                match lets.iter().rposition(|(name, _)| name == v) {
+                    Some(i) => {
+                        let value = lets[i].1;
+                        self.fragment_sort_in(ctx, value, &mut lets[..i].to_vec())
+                    }
+                    // A quantifier/comprehension binder or an instance atom
+                    // global: relational, as `name_sort` also says.
+                    None => Sort::Rel,
+                }
+            }
+            Some(ExprChoice::Name(NameChoice::Macro(mc))) => self.fragment_macro_sort(mc),
+            _ => self.name_sort(ctx, e),
+        }
+    }
+
+    fn fragment_spine_sort(&self, ctx: Ctx, e: ExprId, lets: &mut Vec<(String, ExprId)>) -> Sort {
+        match self.choice(ctx, e) {
+            Some(ExprChoice::Spine(SpineChoice::Builtin {
+                op: BuiltinCall::IntCast,
+            })) => Sort::Rel,
+            Some(ExprChoice::Spine(SpineChoice::Builtin {
+                op: BuiltinCall::IntAtom,
+            })) => {
+                let span = self.ast_of(ctx).exprs[e].span;
+                match self.first_box_arg(ctx, e, span) {
+                    Ok(arg) => self.fragment_sort_in(ctx, arg, lets),
+                    Err(_) => Sort::Rel,
+                }
+            }
+            Some(ExprChoice::Spine(SpineChoice::Macro(mc))) => self.fragment_macro_sort(mc),
+            _ => self.spine_sort(ctx, e),
+        }
+    }
+
+    /// A macro call is inlined by the reference's `visit(ExprCall)`, so the
+    /// body's own translated class is what reaches the dispatch. The body lives
+    /// in its own module and choice table, so it starts with a fresh `let` env.
+    fn fragment_macro_sort(&self, mc: &als_types::MacroChoice) -> Sort {
+        let ctx = Ctx {
+            module: mc.body_module,
+            choices: &mc.body_choices,
+            ast: None,
+        };
+        self.fragment_sort_in(ctx, self.world.macros[mc.macro_id].body, &mut Vec::new())
     }
 
     fn name_sort(&self, ctx: Ctx, e: ExprId) -> Sort {

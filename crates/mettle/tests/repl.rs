@@ -778,9 +778,11 @@ fn mt098_qualified_atom_literals_evaluate() {
 fn mt098_every_printed_atom_is_legal_input() {
     // The round-trip property itself, over the WHOLE universe: evaluate `univ`,
     // then feed each atom it printed back and assert it comes back as itself.
-    // Expected rendering is per-kind — a sig/enum/String atom is a singleton
-    // tupleset, an int atom renders as a bare numeral (LIMITATIONS: "a bare
-    // numeral only for genuinely `int`-typed input").
+    // Every kind of atom re-enters as its own singleton tupleset, an int atom
+    // included: a bare numeral literal is the reference's Expression path
+    // (mt-099, E-59). mt-098 ran this with a per-kind expectation because
+    // mettle then rendered an int atom bare; matching the jar made the
+    // property *simpler*, not looser.
     let out = exec_eval("qualified.als", &[], &["univ"]);
     assert!(out.status.success(), "univ failed: {}", stderr(&out));
     let univ = results(&out).pop().expect("a univ line");
@@ -797,14 +799,7 @@ fn mt098_every_printed_atom_is_legal_input() {
 
     let cells: Vec<(String, String)> = atoms
         .iter()
-        .map(|a| {
-            let want = if a.parse::<i64>().is_ok() {
-                a.clone()
-            } else {
-                format!("{{{a}}}")
-            };
-            (a.clone(), want)
-        })
+        .map(|a| (a.clone(), format!("{{{a}}}")))
         .collect();
     let borrowed: Vec<(&str, &str)> = cells
         .iter()
@@ -847,5 +842,176 @@ fn mt098_qualified_lookup_does_not_leak_into_the_model() {
         "qualified.als",
         &[],
         &[("so/first", "{A$0}"), ("so/next", "{A$0->A$1}")],
+    );
+}
+
+// ---- mt-099: which Int-valued roots render bare ----------------------------
+//
+// `A4Solution.eval` renders a bare numeral only when
+// `TranslateAlloyToKodkod.alloy2kodkod` hands it a Kodkod `IntExpression`;
+// anything that comes back an `Expression` is wrapped in an `A4TupleSet` and
+// prints `{n}` (`scratchpad/src794/A4Solution.java:1064-1070`).
+//
+// The int *type* is not the discriminator: every cell in this section was
+// measured to have Alloy type `{Int}` with `is_int` set, the ones printing
+// `{n}` included. What decides is the translated class, and the evaluator's own
+// parse entry re-resolves the body against its type
+// (`scratchpad/src794/CompModule.java:988-990`), which re-wraps an
+// `Expression`-translating root in `Int[·]` and strips a user-written one.
+//
+// Cells E-59..E-79, jar-verified at mt-099 against the pinned GUI evaluator
+// path — all 44 of them against this exact fixture
+// (`scratchpad/probe/mt099/sweep-fixture.txt`, 44/44).
+
+#[test]
+fn mt099_numeral_literal_renders_as_a_tupleset() {
+    // E-59..E-61. `visit(ExprConstant)` case NUMBER is
+    // `IntConstant.constant(n).toExpression()` — an `IntToExprCast`, which is an
+    // `Expression`. The same fact mt-095 pinned for the ITE dispatch, here
+    // reaching the top-level render.
+    assert_cells(
+        "numeral.als",
+        &[],
+        &[
+            ("3", "{3}"),
+            ("-3", "{-3}"),
+            ("0", "{0}"),
+            ("7", "{7}"),
+            ("-8", "{-8}"),
+        ],
+    );
+}
+
+#[test]
+fn mt099_out_of_range_numeral_literals_wrap_silently() {
+    // E-62/E-63. At bitwidth 4 a literal outside -8..7 is truncated
+    // two's-complement — no error, no rejection, and no `(OF)` marker, exactly
+    // like eval-position arithmetic (contract §2/§7).
+    assert_cells(
+        "numeral.als",
+        &[],
+        &[("8", "{-8}"), ("15", "{-1}"), ("16", "{0}"), ("-9", "{7}")],
+    );
+}
+
+#[test]
+fn mt099_int_cast_renders_as_a_tupleset() {
+    // E-65..E-69. The counter-intuitive half: `int[e]`/`sum e`/`sum[e]` is
+    // `CAST2INT`, and the evaluator's re-resolve re-wraps it as `Int[int[e]]`,
+    // so the operator whose job is "convert to a primitive int" is the one that
+    // prints as a set. True whether the argument is a literal, a genuine
+    // Int-valued relation, or a bare-rendering cardinality.
+    assert_cells(
+        "numeral.als",
+        &[],
+        &[
+            ("int[3]", "{3}"),
+            ("sum[3]", "{3}"),
+            ("sum 3", "{3}"),
+            ("int[B.v]", "{3}"),
+            ("sum B.v", "{3}"),
+            ("int[#A]", "{1}"),
+            ("int[int[3]]", "{3}"),
+        ],
+    );
+}
+
+#[test]
+fn mt099_int_atom_cast_is_transparent_at_the_root() {
+    // E-70..E-72, the other direction — mettle used to render `Int[#A]` as
+    // `{1}`. The re-resolve *drops* a user-written `Int[·]` at the root, so it
+    // passes the question through to its argument: `Int[#A]` is `#A`, while
+    // `Int[3]` is still the numeral's Expression path.
+    assert_cells(
+        "numeral.als",
+        &[],
+        &[
+            ("Int[#A]", "1"),
+            ("Int[sum x: A | 1]", "1"),
+            ("Int[3]", "{3}"),
+            ("Int[Int[3]]", "{3}"),
+            ("Int[B.v]", "{3}"),
+            ("Int[plus[3,4]]", "{7}"),
+        ],
+    );
+}
+
+#[test]
+fn mt099_let_is_transparent_at_the_root() {
+    // E-73..E-75. The reference's `visit(ExprLet)` substitutes — it translates
+    // the bound expression into the environment and returns the *body's* own
+    // translation — so a body that is just the bound name takes the binding's
+    // shape, transitively through nested `let`s.
+    assert_cells(
+        "numeral.als",
+        &[],
+        &[
+            ("let x = #A | x", "1"),
+            ("let x = #A | let y = x | y", "1"),
+            ("let x = 3 | x", "{3}"),
+            ("let x = plus[1,1] | x", "{2}"),
+            // The body decides, not the binding: `#x` is a cardinality however
+            // `x` was bound.
+            ("let x = 3 | #x", "1"),
+        ],
+    );
+}
+
+#[test]
+fn mt099_if_then_else_reads_its_then_branch_through_the_same_rule() {
+    // E-76/E-77. mt-095 pinned that `visit(ExprITE)` dispatches on the then
+    // branch alone; this pins that it reads that branch by *this* rule — an
+    // `int[3]` then-branch makes the whole ITE relational.
+    assert_cells(
+        "numeral.als",
+        &[],
+        &[
+            ("(some A => int[3] else 0)", "{3}"),
+            ("(some A => #A else 0)", "1"),
+            ("(some A => 3 else 4)", "{3}"),
+        ],
+    );
+}
+
+#[test]
+fn mt099_cardinality_sum_and_shift_still_render_bare() {
+    // E-78/E-79 — the negative space of the change. Exactly three surface forms
+    // translate to an `IntExpression` of their own: `#e` (`ExprToIntCast`), a
+    // `sum` quantifier (`SumExpression`), and a shift
+    // (`BinaryIntExpression`). Parentheses and a one-expression block are
+    // transparent. If the fix had over-reached, these would have moved.
+    assert_cells(
+        "numeral.als",
+        &[],
+        &[
+            ("#A", "1"),
+            ("sum x: A | 3", "3"),
+            ("(#A)", "1"),
+            ("{ #A }", "1"),
+            ("#B.v", "1"),
+            ("3 << 1", "6"),
+            ("7 >> 1", "3"),
+            ("-1 >>> 1", "7"),
+            ("#A << 1", "2"),
+        ],
+    );
+}
+
+#[test]
+fn mt099_controls_that_must_not_move() {
+    // The rest of the Int-valued surface, unchanged by the fix: an
+    // `integer/*` fun call and an Int-valued join were already tuplesets, an
+    // int comparison is a formula, and `+` is still set union rather than
+    // arithmetic (E-19).
+    assert_cells(
+        "numeral.als",
+        &[],
+        &[
+            ("plus[3,4]", "{7}"),
+            ("B.v", "{3}"),
+            ("3 = 3", "true"),
+            ("3 in Int", "true"),
+            ("3 + 4", "{3, 4}"),
+        ],
     );
 }

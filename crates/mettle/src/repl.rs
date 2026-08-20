@@ -18,10 +18,14 @@
 //!    directly against its live, in-process instance — not the reference's
 //!    XML-serialize-then-reparse plumbing, which exists only because its
 //!    evaluator panel is decoupled from the solver (§5).
-//! 3. **Rendering is by sort** (§3): a formula prints `true`/`false`, a
-//!    genuinely `int`-typed expression (`#e`, `sum`) prints a bare numeral, and
-//!    everything relational prints `{tuple, …}`. `plus[3,4]` is `Int`-*set*-typed
-//!    and therefore prints `{7}`, not `7` — a real Alloy typing rule, not a quirk.
+//! 3. **Rendering is by sort** (§3): a formula prints `true`/`false`, an
+//!    expression whose Kodkod translation is an `IntExpression` prints a bare
+//!    numeral, and everything else prints `{tuple, …}`. The int **type** is not
+//!    the discriminator (mt-099) — `3`, `int[3]` and `plus[3,4]` are all
+//!    int-typed and all print `{n}`. Only `#e`, a `sum x: d | e` quantifier and
+//!    a shift print bare; `Int[·]`, `let`, parentheses and an `if-then-else`'s
+//!    then branch are transparent. `als_core::FragmentRoot::Evaluator` selects
+//!    that rule, which is the evaluator's own and not the solve path's.
 //!
 //! **Tuple order is mettle's live solve order** (deterministic `TupleSet`
 //! order), not the reference GUI console's XML-round-trip order. The two differ
@@ -57,8 +61,8 @@ use als_core::ir::{Ir, Mutability, RelExpr, RelExprId, RelExprKind, RelId, Relat
 use als_core::temporal::UnrolledBounds;
 use als_core::{
     eliminate_fragment_at_state, lower_fragment, lower_fragment_keeping_temporal, normalize_state,
-    BoundsResult, Evaluator, FragmentInput, Instance, LoweredFragment, LoweredGoal, ScopedUniverse,
-    SolveOptions, TranslateError,
+    BoundsResult, Evaluator, FragmentInput, FragmentRoot, Instance, LoweredFragment, LoweredGoal,
+    ScopedUniverse, SolveOptions, TranslateError,
 };
 use als_syntax::ast::{Ast, ExprKind};
 use als_syntax::{parse_fragment, ArenaId as _, FileId, FragmentError, Span, FRAGMENT_OFFSET};
@@ -86,8 +90,8 @@ const STATE_COMMAND: &str = ":state";
 pub(crate) enum ReplValue {
     /// A formula's truth value.
     Formula(bool),
-    /// A genuinely `int`-typed expression's value, already wrapped to the
-    /// command's bitwidth.
+    /// The value of an expression that translates to an `IntExpression`,
+    /// already wrapped to the command's bitwidth.
     Int(i64),
     /// A relational value over the command's universe.
     Rel(TupleSet),
@@ -454,6 +458,7 @@ pub(crate) fn eval_input(ctx: &mut ReplContext<'_>, input: &str) -> Result<ReplV
         expr: fragment.expr,
         bitwidth: ctx.scoped.bitwidth,
         globals: &ctx.global_values,
+        root: FragmentRoot::Evaluator,
     };
     // Against a trace, every temporal operator is legal input (§(h), probe
     // T-24): keep the temporal nodes, then eliminate them at the current state

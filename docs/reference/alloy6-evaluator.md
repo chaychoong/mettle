@@ -218,8 +218,12 @@ no separate "formula mode" vs. "expression mode."
   pin**: `plus[...]` type-checks to the built-in `Int` **set** type, not
   primitive `int`, so it goes through the `Expression` branch of
   `A4Solution.eval`, not the `IntExpression` branch — it renders as a
-  singleton tupleset `{7}`, **not** a bare `7`. Only genuinely `int`-typed
-  expressions (`#`, `sum`) render as a bare numeral. Verified this is not a
+  singleton tupleset `{7}`, **not** a bare `7`. **Careful — "int-typed renders
+  bare" is not the rule** (mt-099): `int[3]` is int-typed and renders `{3}`
+  (E-65), as does a bare literal `3` (E-59). Only `#e`, a `sum x: d | e`
+  quantifier, and a shift render bare; §3 states the measured rule in full.
+  Note `sum` is two different things here — the *quantifier* renders bare, the
+  `sum e` *cast* does not. Verified this is not a
   probe artifact: `3 + A` (E-19) renders `{3, A$0}` — confirming `+` is
   Alloy's set-union operator over `Int`/relations, never arithmetic
   addition (`plus[]` is the only spelling for arithmetic `+`).
@@ -327,7 +331,8 @@ the instance visualizer's different code path, out of scope here).
 | Unary relation, several atoms | `B` (3 atoms) | `{B$0, B$1, B$2}` | E-37 |
 | Binary relation | `f` (B one-to-one A) | `{B$0->A$0, B$1->A$0, B$2->A$0}` | E-38 |
 | Ternary relation | `g` (A -> B) | `{C$0->A$0->B$0, C$0->A$0->B$1, ..., C$2->A$0->B$2}` | E-39 |
-| Bare integer (genuinely `int`-typed) | `#A` | `1` (as `String`, not `Integer` — §0) | E-12 |
+| Bare integer (an `IntExpression`, see the rule below) | `#A` | `1` (as `String`, not `Integer` — §0) | E-12 |
+| Singleton `Int` atom (an int-*typed* expression that is nonetheless an `Expression`) | `3`, `int[3]`, `plus[3,4]` | `{3}`, `{3}`, `{7}` | E-59, E-65, E-13 |
 | Boolean | `some A` | `true` | E-08 |
 | String atom (exists in instance) | `"hello"` (model uses it) | `{"hello"}` | E-40 |
 | `seq` value | `Holder.xs` | `{0->A$0, 1->A$0}` — an ordinary binary (index -> element) relation, **no special seq syntax** | E-42 |
@@ -338,6 +343,52 @@ the instance visualizer's different code path, out of scope here).
 | Type error, bad join | `A[B]` (arity/type mismatch) | `Type error at line 1 column 1:\nThis cannot be a legal relational join where\nleft hand side is this/B (type = {this/B})\nright hand side is this/A (type = {this/A})` | E-44 |
 | Unknown string literal | `"hello"` (string not in this instance's bounds) | `Fatal error at line 1 column 1:\nString literal "hello" does not exist in this instance.` (`ErrorFatal`) | E-49 |
 | Higher-order quantification | (an expr needing HO quant) | `ErrorType("Higher-order quantification is not allowed in the evaluator.")` | §0 step 10, source-cited only — not independently exercised this pass; low risk, mechanism is unambiguous from bytecode |
+
+**Bare numeral vs. singleton `Int` atom — the full rule (mt-099).** It is
+tempting to read §1's `#`/`sum` remark as "int-typed renders bare". That is
+**wrong**, and the counterexamples are ordinary input. Every cell in E-59-E-79
+was measured to carry Alloy type `{Int}` with `is_int` set — the type is *not*
+the discriminator. What decides is the branch of `A4Solution.eval` the root
+lands in (§0): an `IntExpression` renders bare, an `Expression` becomes an
+`A4TupleSet` and renders `{n}`.
+
+> **The root renders bare iff it is a cardinality `#e`, a `sum x: d | e`
+> quantifier, or a shift (`<<` / `>>` / `>>>`). Every other Int-valued root
+> renders `{n}`** — a numeral literal (E-59-E-64), `int[e]` / `sum e` /
+> `sum[e]` (E-65-E-69), an `integer/*` fun call (E-13), and any Int-valued
+> relation or join.
+>
+> Four constructs are **transparent** — they pass the question through rather
+> than answering it: parentheses and a one-expression block `{e}` (E-79); a
+> user-written `Int[e]` (E-70-E-72); a `let`, whose body's own translation
+> decides (E-73-E-75); and an `if-then-else`, which reads its **then** branch
+> alone, by this same rule (E-76/E-77).
+
+Two halves of that are counter-intuitive and worth stating plainly. First,
+`int[e]` / `sum e` — the operator that *means* "convert to a primitive int" —
+renders as a **set**: it is `CAST2INT`, and §0 step 8's
+`parseOneExpression_fromString` ends by re-resolving the parsed body against
+its own type (`scratchpad/src794/CompModule.java:988-990`), which re-wraps a
+`CAST2INT` root as `Int[int[e]]`; `visit(ExprUnary)` case `CAST2SIGINT` is
+`cint(x.sub).toExpression()`
+(`scratchpad/src794/TranslateAlloyToKodkod.java:888-889`), an `IntToExprCast`,
+which **is** an `Expression`. `CARDINALITY` gets no such wrapper and stays
+`cset(x.sub).count()`, an `IntExpression`. Second, and symmetrically, that same
+re-resolve *strips* a user-written `CAST2SIGINT` at the root, so `Int[#A]`
+renders bare `1` while `int[#A]` renders `{1}`.
+
+Honest limit on that second half: the strip rule was characterized
+**behaviorally**, not traced to a bytecode branch (`ExprUnary` is not in
+`scratchpad/src794/`). "A top-level `CAST2SIGINT` is stripped unless its sub is
+a `CAST2INT`" fits all 20+ cells measured, but it is recorded as a behavioral
+pin, not a source citation.
+
+mettle implements this as `Lowerer::fragment_sort`, selected by
+`FragmentRoot::Evaluator` on `FragmentInput` — deliberately *not* an edit to
+`Lowerer::sort_of`, which asks the different (in-expression coercion) question
+and is the solve path's classifier too. The instance-XML writer's macro bodies
+keep `sort_of` (`FragmentRoot::Value`), because `A4SolutionWriter` builds its
+`Expr` directly and never goes through the evaluator's re-resolve.
 
 **Tuple/atom ordering — a genuinely load-bearing, non-obvious pin.**
 `univ`/`Int` rendered through the evaluator's actual (XML-round-trip) path
@@ -493,7 +544,39 @@ everything with `scratchpad/probe/mt061/probes.sh`.
 | E-56 | Qual.als#0 | `zz/Ord$0`, `so/Nope$0` | `ErrorSyntax`, same shape — no such alias / no such sig |
 | E-57 | Qual.als#0 | `A$9` | `ErrorSyntax`, same shape — index beyond scope |
 | E-58 | Qual.als#0 | `so/Ord` (the SIG by qualified name) | `ErrorSyntax`, "cannot be found" — only atoms/skolems are `addGlobal`'d |
-| E-59 | Qual.als#0 | `3` (a bare numeral literal) | `{3}` — the Expression path, **NOT** a bare numeral; mettle renders `3` (divergence recorded in LIMITATIONS, mt-098) |
+| E-59 | Qual.als#0 / Num.als#0 | `3` (a bare numeral literal) | `{3}` — the Expression path, **NOT** a bare numeral (found mt-098, surface pinned and mettle fixed at mt-099) |
+
+**mt-099 — the numeral/int-cast surface (jar-verified 2026-08-21).** Fixture
+`Num.als` (`sig A {}`, `one sig B { v: one Int }`, `fact { B.v = 3 }`,
+`run { some A } for 1 but 4 int`; banked as
+`crates/mettle/tests/fixtures/repl/numeral.als`). Same harness as above;
+44/44 of these cells were re-measured against that exact fixture with mettle
+side by side (`scratchpad/probe/mt099/sweep-fixture.txt`). **Every cell below
+has Alloy type `{Int}` with `is_int` set** — measured, the `{n}` ones included —
+so the int *type* is not what decides; see §3's rule.
+
+| id | Input | Verdict / observation |
+|---|---|---|
+| E-60 | `-3` | `{-3}` — a negative numeral literal parses, and takes the same Expression path |
+| E-61 | `0` / `7` / `-8` | `{0}` / `{7}` / `{-8}` |
+| E-62 | `8` (bitwidth 4) | `{-8}` — an **out-of-range literal wraps two's-complement, silently**: no error, no rejection, no `(OF)` marker |
+| E-63 | `15` / `16` / `-9` | `{-1}` / `{0}` / `{7}` — same wrap rule |
+| E-64 | `Int[3]` / `Int[Int[3]]` | `{3}` — a literal stays the Expression path however it is wrapped |
+| E-65 | `int[3]` | `{3}` — **`CAST2INT` renders as a tupleset**, not bare |
+| E-66 | `sum[3]` / `sum 3` | `{3}` — the same AST node, the same result |
+| E-67 | `int[B.v]` / `sum B.v` | `{3}` — also for a genuine `Int`-valued relation |
+| E-68 | `int[#A]` | `{1}` — also for an argument that would itself render bare |
+| E-69 | `int[int[3]]` | `{3}` |
+| E-70 | `Int[#A]` | `1` — **bare**: a user-written `Int[·]` at the root is *dropped*, so it is transparent, not relational |
+| E-71 | `Int[sum x: A \| 1]` | `1` — same |
+| E-72 | `Int[B.v]` / `Int[plus[3,4]]` | `{3}` / `{7}` — transparent to a relational argument too |
+| E-73 | `let x = #A \| x` | `1` — `let` is substitution (`visit(ExprLet)`), so the body's own translation decides |
+| E-74 | `let x = #A \| let y = x \| y` | `1` — transitively, through nested `let`s |
+| E-75 | `let x = 3 \| x` / `let x = plus[1,1] \| x` / `let x = 3 \| #x` | `{3}` / `{2}` / `1` |
+| E-76 | `(some A => int[3] else 0)` | `{3}` — the ITE reads its **then** branch through this same rule (mt-095's dispatch, refined) |
+| E-77 | `(some A => #A else 0)` / `(some A => 3 else 4)` | `1` / `{3}` |
+| E-78 | `3 << 1` / `7 >> 1` / `-1 >>> 1` / `#A << 1` | `6` / `3` / `7` / `2` — a **shift** is a `BinaryIntExpression`, so it renders bare |
+| E-79 | `(#A)` / `{ #A }` / `#(A+B)` / `#B.v` / `#none` / `#Int` | bare — parentheses and a one-expression block are transparent |
 
 ## 7. Unpinned corners (be honest)
 

@@ -48,7 +48,7 @@ pub use instrument::{
 };
 pub use lower::{
     lower_command, lower_command_keeping_temporal, lower_fragment, lower_fragment_keeping_temporal,
-    FragmentInput, GoalConjunct, LoweredFragment, LoweredGoal, Provenance,
+    FragmentInput, FragmentRoot, GoalConjunct, LoweredFragment, LoweredGoal, Provenance,
 };
 pub use scope::{compute_universe, MintedAtoms, ScopeTable, ScopedSig, ScopedUniverse};
 pub use solve::{

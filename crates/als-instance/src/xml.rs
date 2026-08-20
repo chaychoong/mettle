@@ -37,8 +37,8 @@ use als_core::bounds::{AtomId, Tuple, TupleSet, Universe};
 use als_core::ir::{Ir, RelId};
 use als_core::{
     eliminate_fragment_at_state, lower_fragment, lower_fragment_keeping_temporal, normalize_state,
-    BoundsResult, Evaluator, FragmentInput, Instance, LoweredFragment, LoweredGoal, ScopedUniverse,
-    SolveOptions, TemporalTrace, TranslateError,
+    BoundsResult, Evaluator, FragmentInput, FragmentRoot, Instance, LoweredFragment, LoweredGoal,
+    ScopedUniverse, SolveOptions, TemporalTrace, TranslateError,
 };
 use als_syntax::ast::{
     Ast, BinOp, CmdKind, DeclId, Expect, ExprId, ExprKind, Para, ParaName, SigMult, UnOp,
@@ -428,6 +428,7 @@ fn lower_macros(
             expr: func.body,
             bitwidth: req.scoped.bitwidth,
             globals: &[],
+            root: FragmentRoot::Value,
         };
         let per_block = match req.solution {
             XmlSolution::Static { .. } => {
