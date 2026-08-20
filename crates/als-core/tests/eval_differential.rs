@@ -394,3 +394,43 @@ fn int_next_prev_builtins() {
     assert_differential("one sig X { v: one Int }\nrun { X.v.next = X.v } for 1 but 3 int\n");
     assert_differential("one sig X { v: one Int }\nrun { some X.v.prev } for 1 but 3 int\n");
 }
+
+// ---- mt-096: the union guard-shedding rule, encoder vs evaluator ------------
+
+/// The layer-(2) union rule (translation-ref §10.7h) lives in the SHARED
+/// `overflow_guard::collect_capable_casts`, so the encoder and the evaluator
+/// cannot drift by construction. These models make that a measured fact rather
+/// than an argument: each puts an overflow-capable `Int[·]` cast in a union and
+/// brute-forces every instance in BOTH overflow modes.
+///
+/// Bitwidth 2 (`Int` = −2..1) keeps the brute force tiny while still making the
+/// overflow reachable — `plus[F.v,1]` overflows exactly at `F.v = 1`.
+#[test]
+fn mt096_union_guard_shedding_matches_between_back_ends() {
+    let model = |body: &str| {
+        format!("open util/integer\none sig F {{ v: one Int }}\nrun {{ {body} }} for 1 but 2 int\n")
+    };
+    for body in [
+        // Sheds: the union's sibling carries no capable cast.
+        "(plus[F.v,1] + 0) in Int",
+        "(plus[F.v,1] + none) in Int",
+        "no (plus[F.v,1] + 0)",
+        "some (plus[F.v,1] + 0)",
+        // Guards: BOTH operands carry one.
+        "(plus[F.v,1] + plus[F.v,1]) in Int",
+        // Guards: every other former still descends.
+        "(plus[F.v,1] & Int) in Int",
+        "(plus[F.v,1] - none) in Int",
+        "(F.v > 0 => plus[F.v,1] else 0) in Int",
+        // Bare, the negative-space control.
+        "plus[F.v,1] in Int",
+        "plus[F.v,1] = 0",
+        // The union under an int reader (`sum`), which sheds on every former.
+        "(plus[F.v,1] + 0) >= 0",
+        // A union nested under another former, and vice versa.
+        "((plus[F.v,1] + 0) & Int) in Int",
+        "((plus[F.v,1] & Int) + 0) in Int",
+    ] {
+        assert_differential_both_modes(&model(body));
+    }
+}

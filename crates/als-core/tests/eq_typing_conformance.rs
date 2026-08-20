@@ -605,3 +605,195 @@ fn part_d_change_is_inert_where_nothing_overflows() {
         assert_eq!(solve(&src, false), Ok(false), "{cell} forbid");
     }
 }
+
+// ------- Part E: the layer-(2) set-former guard corner (mt-096) --------------
+//
+// Jar cells from `scratchpad/probe/mt096/` (`r1_former_reader.als` → `f*`,
+// `r2_union_depth.als` → `u*`, `r3_union_sibling.als` → `v*`, `r4_t1t4.als` →
+// `t*`; raw jar output in the matching `*_jar.txt`, per-cell verdicts in
+// `*_compare.txt`). Rule and its open edge in translation-ref §10.7h.
+//
+// LEDGER-010's amended layer (2) says a cast reached through *any* set former
+// sheds the comparison-level guard. The mt-096 wave measured that against the
+// jar across a former × reader matrix and it is **too broad**: the jar keeps the
+// guard through an intersection, a difference, an if-then-else, a join, an
+// override and a product. Only the UNION sheds, and only sometimes — see the
+// `#[ignore]`d pin at the end for why no implementable rule was found.
+//
+// Each cell's reader is chosen to be TRUE on the (empty, or `{3}`) value the
+// layer-(1) emptiness leaves behind, so guard ⇒ UNSAT and no-guard ⇒ SAT, and
+// the allow column is the internal control: an allow/forbid split IS the guard.
+
+/// The Part-E cell shape — `scratchpad/probe/mt096/r1_former_reader.als`
+/// exactly. `plus[n,7]` overflows at every binding of `n` at bitwidth 4.
+fn part_e_cell(body: &str) -> String {
+    format!(
+        "open util/integer\n\
+         sig Node {{}}\n\
+         run {{ all n: {{x: Int | x>=1 and x<=7}} | {body} }} for 3 but 4 int\n"
+    )
+}
+
+/// The same, plus the `P.g` diagonal the join cells need.
+fn part_e_join_cell(body: &str) -> String {
+    format!(
+        "open util/integer\n\
+         one sig P {{ g: Int -> Int }}\n\
+         fact Diag {{ P.g = {{a: Int, b: Int | a = b}} }}\n\
+         run {{ all n: {{x: Int | x>=1 and x<=7}} | {body} }} for 3 but 4 int\n"
+    )
+}
+
+#[test]
+fn part_e_every_former_except_union_keeps_the_guard() {
+    // The measured negative space, and the reason the `collect_capable_casts`
+    // walk still descends through all of these. Each has the allow/forbid split
+    // that marks a real guard.
+    for (cell, body) in [
+        ("f3r1/u2", "(plus[n,7] & Int) in Int"),
+        ("u5", "((plus[n,7] & Int) & Int) in Int"),
+        ("f4r1", "(plus[n,7] - none) in Int"),
+        ("f6r1", "(n>0 => plus[n,7] else 0) in Int"),
+        ("f7r1", "(n<=0 => 0 else plus[n,7]) in Int"),
+    ] {
+        let src = part_e_cell(body);
+        assert_eq!(solve(&src, false), Ok(false), "{cell} forbid");
+        assert_eq!(solve(&src, true), Ok(true), "{cell} allow");
+    }
+    // The `no` reader over the same formers: UNSAT in BOTH modes — in allow mode
+    // for a value reason (the wrapped cast is a non-empty singleton), in forbid
+    // mode because the guard fires on the empty one.
+    for (cell, body) in [
+        ("f3r2", "no (plus[n,7] & Int)"),
+        ("f4r2", "no (plus[n,7] - none)"),
+        ("f6r2/m14", "no (n>0 => plus[n,7] else 0)"),
+        ("f7r2", "no (n<=0 => 0 else plus[n,7])"),
+    ] {
+        let src = part_e_cell(body);
+        assert_eq!(solve(&src, false), Ok(false), "{cell} forbid");
+        assert_eq!(solve(&src, true), Ok(false), "{cell} allow");
+    }
+    let join = part_e_join_cell("(plus[n,7]).(P.g) in Int");
+    assert_eq!(solve(&join, false), Ok(false), "f8r1 forbid");
+    assert_eq!(solve(&join, true), Ok(true), "f8r1 allow");
+}
+
+#[test]
+fn part_e_a_union_of_two_capable_casts_guards() {
+    // u11/v3: whatever the union corner turns out to be, it is NOT unconditional
+    // shedding — when both operands carry a capable cast the guard survives, and
+    // mettle matches the jar here today.
+    for (cell, body) in [
+        ("v3", "(plus[n,7] + plus[n,7]) in Int"),
+        ("u11", "(plus[n,7] + plus[n,1]) in Int"),
+    ] {
+        let src = part_e_cell(body);
+        assert_eq!(solve(&src, false), Ok(false), "{cell} forbid");
+        assert_eq!(solve(&src, true), Ok(true), "{cell} allow");
+    }
+}
+
+#[test]
+fn part_e_union_guard_survives_without_a_quantifier() {
+    // t4c/t4b — the mt-096 re-probe of mt-051's T1/T4, and the cells that refute
+    // every "the union sheds" rule tried at mt-096. `plus[F.v,7] + 1 in Int` is
+    // jar forbid UNSAT: a union-nested capable cast, sibling a plain constant
+    // cast, and the guard still fires. The ONLY difference from probe u1 (jar
+    // forbid SAT, same union shape) is the enclosing comprehension-∀.
+    let no_quant = "open util/integer\none sig F { v: one Int }\nfact FixF { F.v = 1 }\n\
+        run { plus[F.v,7] + 1 in Int } for 3 but 4 int\n";
+    assert_eq!(solve(no_quant, false), Ok(false), "t4c forbid");
+    assert_eq!(solve(no_quant, true), Ok(true), "t4c allow");
+
+    // t4e — the same expression under the part-C forall is jar forbid **SAT**.
+    // mettle answers UNSAT (it keeps guarding); that divergence is the pinned
+    // union corner, see `part_e_union_sheds_under_a_quantifier_in_the_jar`.
+    let quant = part_e_cell("(plus[n,7] + 1) in Int");
+    assert_eq!(solve(&quant, true), Ok(true), "t4e allow");
+}
+
+#[test]
+fn part_e_the_sum_reader_sheds_on_every_former() {
+    // Unchanged from mt-095 §10.7g and untouched by this bead: an int-position
+    // read of a set goes through `.sum()`, which carries no guard whatever the
+    // former — so these stay SAT.
+    for (cell, body) in [
+        ("f1r3", "(plus[n,7] + 3) >= 0"),
+        ("f3r3", "(plus[n,7] & Int) >= 0"),
+        ("f4r3", "(plus[n,7] - none) >= 0"),
+        ("f6r3", "(n>0 => plus[n,7] else 0) >= 0"),
+        ("f5r3", "{y: Int | y in plus[n,7]} >= 0"),
+    ] {
+        let src = part_e_cell(body);
+        assert_eq!(solve(&src, false), Ok(true), "{cell} forbid");
+    }
+    // …while the BARE cast in int position keeps it (`toInt` unwraps).
+    let bare = part_e_cell("plus[n,7] >= 0");
+    assert_eq!(solve(&bare, false), Ok(false), "f0r3 forbid");
+}
+
+#[test]
+fn part_e_comprehension_sheds_on_both_sides() {
+    // f5: a comprehension body is a Formula position, which the walk already
+    // refuses to enter (each inner comparison guards at its own site), and the
+    // jar agrees — SAT in both modes for every reader.
+    for (cell, body) in [
+        ("f5r1", "{y: Int | y in plus[n,7]} in Int"),
+        ("f5r2", "no {y: Int | y in plus[n,7]}"),
+    ] {
+        let src = part_e_cell(body);
+        assert_eq!(solve(&src, false), Ok(true), "{cell} forbid");
+    }
+}
+
+#[test]
+fn part_e_non_capable_and_non_overflowing_controls() {
+    // u18/u19/u20/v4: the UNSATs above come from overflow capability, not from
+    // the shape — a constant cast and a never-overflowing one are SAT in both
+    // modes in the very same positions.
+    for (cell, body) in [
+        ("u19", "Int[3] in Int"),
+        ("u18", "(Int[3] & Int) in Int"),
+        ("u20", "(plus[n,0] & Int) in Int"),
+        ("v4", "plus[n,0] in Int"),
+    ] {
+        let src = part_e_cell(body);
+        assert_eq!(solve(&src, false), Ok(true), "{cell} forbid");
+        assert_eq!(solve(&src, true), Ok(true), "{cell} allow");
+    }
+}
+
+#[test]
+#[ignore = "mt-096 PINNED: a union-nested cast under a quantifier sheds the \
+            jar's comparison guard, but no IR-level predicate separates the \
+            shedding cells (u1/u10/v6/v7/v8/v9) from the guarding ones \
+            (t4c/t4b with no quantifier, u11/v3 with two capable operands, v1 \
+            with a sibling that cannot overflow) — translation-ref §10.7h"]
+fn part_e_union_sheds_under_a_quantifier_in_the_jar() {
+    // Jar verdicts pinned at mt-096. All forbid **SAT**: under the part-C
+    // forall, a union whose sibling carries no capable cast sheds the guard.
+    // mettle keeps descending through the union and answers UNSAT — the
+    // CONSERVATIVE direction (it never turns a jar UNSAT into a mettle SAT).
+    //
+    // Closing this needs a rule that also explains `part_e_union_guard_survives
+    // _without_a_quantifier` (same union shape, jar UNSAT) and
+    // `part_e_a_union_of_two_capable_casts_guards`. mt-096 tried three and each
+    // was refuted by a cell; the corner is recorded, not guessed at.
+    for (cell, body) in [
+        ("u1", "(plus[n,7] + 3) in Int"),
+        ("u10", "(3 + plus[n,7]) in Int"),
+        ("v8", "(plus[n,7] + none) in Int"),
+        ("v6", "(plus[n,7] + Node) in univ"),
+        ("f1r5/k16", "(plus[n,7] + 3) = 3"),
+        ("f2r2", "no (plus[n,7] + none)"),
+        ("u12", "some (plus[n,7] + 3)"),
+        ("t4e", "(plus[n,7] + 1) in Int"),
+        ("u3", "((plus[n,7] + 3) & Int) in Int"),
+        ("u4", "((plus[n,7] & Int) + 3) in Int"),
+        ("u7", "((n>0 => plus[n,7] else 0) + 3) in Int"),
+        ("v9", "(plus[n,7] + 3 + plus[n,1]) in Int"),
+    ] {
+        let src = part_e_cell(body);
+        assert_eq!(solve(&src, false), Ok(true), "{cell} forbid");
+    }
+}

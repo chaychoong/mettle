@@ -2291,6 +2291,14 @@ union — all matrix ops merge — but not probe-confirmed).
 > comparison-level guard, and only a bare one does. FACTs 1, 2 and 4 stand; the
 > *bare*-cast half of FACT 3 stands.
 >
+> **NARROWED AGAIN (mt-096, 2026-08-20):** the correction above over-generalized
+> from k4/k16. A 75-cell former × reader matrix shows the jar KEEPS the guard
+> through an intersection, a difference, an if-then-else, a join, an override and
+> a product — only a union sheds, and even that is context-dependent and not
+> statable as a rule over the IR. See
+> [§10.7h](#107h-mt-096-the-layer-2-set-former-guard-corner--measured-and-pinned-jar-verified-2026-08-20).
+> FACT 3 is correct as originally written for every former except the union.
+>
 > **CORRECTION (mt-090, 2026-07-30): FACT 5 is RETRACTED in full.** Rule 4 —
 > the "int-ITE / `implies`-antecedent escape" — does not exist. Both halves
 > were confounded, each in its own way; see
@@ -2518,7 +2526,10 @@ IntExpression toInt(Object a) {
    fact-pinned relation, a mix of both, an exactly-bound cardinality and a
    merely-constrained one, and all fourteen cells are forbid SAT. Wave 4 shows
    the ITE is not special either: a union, an intersection, a difference and a
-   comprehension shroud a cast the same way.
+   comprehension shroud a cast the same way. **Read that as scoped to the `sum`
+   reader, which is what those cells (k2/k5/k6/k7) use** — mt-096 measured the
+   set-level readers and `#` separately and there only the union sheds
+   ([§10.7h](#107h-mt-096-the-layer-2-set-former-guard-corner--measured-and-pinned-jar-verified-2026-08-20)).
 
 #### The decisive cells
 
@@ -2550,6 +2561,17 @@ Jar-free tests: `eq_typing_conformance.rs` part D (and the formerly `#[ignore]`d
 `part_c_mixed_branch_ite_is_relational_in_the_jar`, now passing).
 
 #### Residual divergences (11 cells, four families — all NEW, none mt-095's target)
+
+> **All four were triaged at mt-096 and all four are PINNED** — each with a
+> measured blocker, not a guess; see
+> [§10.7h](#107h-mt-096-the-layer-2-set-former-guard-corner--measured-and-pinned-jar-verified-2026-08-20).
+> R1 needs resolver-side surface information mettle does not carry. R2 turns out
+> to be entangled with the union corner (`#` behaves like the set-level readers
+> throughout the mt-096 matrix). R3 is **not** the one-line peephole it looks
+> like: adding it fixes n6/n7 and breaks n1/n2, because mettle routes `#X = 1`
+> through `lower_int` where the jar does a set comparison — it needs the
+> int-compare gate re-keyed on the jar's literal-`IntToExprCast` test first. R4's
+> blocker is scoping: `ite_sort` runs before the `let`'s binder is pushed.
 
 * **R1 (i8)** — Alloy's resolver re-wraps a surface `int[·]` in an ITE branch as
   `Int[int[·]]` (`q1_ast.txt`), making it a set, while `#e` in the identical
@@ -2585,9 +2607,11 @@ Jar-free tests: `eq_typing_conformance.rs` part D (and the formerly `#[ignore]`d
 * **R4 (i23)** — mettle's `sort_of` does not follow a `let` binding to an
   int-valued RHS; its numeral twin i22 agrees, giving a clean minimal pair.
 * **R5 (k4/k16, a doc correction, not a new divergence)** — §10.7e FACT 3's
-  "union-nested casts guard too" is **too strong**: a union-nested cast
-  contributes no guard to a set-level `=` in the jar. Every FACT-3 cell that is
-  jar-confirmed had a bare cast on at least one side.
+  "union-nested casts guard too" does not hold for k4/k16: a union-nested cast
+  contributes no guard to a set-level `=` there. **Narrowed by §10.7h (mt-096):**
+  the generalization these cells prompted — that *any* set former sheds — is
+  refuted by a 75-cell matrix; only the union does, and not by any rule statable
+  over the IR. FACT 3 stands unchanged for every other former.
 
 #### g5 — the cross-polarity translation cache, probed at last (16/16 agreement)
 
@@ -2616,6 +2640,99 @@ and mt-056's eager formula-`let` lowering translates a `let` RHS once at the
 binding site. Cells 10–13 put the shared node under a quantifier, so the cache
 key carries a free-variable binding — the sub-corner §10.7f called untested —
 and those agree too.
+
+### 10.7h mt-096: the layer-(2) set-former guard corner — measured and PINNED (jar-verified 2026-08-20)
+
+**Mission.** Implement §10.7g's / LEDGER-010's amended layer (2): "a cast reached
+through any set former contributes its layer-(1) emptiness value but **no**
+comparison-level guard." Harness: 75 cells across
+`scratchpad/probe/mt096/r{1,2,3,4}_*.als` (mt-090's `AllCmdProbe.java`, sat4j,
+symmetry 0, both `noOverflow` settings per cell). Full narrative:
+`scratchpad/probe/mt096/NOTES.md`.
+
+**Outcome: the amended wording is REFUTED, and the corner is pinned, not fixed.**
+Implementing it literally would have made mettle strictly worse.
+
+#### What the former × reader matrix actually says
+
+`r1_former_reader.als` crosses eight set formers with four readers (36 cells).
+Each cell's reader is TRUE on the value layer-1 emptiness leaves behind, so
+**guard ⇒ UNSAT, no guard ⇒ SAT**, and an allow/forbid split is the guard's
+signature. Forbid column, `∅`/`{3}` values throughout:
+
+| former | `in Int` | `no` | `>= 0` (`sum`) | `#… >= 0` |
+|---|---|---|---|---|
+| bare | guard | guard | guard | guard |
+| **union** | **shed** | **shed** | shed | **shed** |
+| intersection | guard | guard | shed | guard |
+| difference | guard | guard | shed | guard |
+| **comprehension** | **shed** | **shed** | shed | **shed** |
+| if-then-else (either branch) | guard | guard | shed | guard |
+| join | guard | guard | shed | guard |
+| override / product (`r2` u16/u17) | guard | — | — | — |
+
+Two axes, not one:
+
+1. **The `sum` reader sheds on every former** — this is §10.7g's rule and it is
+   unchanged: `toInt` can only UNWRAP a *bare* `IntToExprCast`, so anything else
+   falls through to `.sum()`, which reads the matrix's value only.
+2. **On the set-level readers and `#`, only the UNION and the COMPREHENSION
+   shed.** Intersection, difference, if-then-else, join, override and product all
+   keep the guard.
+
+**mettle already matched the jar on 26 of those 36 cells**, because
+`collect_capable_casts` descends through every former and refuses to enter
+formula positions (which is why the comprehension row already agrees). The
+amended blanket wording would have **regressed 12 agreeing cells**.
+
+#### Why even "only the union sheds" is not implementable
+
+Three successively narrower rules were tried, each refuted by a cell:
+
+* *"Any set former sheds"* — refuted by the intersection/difference/ITE/join rows
+  above, and by `m14` (`no (n>0 => plus[n,7] else 0)`, jar UNSAT).
+* *"A union always sheds"* — refuted by **u11/v3**: a union of **two**
+  overflow-capable casts (`plus[n,7] + plus[n,1]`, `plus[n,7] + plus[n,7]`) is
+  jar forbid **UNSAT**. The guard survives.
+* *"A union sheds unless both operands are capable"* — implemented, measured
+  (28 → 9 divergences over the three waves, no regressions), and then **refuted
+  by `r4_t1t4.als`**. mt-051's T1/T4 were re-probed against the current jar and
+  the banked expectation is **correct**: `plus[F.v,7] + 1 in Int` is jar forbid
+  **UNSAT** (probe t4c) — a union, sibling a constant cast, guard fires. The only
+  difference from probe u1 (jar forbid **SAT**, identical union shape) is the
+  enclosing comprehension-∀. The rule also mispredicts **v1**
+  (`plus[n,7] + plus[n,0]`, sibling capable but unable to overflow, jar SAT).
+
+So the shedding depends jointly on the union, on the sibling operand, and on the
+quantifier context, in a way no predicate over mettle's IR separates across
+{u1, t4c, v1, v3, u11, v9}. The jar's own mechanism does not localize either:
+`javap` shows `BooleanMatrix.and/or/difference/dot` all call `mergeDefConds`
+while `choice` does not, which is the **opposite** of the observed behaviour on
+both counts — so the effect lives in sparse-matrix folding, not in an
+inspectable rule.
+
+#### The decision
+
+**PIN.** `collect_capable_casts` keeps descending through unions. That is the
+**conservative** direction: mettle over-guards, so it can turn a jar SAT into a
+mettle UNSAT but never a jar UNSAT into a mettle SAT. Zero corpus incidence
+(stage-1 sweep byte-identical). Pinned by the `#[ignore]`d
+`eq_typing_conformance::part_e_union_sheds_under_a_quantifier_in_the_jar`
+(12 jar cells); the measured negative space — every other former, the `sum`
+reader, the two-capable-cast case, the no-quantifier case, and the
+non-capable/non-overflowing controls — is live in the six passing part-E tests.
+
+**LEDGER-010's layer (2) should be reverted to its pre-mt-095 wording** ("every
+capable cast reachable through the compared sides' set-operator structure,
+unions included") with this section cited as the documented exception list. The
+mt-095 k4/k16 observation that prompted the amendment is real, but it is one
+corner of a context-dependent effect, not a general rule.
+
+#### Also found
+
+* **`lone` over an intersection sheds where `no`/`in` guard** (probe u15, jar
+  SAT / mettle UNSAT). A third axis — reader-dependence *within* the set-level
+  readers — untouched by this bead and unexplained.
 
 ### 10.8 mt-053 `univ`/`iden` live-universe probes (jar-verified 2026-07-21)
 

@@ -98,6 +98,19 @@ pub(crate) fn overflow_capable(ir: &Ir, id: IntExprId) -> bool {
 /// their own comparison sites) nor into the int expr beneath a cast (a
 /// nested-inside-`Card` cast is a documented out-of-scope corner). Pushed in
 /// traversal order so the caller's lhs-then-rhs walk is deterministic (STYLE D2).
+///
+/// **The union corner is UNPINNED and deliberately left over-guarding**
+/// (translation-ref §10.7h, mt-096). The jar sheds the guard for some
+/// union-nested casts (`(plus[n,7] + 3) = 3` under a comprehension-∀ is jar SAT,
+/// probes k4/k16/u1) but keeps it for others that differ only in context
+/// (`plus[F.v,7] + 1 in Int` with no quantifier is jar UNSAT, probe t4c — the
+/// mt-051 T1/T4 cells, re-confirmed at mt-096) or only in the sibling operand (a
+/// union of TWO capable casts guards, probes u11/v3, while a sibling that cannot
+/// actually overflow sheds, probe v1). No predicate over the IR separates all of
+/// {u1, t4c, v1, v3, u11, v9}, so mettle keeps descending — the CONSERVATIVE
+/// direction, which never turns a jar UNSAT into a mettle SAT. Every other
+/// former is jar-confirmed to keep the guard (intersection u2/u5, difference f4,
+/// if-then-else f6/f7, join f8, override u16, product u17).
 pub(crate) fn collect_capable_casts(ir: &Ir, id: RelExprId, out: &mut Vec<IntExprId>) {
     match &ir.rel_exprs[id].kind {
         RelExprKind::IntToAtom(ie) => {
