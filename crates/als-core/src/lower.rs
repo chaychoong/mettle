@@ -3960,26 +3960,7 @@ impl<'a> Lowerer<'a> {
             ExprKind::Name(_) | ExprKind::AtName(_) => self.name_sort(ctx, e),
             ExprKind::Arrow { .. } | ExprKind::Comprehension { .. } => Sort::Rel,
             ExprKind::Compare { .. } => Sort::Formula,
-            ExprKind::IfThenElse {
-                then_branch,
-                else_branch,
-                ..
-            } => {
-                // Both branches share the ITE's sort (the checker unifies them).
-                // Read it off either branch: an Int branch makes it an int-ITE,
-                // a Formula branch a formula-ITE (`c => f else g`, both boolean),
-                // otherwise relational. Naming Formula matters for routing a
-                // formula-valued `let` value (see `push_let_bindings`).
-                let t = self.sort_of(ctx, *then_branch);
-                let el = self.sort_of(ctx, *else_branch);
-                if t == Sort::Int || el == Sort::Int {
-                    Sort::Int
-                } else if t == Sort::Formula || el == Sort::Formula {
-                    Sort::Formula
-                } else {
-                    Sort::Rel
-                }
-            }
+            ExprKind::IfThenElse { then_branch, .. } => self.ite_sort(ctx, *then_branch),
             ExprKind::Quant { quant, .. } => {
                 if matches!(quant, Quant::Sum) {
                     Sort::Int
@@ -3991,6 +3972,28 @@ impl<'a> Lowerer<'a> {
             // A single-element block `{ e }` (a fun body) has `e`'s sort.
             ExprKind::Block(exprs) if exprs.len() == 1 => self.sort_of(ctx, exprs[0]),
             ExprKind::Block(_) => Sort::Formula,
+        }
+    }
+
+    /// The sort an `if-then-else` takes, read off its **then** branch alone
+    /// (translation-ref §10.7g, mt-095 probes i1/i2, i5, m2/m4).
+    ///
+    /// `visit(ExprITE)` tests the *then* branch's translated Kodkod class and
+    /// coerces the else branch to match (`cform`/`cset`/`cint`) — the else
+    /// branch never votes. The one place mettle's `sort_of` disagrees with that
+    /// class is a bare numeral: `visit(ExprConstant)` case `NUMBER` is
+    /// `IntConstant.constant(n).toExpression()`, an `IntToExprCast`, which is an
+    /// `Expression` — and `instanceof Expression` is tested *before*
+    /// `instanceof IntExpression`, so a numeral branch makes the ITE relational.
+    ///
+    /// Everywhere else a numeral behaves int-sorted anyway, because `toInt`
+    /// unwraps an `IntToExprCast` back to its `IntExpression` (mettle's
+    /// `IntToAtom` peephole in `lower_int`) — the ITE dispatch is the sole
+    /// position where the distinction is observable.
+    fn ite_sort(&self, ctx: Ctx, then_branch: ExprId) -> Sort {
+        match &self.ast_of(ctx).exprs[then_branch].kind {
+            ExprKind::Num(_) => Sort::Rel,
+            _ => self.sort_of(ctx, then_branch),
         }
     }
 

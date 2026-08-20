@@ -9,8 +9,12 @@
 //! overflow-capable cast denotes the EMPTY set in forbid mode, in every context;
 //! (B) each capable cast reachable through the compared sides' set structure
 //! threads the §10.7c rules 0–3 polarity guard; (C) a translation-constant cast
-//! contributes no (B) guard (its (A) value already governs). Rule 4 (the int-ITE /
-//! `implies`-antecedent sliver) is now pinned to rescue.
+//! contributes no (B) guard (its (A) value already governs).
+//!
+//! Rule 4 — the claimed int-ITE / `implies`-antecedent rescue — was RETRACTED in
+//! full at mt-090 (translation-ref §10.7f); part C below is its replacement.
+//! Part D (mt-095, §10.7g) pins the `visit(ExprITE)` then-branch dispatch that
+//! part C's last two cells were waiting on.
 //!
 //! MIN spelling: the jar's probes spell MIN as `(0-8)`, which the jar folds to an
 //! overflow-free `-8` via its `0-(max+1)` MINUS peephole (`TranslateAlloyToKodkod`
@@ -317,23 +321,20 @@ fn part_c_no_escape_from_defect_a() {
 }
 
 #[test]
-#[ignore = "mt-090 follow-up: int-position ITE with ONE int-literal branch is \
-            relational in the jar, an int-ITE in mettle (sort_of dispatches on \
-            either branch, the jar on the `then` branch, and an Alloy NUMBER \
-            literal translates to a SET)"]
 fn part_c_mixed_branch_ite_is_relational_in_the_jar() {
     // Jar verdicts pinned at mt-090 (`scratchpad/probe/mt090/p4_jar.txt`, probes
     // h1/h2/h3 — h1 is mt-051's P12 verbatim). All three are forbid **SAT**
     // because the jar builds a RELATIONAL if-then-else over `Int[·]` casts: the
-    // overflowed branch is the empty set and `sum ∅ = 0`, so `>= 0` holds. mettle
-    // builds an int-ITE that keeps the accumulated overflow, so the Defect-A
-    // exclusion fires and it answers UNSAT.
+    // overflowed branch is the empty set and `sum ∅ = 0`, so `>= 0` holds.
     //
-    // Fixing it needs BOTH (a) `Lowerer::sort_of` dispatching on the `then`
-    // branch with an Alloy number literal counted as a set, and (b) a DYNAMIC
-    // constant-escape (the jar sheds the DefCond because the ground cast matrix
-    // folds to constant-empty; mettle's §10.7e FACT-4 escape is deliberately
-    // structural so encoder and evaluator cannot drift). Both are out of mt-090.
+    // CLOSED at mt-095 (translation-ref §10.7g): `visit(ExprITE)` dispatches on
+    // the `then` branch alone and an Alloy NUMBER literal translates to a SET,
+    // so `Lowerer::ite_sort` now reads the sort off the `then` branch with a
+    // bare numeral counted as relational. mt-090 predicted a second half — a
+    // *dynamic* constant-escape — and the mt-095 probe wave REFUTED it: the
+    // guard is shed by structure, not by constant-folding (see
+    // `part_d_the_escape_is_structural_not_dynamic`), so no escape work was
+    // needed and the encoder/evaluator pair is untouched.
     for body in [
         "(n>0 => plus[n,7] else 0) >= 0",
         "(n>3 => plus[n,7] else 5) >= 0",
@@ -342,5 +343,265 @@ fn part_c_mixed_branch_ite_is_relational_in_the_jar() {
         let src = part_c_cell(body);
         assert_eq!(solve(&src, true), Ok(false), "allow {body}");
         assert_eq!(solve(&src, false), Ok(true), "forbid {body}");
+    }
+}
+
+// ------- Part D: the `visit(ExprITE)` then-branch dispatch rule (mt-095) -----
+//
+// Jar cells from `scratchpad/probe/mt095/` (`q1_dispatch.als` → `i*`,
+// `q2_escape.als` → `j*`, `q4_shed.als` → `k*`, `q5_boundary.als` → `m*`; raw
+// jar output in the matching `*_jar.txt`, per-cell verdicts in `*_compare.txt`).
+// Rule in translation-ref §10.7g. Everything here is jar-free: the expected
+// verdicts are constants recorded from that wave.
+
+/// The Part-D cell shape: the Part-C comprehension domain (so `plus[n,7]`
+/// overflows at every binding of `n` at bitwidth 4) plus the sigs the branch
+/// shapes need. Matches `scratchpad/probe/mt095/q1_dispatch.als` exactly.
+fn part_d_cell(body: &str) -> String {
+    format!(
+        "open util/integer\n\
+         sig Node {{}}\n\
+         one sig F {{ v: one Int }}\n\
+         fact FixV {{ F.v = 1 }}\n\
+         run {{ all n: {{x: Int | x>=1 and x<=7}} | {body} }} for 3 but 4 int\n"
+    )
+}
+
+#[test]
+fn part_d_ite_dispatches_on_the_then_branch_alone() {
+    // The decisive mirrored pair (i1/i2). Both cells put the SAME overflowing
+    // arithmetic in the branch the ground-constant condition SELECTS; only which
+    // syntactic slot the int-sorted branch occupies moves. A rule that consulted
+    // either branch could not separate them.
+    //
+    // i1: `then` is a `util/integer` call, whose body the resolver wraps in
+    // `Int[·]` ⇒ an `Expression` ⇒ relational ITE ⇒ the overflowed cast is empty
+    // ⇒ `sum ∅ = 0 >= 0` ⇒ SAT.
+    let i1 = part_d_cell("(n>0 => plus[n,7] else #Node) >= 0");
+    assert_eq!(solve(&i1, false), Ok(true), "i1 forbid");
+    assert_eq!(solve(&i1, true), Ok(false), "i1 allow");
+
+    // i2: `then` is `#Node` ⇒ CARDINALITY ⇒ an `IntExpression` ⇒ int ITE ⇒ the
+    // else is `cint`-coerced, which UNWRAPS the cast and keeps its accumulated
+    // overflow ⇒ the Defect-A exclusion fires ⇒ UNSAT.
+    let i2 = part_d_cell("(n<=0 => #Node else plus[n,7]) >= 0");
+    assert_eq!(solve(&i2, false), Ok(false), "i2 forbid");
+    assert_eq!(solve(&i2, true), Ok(false), "i2 allow");
+}
+
+#[test]
+fn part_d_a_numeral_branch_is_a_set_not_an_int() {
+    // i5 vs i2: identical condition, identical else, and the `then` branch is a
+    // bare numeral instead of `#Node`. `visit(ExprConstant)` case NUMBER is
+    // `IntConstant.constant(n).toExpression()` — an `IntToExprCast`, which is an
+    // `Expression`, and `visit(ExprITE)` tests `instanceof Expression` BEFORE
+    // `instanceof IntExpression`. So the numeral makes the ITE relational.
+    let i5 = part_d_cell("(n<=0 => 0 else plus[n,7]) >= 0");
+    assert_eq!(solve(&i5, false), Ok(true), "i5 forbid");
+    assert_eq!(solve(&i5, true), Ok(false), "i5 allow");
+
+    // The value of that relational ITE is pinned from three directions, so the
+    // SAT above cannot be explained by a lost guard alone:
+    //   i6 `> 7`  — UNSAT: `sum ∅` is 0, not the wrapped arithmetic.
+    //   i7 `<= 0` — SAT:   0 satisfies it, in BOTH overflow modes.
+    //   i21 `= 0` — UNSAT: as a SET the ITE is ∅, and `∅ = {0}` is false
+    //               (§10.7e FACT 1 set equality), which an int reading would
+    //               have made true. This is the cell that proves the ITE really
+    //               denotes the empty SET rather than the integer 0.
+    let i6 = part_d_cell("(n<=0 => 0 else plus[n,7]) > 7");
+    assert_eq!(solve(&i6, false), Ok(false), "i6 forbid");
+    let i7 = part_d_cell("(n<=0 => 0 else plus[n,7]) <= 0");
+    assert_eq!(solve(&i7, false), Ok(true), "i7 forbid");
+    assert_eq!(solve(&i7, true), Ok(true), "i7 allow");
+    let i21 = part_d_cell("(n<=0 => 0 else plus[n,7]) = 0");
+    assert_eq!(solve(&i21, false), Ok(false), "i21 forbid");
+}
+
+#[test]
+fn part_d_then_branch_kinds() {
+    // Every shape whose Kodkod class the dispatch reads. Relational (⇒ SAT):
+    // a redundant `Int[·]` cast the resolver strips to its operand (i9), a bound
+    // quantifier variable (i10), a constant-foldable call (i12).
+    for (cell, body) in [
+        ("i9", "(n<=0 => Int[F.v] else plus[n,7]) >= 0"),
+        ("i10", "(n<=0 => n else plus[n,7]) >= 0"),
+        ("i12", "(n<=0 => plus[3,4] else plus[n,7]) >= 0"),
+    ] {
+        let src = part_d_cell(body);
+        assert_eq!(solve(&src, false), Ok(true), "{cell} forbid");
+        assert_eq!(solve(&src, true), Ok(false), "{cell} allow");
+    }
+
+    // Int-kind (⇒ UNSAT): a `sum` quantifier (i11), `#` of an Int-typed set
+    // rather than of a sig (m6).
+    for (cell, body) in [
+        ("i11", "(n<=0 => (sum q: Node | 1) else plus[n,7]) >= 0"),
+        ("m6", "(n<=0 => #(F.v) else plus[n,7]) >= 0"),
+    ] {
+        let src = part_d_cell(body);
+        assert_eq!(solve(&src, false), Ok(false), "{cell} forbid");
+        assert_eq!(solve(&src, true), Ok(false), "{cell} allow");
+    }
+}
+
+#[test]
+fn part_d_dispatch_recurses_and_ignores_the_untaken_branch() {
+    // Nested ITE (i14/i15): the outer `then` is itself an ITE, so the outer sees
+    // the INNER's own kind — numeral-then inner ⇒ relational ⇒ SAT;
+    // cardinality-then inner ⇒ int ⇒ UNSAT.
+    let i14 = part_d_cell("(n<=0 => (n>3 => 0 else 1) else plus[n,7]) >= 0");
+    assert_eq!(solve(&i14, false), Ok(true), "i14 forbid");
+    let i15 = part_d_cell("(n<=0 => (n>3 => #Node else #Node) else plus[n,7]) >= 0");
+    assert_eq!(solve(&i15, false), Ok(false), "i15 forbid");
+
+    // An ITE nested in the ELSE is coerced by the outer arm it lands in (i16
+    // relational / i17 int), and either way the outer's own `then` decides.
+    let i16 = part_d_cell("(n<=0 => 0 else (n>0 => plus[n,7] else 0)) >= 0");
+    assert_eq!(solve(&i16, false), Ok(true), "i16 forbid");
+    let i17 = part_d_cell("(n<=0 => #Node else (n>0 => plus[n,7] else 0)) >= 0");
+    assert_eq!(solve(&i17, false), Ok(true), "i17 forbid");
+
+    // Negative space: the branch the condition does NOT select contributes
+    // nothing, on either dispatch (i3 relational / i4 int, both SAT).
+    for (cell, body) in [
+        ("i3", "(n<=0 => plus[n,7] else #Node) >= 0"),
+        ("i4", "(n>0 => #Node else plus[n,7]) >= 0"),
+    ] {
+        let src = part_d_cell(body);
+        assert_eq!(solve(&src, false), Ok(true), "{cell} forbid");
+        assert_eq!(solve(&src, true), Ok(true), "{cell} allow");
+    }
+}
+
+#[test]
+fn part_d_dispatch_holds_in_operand_position_too() {
+    // The ITE as a `util/integer` call ARGUMENT, not as a comparison operand.
+    // An argument is `cset`-coerced, so a relational ITE stays a set and its
+    // emptied cast reads 0 (i18/m16 SAT), while an int ITE is re-wrapped as
+    // `Int[·]` and then UNWRAPPED by the callee's own `cint`, keeping the
+    // overflow (i19/m17 UNSAT).
+    for (cell, body) in [
+        ("i18", "plus[(n<=0 => 0 else plus[n,7]), 0] >= 0"),
+        ("m16", "plus[(n<=0 => 0 else plus[n,7]), 3] = 3"),
+    ] {
+        let src = part_d_cell(body);
+        assert_eq!(solve(&src, false), Ok(true), "{cell} forbid");
+        assert_eq!(solve(&src, true), Ok(false), "{cell} allow");
+    }
+    for (cell, body) in [
+        ("i19", "plus[(n<=0 => #Node else plus[n,7]), 0] >= 0"),
+        ("m17", "plus[(n<=0 => #Node else plus[n,7]), 3] = 3"),
+    ] {
+        let src = part_d_cell(body);
+        assert_eq!(solve(&src, false), Ok(false), "{cell} forbid");
+        assert_eq!(solve(&src, true), Ok(false), "{cell} allow");
+    }
+}
+
+#[test]
+fn part_d_the_escape_is_structural_not_dynamic() {
+    // mt-090 predicted that matching the jar here would need a DYNAMIC constant
+    // escape — the jar sheds the DefCond, the theory went, because the ground
+    // cast matrix folds to constant-empty. The mt-095 wave REFUTES that: every
+    // relational-ITE cell below is forbid SAT no matter how non-constant the
+    // cast operand is. The shedding is structural — a cast that `toInt` must
+    // read with `.sum()` instead of UNWRAPPING contributes no comparison-level
+    // guard, whatever it is built from.
+    //
+    // j2/j3: the operand is a relation pinned only by a FACT, so it is not a
+    // translation constant on any reading (j3 has no quantifier at all).
+    // j5: a ground variable mixed with such a relation. j6/j7: an exactly-bound
+    // vs a merely-constrained cardinality — mettle's own `translation_constant`
+    // predicate separates exactly these two, and the jar does not.
+    // j9: only some bindings overflow, so the escape is per-binding.
+    let escapes = [
+        ("j0", "(n>0 => plus[n,7] else 0) >= 0"),
+        ("j2", "(n>0 => plus[F.v,7] else 0) >= 0"),
+        ("j5", "(n>0 => plus[n,F.v] else 0) >= 0"),
+        ("j9", "(n>0 => plus[n,3] else 0) >= 0"),
+    ];
+    for (cell, body) in escapes {
+        let src = part_d_cell(body);
+        assert_eq!(solve(&src, false), Ok(true), "{cell} forbid");
+    }
+
+    // The controls that keep the rule honest: strip the ITE and the very same
+    // arithmetic goes back to UNSAT, because `toInt` then UNWRAPS the cast
+    // (`IntToExprCast → intExpr()`) and the guard survives (j1/j4).
+    for (cell, body) in [("j1", "plus[n,7] >= 0"), ("j4", "plus[F.v,7] >= 0")] {
+        let src = part_d_cell(body);
+        assert_eq!(solve(&src, false), Ok(false), "{cell} forbid");
+    }
+
+    // j10/j11: and the emptied branch really reads 0 — `> 7` and a per-binding
+    // `= 0` are both UNSAT, so j9's SAT is not a blanket collapse.
+    for (cell, body) in [
+        ("j10", "(n>0 => plus[n,3] else 0) > 7"),
+        ("j11", "int[(n>0 => plus[n,3] else 0)] = 0"),
+    ] {
+        let src = part_d_cell(body);
+        assert_eq!(solve(&src, false), Ok(false), "{cell} forbid");
+    }
+}
+
+#[test]
+fn part_d_shedding_is_not_specific_to_the_ite() {
+    // The same `.sum()` fall-through shrouds a cast behind ANY set former, so
+    // these were already agreeing before mt-095 and must keep agreeing after:
+    // a union (k2), an intersection (k5), a difference (k6), a comprehension
+    // (k7) — all forbid SAT — against the bare cast (k0), forbid UNSAT.
+    for (cell, body) in [
+        ("k2", "(plus[n,7] + plus[n,7]) >= 0"),
+        ("k5", "(plus[n,7] & Int) >= 0"),
+        ("k6", "(plus[n,7] - 0) >= 0"),
+        ("k7", "{y: Int | y in plus[n,7]} >= 0"),
+    ] {
+        let src = part_d_cell(body);
+        assert_eq!(solve(&src, false), Ok(true), "{cell} forbid");
+    }
+    let k0 = part_d_cell("plus[n,7] >= 0");
+    assert_eq!(solve(&k0, false), Ok(false), "k0 forbid");
+
+    // Negative space for the whole rule: a SET-level reader (`=`, `in`, `no`)
+    // over a BARE cast still applies the guard — the shedding belongs to the
+    // int-reading path, not to sets in general (k13/k14/k15).
+    for (cell, body) in [
+        ("k13", "plus[n,7] = 0"),
+        ("k14", "no plus[n,7]"),
+        ("k15", "plus[n,7] in Int"),
+    ] {
+        let src = part_d_cell(body);
+        assert_eq!(solve(&src, false), Ok(false), "{cell} forbid");
+    }
+}
+
+#[test]
+fn part_d_change_is_inert_where_nothing_overflows() {
+    // The dispatch change re-routes every numeral-then ITE through the
+    // relational path, including ones with no overflow anywhere. There the
+    // relational reading yields the singleton `Int[·]`, whose `sum` is the same
+    // number, so the answers must not move (m7/m8/m9/m10/m11/m12).
+    for (cell, body, want) in [
+        ("m7", "(n>3 => 3 else 5) >= 3", true),
+        ("m8", "(n>3 => 3 else 5) = 5", false),
+        ("m9", "(n>3 => 3 else 5) < 4", false),
+        ("m10", "(n>3 => #Node else #F) >= 0", true),
+        ("m11", "(n>3 => 3 else 5) in Int", true),
+        ("m12", "some (n>3 => 3 else 5)", true),
+    ] {
+        let src = part_d_cell(body);
+        assert_eq!(solve(&src, false), Ok(want), "{cell} forbid");
+        assert_eq!(solve(&src, true), Ok(want), "{cell} allow");
+    }
+
+    // And where the ITE is read as a SET whose selected branch DID overflow, the
+    // cast's emptiness plus the set-level guard still exclude it: `some` is
+    // false and `no` does not become vacuously true (m13/m14, both UNSAT).
+    for (cell, body) in [
+        ("m13", "some (n<=0 => 0 else plus[n,7])"),
+        ("m14", "no (n<=0 => 0 else plus[n,7])"),
+    ] {
+        let src = part_d_cell(body);
+        assert_eq!(solve(&src, false), Ok(false), "{cell} forbid");
     }
 }

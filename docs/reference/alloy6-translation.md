@@ -2281,6 +2281,16 @@ bounds (FACT 2's value semantics apply; the decl-level ensureDef analog is
 not implemented), and `&`/`-`-nested casts (source-read as identical to
 union — all matrix ops merge — but not probe-confirmed).
 
+> **CORRECTION (mt-095, 2026-08-20): FACT 3 is TOO STRONG on union nesting.**
+> "matrix ops merge defConds (`mergeDefConds`), so union-nested casts guard too"
+> is contradicted by probes k4/k16 (`(plus[n,7] + 3) = 3` under the part-C
+> forall: jar forbid **SAT**, mettle UNSAT). Every FACT-3 cell that is actually
+> jar-confirmed had a **bare** cast on at least one compared side — that is what
+> the confirmed cells pin. The general rule the mt-095 wave pins instead is
+> §10.7g item 4: a cast reached through any set former contributes no
+> comparison-level guard, and only a bare one does. FACTs 1, 2 and 4 stand; the
+> *bare*-cast half of FACT 3 stands.
+>
 > **CORRECTION (mt-090, 2026-07-30): FACT 5 is RETRACTED in full.** Rule 4 —
 > the "int-ITE / `implies`-antecedent escape" — does not exist. Both halves
 > were confounded, each in its own way; see
@@ -2445,6 +2455,167 @@ translation is reused across the two polarities Alloy's ExprITE desugaring puts
 it at (`FOL2BoolCache` keys on node + free-variable bindings, not on
 `Environment.negated`). mettle agrees on g5 today; the general "shared
 subformula translated at two polarities" corner is unprobed.
+
+> **BOTH residuals are CLOSED at mt-095**
+> ([§10.7g](#107g-mt-095-the-visitexprite-then-branch-dispatch-rule-jar-verified-2026-08-20)):
+> `e0`/`e6` are fixed by the then-branch dispatch rule — and the "dynamic
+> constant-escape" this section predicted as the hard half **does not exist**.
+> g5 is probed at 16 cells with 16 agreements.
+
+### 10.7g mt-095: the `visit(ExprITE)` then-branch dispatch rule (jar-verified 2026-08-20)
+
+**Mission.** Close §10.7f's `e0`/`e6` residual — an int-position `if-then-else`
+with one integer-literal branch, jar SAT and mettle UNSAT. Harness: 90 cells
+across `scratchpad/probe/mt095/q{1..5}_*.als`, each run under BOTH
+`A4Options.noOverflow` settings in one JVM (mt-090's `AllCmdProbe.java`, sat4j,
+symmetry 0, Alloy 6.2.0), plus a new `AstDump.java` that prints each command's
+**resolved** AST. Raw output and the full narrative:
+`scratchpad/probe/mt095/NOTES.md`.
+
+#### The rule, from source
+
+`javap` on `TranslateAlloyToKodkod` (`scratchpad/probe/mt095/tak.disasm`
+:1394-1445 for the ITE, :1201-1300 for the coercions):
+
+```java
+Object visit(ExprITE x) {
+    Formula f = cform(x.cond);
+    Object a = visitThis(x.left);            // the THEN branch, alone
+    if (a instanceof Formula)    return k2pos(f.implies((Formula) a)
+                                        .and(f.not().implies(cform(x.right))), x);
+    if (a instanceof Expression) return f.thenElse((Expression) a, cset(x.right));
+    return f.thenElse((IntExpression) a, cint(x.right));
+}
+
+Expression toSet(Object a) { Expression → itself; IntExpression → toExpression(); }
+IntExpression toInt(Object a) {
+    ExprToIntCast over IntToExprCast → intExpr();   // DOUBLE unwrap
+    IntToExprCast                    → intExpr();   // UNWRAP — keeps the overflow flag
+    IntExpression                    → itself;
+    Expression                       → sum();       // reads the VALUE only
+}
+```
+
+1. **Dispatch.** An `if-then-else` takes the **then** branch's translated Kodkod
+   class. The else branch is coerced to match (`cform`/`cset`/`cint`) and never
+   votes on the kind.
+2. **A bare numeral is a SET.** `visit(ExprConstant)` case `NUMBER` is
+   `IntConstant.constant(n).toExpression()` — an `IntToExprCast`, which *is* an
+   `Expression` — and `instanceof Expression` is tested **before**
+   `instanceof IntExpression`. The ITE dispatch is the **only** position where
+   this is observable, because everywhere else `toInt` unwraps an
+   `IntToExprCast` straight back to its `IntExpression`.
+3. **Branch kinds.** IntExpression: `#e` (CARDINALITY), `sum x: D | e`
+   (ExprQt SUM), `Int/min`/`Int/max`. Expression: a numeral, a `util/integer`
+   fun call (the resolver wraps such a body in `Int[·]`), a quantifier variable,
+   a sig/field/join, `Int[e]`, a comprehension, and a nested ITE or `let` whose
+   own kind is Expression.
+4. **The guard is shed by STRUCTURE, not by constant-folding.** A cast that
+   `toInt` must read with `.sum()` contributes no comparison-level guard; one
+   that `toInt` UNWRAPS keeps it. §10.7f predicted a *dynamic* escape (the
+   ground cast matrix folding to constant-empty) — **refuted**: wave 2 held the
+   ITE fixed and varied the cast operand across a ground quantifier variable, a
+   fact-pinned relation, a mix of both, an exactly-bound cardinality and a
+   merely-constrained one, and all fourteen cells are forbid SAT. Wave 4 shows
+   the ITE is not special either: a union, an intersection, a difference and a
+   comprehension shroud a cast the same way.
+
+#### The decisive cells
+
+| pair | what moves | jar forbid |
+|---|---|---|
+| **i1** `(n>0 => plus[n,7] else #Node) >= 0` | the same overflowing arithmetic is SELECTED in both; only the slot of the int-sorted branch moves | **SAT** (relational) |
+| **i2** `(n<=0 => #Node else plus[n,7]) >= 0` | | **UNSAT** (int) |
+| **i5** `(n<=0 => 0 else plus[n,7]) >= 0` | identical to i2 but for `0` in place of `#Node` | **SAT** (numeral ⇒ set) |
+| i6 `… > 7` / i7 `… <= 0` / i21 `… = 0` | value pins on i5 | UNSAT / SAT / UNSAT |
+| j6 `plus[#Node,7]` at `exactly 3 Node` | exactly-bound vs merely-constrained — the split mettle's own `translation_constant` makes | **SAT** |
+| j7 `plus[#Node,7]` at `3 Node` + `some Node` | | **SAT** (so the escape is not that split) |
+
+i21 is the cell that proves the relational reading denotes the empty **set**:
+`∅ = {0}` is false (§10.7e FACT 1), which an int reading would have made true.
+Negative space: a SET-level reader (`=`, `in`, `no`) over a **bare** cast still
+applies the guard (k13/k14/k15), so the shedding belongs to the int-reading
+path, not to sets in general.
+
+#### mettle
+
+`Lowerer::sort_of`'s ITE arm now reads the sort off the then branch through
+`Lowerer::ite_sort`, which maps a bare `ExprKind::Num` to `Sort::Rel` and
+otherwise defers to `sort_of`. Nothing else changed: mettle's `lower_int` /
+`lower_rel` already implement `toInt` / `toSet` faithfully, including the
+`IntToAtom` unwrap peephole, so no escape work was needed and the encoder and
+the evaluator — which consume the same lowered IR — stay a matched pair by
+construction. The waves-1–5 matrix is 90 cells, **28 divergences before, 9 after**, with no cell regressed; wave 6 adds 10 more cells (2 divergences) isolating one residual family.
+Jar-free tests: `eq_typing_conformance.rs` part D (and the formerly `#[ignore]`d
+`part_c_mixed_branch_ite_is_relational_in_the_jar`, now passing).
+
+#### Residual divergences (11 cells, four families — all NEW, none mt-095's target)
+
+* **R1 (i8)** — Alloy's resolver re-wraps a surface `int[·]` in an ITE branch as
+  `Int[int[·]]` (`q1_ast.txt`), making it a set, while `#e` in the identical
+  position is not re-wrapped. Both carry Alloy type `{Int}`, so the type system
+  does not distinguish them; this is an inconsistency inside Alloy's own
+  `ExprUnary` resolution, and mettle has no such wrapper to read. m1
+  (`int[plus[n,7]]` as the then branch) agrees, so the corner is narrow.
+* **R2 (i13, k8)** — `Expression.count()` applies a shrouded cast's DefCond
+  where `.sum()` does not, but a *union*-shrouded cast under `#` (k9) does not
+  guard, so it is not simply "`count` propagates". Mechanism not chased.
+* **R3 (k10, k12; decisively n6/n7 in `q6_carddiscard.als`)** — `toInt`'s
+  DOUBLE-unwrap arm discards `#` when its operand is an `Int[·]` cast **and the
+  result is read by `cint`** (`<`, `>`, `<=`, `>=`, or an int operand position):
+  `#(plus[n,7]) >= 0` translates as `(n+7) >= 0`, cardinality thrown away. Under
+  a **set** reader (`=`, `in`) no `cint` is called, no peephole fires, and `#`
+  stays a real cardinality. Wave 6 pins both halves with **no overflow
+  anywhere**: `plus[3,4]` is the one-element set `{7}`, and
+
+  | cell | body | jar | mettle |
+  |---|---|---|---|
+  | n1/n2 | `#(plus[3,4]) = 7` / `= 1` | UNSAT / SAT | agrees |
+  | **n6/n7** | `#(plus[3,4]) >= 7` / `>= 2` | **SAT** / **SAT** | **UNSAT** / **UNSAT** |
+  | n9/n10 | `#Node >= 3` / `#(plus[3,4] + plus[1,1]) >= 2` | SAT / SAT | agrees |
+
+  so under `=` both read cardinality 1, and under `>=` the jar reads 7 where
+  mettle reads 1. n9/n10 are the negative space (a real relation, and a union
+  that is not a bare cast, stay real cardinalities). k12 is the same family on
+  the `int[·]` reader. **k11 (`#(plus[n,7]) = 0`) is NOT this family** — it is a
+  set comparison, so `#` really is a cardinality and `#∅ = 0` would hold; its
+  UNSAT is the cast's guard firing through the `Card` operand, the "casts nested
+  inside a `Card`/`sum` operand" corner §10.7e already lists as out of scope, now
+  with jar cells attached.
+* **R4 (i23)** — mettle's `sort_of` does not follow a `let` binding to an
+  int-valued RHS; its numeral twin i22 agrees, giving a clean minimal pair.
+* **R5 (k4/k16, a doc correction, not a new divergence)** — §10.7e FACT 3's
+  "union-nested casts guard too" is **too strong**: a union-nested cast
+  contributes no guard to a set-level `=` in the jar. Every FACT-3 cell that is
+  jar-confirmed had a bare cast on at least one side.
+
+#### g5 — the cross-polarity translation cache, probed at last (16/16 agreement)
+
+§10.7f's "also observed, not acted on". No divergence, and no plausible live
+wrong verdict. The mechanism is real and now shown with a minimal pair — two
+spellings of one formula, opposite verdicts, twice:
+
+| cell | body (at `exactly 8 Node`) | jar forbid |
+|---|---|---|
+| `g5_lem` | `(#Node < 0) or (not (#Node < 0))` | **UNSAT** |
+| `g5_let_shared` | `let p = (#Node < 0) \| p or (not p)` | **SAT** |
+| `g5_ite_both` | `(#Node < 0) => (no Node) else (no Node)` | **UNSAT** |
+| `g5_desugared` | the same, written as the explicit conjunction | **SAT** |
+
+Written out, each occurrence is its own Kodkod node translated at its own
+polarity: positive gives `cmp ∧ ¬of` (FALSE), negated gives `cmp ∨ of` (TRUE)
+whose `not` is FALSE, so LEM is FALSE. (LEM failing under `noOverflow` is
+correct, deliberate Alloy semantics — an overflowing comparison is false at both
+polarities so the instance is pruned from both directions.) With a `let`, or via
+`visit(ExprITE)`'s single `cform(x.cond)`, ONE node appears both bare and under
+a `NotFormula`, and `FOL2BoolCache` — keyed on (node, free-variable bindings),
+not on `Environment.negated` — returns the first visit's translation, so the
+flip never happens. mettle matches because it shares the same way: its
+formula-ITE lowering translates the condition once at the ITE's own polarity,
+and mt-056's eager formula-`let` lowering translates a `let` RHS once at the
+binding site. Cells 10–13 put the shared node under a quantifier, so the cache
+key carries a free-variable binding — the sub-corner §10.7f called untested —
+and those agree too.
 
 ### 10.8 mt-053 `univ`/`iden` live-universe probes (jar-verified 2026-07-21)
 
