@@ -2971,6 +2971,131 @@ with no code of their own. **150/150 verdict cells and 39/39 render cells now
 match the jar** (before: 82 of the 150 deferred). Pinned jar-free by
 `macro_int_conformance::*` (9 tests) and `repl::mt100_*` (4 tests).
 
+### 10.7k mt-101: the bare out-of-range integer literal — matrix pinned, layer (A) implemented, layer (B) left open (jar-verified 2026-08-21)
+
+**Mission.** Close mt-052's residual: at bw 4 the jar gives `8 = 8`, `9 = 9`,
+`#(8) = 1`, `no (0 & 8)` and `H.u = 8` all forbid-UNSAT while mettle said SAT
+(`scratchpad/probe/mt052/oor.als`, cells g01–g07), and the effect looked
+former-dependent (`H.u = 0 + 8` is forbid-SAT). Harness: `scratchpad/probe/mt101/`
+— mt-090's `AllCmdProbe.java` over eight models, **1438 verdict cells** (719
+commands × both `noOverflow` settings, sat4j, symmetry 0). The core is a
+**25 former × 8 reader grid run twice**, once with the literal `8` and once with
+the constant overflowing cast `plus[7,1]` (m3/m6, 410 cells each), plus an
+in-range control grid (m2, 210 cells), a union/quantifier/bitwidth stress model
+(m4), the §10.7h killer shapes re-run with a literal (m5), and the
+constant-vs-variable discriminator (m7/m8). Full narrative:
+`scratchpad/probe/mt101/NOTES.md`.
+
+**Harness hygiene, and a probe defect I had to correct mid-round.** The first
+grid (m1) was **confounded**: an overflowing cast is EMPTY in forbid mode
+(layer (A), §10.7e FACT 2), so a reader that is false on `∅` goes forbid-UNSAT
+with no guard involved. m3 re-runs the grid with every reader **true on both**
+the allow-mode value and `∅`, which isolates layer (B) exactly. m1 is kept
+because its confounded readers are the ones layer (A) actually moves. The
+`noOverflow` flag is set explicitly on `A4Options` per cell (never the dead CLI
+`-y`, per the oracle-gotchas memo); the in-range control grid is forbid-SAT on
+all 102 discriminating cells, so every forbid-UNSAT elsewhere is the literal's.
+
+#### The rule
+
+`visit(ExprConstant)` case NUMBER is `IntConstant.constant(n).toExpression()`
+with both range checks commented out (`:833-836`), so Alloy raises nothing — the
+flag comes from **Kodkod**. `DefCond.ensureDef` (source banked at
+`scratchpad/probe/DefCond.java`) is the whole mechanism:
+
+```java
+if (!env.isNegated()) {
+    for (DefCond e : univQuantInts) ret = factory.or(ret, e.getAccumOverflow());
+    for (DefCond e : extQuantInts)  ret = factory.and(ret, factory.not(e.getAccumOverflow()));
+}
+```
+
+An out-of-range literal's `accumOverflow` is the **constant TRUE**, and with no
+enclosing bare-`Int` binder it classifies existential (Defect A), so the
+comparison folds to `and(value, not(TRUE))` = **FALSE**. Two layers follow, and
+they are the same two §10.7e pinned for casts:
+
+- **(A) value** — the cast denotes the **empty set** in forbid mode. Pinned
+  directly: `H.u = (0+8) and H.u = 0` is allow-UNSAT / forbid-**SAT** (cell L1),
+  i.e. `0 + 8` really is exactly `{0}` in forbid mode; `#H.u = 2` on the same
+  union is allow-SAT / forbid-UNSAT (L2); the in-range twin is SAT/SAT (L5).
+- **(B) comparison-level guard** — `ensureDef` at the reader, as above.
+
+**The literal is not a special case.** Run the 25×8 grid twice — once with `8`,
+once with the constant cast `plus[7,1]`, which wraps to the same `-8` and also
+always overflows — and the two grids are **identical in 200/200 discriminating
+cells** (m3 vs m6). There is no literal-specific rule anywhere in the matrix.
+
+**What the grid says.** Guard fires for: bare, parenthesized, intersection
+(either order), difference (either order), join, `iden`-join, `Int[·]`, `let`,
+macro, macro-of-macro, fun body, `plus` operand, if-then-else (either branch),
+a union of **two** out-of-range operands, `none + 8`, and the other out-of-range
+values (`9`, `16`, `15`, `31`). Guard sheds for: a **union whose sibling is a
+non-empty non-overflowing operand** (`0 + 8`, `7 + 8`, `8 + 7`, `Int + 8`,
+`H.u + 8`, `8 + plus[F.v,7]`, three-way unions), and a **comprehension body**.
+Two readers shed independently of the former: a **quantifier decl bound**
+(`all x: 8 | …`) always, and **`lone`** on every former except the two ITEs.
+The trigger is exactly `n < min(bw) || n > max(bw)` and tracks the command
+bitwidth (`8` sheds at bw 5 and guards at bw 3 and 4; `16` guards at bw 5 and
+sheds at bw 6).
+
+**The third axis, and why it is load-bearing.** A **constant** overflow source
+and a **variable** one are NOT interchangeable on the shedding shapes (m8, cells
+w01–w06): with `F.v` fact-forced so the cast always overflows, `lone plus[F.v,1]`
+and `(0 + plus[F.v,1]) in Int` are forbid-**UNSAT** while the literal twins are
+forbid-**SAT**. This is §10.7e's original wording being exactly right — *a
+constant-empty matrix sheds its `DefCond` in the jar's matrix fast paths* — and
+it explains the whole shed column: an overflowing constant's matrix is literally
+the empty constant matrix, so a union folds it away (taking its `DefCond` with
+it) where a symbolic operand cannot be folded, and `lone ∅` folds to TRUE before
+`ensureDef` is ever reached. It also explains why the shed is **permanent**:
+wrapping a shed union in a difference, a join, `#`, a field equality, an ITE or
+a comprehension does not bring the guard back (m5 s01–s06), because the fold
+happened at the union node.
+
+#### What was implemented, and what was NOT
+
+**Implemented — layer (A) only.** `overflow_capable` now reports an
+`IntExprKind::Const` outside the bitwidth range as capable, and both back ends
+give such a literal a constantly-TRUE overflow bit (`encode::int`,
+`eval::eval_int` — twin one-line arms, so the matched pair holds by
+construction). That is enough for the emptiness semantics and for the
+**int-comparison** guard that already existed. Measured on the m1 grid:
+**86 diverging commands → 31, 55 fixed, ZERO newly broken**, and **zero
+over-guarding cells on any of the three grids** — the change cannot turn a jar
+SAT into a mettle UNSAT. Of mt-052's banked cells, `g01`/`g04`/`g05` now agree;
+`g03`/`g06` already did.
+
+**NOT implemented — layer (B), deliberately.** Extending the (B) guard to
+constant sources (by making `translation_constant` stop shedding an
+out-of-range literal) was implemented, measured, and **backed out**: it fixes
+62 cells but converts **41 previously-agreeing cells into over-guarding
+divergences** (jar SAT → mettle UNSAT), concentrated in exactly the union family
+and the `lone` reader. m8 proves those sheds are *correct* jar behaviour for
+constant-empty matrices rather than the unpinnable noise §10.7h found for
+variable casts — so reproducing them faithfully would need a constant-empty
+analysis threaded through union siblings and multiplicity readers (note
+`none + 8` **guards** while `0 + 8` sheds: the predicate is "is the sibling
+itself constant-empty?", not "is there a union?"). That is a new sub-system in
+the most fragile part of the translator, and mt-096 is the standing warning
+about carve-outs of exactly this shape. **Pinned open, not fixed.**
+
+The honest residual: **mettle still over-accepts an out-of-range literal at
+set-level readers** — `H.u = 8` and `no (0 & 8)` (mt-052's `g02`/`g07`) are
+still jar-UNSAT / mettle-SAT, along with 13 `in Int` and 13 `H.u = …` cells in
+the m1 grid. Recorded in [LIMITATIONS.md](../../LIMITATIONS.md).
+
+#### Also found
+
+* **The "casts nested inside a `Card`/`sum` operand" corner is wider than
+  §10.7e's wording.** `#(X) <= 1` is forbid-UNSAT in the jar for a literal, a
+  constant cast **and** a variable cast (m8 w07/w08), while mettle sheds all
+  three — so this is not a constant-ness effect at all, and it accounts for the
+  16 `ri_cardle` cells in the m3/m6 residual. Unchanged by this bead.
+* **`Int[int[8]]` never reaches the cast in mettle** (m3 `f11_castrt`, 6 cells):
+  the §2.4 `int[Int[e]]` peephole leaves an `AtomToInt`, which `overflow_capable`
+  reports non-capable by construction. Pre-existing, orthogonal to the literal.
+
 ### 10.8 mt-053 `univ`/`iden` live-universe probes (jar-verified 2026-07-21)
 
 Harness: `scratchpad/probe/mt053/run.sh` over `OracleShim` (Alloy 6.2.0,

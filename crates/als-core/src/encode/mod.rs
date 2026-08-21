@@ -709,8 +709,8 @@ impl<'a> Encoder<'a> {
                 // independent, in every context. Allow mode keeps the wrapped
                 // atom; a non-capable cast (`Int[3]`) carries a constant-false
                 // flag, so the gate folds away.
-                let guarded =
-                    !self.allow_overflow && crate::overflow_guard::overflow_capable(self.ir, ie);
+                let guarded = !self.allow_overflow
+                    && crate::overflow_guard::overflow_capable(self.ir, self.bitwidth, ie);
                 let key = ExtKey::IntToAtom(
                     v.bits().iter().map(|&b| cell_key(b)).collect(),
                     guarded.then(|| cell_key(of)),
@@ -1325,7 +1325,13 @@ impl<'a> Encoder<'a> {
         let node = self.ir.int_exprs[id].clone();
         let width = self.bitwidth as usize;
         match node.kind {
-            IntExprKind::Const(v) => Ok((IntVal::constant(i64::from(v), width), Bool::FALSE)),
+            IntExprKind::Const(v) => {
+                // The value wraps silently; the FLAG is what a literal outside
+                // the bitwidth range raises (§10.7k). Constantly TRUE, so
+                // `guard_rel_casts`/`int_compare` fold it straight to `FALSE`.
+                let of = Bool::Const(crate::overflow_guard::const_overflows(v, self.bitwidth));
+                Ok((IntVal::constant(i64::from(v), width), of))
+            }
             IntExprKind::Card(rel) => {
                 let m = self.rel(rel)?;
                 Ok(self.int_card(&m))
@@ -1586,7 +1592,7 @@ impl<'a> Encoder<'a> {
         }
         let mut casts = Vec::new();
         for &s in sides {
-            crate::overflow_guard::collect_capable_casts(self.ir, s, &mut casts);
+            crate::overflow_guard::collect_capable_casts(self.ir, self.bitwidth, s, &mut casts);
         }
         self.guard_rel_casts(atom, &casts)
     }

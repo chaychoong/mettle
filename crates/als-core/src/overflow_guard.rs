@@ -72,12 +72,23 @@ pub(crate) struct QuantFrame {
     pub effective_forall: bool,
 }
 
+/// Whether an integer literal is outside the bitwidth's two's-complement range,
+/// i.e. whether Kodkod's `IntConstant` for it carries a **constantly-TRUE**
+/// overflow flag (translation-ref §10.7k, mt-101). `8` at bitwidth 4 wraps
+/// silently to the Int atom `-8` on the value layer, but the flag it raises is
+/// what `DefCond.ensureDef` then folds into the enclosing comparison.
+pub(crate) fn const_overflows(value: i32, bitwidth: u32) -> bool {
+    value < crate::lower::int_min(bitwidth) || value > crate::lower::int_max(bitwidth)
+}
+
 /// Whether an integer expression can overflow — it syntactically contains
-/// arithmetic, `sum`, or cardinality (not `Const`, not `int[·]`; translation-ref
-/// §10.7c). Drives both the value semantics and the comparison-level guard.
-pub(crate) fn overflow_capable(ir: &Ir, id: IntExprId) -> bool {
+/// arithmetic, `sum`, or cardinality, **or is a literal outside the bitwidth's
+/// range** (not an in-range `Const`, not `int[·]`; translation-ref §10.7c,
+/// §10.7k). Drives both the value semantics and the comparison-level guard.
+pub(crate) fn overflow_capable(ir: &Ir, bitwidth: u32, id: IntExprId) -> bool {
     match &ir.int_exprs[id].kind {
-        IntExprKind::Const(_) | IntExprKind::AtomToInt(_) => false,
+        IntExprKind::Const(v) => const_overflows(*v, bitwidth),
+        IntExprKind::AtomToInt(_) => false,
         IntExprKind::Card(_)
         | IntExprKind::Neg(_)
         | IntExprKind::Binary { .. }
@@ -86,7 +97,10 @@ pub(crate) fn overflow_capable(ir: &Ir, id: IntExprId) -> bool {
             then_branch,
             else_branch,
             ..
-        } => overflow_capable(ir, *then_branch) || overflow_capable(ir, *else_branch),
+        } => {
+            overflow_capable(ir, bitwidth, *then_branch)
+                || overflow_capable(ir, bitwidth, *else_branch)
+        }
     }
 }
 
@@ -111,25 +125,30 @@ pub(crate) fn overflow_capable(ir: &Ir, id: IntExprId) -> bool {
 /// direction, which never turns a jar UNSAT into a mettle SAT. Every other
 /// former is jar-confirmed to keep the guard (intersection u2/u5, difference f4,
 /// if-then-else f6/f7, join f8, override u16, product u17).
-pub(crate) fn collect_capable_casts(ir: &Ir, id: RelExprId, out: &mut Vec<IntExprId>) {
+pub(crate) fn collect_capable_casts(
+    ir: &Ir,
+    bitwidth: u32,
+    id: RelExprId,
+    out: &mut Vec<IntExprId>,
+) {
     match &ir.rel_exprs[id].kind {
         RelExprKind::IntToAtom(ie) => {
-            if overflow_capable(ir, *ie) {
+            if overflow_capable(ir, bitwidth, *ie) {
                 out.push(*ie);
             }
         }
         RelExprKind::Binary { lhs, rhs, .. } => {
-            collect_capable_casts(ir, *lhs, out);
-            collect_capable_casts(ir, *rhs, out);
+            collect_capable_casts(ir, bitwidth, *lhs, out);
+            collect_capable_casts(ir, bitwidth, *rhs, out);
         }
-        RelExprKind::Unary { expr, .. } => collect_capable_casts(ir, *expr, out),
+        RelExprKind::Unary { expr, .. } => collect_capable_casts(ir, bitwidth, *expr, out),
         RelExprKind::IfThenElse {
             then_branch,
             else_branch,
             ..
         } => {
-            collect_capable_casts(ir, *then_branch, out);
-            collect_capable_casts(ir, *else_branch, out);
+            collect_capable_casts(ir, bitwidth, *then_branch, out);
+            collect_capable_casts(ir, bitwidth, *else_branch, out);
         }
         // Leaves and Formula-bearing nodes stop the set-structure walk.
         RelExprKind::Relation(_)
@@ -150,6 +169,11 @@ pub(crate) fn collect_capable_casts(ir: &Ir, id: RelExprId, out: &mut Vec<IntExp
 /// drift (do NOT substitute `Bool::Const`-ness on the encoder side).
 pub(crate) fn translation_constant(ir: &Ir, bounds: &Bounds, id: IntExprId) -> bool {
     match &ir.int_exprs[id].kind {
+        // Every literal is translation-constant, in range or not. An
+        // OUT-OF-RANGE one makes the cast matrix constant-EMPTY, and the jar's
+        // matrix fast paths shed a constant-empty operand's `DefCond` on exactly
+        // the formers/readers §10.7k measures — which is why the (B) escape
+        // stays unconditional here and the residual is pinned, not implemented.
         IntExprKind::Const(_) => true,
         IntExprKind::Card(rel) | IntExprKind::AtomToInt(rel) => rel_const(ir, bounds, *rel),
         IntExprKind::Neg(ie) => translation_constant(ir, bounds, *ie),

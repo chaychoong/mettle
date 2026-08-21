@@ -5053,7 +5053,7 @@ fn mult_test_of(m: Option<Mult>) -> Option<MultTest> {
 }
 
 /// The most-negative signed value at bitwidth `bw` (`−2^{bw-1}`; `0` at bw 0).
-fn int_min(bw: u32) -> i32 {
+pub(crate) fn int_min(bw: u32) -> i32 {
     if bw == 0 {
         return 0;
     }
@@ -5061,7 +5061,7 @@ fn int_min(bw: u32) -> i32 {
 }
 
 /// The most-positive signed value at bitwidth `bw` (`2^{bw-1}−1`; `0` at bw 0).
-fn int_max(bw: u32) -> i32 {
+pub(crate) fn int_max(bw: u32) -> i32 {
     if bw == 0 {
         return 0;
     }

@@ -407,7 +407,7 @@ impl<'a> Evaluator<'a> {
                 // matching the encoder's `empty_on_overflow`.
                 if !self.allow_overflow
                     && of
-                    && crate::overflow_guard::overflow_capable(self.ir, ie)
+                    && crate::overflow_guard::overflow_capable(self.ir, self.bitwidth, ie)
                 {
                     Ok(TupleSet::empty(1))
                 } else {
@@ -539,7 +539,13 @@ impl<'a> Evaluator<'a> {
     pub fn eval_int(&mut self, id: IntExprId) -> Result<(i64, bool), TranslateError> {
         let node = self.ir.int_exprs[id].clone();
         match node.kind {
-            IntExprKind::Const(v) => Ok((self.wrap_signed(i64::from(v)), false)),
+            IntExprKind::Const(v) => Ok((
+                self.wrap_signed(i64::from(v)),
+                // §10.7k: an out-of-range literal wraps on the value layer but
+                // raises a constantly-TRUE overflow flag, exactly as the
+                // encoder's twin arm does.
+                crate::overflow_guard::const_overflows(v, self.bitwidth),
+            )),
             IntExprKind::Card(rel) => {
                 let m = self.eval_rel(rel)?;
                 let c = i64::try_from(m.len()).unwrap_or(i64::MAX);
@@ -763,7 +769,7 @@ impl<'a> Evaluator<'a> {
         }
         let mut casts = Vec::new();
         for &s in sides {
-            crate::overflow_guard::collect_capable_casts(self.ir, s, &mut casts);
+            crate::overflow_guard::collect_capable_casts(self.ir, self.bitwidth, s, &mut casts);
         }
         self.guard_rel_casts(atom, &casts)
     }
