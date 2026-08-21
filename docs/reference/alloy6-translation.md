@@ -481,6 +481,30 @@ controls. Corpus effect: `overlapping-ranges.als[0]`, `philosophers.als[0]` and
 resolver or recorded-choice behaviour moves, so the mt-040 additive-recording
 guarantee holds by construction.
 
+#### 3.7b A macro's sort is its **body's** sort — including in integer position (mt-100)
+
+The expansion in §3.7/§3.7a happens **before** translation, so the translator
+never sees a macro node: the body's own translated class is what the
+surrounding context dispatches on. In particular a macro whose body is
+`Int`-sorted (`let k = #A`, `let n = 3`, `let m = 0-8` under the §10.7i fold,
+`let card[s] = #s`) is an integer-position expression at every use, and the
+jar accepts it wherever the body would be accepted — command body, module
+`fact`, arithmetic argument, `sum` body, and the GUI evaluator prompt alike.
+Two consequences that a "macros are expanded once, somewhere" reading would
+get wrong, both measured: the §10.7i fold's trigger still tracks the **solved
+command's** bitwidth through the macro, and a macro body's forbid-mode
+overflow guard is identical cell-for-cell to the same text written inline.
+
+mettle already classified this correctly (`macro_sort` /
+`fragment_macro_sort`); what was missing was somewhere for `lower_int` to
+route into, so every such use hit the `integer-position name` /
+`integer-position spine` typed defers. `Lowerer::replay_macro_int` mirrors
+`replay_macro_rel` — same `bind_macro`, so §3.7a's caller-context rule is
+inherited rather than re-derived — and is dispatched from `lower_int`'s name
+arm (`NameChoice::Macro`) and its `BoxJoin` arm (`SpineChoice::Macro`).
+Probes and the full cell tables:
+[§10.7j](#107j-mt-100-a-module-level-macro-in-integer-position--pinned-and-implemented-jar-verified-2026-08-21).
+
 ---
 
 ## 3. Symmetry breaking
@@ -2894,6 +2918,58 @@ tests) and `repl::mt052_*` (6 tests).
   keeps it — the same former-dependence §10.7h measured. Out of scope for
   mt-052; it is what holds four of that bead's guard-exactness cells to
   allow-mode-only assertions. Recorded in [LIMITATIONS.md](../../LIMITATIONS.md).
+
+### 10.7j mt-100: a module-level macro in **integer** position — pinned and implemented (jar-verified 2026-08-21)
+
+**Mission.** Close the defer §10.7i's round 5 left behind. mettle replayed a
+macro in formula and relation position but not in integer position, so every
+macro whose **body is `Int`-sorted** — `let k = #A`, `let n = 3`,
+`let m = 0-8` (the §10.7i fold), `let cardm[s] = #s` — hit the typed defers
+"integer-position name" / "integer-position spine". Harness:
+`scratchpad/probe/mt100/` — mt-090's `AllCmdProbe.java` over seven models
+(`named.als`, `factpos.als`, `fold.als`, `param.als`, `nested.als`, `ovf.als`,
+`relsort.als`: 75 commands × both `noOverflow` settings = **150 verdict
+cells**, sat4j, symmetry 0) and mt-099's GUI-evaluator `Probe.java` over
+`ev.als` and the live `repl/macros.als` fixture (20 + 19 = **39 render
+cells**). Narrative and full cell tables: `scratchpad/probe/mt100/NOTES.md`.
+
+#### The rule
+
+**A macro use is inlined before translation, so the *body's* translated class
+is what the surrounding context sees — in integer position exactly as in the
+other two.** `CompModule.parseOneExpressionFromString`/the resolver expand
+`ExprCall`-shaped macro uses into the substituted body; the translator never
+sees a macro node. Every measured consequence follows from that one fact, and
+none of them needs an arm of its own:
+
+| family | cells | measured |
+| --- | --- | --- |
+| (a) bare `Int`-bodied name | 19 cmds (`named.als`) + 5 (`factpos.als`) | `let k = #A` in `run`/`fact`/int-argument/`>`/`sum`/`Int[·]` position is the plain body: `k = 1` SAT and `k = 4` UNSAT at `for 3`, `k = 4` SAT at `for 5`. `let n = 3` and `let j = plus[1,2]` likewise |
+| (b) the §10.7i fold under a macro | 12 (`fold.als`) | **the fold survives macro expansion.** `let m4 = 0-8`: `m4 = min` SAT, `m4 = 0` UNSAT, `plus[m4,1] = minus[0,7]` SAT, `#(Int[m4]) = 1` SAT — and it still tracks the *command's* bitwidth (`let m3 = 0-4` folds at bw 3, is `{0}` at bw 4) |
+| (c) parameterized macro, spine position | 11 (`param.als`) | `let cardm[s] = #s` used as `cardm[A] = 2` is legal and lowers; so is an `Int`-sorted **argument** (`f[#A]`) |
+| (d) macro inside a macro | 9 (`nested.als`) | the mt-097 family-B discipline carries over verbatim — `let h[z] = g[plus[z,1]]` resolves `h`'s argument in the **caller's** choice table |
+| (e) overflow | 11 (`ovf.als`) | **a macro body's forbid-mode guard is identical to the same text written inline**, cell for cell: `let ov = plus[7,1]` vs `plus[7,1]` agree on all of allow-SAT/forbid-UNSAT at bw 4 and both-SAT at bw 5 |
+| (f) `Rel`-sorted body (regression) | 8 (`relsort.als`) | unchanged — `let r = B.n` in int position still goes through the `Sort::Rel` coercion, never the macro arm |
+| (g) evaluator | 39 render cells | **a macro name is legal evaluator input** (the console re-parses the whole module from the XML `<source>` nodes, so the macros are back in scope) and renders exactly as its body does: `k` → bare `2` like `#A`, `n` → `{3}` like the numeral (§10.7's mt-095/mt-099 carve-out), `m` → bare `-8` like `0-8`, `cardm[A]` → bare `2` |
+
+The corollary worth stating separately, because it is what makes the fix one
+function: **the sort of a macro use is the sort of its body**, and mettle
+already computed that (`macro_sort`/`fragment_macro_sort`). The defer was purely
+that `lower_int` had no `NameChoice::Macro` / `SpineChoice::Macro` arm to route
+into, while `lower_rel` and `lower_formula` did.
+
+#### What this fixed in mettle
+
+`replay_macro_int` (`crates/als-core/src/lower.rs`) mirrors `replay_macro_rel`
+line for line — same `bind_macro` (so mt-097's caller-`Ctx` rule is inherited,
+not re-derived), same body context, `lower_int` instead of `lower_rel` — and is
+dispatched from `lower_int`'s name arm and its `BoxJoin` spine arm. Nothing
+else changed: the §2.4 `int[Int[e]]` peephole, the §10.7i fold, the overflow
+accumulation and the evaluator's fragment dispatch all ride the existing
+machinery by construction, which is why families (b) and (e) came out right
+with no code of their own. **150/150 verdict cells and 39/39 render cells now
+match the jar** (before: 82 of the 150 deferred). Pinned jar-free by
+`macro_int_conformance::*` (9 tests) and `repl::mt100_*` (4 tests).
 
 ### 10.8 mt-053 `univ`/`iden` live-universe probes (jar-verified 2026-07-21)
 

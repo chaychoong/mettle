@@ -2982,6 +2982,9 @@ impl<'a> Lowerer<'a> {
                     Some(ExprChoice::Spine(SpineChoice::Call(cc))) => {
                         self.inline_fun_int(ctx, cc.func, &cc.args, cc.implicit_this, span)
                     }
+                    Some(ExprChoice::Spine(SpineChoice::Macro(mc))) => {
+                        self.replay_macro_int(ctx, &mc, span)
+                    }
                     _ => Err(TranslateError::LoweringUnsupported {
                         what: "integer-position spine".to_owned(),
                         span,
@@ -3015,10 +3018,14 @@ impl<'a> Lowerer<'a> {
                 ))
             }
             ExprKind::Name(_) | ExprKind::AtName(_) => {
-                // A 0-ary fun returning an int, inlined.
+                // A 0-ary fun returning an int, inlined; or an `Int`-sorted
+                // module-level macro, replayed.
                 match self.choice(ctx, e).cloned() {
                     Some(ExprChoice::Name(NameChoice::Call0(func))) => {
                         self.inline_fun_int(ctx, func, &[], true, span)
+                    }
+                    Some(ExprChoice::Name(NameChoice::Macro(mc))) => {
+                        self.replay_macro_int(ctx, &mc, span)
                     }
                     _ => Err(TranslateError::LoweringUnsupported {
                         what: "integer-position name".to_owned(),
@@ -3870,6 +3877,35 @@ impl<'a> Lowerer<'a> {
         };
         let body = self.world.macros[mc.macro_id].body;
         let r = self.lower_rel(ctx, body);
+        for _ in 0..pushed {
+            self.binders.pop();
+        }
+        r
+    }
+
+    /// The integer-position twin of [`Self::replay_macro_rel`]. A macro whose
+    /// body is `Int`-sorted (`#A`, a bare numeral, the `0-(max+1)` fold) never
+    /// reaches `lower_rel`'s macro arm: the caller's `Sort::Int` classification
+    /// routes it straight here. The reference inlines the macro *before*
+    /// translating, so the body's own translated class is what the surrounding
+    /// arithmetic sees — replaying the body through `lower_int` reproduces that
+    /// exactly, including the §2.4 peephole, the `0-(max+1)` fold and the
+    /// forbid-mode overflow flag, with no arm of its own (translation-ref
+    /// §10.7j).
+    fn replay_macro_int(
+        &mut self,
+        caller: Ctx,
+        mc: &als_types::MacroChoice,
+        span: Span,
+    ) -> Result<IntExprId, TranslateError> {
+        let pushed = self.bind_macro(caller, mc, span)?;
+        let ctx = Ctx {
+            module: mc.body_module,
+            choices: &mc.body_choices,
+            ast: None,
+        };
+        let body = self.world.macros[mc.macro_id].body;
+        let r = self.lower_int(ctx, body);
         for _ in 0..pushed {
             self.binders.pop();
         }

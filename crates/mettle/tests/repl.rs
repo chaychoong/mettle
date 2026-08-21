@@ -1144,3 +1144,88 @@ fn mt052_peephole_trigger_tracks_the_solved_bitwidth() {
         &[("0-8", "-8"), ("0-4", "{0}")],
     );
 }
+
+// ---- mt-100: module-level macros in integer position -----------------------
+//
+// The console re-parses the WHOLE module from the XML's `<source>` nodes before
+// evaluating, so a module-level macro is back in scope at the prompt — and it
+// renders exactly as its body would, because the macro is inlined before
+// anything is translated (translation-ref §10.7j).
+//
+// Cells jar-verified at mt-100 against the pinned GUI-evaluator path, on this
+// exact fixture (`scratchpad/probe/mt100/eval2-jar.txt`, 19/19).
+
+#[test]
+fn mt100_a_macro_name_renders_as_its_body() {
+    // `k` is `#A` (a `Card`, bare), `n` is the numeral `3` (an `Expression`,
+    // so `{3}`), `m` is the §10.7i fold (bare `-8`), `j` is a `fun/…` call
+    // (`{3}`). Four bodies, four different renderings, none of them the
+    // macro's own — which is the whole rule in one cell block.
+    assert_cells(
+        "macros.als",
+        &[],
+        &[
+            ("k", "2"),
+            ("#A", "2"),
+            ("n", "{3}"),
+            ("m", "-8"),
+            ("0-8", "-8"),
+            ("j", "{3}"),
+            ("plus[1,2]", "{3}"),
+        ],
+    );
+}
+
+#[test]
+fn mt100_a_macro_reaches_every_evaluator_position() {
+    // The macro flows into arithmetic, an int comparison, an equality, and back
+    // out through `Int[·]` — each position rendering by its own rule.
+    assert_cells(
+        "macros.als",
+        &[],
+        &[
+            ("plus[k,1]", "{3}"),
+            ("plus[m,1]", "{-7}"),
+            ("Int[k]", "2"),
+            ("k = 2", "true"),
+            ("k > 1", "true"),
+            ("m = min", "true"),
+        ],
+    );
+}
+
+#[test]
+fn mt100_a_parameterized_macro_is_evaluable() {
+    // `cardm`'s body is `#s`, so the spine is Int-sorted and renders bare; `f`'s
+    // is a `fun/…` call and renders as a set. `cardm`'s parameter shadows the
+    // module-level macro `s`, and `f[7]` wraps at bitwidth 4 exactly as the
+    // inline `plus[7,1]` does.
+    assert_cells(
+        "macros.als",
+        &[],
+        &[
+            ("cardm[A]", "2"),
+            ("cardm[s]", "2"),
+            ("#s", "2"),
+            ("f[2]", "{3}"),
+            ("f[k]", "{3}"),
+            ("f[7]", "{-8}"),
+        ],
+    );
+}
+
+#[test]
+fn mt100_a_rel_sorted_macro_still_renders_as_a_set() {
+    // The negative space: `let s = A` is Rel-sorted, so it never touches the
+    // new int arm and stays a tuple set — identical to spelling `A`.
+    assert_cells(
+        "macros.als",
+        &[],
+        &[
+            ("s", "{A$0, A$1}"),
+            ("A", "{A$0, A$1}"),
+            ("deep", "{3}"),
+            ("deep = 3", "true"),
+        ],
+    );
+}
