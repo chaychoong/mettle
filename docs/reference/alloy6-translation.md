@@ -382,7 +382,10 @@ set equality always, with forbid-mode cast-emptiness + guard semantics.
   coercion"). One real peephole exists, and it is on **`MINUS`**, not `IPLUS`
   (correcting an earlier note): `0 - (max+1)` folds to the constant `min` so the
   most-negative literal (`-8` at bw 4) can be written without an out-of-range
-  intermediate (`TranslateAlloyToKodkod`, `ExprBinary` `MINUS` case).
+  intermediate (`TranslateAlloyToKodkod`, `ExprBinary` `MINUS` case). The exact
+  guard, its negative space, and the fact that the fold's result is an
+  `IntExpression` (so it is int-*sorted*, not just int-valued) are pinned in
+  [§10.7i](#107i-mt-052-the-0-max1-minus-peephole--pinned-and-implemented-jar-verified-2026-08-21).
 - **Overflow semantics live entirely in Kodkod's int translation**, switched by
   `Options.setNoOverflow(opt.noOverflow)` and `IntEncoding.TWOSCOMPLEMENT` at the
   chosen bitwidth. With `noOverflow=false` (jar headless default) arithmetic
@@ -1432,7 +1435,11 @@ exception is the one documented peephole at exactly `k = bw_max+1` (=8 at bw 4):
 this one way. `(0-1)`, `(0-5)`, etc. are **not** covered by that peephole and
 silently mean something else entirely. `negate[k]` works uniformly for every `k`
 in `1..8` (confirmed: `negate[8]` also gives `-8`, agreeing with the `(0-8)`
-peephole on that one value). All probes below use `negate[k]`.
+peephole on that one value). All probes below use `negate[k]`. (mt-052 later
+pinned that peephole exactly and implemented it — §10.7i. `(0-8)` is now the
+*preferable* MIN spelling of the two, because the folded `IntConstant` carries
+no overflow flag where `negate[8]`'s out-of-range literal does; the round below
+predates that and its `negate[k]` spellings stand.)
 
 **Sanity anchors — all reproduced** (OpenJDK 21, jar 6.2.0, sat4j, sym 0, allow
 mode unless noted): `div[negate[5],2]=-2`, `div[5,negate[2]]=-2`,
@@ -2794,6 +2801,99 @@ corner of a context-dependent effect, not a general rule.
 * **`lone` over an intersection sheds where `no`/`in` guard** (probe u15, jar
   SAT / mettle UNSAT). A third axis — reader-dependence *within* the set-level
   readers — untouched by this bead and unexplained.
+
+### 10.7i mt-052: the `0-(max+1)` MINUS peephole — pinned and implemented (jar-verified 2026-08-21)
+
+**Mission.** Close the last named integer corner from §10.7's "Remaining
+documented integer corners": the jar folds `0 - (max+1)` to the int constant
+`min`, mettle read it as set difference, and the gap was a live wrong-verdict
+candidate (jar-SAT / mettle-UNSAT) with zero corpus incidence. Harness:
+`scratchpad/probe/mt052/` — mt-090's `AllCmdProbe.java` over `bw.als` /
+`bw2.als` / `bw3.als` / `tcand.als` (79 + 27 verdict cells, sat4j, symmetry 0,
+both `noOverflow` settings per cell) and mt-099's GUI-evaluator `Probe.java`
+over `ev.als` and the two live repl fixtures (21 + 29 = 50 render cells). Full
+narrative,
+including a round-1 hygiene defect and its correction:
+`scratchpad/probe/mt052/NOTES.md`.
+
+#### The rule
+
+`visit(ExprBinary)` opens `Expr a = x.left, b = x.right;` — **raw, no
+`deNOP()`** — and `case MINUS` (`TranslateAlloyToKodkod.java:1239-1248` @
+`794226dd`) returns `IntConstant.constant(min)` when `a` is literally the
+numeral `0` and `b` is literally the numeral `max+1`, falling through to
+`cset(a).difference(cset(b))` otherwise. It exists so `min` is spellable at
+all: `-8` is not surface syntax and `8` at bw 4 is already out of range.
+
+The guard is **syntactic, on the resolved AST, and reads the command's
+bitwidth** (`min`/`max` are `A4Solution`'s, `:161-162`). Measured negative
+space, every row a pinned cell:
+
+| spelling (bw 4) | denotes | cell |
+|---|---|---|
+| `0-8`, `0 - 8`, `(0)-8`, `0-(8)`, `(0-8)` | **`min` = −8** | C01–C05 |
+| `0-1`, `0-2`, `0-7` (in-range RHS) | `{0}` — the mt-044 artifact family | C06–C08 |
+| `1-8` (non-zero LHS) | `{1}` | C10 |
+| `0-9` (RHS past `max+1`) | `{0}` | C11 |
+| `0-0`, `0-16`, `0-8-8` | **`{}`** — an out-of-range RHS wraps two's-complement to an atom that cancels | E01/E03/E19 |
+| `0-plus[4,4]` (computed `max+1`) | `{0}` — the rule is **not** value-based | C13 |
+| `let k = 8 \| 0-k` | `{0}` — no substitution in front of the guard | E17/E18 |
+| `1-(0-8)` | `{1}` — the inner fold fires, the outer `-` does not | E20 |
+
+Parentheses are transparent because Alloy's parser folds them around a numeral
+with no `ExprUnary.NOOP` wrapper (`AstDump`), which is the only reason the
+missing `deNOP()` does not bite. The trigger literal moves with the scope:
+`0-1` at bw 1, `0-2` at bw 2, `0-4` at bw 3, `0-8` at bw 4, `0-16` at bw 5
+(F01–F06, C14–C17). At bw 0 the cell is degenerate — with no `Int` atoms every
+int-valued expression is the empty relation under either reading (F07–F09).
+
+#### The half the source citation alone does not give you
+
+The fold returns an **`IntExpression`**, not an `Expression`. That is a *sort*
+fact, not just a value fact, and it is observable in three further places:
+
+* `toSet` re-wraps it, `IntConstant.constant(min).toExpression()` — an
+  `IntToExprCast` — so `(0-8) = 0` is a **both-cast int compare** (§10.7e
+  FACT 1), not a set comparison;
+* `toInt` takes it **unwrapped**, with no `.sum()` round-trip;
+* `visit(ExprITE)` (§10.7g) and `A4Solution.eval`'s render dispatch both test
+  `instanceof Expression` first, and an `IntExpression` fails it. So the
+  console prints `0-8` **bare** (`-8`, where the numeral `-8` prints `{-8}`),
+  and `no A => (0-8) else 1` is int-dispatched off the then branch and prints
+  its **else** branch bare as `1` — while the same shape with `(0-2)` is
+  relational and prints `{0}`.
+
+A fix that changed only the denotation would have left all three wrong.
+
+#### What mettle does
+
+Two edits in `crates/als-core/src/lower.rs`, no new machinery, because mettle
+already mirrors `toSet`/`toInt` as the coercion guards at the top of
+`lower_rel` and `lower_int`: `sort_of`'s `BinOp::Diff` arm reports `Sort::Int`
+when `minus_folds_to_min` holds, and `lower_int`'s `Binary` arm yields
+`IntExprKind::Const(min)`. The rest follows — `lower_rel`'s `Sort::Int` guard
+re-wraps as `IntToAtom(Const(min))` (exactly the shape `fun/min` already lowers
+to, so the encoder path was pre-exercised), `ite_sort` and `fragment_sort_in`
+both delegate to `sort_of`, and the IR evaluator shares the lowered IR with the
+encoder so the pair matches by construction. Verdicts: 79/79 solve cells and
+50/50 render cells agree with the jar, minus four cells held back to allow mode
+only for the separate residual below. Stage-1 sweep byte-identical (zero corpus
+incidence, as predicted). Pinned jar-free by `int_conformance::mt052_*` (5
+tests) and `repl::mt052_*` (6 tests).
+
+#### Also found
+
+* **A bare out-of-range integer literal carries no forbid-mode overflow flag in
+  mettle.** Independent of `-` entirely: at bw 4 the jar gives `8 = 8`,
+  `#(8) = 1`, `no (0 & 8)` and `H.u = 8` all **forbid-UNSAT** while mettle says
+  SAT (`scratchpad/probe/mt052/oor.als`, cells g01–g07). `visit(ExprConstant)`
+  case NUMBER is `IntConstant.constant(n).toExpression()` with the range checks
+  commented out (`:833-836`), so the flag must be arriving from Kodkod's
+  `IntConstant` translation rather than from Alloy. Curiously **not** uniform:
+  `H.u = 0 + 8` is forbid-SAT, so a union sheds the guard where a bare cast
+  keeps it — the same former-dependence §10.7h measured. Out of scope for
+  mt-052; it is what holds four of that bead's guard-exactness cells to
+  allow-mode-only assertions. Recorded in [LIMITATIONS.md](../../LIMITATIONS.md).
 
 ### 10.8 mt-053 `univ`/`iden` live-universe probes (jar-verified 2026-07-21)
 

@@ -1015,3 +1015,132 @@ fn mt099_controls_that_must_not_move() {
         ],
     );
 }
+
+// ---- mt-052: the `0-(max+1)` MINUS peephole at the render dispatch ---------
+//
+// `TranslateAlloyToKodkod`'s `case MINUS` folds a literal-`0` left operand
+// against a literal-`max+1` right one to `IntConstant.constant(min)` — and that
+// is an `IntExpression`, not an `Expression`. So the fold is visible in the
+// console twice over: in the *value* (`-8`, not the set `{0}` a plain `-`
+// gives) and in the *shape* (bare, by the same rule the section above pins for
+// `#`), which is what separates it from every other integer-valued root here.
+//
+// Jar-verified at mt-052 against this exact fixture and `bitwidth.als`
+// (`scratchpad/probe/mt052/NOTES.md`, round 4 + the fixture round; jar commit
+// `794226dd`, the pinned GUI evaluator path).
+
+#[test]
+fn mt052_folded_min_renders_bare() {
+    // `0-8` at bitwidth 4 is the int constant −8 and takes the `IntExpression`
+    // branch, so it prints bare — unlike the numeral `-8` itself, which is an
+    // `IntToExprCast` and prints `{-8}` (E-59 above). Parentheses are
+    // transparent: the parser folds them around a numeral without a wrapper
+    // node, so the reference's un-`deNOP`ed `instanceof ExprConstant` test
+    // still sees the literal.
+    assert_cells(
+        "numeral.als",
+        &[],
+        &[
+            ("0-8", "-8"),
+            ("(0-8)", "-8"),
+            ("0 - 8", "-8"),
+            ("(0-8) = -8", "true"),
+            ("(0-8) = 0", "false"),
+        ],
+    );
+}
+
+#[test]
+fn mt052_in_range_minus_still_renders_as_a_difference() {
+    // The negative space, and the reason the fold is worth a section: every
+    // other `0-N` is relational set difference and renders `{0}` — the artifact
+    // family that makes `(0-1)` mean the atom 0 rather than −1. An out-of-range
+    // right operand wraps two's-complement first, so `0-16` (16 → the atom 0)
+    // and `0-8-8` cancel to the EMPTY set rather than to `{0}`.
+    assert_cells(
+        "numeral.als",
+        &[],
+        &[
+            ("0-2", "{0}"),
+            ("0-1", "{0}"),
+            ("0-7", "{0}"),
+            ("0-9", "{0}"),
+            ("1-8", "{1}"),
+            ("1-(0-8)", "{1}"),
+            ("0-0", "{}"),
+            ("0-16", "{}"),
+            ("0-8-8", "{}"),
+        ],
+    );
+}
+
+#[test]
+fn mt052_peephole_guard_is_syntactic_at_the_prompt() {
+    // The guard tests the AST node, not the value, and nothing looks through an
+    // indirection: a computed `max+1` and a `let`-bound one both stay set
+    // difference. `0-plus[4,4]` is the sharp one — `plus[4,4]` really is 8 at
+    // this bitwidth, and it still does not fold.
+    assert_cells(
+        "numeral.als",
+        &[],
+        &[("0-plus[4,4]", "{0}"), ("let k = 8 | 0-k", "{0}")],
+    );
+}
+
+#[test]
+fn mt052_folded_min_flows_through_every_position() {
+    // `toInt` takes the fold unwrapped and `toSet` re-wraps it as
+    // `IntConstant(min).toExpression()`, so the same constant reaches int
+    // position, set position, cardinality and a `sum` binder — each rendering
+    // by its own position's rule, not the fold's.
+    assert_cells(
+        "numeral.als",
+        &[],
+        &[
+            ("#(0-8)", "1"),
+            ("int[0-8]", "{-8}"),
+            ("Int[0-8]", "-8"),
+            ("plus[0-8,1]", "{-7}"),
+            ("(0-8) + 1", "{-8, 1}"),
+            ("sum x: 0-8 | int[x]", "-8"),
+        ],
+    );
+}
+
+#[test]
+fn mt052_folded_min_drives_the_ite_dispatch() {
+    // mt-095's rule meets mt-052's: `visit(ExprITE)` reads the *then* branch's
+    // translated class and coerces the else branch to match. A folded `(0-8)`
+    // makes the ITE int-dispatched, so the **else** branch renders bare too —
+    // `no A => (0-8) else 1` is `1`, where the same shape with an unfolded
+    // `(0-2)` is relational and gives `{0}`.
+    assert_cells(
+        "numeral.als",
+        &[],
+        &[
+            ("some A => (0-8) else 1", "-8"),
+            ("no A => (0-8) else 1", "1"),
+            ("some A => (0-2) else 1", "{0}"),
+        ],
+    );
+}
+
+#[test]
+fn mt052_peephole_trigger_tracks_the_solved_bitwidth() {
+    // `min`/`max` are the solved command's, so the trigger literal moves with
+    // the scope (E-25/E-26's point, applied to the fold): under `Narrow`
+    // (bw 3) it is `0-4`, and `0-8` folds nothing — 8 wraps to the atom 0 and
+    // the difference cancels to `{}`.
+    assert_cells(
+        "bitwidth.als",
+        &["--command", "Narrow"],
+        &[("0-4", "-4"), ("0-8", "{}"), ("0-2", "{0}"), ("0-3", "{0}")],
+    );
+    // The same two inputs under `Wide` (bw 4), where 8 is the trigger and 4 is
+    // an ordinary in-range operand.
+    assert_cells(
+        "bitwidth.als",
+        &["--command", "Wide"],
+        &[("0-8", "-8"), ("0-4", "{0}")],
+    );
+}

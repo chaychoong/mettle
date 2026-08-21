@@ -7,7 +7,9 @@
 //! Negative integer literals are spelled `negate[k]` (genuine `util/integer`
 //! arithmetic), never `(0-k)` — the raw hyphen is relational set-difference and
 //! `(0-5)` silently means the atom `0` (§10.7b harness finding). The one
-//! exception, the `(0-8)` = MIN peephole, is not exercised here.
+//! exception is the `0-(max+1)` MINUS peephole, which folds to the int constant
+//! `min` — that one has its own section at the bottom of this file (mt-052,
+//! §10.7i).
 
 use als_core::ir::Ir;
 use als_core::{
@@ -133,9 +135,9 @@ fn i11_universal_position_overflow_rescues() {
 fn i10_div_by_zero_excluded_in_forbid() {
     // Reflexive div-by-zero / MIN÷−1 / rem-by-zero set overflow, so each is
     // excluded at positive polarity in forbid mode; a clean div is SAT control.
-    // (`negate[8]` is used for MIN: mettle has no `(0-8)→MIN` peephole, so
-    // `(0-8)` is the atom 0 here — the exclusion still holds, whether via the
-    // MIN÷−1 overflow or `negate[8]`'s own flag; both give the pinned UNSAT.)
+    // (`negate[8]` is used for MIN here, predating mt-052's peephole; `(0-8)`
+    // would now also be MIN. The exclusion holds either way — via the MIN÷−1
+    // overflow or via `negate[8]`'s own flag — and both give the pinned UNSAT.)
     assert_eq!(solve("run { div[5, 0] = div[5, 0] }\n", false), Ok(false));
     assert_eq!(
         solve(
@@ -303,4 +305,135 @@ fn right_shifts_never_self_overflow() {
         solve("run { (negate[1] >> 1) = negate[1] }\n", false),
         Ok(true)
     );
+}
+
+// ------------- mt-052: the `0-(max+1)` MINUS peephole (§10.7i) ---------------
+//
+// `TranslateAlloyToKodkod`'s `case MINUS` folds a literal-`0` left operand
+// against a literal-`max+1` right one to `IntConstant.constant(min)` — the only
+// way to spell the most-negative literal, since `-8` is not surface syntax and
+// `8` at bitwidth 4 is already out of range. Every other `-` is relational set
+// difference, which is the `(0-1)` artifact family the module header warns
+// about.
+//
+// The guard is syntactic (on the resolved AST, with no `deNOP`) and reads the
+// *command's* bitwidth, so all four axes below are separate cells. Verdicts are
+// jar-pinned at mt-052 (`scratchpad/probe/mt052/NOTES.md`, `tcand.als` round —
+// jar commit `794226dd`, sat4j, symmetry 0, both overflow modes).
+
+#[test]
+fn mt052_zero_minus_max_plus_one_folds_to_min() {
+    // t01/t02/t25: `0-8` at bw 4 IS `min`, parenthesized or not, either way
+    // round. `min` is the reference's own `ExprConstant.Op.MIN`, i.e. a bare
+    // `IntConstant` — so unlike `negate[8]` it carries no overflow flag and the
+    // cell is pinned in **both** modes.
+    assert_eq!(solve("run { (0-8) = min }\n", true), Ok(true));
+    assert_eq!(solve("run { (0-8) = min }\n", false), Ok(true));
+    assert_eq!(solve("run { 0-8 = min }\n", true), Ok(true));
+    assert_eq!(solve("run { min = (0-8) }\n", true), Ok(true));
+    // t03: and it is emphatically NOT the set `{0}` any more.
+    assert_eq!(solve("run { (0-8) = 0 }\n", true), Ok(false));
+    // t17: the folded constant is overflow-free — `(0-8)` is the clean MIN
+    // spelling §10.7d already relied on.
+    assert_eq!(solve("run { (0-8) = (0-8) }\n", false), Ok(true));
+}
+
+#[test]
+fn mt052_in_range_minus_stays_set_difference() {
+    // t04/t05/t06: the negative space. An in-range right operand keeps plain
+    // relational difference, so `(0-N) = {0} − {N} = {0}` for every N in 1..7 —
+    // the artifact family mt-044 pinned. A fold that leaked one step past
+    // `max+1` would break exactly these.
+    for src in [
+        "run { (0-2) = 0 }\n",
+        "run { (0-1) = 0 }\n",
+        "run { (0-7) = 0 }\n",
+    ] {
+        assert_eq!(solve(src, true), Ok(true), "{src}");
+        assert_eq!(solve(src, false), Ok(true), "{src}");
+    }
+    // t20: and `(0-2)` is int-coerced as the SET's sum, 0 — not −2.
+    assert_eq!(solve("run { (0-2) < 0 }\n", true), Ok(false));
+    // t19: the folded one really is negative.
+    assert_eq!(solve("run { (0-8) < 0 }\n", true), Ok(true));
+}
+
+#[test]
+fn mt052_peephole_guard_is_exact() {
+    // t07/t08/t18/t24: everything one step off the guard stays set difference.
+    // A non-zero left operand, a right operand past `max+1`, a *computed*
+    // `max+1` (the rule is syntactic, never value-based), and a `let`-bound one
+    // (`visit(ExprBinary)` reads `x.left`/`x.right` raw — no `deNOP`, no
+    // substitution).
+    //
+    // Allow mode only: each of these keeps an out-of-range literal (or an
+    // overflowing `plus`) that the jar flags in forbid mode and mettle does not
+    // yet — a separate residual, recorded in LIMITATIONS.md, that the peephole
+    // neither causes nor fixes.
+    assert!(allows("run { (1-8) = 1 }\n"));
+    assert!(allows("run { (0-9) = 0 }\n"));
+    assert!(allows("run { 0-plus[4,4] = 0 }\n"));
+    assert!(allows("run { (let k = 8 | 0-k) = 0 }\n"));
+}
+
+#[test]
+fn mt052_peephole_trigger_tracks_the_command_bitwidth() {
+    // t09/t10/t11/t12/t21/t22/t23: `min`/`max` are the solved command's, so the
+    // trigger literal moves with the scope — `0-1` at bw 1, `0-2` at bw 2,
+    // `0-4` at bw 3, `0-16` at bw 5. The same numeral is the fold at one
+    // bitwidth and ordinary difference at another.
+    assert_eq!(
+        solve("run { (0-1) = min } for 3 but 1 int\n", true),
+        Ok(true)
+    );
+    assert_eq!(
+        solve("run { (0-2) = min } for 3 but 2 int\n", true),
+        Ok(true)
+    );
+    assert_eq!(
+        solve("run { (0-4) = min } for 3 but 3 int\n", true),
+        Ok(true)
+    );
+    assert_eq!(
+        solve("run { (0-16) = min } for 3 but 5 int\n", true),
+        Ok(true)
+    );
+    // Negative space at the same bitwidths: one below the trigger is difference.
+    assert_eq!(solve("run { (0-1) = 0 } for 3 but 2 int\n", true), Ok(true));
+    assert_eq!(solve("run { (0-8) = 0 } for 3 but 5 int\n", true), Ok(true));
+    // And `0-8` at bw 3 folds nothing: 8 wraps to the Int atom 0, so the
+    // difference cancels to the EMPTY set — not `{0}`, and not `min`.
+    assert_eq!(
+        solve("run { (0-8) = min } for 3 but 3 int\n", true),
+        Ok(false)
+    );
+    assert_eq!(solve("run { (0-8) = max }\n", true), Ok(false));
+}
+
+#[test]
+fn mt052_folded_min_is_int_sorted_in_every_position() {
+    // The half the bead's line citation does not state: the fold returns an
+    // `IntExpression`, not an `Expression`. `toInt` takes it unwrapped (no
+    // `.sum()` round-trip) and `toSet` re-wraps it as `IntConstant(min)
+    // .toExpression()`, so the constant reaches int position, set position,
+    // cardinality and a quantifier-decl bound alike.
+    //
+    // t13/t14: int position. −8 + 1 = −7, against a genuine `IMINUS` −7 (never
+    // `0-7`, which is the SET `{0}` — round 1 of the probe fell into that).
+    assert_eq!(
+        solve("run { plus[0-8, 1] = minus[0, 7] }\n", true),
+        Ok(true)
+    );
+    assert_eq!(
+        solve("run { plus[0-8, 1] = minus[0, 7] }\n", false),
+        Ok(true)
+    );
+    // t14: the in-range control coerces its `{0}` to 0, giving 0 + 1 = 1.
+    assert_eq!(solve("run { plus[0-2, 1] = 1 }\n", true), Ok(true));
+    // t15: set position — one Int atom, so cardinality 1.
+    assert_eq!(solve("run { #(0-8) = 1 }\n", true), Ok(true));
+    // t16: a quantifier-decl bound is a set position too.
+    assert_eq!(solve("run { some x: 0-8 | x = min }\n", true), Ok(true));
+    // t26: and it is still an ordinary member of `Int`.
+    assert_eq!(solve("run { (0-8) in Int }\n", true), Ok(true));
 }

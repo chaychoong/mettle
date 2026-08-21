@@ -2551,6 +2551,47 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// Whether `lhs op rhs` is the jar's one `MINUS` peephole: `0 - (max+1)`
+    /// folds to the int constant `min` (translation-ref §10.7i;
+    /// `TranslateAlloyToKodkod.java:1239-1248` @ `794226dd`; probe matrix
+    /// `scratchpad/probe/mt052/NOTES.md`).
+    ///
+    /// It exists so the most-negative literal can be written at all: `-8` is
+    /// not surface syntax, and `8` at bitwidth 4 is already out of range, so
+    /// without the fold there would be no way to spell `min` without an
+    /// out-of-range intermediate.
+    ///
+    /// The guard is **syntactic, on the resolved AST, and un-`deNOP`ed** —
+    /// `visit(ExprBinary)` reads `x.left`/`x.right` raw and tests
+    /// `instanceof ExprConstant` with `op == NUMBER`. So it survives
+    /// parentheses (the parser folds those around a numeral without a wrapper
+    /// node: cells C03–C05) but nothing else. Everything below stays plain set
+    /// difference, and each is a pinned cell: an in-range right operand
+    /// (`0-2`, C06 — the mt-044 `(0-1)` artifact family), a non-zero left one
+    /// (`1-8`, C10), a right operand past `max+1` (`0-9`, C11), a *computed*
+    /// `max+1` (`0-plus[4,4]`, C13 — value-based folding is explicitly not the
+    /// rule), a `let`-bound one (`let k = 8 | 0-k`, E17/E18), and the same
+    /// numeral at a bitwidth where it is not `max+1` (`0-8` at bw 5, C15).
+    ///
+    /// `min`/`max` are the *command's* (`A4Solution.java:161-162`), so the
+    /// trigger literal moves with the scope: `0-1` at bw 1, `0-2` at bw 2,
+    /// `0-4` at bw 3 (F01–F06, C16).
+    ///
+    /// Callers rely on the fold's result being an `IntExpression` rather than
+    /// an `Expression`, which is why this is consulted from
+    /// [`Self::sort_of`] — see the `BinOp::Diff` arm there for what that buys.
+    fn minus_folds_to_min(&self, ctx: Ctx, op: BinOp, lhs: ExprId, rhs: ExprId) -> bool {
+        if op != BinOp::Diff {
+            return false;
+        }
+        let Some(trigger) = int_max(self.bitwidth).checked_add(1) else {
+            return false;
+        };
+        let exprs = &self.ast_of(ctx).exprs;
+        matches!(exprs[lhs].kind, ExprKind::Num(0))
+            && matches!(exprs[rhs].kind, ExprKind::Num(n) if n == trigger)
+    }
+
     fn lower_binary_rel(
         &mut self,
         ctx: Ctx,
@@ -2905,6 +2946,11 @@ impl<'a> Lowerer<'a> {
                 }),
             },
             ExprKind::Binary { op, lhs, rhs } => {
+                if self.minus_folds_to_min(ctx, op, lhs, rhs) {
+                    // `toInt` of the folded constant, unwrapped — no `.sum()`
+                    // round-trip. See [`Self::minus_folds_to_min`].
+                    return Ok(self.mk_int(IntExprKind::Const(int_min(self.bitwidth)), span));
+                }
                 if let Some(iop) = int_binop(op) {
                     let l = self.lower_int(ctx, lhs)?;
                     let r = self.lower_int(ctx, rhs)?;
@@ -3991,7 +4037,7 @@ impl<'a> Lowerer<'a> {
                 | UnOp::Once => Sort::Formula,
                 _ => self.sort_of(ctx, *expr),
             },
-            ExprKind::Binary { op, lhs, .. } => match op {
+            ExprKind::Binary { op, lhs, rhs } => match op {
                 BinOp::Or
                 | BinOp::And
                 | BinOp::Iff
@@ -4010,10 +4056,20 @@ impl<'a> Lowerer<'a> {
                 | BinOp::IntDiv
                 | BinOp::IntRem => Sort::Int,
                 BinOp::Join => self.spine_sort(ctx, e),
-                _ => {
-                    let _ = lhs;
-                    Sort::Rel
-                }
+                // The `MINUS` peephole returns an `IntConstant` — an
+                // `IntExpression`, not an `Expression` — so a folding
+                // `0-(max+1)` is int-sorted wherever the jar dispatches on the
+                // translated Kodkod class, which no other `-` ever is. That is
+                // load-bearing in three places beyond the value itself:
+                // [`Self::lower_rel`]'s guard re-wraps it as `Int[min]`
+                // (the jar's `toSet` → `.toExpression()`); the ITE dispatch
+                // reads it through [`Self::ite_sort`] and takes the int branch,
+                // dragging the else branch with it (`no F => (0-8) else 1`
+                // renders bare `1`); and the evaluator console renders it bare
+                // (`-8`, not `{-8}`) through [`Self::fragment_sort_in`].
+                // See [`Self::minus_folds_to_min`].
+                BinOp::Diff if self.minus_folds_to_min(ctx, *op, *lhs, *rhs) => Sort::Int,
+                _ => Sort::Rel,
             },
             ExprKind::BoxJoin { .. } => self.spine_sort(ctx, e),
             ExprKind::Name(_) | ExprKind::AtName(_) => self.name_sort(ctx, e),
