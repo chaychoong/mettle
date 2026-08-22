@@ -26,6 +26,8 @@ mod expr;
 mod members;
 mod sigs;
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use als_syntax::ast::{Ast, BinOp, ExprId, ExprKind, SigMult};
 use als_syntax::{Arena, ArenaId};
 use indexmap::IndexMap;
@@ -187,6 +189,25 @@ struct ModuleSyms {
     macros: IndexMap<String, MacroId>,
 }
 
+/// Whether one `$`-bearing name segment names something the reference's phase-8
+/// meta synthesis would mint, given each sig's own declared field labels
+/// (mt-108). See [`Resolver::compute_meta_gate`] for the namespace this
+/// mirrors. Split at the **first** `$`: a sig or field label can never contain
+/// one (declared `$` names are a parse-time reject), so `A$B$C` finds no field
+/// `B$C` and correctly fails.
+fn is_meta_name(seg: &str, own_fields: &BTreeMap<&str, BTreeSet<&str>>) -> bool {
+    if matches!(seg, "sig$" | "field$" | "static$" | "var$") {
+        return true;
+    }
+    let Some((sig, field)) = seg.split_once('$') else {
+        return false;
+    };
+    let Some(fields) = own_fields.get(sig) else {
+        return false;
+    };
+    field.is_empty() || fields.contains(field)
+}
+
 /// The resolver's working state: the graph, the world being built, per-module
 /// symbol tables, reachability, and the diagnostic sinks.
 #[derive(Debug)]
@@ -211,6 +232,12 @@ struct Resolver<'g> {
     /// (mt-041, probe row 7); `resolve_ordering` part (a) folds them into every
     /// command's `additional_exact`.
     root_exact_sigs: Vec<SigId>,
+    /// Whether this model plausibly uses the `$` metamodel (resolution-doc §1
+    /// phase 8) — the accept-lean gate `Cx::lenient` reads. Computed once, from
+    /// [`ModuleGraph::dollar_names`], as soon as sigs and their field labels are
+    /// known; `false` until then, which is correct because nothing resolves
+    /// expressions before that point. See [`Resolver::compute_meta_gate`].
+    meta_gate: bool,
     errors: Vec<ResolveError>,
     warnings: Vec<ResolveWarning>,
 }
@@ -244,6 +271,7 @@ impl<'g> Resolver<'g> {
             sig_srcs: Vec::new(),
             func_srcs: Vec::new(),
             root_exact_sigs: Vec::new(),
+            meta_gate: false,
             errors: Vec::new(),
             warnings: Vec::new(),
         }
@@ -263,6 +291,9 @@ impl<'g> Resolver<'g> {
         self.compute_qualified_names();
         // Phase 2/3-equivalent: bind module params to argument sigs.
         self.resolve_params();
+        // The phase-8 gate, decided now that sig and field labels exist and
+        // before any expression is resolved (mt-108).
+        self.compute_meta_gate();
         // Phase 4b: resolve sig parents, detect cycles, compute types.
         self.resolve_sig_hierarchy();
         if self.has_errors() {
@@ -306,6 +337,58 @@ impl<'g> Resolver<'g> {
         // additive metadata — the accept/reject verdict + warnings are unchanged
         // (invariance rule), so it runs even after the early-bail checkpoints.
         self.resolve_ordering();
+    }
+
+    /// Decides the metamodel gate the accept-lean path reads ([`Cx::lenient`]) —
+    /// whether any `$`-bearing name in this model could denote something the
+    /// reference's phase-8 synthesis would actually mint (mt-108, ADR-0024).
+    ///
+    /// The reference's own `seenDollar` is merely "a `$` appeared somewhere",
+    /// which is enough for the jar because it goes on to *build* the meta sigs
+    /// and then resolves against them for real (`resolveMeta`). mettle does not
+    /// build them, and leans accept across the whole model instead — so an
+    /// unnarrowed gate hands blanket leniency to a model whose only `$` is a
+    /// typo, and mettle accepts what the jar rejects. The gate therefore fires
+    /// only on names inside the namespace `resolveMeta` populates:
+    ///
+    /// - the reserved `sig$` / `field$`, and the synthesized `static$` / `var$`;
+    /// - `S$` for a declared sig `S` (the reference's `s.label + "$"`);
+    /// - `S$f` for a field `f` **declared by** `S` (`s.label + "$" + f.label`)
+    ///   — an inherited field's meta sig sits under its owner, not under `S`.
+    ///
+    /// Anything else — `$Professor`, a bare `$` — takes the ordinary resolution
+    /// path and is rejected as an unknown name, matching the jar. A parameter
+    /// *alias* (`elem` in `util/ordering[elem]`) is deliberately not a match:
+    /// the reference names meta sigs after the argument sig's own label, so
+    /// `elem$` is not a meta name for the jar either.
+    ///
+    /// Declared `$` names are a parse-time reject, so every candidate here
+    /// arrives from a name reference.
+    fn compute_meta_gate(&mut self) {
+        if self.graph.dollar_names.is_empty() {
+            return;
+        }
+        // Sig label → the field labels that sig declares itself. Two sigs in
+        // different modules can share a bare name; merging their field sets
+        // under one key can only widen the gate, never narrow it below a real
+        // meta name. `BTreeMap`/`BTreeSet` for determinism (STYLE D2).
+        let mut own_fields: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+        for src in &self.sig_srcs {
+            let ast = self.ast(src.module);
+            let entry = own_fields
+                .entry(self.world.sigs[src.id].name.as_str())
+                .or_default();
+            for &d in &src.fields {
+                for name in &ast.decls[d].names {
+                    entry.insert(name.text.as_str());
+                }
+            }
+        }
+        self.meta_gate = self
+            .graph
+            .dollar_names
+            .iter()
+            .any(|seg| is_meta_name(seg, &own_fields));
     }
 
     /// Populates the `util/ordering` exact-scope + pinning seam (mt-035,

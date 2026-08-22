@@ -475,15 +475,19 @@ impl<'a, 'g> Cx<'a, 'g> {
         self.errors.push(e);
     }
 
-    /// Whether this model uses `$`-meta names anywhere (`sig$`/`field$`/
+    /// Whether this model plausibly uses `$`-meta names (`sig$`/`field$`/
     /// `X$.subfields`). mettle does not synthesize the meta-sig atoms the meta
     /// phase would (resolution-doc §1 phase 8); it approximates them as `univ`,
-    /// so an expression-level reject in a `$`-model may be an artifact of that
+    /// so an expression-level reject in a meta model may be an artifact of that
     /// approximation. The reference resolves these with real meta atoms, so
-    /// mettle stays accept-lean (never rejects) in a `$`-model — the drop-in
-    /// gate outranks the rare `$`-model over-acceptance (LIMITATIONS).
+    /// mettle stays accept-lean (never rejects) in a meta model — the drop-in
+    /// gate outranks the rare meta-model over-acceptance (LIMITATIONS).
+    ///
+    /// A stray `$` does **not** buy this leniency: the gate matches only names
+    /// the reference's synthesis would mint (`Resolver::compute_meta_gate`,
+    /// mt-108), so `$Professor` resolves and rejects normally.
     fn lenient(&self) -> bool {
-        self.r.graph.seen_dollar
+        self.r.meta_gate
     }
 
     fn int_sig(&self) -> SigId {
@@ -1578,7 +1582,11 @@ impl<'a, 'g> Cx<'a, 'g> {
             if !self.lookup_funcs(&segs).is_empty() || self.lookup_macro(&segs).is_some() {
                 return R::ok(Type::unary(self.r.world.builtins.univ));
             }
-            if segs.iter().any(|s| s.contains('$')) || self.r.graph.seen_dollar {
+            // The per-name `$` test the gate used to carry here is subsumed:
+            // any `$`-bearing name reference is in `dollar_names`, so a *meta*
+            // one already sets the gate and a stray one must not be excused
+            // (mt-108).
+            if self.lenient() {
                 return R::ok(Type::unary(self.r.world.builtins.univ));
             }
             self.err(ResolveError::UnknownName {
@@ -2453,12 +2461,12 @@ impl<'a, 'g> Cx<'a, 'g> {
                         });
                         return out;
                     }
-                    // A callable-by-name (macro arg), meta/`$` name → lenient
-                    // `univ` leaf; a genuinely unknown name → a reject reading.
+                    // A callable-by-name (macro arg), or a name in a meta model
+                    // → lenient `univ` leaf; a genuinely unknown name (a stray
+                    // `$` included, mt-108) → a reject reading.
                     let callable =
                         !self.lookup_funcs(&segs).is_empty() || self.lookup_macro(&segs).is_some();
-                    let dollar = segs.iter().any(|s| s.contains('$')) || self.r.graph.seen_dollar;
-                    if callable || dollar {
+                    if callable || self.lenient() {
                         out.push(Reading {
                             ty: Type::unary(self.r.world.builtins.univ),
                             weight: 0,
@@ -2729,12 +2737,12 @@ impl<'a, 'g> Cx<'a, 'g> {
                     self.errors.truncate(nerr);
                 }
                 let joined = lt.join(&self.r.world, &right_ty);
-                // `$`-meta models resolve leniently (meta atoms mettle approximates
+                // Meta models resolve leniently (meta atoms mettle approximates
                 // as `univ`); a lenient `univ`/placeholder operand is never a
                 // genuine illegal join.
                 if !l.err
                     && joined.is_error()
-                    && !self.r.graph.seen_dollar
+                    && !self.lenient()
                     && !self.contains_univ(&lt)
                     && !self.contains_univ(&right_ty)
                 {

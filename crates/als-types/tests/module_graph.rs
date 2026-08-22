@@ -357,9 +357,26 @@ fn load_is_deterministic() {
 }
 
 #[test]
-fn seen_dollar_gate() {
+fn dollar_names_collected() {
     let plain = load("root.als", &[("root.als", "sig A {}\n")]).unwrap();
-    assert!(!plain.seen_dollar);
+    assert!(plain.dollar_names.is_empty());
     let meta = load("root.als", &[("root.als", "fact { some sig$ }\n")]).unwrap();
-    assert!(meta.seen_dollar, "a `sig$` reference sets the meta gate");
+    assert_eq!(meta.dollar_names, vec!["sig$".to_owned()]);
+    // The loader collects the raw segments and judges none of them: deciding
+    // which are meta names needs sigs, so it happens in resolve (mt-108).
+    let stray = load("root.als", &[("root.als", "sig A {}\nfact { $B in A }\n")]).unwrap();
+    assert_eq!(stray.dollar_names, vec!["$B".to_owned()]);
+    // Sorted and deduplicated across every loaded file, root and opened alike.
+    let multi = load(
+        "root.als",
+        &[
+            (
+                "root.als",
+                "open m\nsig A {}\nfact { some A$ and some A$ }\n",
+            ),
+            ("m.als", "module m\nfact { some sig$ }\n"),
+        ],
+    )
+    .unwrap();
+    assert_eq!(multi.dollar_names, vec!["A$".to_owned(), "sig$".to_owned()]);
 }

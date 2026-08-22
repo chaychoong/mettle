@@ -33,6 +33,10 @@ The stage-1 sweep's 3 residual `lowering` rows split 1 + 2: ertms_1A[5] (sized, 
 - **Partial build (a1–a7 surface only)** — rejected: the atoms enter the universe either way, so the expensive invariant-touching part (P4) is unchanged; saves ~1.5 of 11 days and ships a wrong-on-anything-else metamodel that would be redone.
 - **Do nothing at all** — rejected narrowly: leaves 6 measured over-accepts caused by our own stopgap, closable in ~half a day with grep-enumerable risk.
 
+## Addendum — mt-108 SHIPPED, 2026-08-23 (same day): measured closure is 5, not 6
+
+The narrowing shipped as designed (`ModuleGraph::dollar_names` collected at load; `Resolver::compute_meta_gate` decides once sig/field labels exist; `Cx::lenient` reads it; the `X$f` form requires `f` declared by `X` itself — the faithful shape, since an inherited field's meta sig sits under its owner). **Measured over all 150,891 codes (full pre/post mettle-side diff, independently re-verified by the tech lead): exactly 5 codes flip, all accept → reject `UnknownName`, each matching the jar's own reject at the same line and column. Over-accepts 314 → 309; corpus 167/167; the two meta models and all 7 mt-097 probe cells byte-identical in behavior.** The estimate's sixth code (060669, `Course$projects`) stays lenient, correctly — `Course` declares `projects`, so it is a genuine meta name (the jar's own error prints the resolved meta-sig type `{this/Course$projects}` before rejecting on the join shape); its over-accept is attributable to the missing feature (mt-107), not the stopgap, and this ADR's "6 caused by the stopgap" over-attributed by one. Deliberate posture pin: the narrowed gate stays model-wide, as the reference's `seenDollar` is — one genuine meta name still leniences the whole model (test-pinned so it reads as a decision, not a hole). Full record: `scratchpad/probe/mt106/mt108-report.md`, reference-doc §11 (alloy4fun-resolve-pass.md).
+
 ## Consequences
 
 - LIMITATIONS' `Sig$` entry gains the sizing pointer; the `seen_dollar` leniency description changes when mt-108 lands.

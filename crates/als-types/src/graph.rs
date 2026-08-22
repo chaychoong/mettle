@@ -100,7 +100,8 @@ pub struct ModuleInstance {
 }
 
 /// The loaded module world: the file table, the instance arena, the root, and
-/// the meta-phase `seenDollar` gate (resolution-doc §1 phase 8).
+/// the raw material for the meta-phase `seenDollar` gate (resolution-doc §1
+/// phase 8).
 #[derive(Debug)]
 pub struct ModuleGraph {
     /// Every parsed file, `FileId`-keyed.
@@ -109,11 +110,14 @@ pub struct ModuleGraph {
     pub modules: Arena<ModuleId, ModuleInstance>,
     /// The root module (the file handed to [`ModuleGraph::load`]).
     pub root: ModuleId,
-    /// Whether any name in **any loaded file** contained `$` — gates mt-018's
-    /// meta-sig synthesis (the reference accumulates this across every parsed
-    /// file). Declared `$` names are already a parse-time reject, so only
-    /// `sig$`/`field$` uses remain.
-    pub seen_dollar: bool,
+    /// Every distinct `$`-bearing **name segment** appearing in any loaded
+    /// file, sorted (the reference accumulates its `seenDollar` flag across
+    /// every parsed file the same way; mettle keeps the names themselves
+    /// because the flag alone cannot tell a metamodel reference from a stray
+    /// `$`). Declared `$` names are already a parse-time reject, so every entry
+    /// here comes from a name *reference*. The resolver turns this into the
+    /// meta gate once sigs exist — see `Resolver::compute_meta_gate` (mt-108).
+    pub dollar_names: Vec<String>,
 }
 
 impl ModuleGraph {

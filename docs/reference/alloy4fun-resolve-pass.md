@@ -457,3 +457,41 @@ current structure does not yet reach:
   jar-verified: left-of-join reject + disambiguated accept, `this/next` scope,
   bare-`~next` ambiguity, `DeduceType` specialization, unknown-name-in-join,
   comprehension redeclared-var, 0-param-macro join).
+
+## 11. mt-108 — the `seen_dollar` gate narrowed (2026-08-23)
+
+The model-wide accept-lean switch for `$`-metamodel models used to fire on ANY
+`$`-bearing name anywhere in a loaded file, which handed blanket leniency to
+models whose only `$` was a stray character. The mt-106 sizing round measured
+that cost directly: of the 7 alloy4fun codes containing a `$`, the jar rejects
+all 7, mettle rejected only 1 — six of the 314 over-accepts sat in `$`-bearing
+codes.
+
+mt-108 (ADR-0024 Decision 2) narrows the trigger to the namespace the
+reference's phase-8 `resolveMeta` synthesis actually mints: `sig$` / `field$` /
+`static$` / `var$`, `S$` for a declared sig `S`, and `S$f` for a field `f`
+declared by `S` itself. The loader now collects the `$`-bearing name segments
+(`ModuleGraph::dollar_names`); the resolver decides the gate once sigs and
+field labels exist (`Resolver::compute_meta_gate`); `Cx::lenient` reads the
+result. Stray names (`$Professor`, a bare `$`) take the ordinary resolution
+path.
+
+**Measured (150,891 codes, diff of full pre/post mettle-side runs, re-verified
+independently by the tech lead): exactly 5 codes flip, all accept → reject
+`UnknownName`** — 028779, 072345, 072347, 073477, 126919 — each with the jar's
+own reject at the same line and column (`ParseOnlyShim` run banked in
+`scratchpad/probe/mt106/mt108-report.md`). Nothing else moves; corpus stays
+167/167.
+
+**Over-accepts: 314 → 309.** The sixth `$`-code over-accept (060669,
+`one (Course$projects).p`) stays, correctly: `Course` declares `projects`, so
+`Course$projects` is a genuine meta-field name — the jar resolves it to the
+synthesized meta sig (its error message prints `{this/Course$projects}`) and
+rejects on the *join shape*. That over-accept is attributable to the missing
+metamodel feature (mt-107), not to the gate, and only the feature can close it.
+
+One deliberate posture pin: the narrowed gate is still **model-wide** (as the
+reference's `seenDollar` is) — a model containing one genuine meta name
+resolves accept-lean everywhere. Pinned by
+`one_meta_name_leniences_the_whole_model_mt108` so it reads as a decision, not
+a hole. Tests: 6 `_mt108` fns in `crates/als-types/tests/resolve_probes.rs`.

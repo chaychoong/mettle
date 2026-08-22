@@ -536,3 +536,66 @@ fn zero_param_macro_join_accepted_mt025() {
          pred inv { sProjects in enrolled.cProjects }\nrun inv\n",
     );
 }
+
+// ---- mt-108: the `$` metamodel gate (resolution-doc §1 phase 8, ADR-0024) ----
+//
+// mettle does not synthesize the reference's meta sigs, so a model that plausibly
+// uses them resolves accept-lean (`Cx::lenient`). The gate matches only the names
+// `resolveMeta` would actually mint — every stray `$` below is jar-verified as a
+// reject, against `oracle/org.alloytools.alloy.dist.jar`.
+
+/// `sig$` is a reserved meta name: the gate fires and the model resolves
+/// leniently. Jar: ACCEPT (resolution-doc §10 probe 44, "some sig$").
+#[test]
+fn builtin_meta_name_is_lenient_mt108() {
+    accept("sig A {}\nfact { some sig$ }\nrun {}\n");
+}
+
+/// `S$` for a declared sig is a meta name (the reference mints `s.label + \"$\"`),
+/// so the whole model stays accept-lean. Jar: SAT on the mt-097 a3/a4 cells.
+#[test]
+fn meta_sig_name_is_lenient_mt108() {
+    accept("sig V { left: lone V, right: lone V }\nrun { some V$ } for 3\n");
+    accept("sig V { left: lone V, right: lone V }\nrun { #V$.subfields = 2 } for 3\n");
+}
+
+/// `S$f` is a meta name only when `f` is a field **`S` itself declares** — the
+/// reference mints `s.label + \"$\" + field.label` per owning sig. A field name
+/// that `S` does not own leaves the gate shut, so the name rejects normally.
+#[test]
+fn meta_field_name_needs_a_real_field_mt108() {
+    accept("sig A { f: lone A }\nfact { some A$f }\nrun {}\n");
+    let e = reject("sig A { f: lone A }\nfact { some A$g }\nrun {}\n");
+    assert!(matches!(e, ResolveError::UnknownName { .. }), "{e:?}");
+}
+
+/// A stray `$` buys no leniency. Both shapes are alloy4fun codes the jar rejects
+/// with exactly this message: `$Protected` (028779:49:13, "The name
+/// \"$Protected\" cannot be found") and a bare `$` (126919:46:25, "The name
+/// \"$\" cannot be found").
+#[test]
+fn stray_dollar_name_rejected_mt108() {
+    let e =
+        reject("sig File {}\nsig Trash in File {}\npred inv5 { $Protected in Trash }\nrun inv5\n");
+    assert!(matches!(e, ResolveError::UnknownName { .. }), "{e:?}");
+    let e = reject("sig A { f: lone A }\nfact { some $ }\nrun {}\n");
+    assert!(matches!(e, ResolveError::UnknownName { .. }), "{e:?}");
+}
+
+/// The gate is a property of the **model**, not of each name — as the
+/// reference's own `seenDollar` is. One real meta name therefore excuses the
+/// stray one alongside it; that is the accept-lean posture working as designed,
+/// not a hole in the narrowing.
+#[test]
+fn one_meta_name_leniences_the_whole_model_mt108() {
+    accept("sig A {}\nfact { some A$ and $stray in A }\nrun {}\n");
+}
+
+/// A parameter *alias* is not a meta name: the reference names meta sigs after
+/// the argument sig's own label, so `elem$` denotes nothing even inside
+/// `util/ordering`'s own module.
+#[test]
+fn param_alias_is_not_a_meta_name_mt108() {
+    let e = reject("sig A {}\nopen util/ordering[A]\nfact { some elem$ }\nrun {}\n");
+    assert!(matches!(e, ResolveError::UnknownName { .. }), "{e:?}");
+}

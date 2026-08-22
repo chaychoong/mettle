@@ -55,16 +55,16 @@ pub(crate) fn run<L: ModuleLoader>(
     builder.process_opens(root, &mut chain)?;
 
     // The reference threads its `seenDollar` accumulator through EVERY parsed
-    // file (root and transitively-opened alike), so the gate scans them all.
-    let seen_dollar = builder
-        .files
-        .iter()
-        .any(|(_, file)| compute_seen_dollar(file.ast_ref()));
+    // file (root and transitively-opened alike), so the scan covers them all.
+    let mut dollars = BTreeSet::new();
+    for (_, file) in builder.files.iter() {
+        collect_dollar_segments(file.ast_ref(), &mut dollars);
+    }
     Ok(ModuleGraph {
         files: builder.files,
         modules: builder.modules,
         root,
-        seen_dollar,
+        dollar_names: dollars.into_iter().collect(),
     })
 }
 
@@ -411,20 +411,26 @@ fn module_name_of(ast: &Ast, opened_as: Option<&QualName>) -> Vec<String> {
 /// Whether any name reference in one file's AST contains `$` (the meta-phase
 /// gate, resolution-doc §1 phase 8, checked across every loaded file). A cheap
 /// over-scan of `Name`/`AtName` leaves; mt-018 consumes
-/// `ModuleGraph::seen_dollar` to decide meta-sig synthesis.
-fn compute_seen_dollar(ast: &Ast) -> bool {
+/// `ModuleGraph::dollar_names` to decide meta-sig synthesis.
+///
+/// Collects the `$`-bearing segments themselves, not just a flag: the gate can
+/// only be decided once sigs exist, because `Vertex$` and `$Professor` are
+/// indistinguishable at load time (mt-108).
+fn collect_dollar_segments(ast: &Ast, out: &mut BTreeSet<String>) {
     // A leaf-name scan over the flat expression arena, not a node-dispatch
     // site: only `Name`/`AtName` carry names, so an `if let` over those two
     // (rather than an exhaustive `match`) is the right shape — there is no
     // per-variant behavior a new `ExprKind` would need to opt into here
     // (PORTING R1 targets dispatch `match`es, not membership predicates).
-    ast.exprs.iter().any(|(_, expr)| {
+    for (_, expr) in ast.exprs.iter() {
         if let ExprKind::Name(q) | ExprKind::AtName(q) = &expr.kind {
-            q.segments.iter().any(|s| s.text.contains('$'))
-        } else {
-            false
+            for seg in &q.segments {
+                if seg.text.contains('$') {
+                    out.insert(seg.text.clone());
+                }
+            }
         }
-    })
+    }
 }
 
 /// The opens the reference synthesizes at parse time but which never appear in
