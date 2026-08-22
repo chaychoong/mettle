@@ -1398,8 +1398,69 @@ This was the whole of the mt-055 tso residual: `tso_transistency_perturbed.als`'
 mints (`A4Solution.getAllSkolems() == []`). Commands 0/4 counted 121/96 against the
 jar's 11/8; with the rule all five commands match exactly (11, 36, 24, 1, 8).
 
-A **formula-valued `let`** remains divergent in the same family and is *not* fixed
-here — see LIMITATIONS.md and bead mt-056.
+#### 10.6a The formula-valued `let` decides at the USE (mt-056, jar-verified 2026-08-21)
+
+Alloy's `visit(ExprLet)` translates the RHS **once** and places that one Kodkod
+node at every use; Kodkod's `Skolemizer` is a **separate later pass** over the
+assembled tree. So the connective rule above is evaluated in the **use site's**
+context, not the binding site's. mettle's `push_let_bindings` used to lower the
+RHS eagerly at the `let`'s own polarity and bind the resulting `FormulaId`,
+freezing the decision.
+
+Harness `scratchpad/probe/mt056/SkolemProbe.java` reports both observables per
+command — `A4Solution.getAllSkolems()` (the direct "was `$b` minted?") and the
+exhaustive count — over `m1_lets.als` (37 commands) and `m2_capture.als` (6), at
+SB-0 and SB-20. Controls reproduce §10.6's pinned figures exactly (bare
+`some b: B | b = b` **16 / 6**; `some A or …` **15 / 8**), validating the harness
+against an independent pin. Full tables: `scratchpad/probe/mt056/NOTES.md`.
+
+**The pinned rule: a formula-valued `let` is observationally identical to
+inlining.** Every `let` row equals its inline twin — skolem names and both
+counts — across all eleven connective contexts, and:
+
+* **Each use is decided independently, and each skolemizable use mints its OWN
+  skolem.** `let p = E | p and p` mints **two** skolems (`$…_b`, `$…_b'`) and
+  counts 24 / 9 from one shared Alloy node.
+* **There is no first-visit-wins memoisation.** `p and (p or some A)` and
+  `(p or some A) and p` give identical skolems and counts to each other *and* to
+  their unshared inline twins (16 / 6). The corner mt-056 was filed to settle
+  before choosing a design is settled: visit order is not observable, and the
+  bead's candidate (2) is correct in its naive form.
+* **`skolemDepth` is 0**, so a use under `all x: A | p` mints nothing (13 / 7)
+  and the prefix-capture question never arises.
+
+**The hazard that per-use lowering creates, and the shape that answers it.**
+Re-lowering the RHS at the use re-resolves its free names in the *use's* binder
+stack, so a binder that **shadows** a name the RHS mentions would capture it —
+which the jar cannot suffer, having translated the RHS once. Measured
+(`m2_capture` c01/c04/c05): `some x: A | (let p = (some b: A | b in x.r) | all
+x: A | p)` counts **26 / 13**, equal to the outer-`x` hand spelling and *not* to
+the captured one (20 / 10). **The jar binds the OUTER `x`.** So the faithful
+design is: lower the RHS at each use under the use's ambient polarity, but with
+the binder stack **truncated to the binding site's depth**.
+
+**mettle** implements exactly that: `Binding::Formula` carries the unlowered
+`ExprId` plus the binding-site binder depth, and `lookup_binder_formula` lowers
+per use, truncating and restoring the stack. The binding-site `Ctx` is
+deliberately not stored (macro replay builds one borrowing a locally-cloned
+`MacroChoice`, so it cannot outlive the lowerer); the use site's context
+interprets the same `ExprId` identically, and the stored `ModuleId` is a
+tripwire that defers typed rather than reading against a foreign table. A
+**rebinding** `let q = p` is handled too (`name_bound_to_formula`): `sort_of`
+reads the choice table, which records a `let` binder as an ordinary relational
+`Var`, so without it the rebinding took the `lower_rel` path and deferred typed
+where the jar counts 15 / 8 — a pre-existing gap this bead closes as part of the
+same seam. **After: 38/38 and 6/6 commands match the jar, COUNT_MISMATCH 0.**
+Tests: `skolem_polarity_conformance::{formula_let_is_transparent_in_every_connective_context,
+each_use_of_a_formula_let_skolemizes_independently,
+mixed_contexts_are_decided_per_use_not_by_visit_order,
+a_let_bound_to_another_let_is_transparent_too, the_filed_repro_matches_the_jar,
+per_use_lowering_does_not_capture_a_shadowed_name}`.
+
+**Cost note.** Per-use lowering duplicates the RHS's IR subtree once per use
+where the jar shares one node. That is semantically required (it is how the
+distinct skolems arise) and is invisible in verdicts and counts, but a
+formula-`let` used many times now builds a proportionally larger goal.
 
 Everything else keeps a typed
 defer aligned with the jar's `HigherOrderDeclException` text (`TranslateError::

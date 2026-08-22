@@ -472,12 +472,32 @@ enum Binding {
     /// inlining).
     Expr(RelExprId),
     /// A formula-valued `let` binding (Alloy allows a `let` to bind a boolean:
-    /// `let p = some a | p …`) → the already-lowered formula, evaluated once in
-    /// the enclosing env (translation-ref §2, referential transparency). Only
-    /// consumable in formula position; a use anywhere relational is a checker
-    /// type error, so `lookup_binder` rejects it there rather than inventing a
-    /// value.
-    Formula(FormulaId),
+    /// `let p = some a | p …`), kept **unlowered** (translation-ref §10.6a,
+    /// mt-056). The jar translates the RHS once and *places that Kodkod node at
+    /// each use*, while Kodkod's `Skolemizer` is a separate later pass over the
+    /// assembled tree — so the §10.6 connective rule is decided at the **use**,
+    /// not at the binding. Lowering here instead froze the decision at the
+    /// binding site and minted skolems the jar refuses.
+    ///
+    /// `depth` is the binder-stack height at the binding site. The RHS is
+    /// re-lowered at each use under the use's ambient [`SkolemPolarity`] but
+    /// with the stack truncated back to `depth`, so a binder that **shadows** a
+    /// name the RHS mentions cannot capture it — the jar cannot suffer capture,
+    /// having translated the RHS once, and probe m2 `c01` measures it (26, the
+    /// outer-`x` reading, not 20).
+    ///
+    /// The binding-site [`Ctx`] is deliberately NOT stored: macro replay builds
+    /// one borrowing a locally-cloned `MacroChoice`, so it cannot outlive the
+    /// lowerer. A `let`'s uses are lexically inside its own body — same AST
+    /// arena, same choice table — so the use site's context interprets `expr`
+    /// identically. `module` is kept purely as a tripwire: if a use ever arrives
+    /// under a different module's context the lookup defers typed instead of
+    /// reading `expr` against the wrong table.
+    Formula {
+        expr: ExprId,
+        module: ModuleId,
+        depth: usize,
+    },
     /// A callable (func/pred) passed to a higher-order macro by bare name (§3.7,
     /// mt-040): the parameter is invoked as `param[args]` in the body and inlined
     /// as the real call, never used as a relational value.
@@ -1977,7 +1997,7 @@ impl<'a> Lowerer<'a> {
         // formula (translation-ref §2): `let p = some a | p` uses `p` here.
         if let Some(ExprChoice::Name(NameChoice::Var(name))) = self.choice(ctx, e) {
             let name = name.clone();
-            return self.lookup_binder_formula(&name, span);
+            return self.lookup_binder_formula(ctx, &name, span);
         }
         // A higher-order-macro callable parameter applied as a formula
         // (`axiom[no_p]`, or bare `axiom`) inlines the recorded pred (mt-040).
@@ -4479,8 +4499,15 @@ impl<'a> Lowerer<'a> {
     ) -> Result<usize, TranslateError> {
         let mut pushed = 0;
         for b in bindings {
-            let binding = if self.sort_of(ctx, b.value) == Sort::Formula {
-                Binding::Formula(self.lower_formula(ctx, b.value)?)
+            let is_formula = self.sort_of(ctx, b.value) == Sort::Formula
+                || self.name_bound_to_formula(ctx, b.value);
+            let binding = if is_formula {
+                // Deliberately NOT lowered here — see [`Binding::Formula`].
+                Binding::Formula {
+                    expr: b.value,
+                    module: ctx.module,
+                    depth: self.binders.len(),
+                }
             } else {
                 Binding::Expr(self.lower_rel(ctx, b.value)?)
             };
@@ -4490,29 +4517,72 @@ impl<'a> Lowerer<'a> {
         Ok(pushed)
     }
 
+    /// Whether `e` is a bare name already bound to a formula-valued `let`
+    /// (mt-056): the `let q = p | …` rebinding, probe cell `n01`. `sort_of`
+    /// reads the recorded choice table, which classifies a `let` binder as an
+    /// ordinary `Var` (relational) — it has no idea the binding is a formula —
+    /// so without this the rebinding takes the `lower_rel` path and defers
+    /// typed where the jar simply counts (15 / 8).
+    fn name_bound_to_formula(&self, ctx: Ctx, e: ExprId) -> bool {
+        let Some(ExprChoice::Name(NameChoice::Var(name))) = self.choice(ctx, e) else {
+            return false;
+        };
+        self.binders
+            .iter()
+            .rev()
+            .find(|(n, _)| n == name)
+            .is_some_and(|(_, b)| matches!(b, Binding::Formula { .. }))
+    }
+
     /// The formula bound to a formula-valued `let` name (translation-ref §2). A
     /// name that is instead relation- or int-valued reaching formula position is
     /// a checker type error, so it is a typed defer, never a wrong verdict.
     fn lookup_binder_formula(
         &mut self,
+        ctx: Ctx,
         name: &str,
         span: Span,
     ) -> Result<FormulaId, TranslateError> {
-        for (n, b) in self.binders.iter().rev() {
-            if n == name {
-                return match b {
-                    Binding::Formula(f) => Ok(*f),
-                    _ => Err(TranslateError::LoweringUnsupported {
-                        what: format!("non-formula binding `{name}` used in a formula position"),
-                        span,
-                    }),
-                };
-            }
+        let found = self
+            .binders
+            .iter()
+            .rev()
+            .find(|(n, _)| n == name)
+            .map(|(_, b)| match b {
+                Binding::Formula {
+                    expr,
+                    module,
+                    depth,
+                } => Some((*expr, *module, *depth)),
+                _ => None,
+            });
+        let Some(bound) = found else {
+            return Err(TranslateError::LoweringUnsupported {
+                what: format!("unbound variable `{name}`"),
+                span,
+            });
+        };
+        let Some((expr, module, depth)) = bound else {
+            return Err(TranslateError::LoweringUnsupported {
+                what: format!("non-formula binding `{name}` used in a formula position"),
+                span,
+            });
+        };
+        if module != ctx.module {
+            return Err(TranslateError::LoweringUnsupported {
+                what: format!("formula-valued let `{name}` used from another module's context"),
+                span,
+            });
         }
-        Err(TranslateError::LoweringUnsupported {
-            what: format!("unbound variable `{name}`"),
-            span,
-        })
+        // Lower the RHS HERE, so the §10.6 connective rule sees this use's
+        // ambient polarity (`self.pol` is the use site's) — but under the
+        // BINDING site's binder stack, so an intervening shadowing binder cannot
+        // capture a free name of the RHS (mt-056, translation-ref §10.6a).
+        // `lower_formula` leaves the stack balanced, so the tail restores exactly.
+        let tail = self.binders.split_off(depth);
+        let lowered = self.lower_formula(ctx, expr);
+        self.binders.extend(tail);
+        lowered
     }
 
     fn lookup_binder(&mut self, name: &str, span: Span) -> Result<RelExprId, TranslateError> {
@@ -4528,7 +4598,7 @@ impl<'a> Lowerer<'a> {
                     // use in relation position is a checker type error, so defer
                     // typed here rather than fabricate one (translation-ref §2;
                     // consumed in formula position by `lookup_binder_formula`).
-                    Binding::Formula(_) => Err(TranslateError::LoweringUnsupported {
+                    Binding::Formula { .. } => Err(TranslateError::LoweringUnsupported {
                         what: format!("formula-valued let `{name}` used in a relation position"),
                         span,
                     }),
