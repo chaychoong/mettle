@@ -68,6 +68,23 @@ impl fmt::Display for Pretty<'_> {
     }
 }
 
+/// The AST path depth beyond which this module's recursion is not safe
+/// (mt-021, [ADR-0022]). A parsed AST can never exceed it — the parser's
+/// `MAX_AST_PATH` budget is 768 and bounds the spine at construction — so this
+/// is purely the **programmatic-AST residual**: an `Ast` built through the
+/// public API never passes the parser and is therefore unbounded. Measured
+/// first crash on this machine (release, main thread): the printer at 58,277
+/// links, the dumper at 52,433.
+///
+/// Callers building an `Ast` by hand are responsible for keeping root-to-leaf
+/// path depth under this. Debug builds assert it; release builds do not, so an
+/// API user who ignores the bound still gets the abort mt-021 removed from the
+/// file path. Closing that would need the iterative rewrite ADR-0022 evaluated
+/// and rejected as option (a).
+///
+/// [ADR-0022]: ../../../docs/adr/0022-recursion-depth-safety-flat-chains.md
+pub const MAX_SAFE_PRINT_PATH: usize = 10_000;
+
 /// Renders `ast` as a source string (convenience over [`Ast::pretty`]).
 #[must_use]
 pub fn pretty_to_string(ast: &Ast) -> String {

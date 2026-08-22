@@ -617,45 +617,73 @@ fn operator_chains(n: usize) -> [String; 3] {
 }
 
 /// Pathological repetition: very long flat operator chains. The Pratt loop
-/// handles these *iteratively* for a left/right-associative operator (no
-/// extra recursion depth -- confirmed by parsing chains of 10,000 up to
-/// `MAX_EXPR_DEPTH`-many terms with no crash even on a 1 MiB thread), so
-/// parsing alone is safe at any of the depths below and is checked at all
-/// of them.
+/// (and `parse_postfix`'s dot/box-join loop) handle these *iteratively*, so
+/// they cost the parser's own `MAX_EXPR_DEPTH` recursion budget nothing —
+/// but each link adds one node to a left-leaning spine that every downstream
+/// consumer walks recursively. mt-021 added `MAX_AST_PATH` for exactly that,
+/// so a chain past the bound is now a typed `TooDeep`, not a parse.
+///
+/// A chain comfortably under the bound must still parse: that is the
+/// no-real-model-is-affected half of the contract (the longest chain in the
+/// 150,891-code alloy4fun corpus is 113 terms; in the vendored corpus, 8).
 #[test]
-fn long_operator_chains_parse_without_crashing() {
-    for n in [100, 1_000, 10_000] {
+fn short_operator_chains_still_parse() {
+    for n in [8, 113, 700] {
         for src in operator_chains(n) {
             let result = parse(&src, FileId::from_index(0));
             assert!(
                 result.is_ok(),
-                "expected a long ({n}-term) operator chain to parse: {src:.80}…"
+                "expected an under-bound ({n}-term) operator chain to parse: {src:.80}…"
             );
         }
     }
 }
 
-/// **Real finding, deliberately not fixed here (documented instead, see
-/// `LIMITATIONS.md` and `docs/reference/fuzzing.md` section 4).** A long
-/// flat operator chain parses to a deeply *left-leaning* AST (e.g.
-/// `Binary(Binary(Binary(…, A), A), A)` for `A + A + … + A`), and unlike
-/// the parser (whose Pratt loop processes such a chain iteratively, see
-/// above), `print::pretty_to_string`/`dump` walk the AST with ordinary
-/// unguarded recursion (`write_expr` -> `write_binary` -> `write_operand`
-/// -> `write_expr` for the left child, and `Dumper::expr` likewise) --
-/// depth here equals chain length, not `MAX_EXPR_DEPTH`-bounded recursion
-/// count, so a long enough chain overflows the stack in the *printer*
-/// (measured: a 5,000-term chain crashes a debug build on a small thread
-/// stack even though the same chain parses fine). This is a genuine
-/// mt-014-fuzzer finding, but it is a printer/dumper architecture issue
-/// (a `Display`/plain-`String` API can't cleanly return a typed "too deep"
-/// error the way the parser can -- STYLE E2/E3), materially out of this
-/// bead's parser-robustness scope; only round-trip-checked here at a depth
-/// well below where it would ever matter, to document the boundary without
-/// making this test itself flaky against a constrained CI stack.
+/// The mt-021 stressors, at and far past the bound (the brief's 10x is 7,680).
+/// Each must come back as a typed `TooDeep` — never a crash, never a hang, and
+/// never a successful parse handing a 7,680-deep spine to the printer.
+#[test]
+fn long_operator_chains_are_rejected_not_crashed() {
+    for n in [769, 1_000, 7_680] {
+        for src in operator_chains(n) {
+            match parse(&src, FileId::from_index(0)) {
+                Err(ParseError::TooDeep { .. }) => {}
+                Err(other) => panic!("expected TooDeep for an {n}-term chain, got {other:?}"),
+                Ok(_) => panic!("an {n}-term chain must not parse (mt-021 MAX_AST_PATH)"),
+            }
+        }
+    }
+}
+
+/// The composition the unified budget exists for: nesting and chaining are
+/// each individually under-bound, but their PATH sum is not. A per-chain cap
+/// would let this through and hand the consumers a ~100x deeper spine.
+#[test]
+fn nesting_composed_with_chaining_is_bounded() {
+    let n = 700;
+    let src = format!(
+        "run {{ some {}{}{} }}",
+        "(".repeat(100),
+        (0..n).map(|_| "A").collect::<Vec<_>>().join(" + "),
+        ")".repeat(100),
+    );
+    assert!(
+        matches!(
+            parse(&src, FileId::from_index(0)),
+            Err(ParseError::TooDeep { .. })
+        ),
+        "100 nesting levels + a {n}-term chain must exceed the path budget"
+    );
+}
+
+/// The mt-014 finding this used to document — a long flat chain parsing to a
+/// left-leaning AST that `print`/`dump` then walk with unguarded recursion —
+/// is **CLOSED by mt-021**: `MAX_AST_PATH` bounds the spine at parse time, so
+/// no consumer can be handed one. This test keeps the round-trip check at a
+/// realistic length, which is now simply an under-bound chain.
 #[test]
 fn moderate_operator_chains_round_trip() {
-    const PRINT_SAFE_N: usize = 300;
+    const PRINT_SAFE_N: usize = 300; // under MAX_AST_PATH by ~2.5x
     for src in operator_chains(PRINT_SAFE_N) {
         if let Ok(ast) = parse(&src, FileId::from_index(0)) {
             let ctx = || format!("moderate operator chain, n={PRINT_SAFE_N}");

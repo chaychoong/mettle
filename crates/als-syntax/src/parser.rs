@@ -134,8 +134,12 @@ pub enum ParseError {
     /// overflow, which the reference jar suffers on the same pathological
     /// input (a deliberate, better-than-reference divergence; see
     /// `LIMITATIONS.md` and `docs/reference/fuzzing.md` section 3).
-    #[error("expression nesting is too deep (limit: {MAX_EXPR_DEPTH} levels)")]
+    #[error("expression nesting is too deep (limit: {limit} levels)")]
     TooDeep {
+        /// Which budget fired: [`MAX_EXPR_DEPTH`] (parser C-stack) or
+        /// [`MAX_AST_PATH`] (AST path depth, mt-021). Reported so the message
+        /// cites the limit actually hit rather than a fixed number.
+        limit: u32,
         /// Span of the token at which the limit was exceeded.
         span: Span,
     },
@@ -161,7 +165,7 @@ impl ParseError {
             | Self::ModuleHeaderNotFirst { span }
             | Self::BadScopeNumber { span }
             | Self::BinderNeedsParens { span }
-            | Self::TooDeep { span } => *span,
+            | Self::TooDeep { span, .. } => *span,
         }
     }
 }
@@ -285,6 +289,13 @@ struct Parser<'src> {
     /// [`MAX_EXPR_DEPTH`] by [`Parser::parse_operand`]/[`Parser::parse_closure`]
     /// (mt-014 Part 1).
     depth: u32,
+    /// Current root-to-leaf **AST path depth**, guarded against
+    /// [`MAX_AST_PATH`] (mt-021). Distinct from [`Self::depth`], which bounds
+    /// the *parser's own* C-stack recursion: a flat operator chain costs
+    /// `depth` nothing (the Pratt loop is iterative) yet adds one AST node per
+    /// link to a left-leaning spine that every downstream consumer walks
+    /// recursively. Two budgets, two resources.
+    path: u32,
 }
 
 /// Maximum expression-nesting recursion depth before the parser fails
@@ -312,6 +323,47 @@ struct Parser<'src> {
 /// safe (no crash) even against 100,000 levels of adversarial `(`/`{`/`~`
 /// nesting on an explicit 1 MiB debug thread.
 const MAX_EXPR_DEPTH: u32 = 256;
+
+/// Maximum root-to-leaf **AST path depth** before the parser fails with
+/// [`ParseError::TooDeep`] (mt-021, [ADR-0022]).
+///
+/// [`MAX_EXPR_DEPTH`] bounds the parser's own C-stack and is sized against a
+/// 1 MiB thread. It does **not** bound the shape of the tree the parser
+/// *returns*: a flat chain (`A + A + …`) is consumed by the Pratt loop
+/// iteratively, so it costs `depth` nothing while building a left-leaning
+/// spine one node deep per link. Every downstream consumer — the printer, the
+/// dumper, the resolver, the lowerer — then walks that spine with ordinary
+/// recursion and aborts on `SIGABRT`. mt-021 measured the thresholds (release,
+/// main thread, `scratchpad/probe/mt021/`):
+///
+/// | consumer | worst shape | first crash |
+/// |---|---|---:|
+/// | resolver / lowerer | `A.r.r.r…` | **3,687** |
+/// | dumper | `A + A + …` | 52,433 |
+/// | printer | `A + A + …` | 58,277 |
+///
+/// A per-chain cap would be a fig leaf: nesting is separately capped at 128
+/// real `(`/`{` levels, and an adversarial file can put a full-length chain at
+/// *every* level, so the spine reaches ~128x the chain cap. This counter is
+/// therefore a genuine **path** budget — nesting links and chain links both
+/// draw on it — so the bound holds for any combination.
+///
+/// `768` is set against the worst measured crash with the mt-021 4x margin:
+/// **3,687 / 4 = 921**, and 768 is the clean value under it (1,024 would be
+/// only 3.6x and fails the rule). The resulting headroom over real input:
+///
+/// - **4.8x** below the worst crash (3,687);
+/// - **6.8x** above the longest chain in the 150,891-code alloy4fun corpus
+///   (113, an upper bound: the total operator count in one code);
+/// - **96x** above the longest chain in the 167-file vendored corpus (8).
+///
+/// The reference is not safe on this input either — the jar throws a raw
+/// `java.lang.StackOverflowError` at 5,000 terms — so a typed rejection is a
+/// deliberate better-than-reference divergence, as `MAX_EXPR_DEPTH` already is
+/// (LIMITATIONS.md).
+///
+/// [ADR-0022]: ../../../docs/adr/0022-recursion-depth-safety-flat-chains.md
+const MAX_AST_PATH: u32 = 768;
 
 // -- Precedence table (grammar-doc section 3) -----------------------------
 //
@@ -417,6 +469,7 @@ impl<'src> Parser<'src> {
             pos: 0,
             ast: Ast::default(),
             depth: 0,
+            path: 0,
         }
     }
 
@@ -1320,6 +1373,7 @@ impl<'src> Parser<'src> {
         self.enter_depth()?;
         let result = self.parse_operand_at_depth(min_bp, budget);
         self.depth -= 1;
+        self.path -= 1;
         result
     }
 
@@ -1329,6 +1383,18 @@ impl<'src> Parser<'src> {
     /// pair is textually obvious and always balanced, including across the
     /// `?`-propagated error paths below.
     fn parse_operand_at_depth(&mut self, min_bp: u8, budget: u8) -> Result<ExprId, ParseError> {
+        // The chain below spends one path unit per infix link. Restoring the
+        // mark on the way out — on success AND on every `?` — is what keeps the
+        // budget a root-to-leaf PATH measure rather than a whole-file total.
+        let mark = self.path;
+        let result = self.parse_operand_chain(min_bp, budget);
+        self.path = mark;
+        result
+    }
+
+    /// The Pratt operand/infix loop. Split out of [`Self::parse_operand_at_depth`]
+    /// so that function's path-budget mark is restored on every exit path.
+    fn parse_operand_chain(&mut self, min_bp: u8, budget: u8) -> Result<ExprId, ParseError> {
         if self.starts_binder() {
             return self.binder_if_budgeted(budget);
         }
@@ -1338,6 +1404,10 @@ impl<'src> Parser<'src> {
                 break;
             }
             self.bump();
+            // Each link adds one node to a left-leaning spine every downstream
+            // consumer walks recursively — the mt-021 exposure. The Pratt loop
+            // is iterative, so `depth` never sees it.
+            self.enter_path()?;
             let child_budget = child_binder_budget(budget, binder_operator_class(infix));
             lhs = self.build_infix(infix, lhs, rbp, child_budget)?;
         }
@@ -1353,9 +1423,27 @@ impl<'src> Parser<'src> {
         if self.depth >= MAX_EXPR_DEPTH {
             return Err(ParseError::TooDeep {
                 span: self.cur_span(),
+                limit: MAX_EXPR_DEPTH,
             });
         }
+        // A nesting level is also one AST level, so it draws on both budgets.
+        self.enter_path()?;
         self.depth += 1;
+        Ok(())
+    }
+
+    /// Consumes one unit of the [`MAX_AST_PATH`] budget (mt-021), failing with
+    /// the same [`ParseError::TooDeep`] the nesting guard uses — one diagnostic
+    /// family for both resources. Every caller either restores `self.path` on
+    /// the way out or is itself inside a scope that does.
+    fn enter_path(&mut self) -> Result<(), ParseError> {
+        if self.path >= MAX_AST_PATH {
+            return Err(ParseError::TooDeep {
+                span: self.cur_span(),
+                limit: MAX_AST_PATH,
+            });
+        }
+        self.path += 1;
         Ok(())
     }
 
@@ -1538,9 +1626,18 @@ impl<'src> Parser<'src> {
     fn parse_postfix(&mut self, budget: u8) -> Result<ExprId, ParseError> {
         let mut lhs = self.parse_unop(budget)?;
         loop {
+            // Dot/box-join chains are built iteratively here, exactly like the
+            // Pratt infix loop, so they are the other flat-chain site and need
+            // the same path budget (mt-021 — `A.r.r.r…` is the WORST measured
+            // shape, crashing the resolver at 3,687). The enclosing
+            // `parse_operand_at_depth` restores the mark on every exit.
             match self.cur() {
-                TokenKind::LBracket => lhs = self.parse_box_join(lhs)?,
+                TokenKind::LBracket => {
+                    self.enter_path()?;
+                    lhs = self.parse_box_join(lhs)?;
+                }
                 TokenKind::Dot => {
+                    self.enter_path()?;
                     self.bump();
                     // `.`'s right operand is an ordinary (non-`implies`)
                     // "hop" per the same budget rule as any other infix
@@ -1633,6 +1730,7 @@ impl<'src> Parser<'src> {
         self.enter_depth()?;
         let result = self.parse_closure_at_depth(budget);
         self.depth -= 1;
+        self.path -= 1;
         result
     }
 
