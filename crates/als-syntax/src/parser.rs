@@ -136,6 +136,12 @@ pub enum ParseError {
     /// `LIMITATIONS.md` and `docs/reference/fuzzing.md` section 3).
     #[error("expression nesting is too deep (limit: {limit} levels)")]
     TooDeep {
+        /// **Never retry this error behind a speculative parse** (mt-103): it
+        /// reports an exhausted budget, so re-parsing the same tokens at the
+        /// same depth fails identically, and one retry per nesting level is
+        /// exponential. `build_implies` — currently the parser's only
+        /// backtracking site — short-circuits it.
+        ///
         /// Which budget fired: [`MAX_EXPR_DEPTH`] (parser C-stack) or
         /// [`MAX_AST_PATH`] (AST path depth, mt-021). Reported so the message
         /// cites the limit actually hit rather than a fixed number.
@@ -1523,12 +1529,29 @@ impl<'src> Parser<'src> {
     /// simply left unreferenced — harmless, and this path is rare.
     fn build_implies(&mut self, cond: ExprId, rbp: u8, budget: u8) -> Result<ExprId, ParseError> {
         let saved_pos = self.pos;
+        // The parser's ONE speculative parse: try the then-branch under the
+        // restricted binder budget, and on failure re-parse it under the
+        // caller's. Retrying is what makes `implies … else` decidable — but it
+        // must NOT retry a **resource-exhaustion** error (mt-103). `TooDeep`
+        // says the depth/path budget is spent; the retry re-parses the same
+        // tokens at the same `self.depth`, so it is guaranteed to fail
+        // identically — and with one retry per nesting level that is 2^N work.
+        // A 255-term `=>` chain (the first length that trips `MAX_EXPR_DEPTH`,
+        // `=>` being right-associative at one unit per level) took >60s instead
+        // of erroring instantly.
+        //
+        // Short-circuiting is result-preserving: `BINDER_BUDGET_NONE` only ever
+        // *rejects* a binder that the wider budget would accept, so attempt 1
+        // can never parse DEEPER than attempt 2 — if attempt 1 exhausted the
+        // budget, attempt 2 would too.
         let (then_branch, then_used_extra_budget) =
-            if let Ok(e) = self.parse_operand(rbp, BINDER_BUDGET_NONE) {
-                (e, false)
-            } else {
-                self.pos = saved_pos;
-                (self.parse_operand(rbp, budget)?, true)
+            match self.parse_operand(rbp, BINDER_BUDGET_NONE) {
+                Ok(e) => (e, false),
+                Err(e @ ParseError::TooDeep { .. }) => return Err(e),
+                Err(_) => {
+                    self.pos = saved_pos;
+                    (self.parse_operand(rbp, budget)?, true)
+                }
             };
         if self.eat(&TokenKind::Else) {
             if then_used_extra_budget {

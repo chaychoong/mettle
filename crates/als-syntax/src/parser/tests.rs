@@ -612,6 +612,59 @@ fn quantifier_chain(levels: u32) -> String {
     src
 }
 
+/// mt-103: a right-associative `=>` chain crosses `MAX_EXPR_DEPTH` at 255
+/// terms (one unit per level). Before the fix, `build_implies`'s speculative
+/// then-branch parse retried on ANY error — including the guard's own
+/// `TooDeep` — so every one of the 255 stacked frames re-parsed, and the guard
+/// that was supposed to fail fast HUNG instead (measured: 254 terms 0.00s,
+/// 255 terms no answer in 60s). The error must now propagate without re-entry.
+///
+/// Wall-clock is asserted deliberately: the bug's signature was *time*, not a
+/// wrong verdict, so a correctness-only assertion would not have caught it.
+/// The bound is ~1000x the fixed cost and ~1/60th the broken one.
+#[test]
+fn implies_chain_past_the_depth_limit_errors_immediately() {
+    for terms in [255_usize, 1_000, 10_000] {
+        let src = format!(
+            "sig A {{}}\nrun {{ {} }}",
+            vec!["some A"; terms].join(" => ")
+        );
+        let start = std::time::Instant::now();
+        let got = parse(&src, FileId::from_index(0));
+        let elapsed = start.elapsed();
+        assert!(
+            matches!(got, Err(ParseError::TooDeep { .. })),
+            "expected TooDeep for a {terms}-term `=>` chain, got {got:?}"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(1),
+            "a {terms}-term `=>` chain took {elapsed:?} — the mt-103 exponential \
+             retry is back (it must fail in microseconds, not seconds)"
+        );
+    }
+}
+
+/// The speculative parse `build_implies` performs is grammar-load-bearing —
+/// it is what lets a binder appear in a then-branch — so short-circuiting
+/// `TooDeep` must not change any accepting parse. These are the shapes that
+/// exercise both arms of the retry, at depth.
+#[test]
+fn implies_else_still_parses_after_the_short_circuit() {
+    // Plain then/else, and the `implies` spelling of the same tree.
+    ast_of("sig A {}\nrun { some A => some A else some A }");
+    ast_of("sig A {}\nrun { some A implies some A else some A }");
+    // A binder in the then-branch: the retry path itself (the restricted
+    // budget rejects it, the wider one accepts).
+    ast_of("sig A {}\nrun { some A => (all x: A | some x) else some A }");
+    // Chained else, and a deep-but-legal chain that must still parse.
+    ast_of("sig A {}\nrun { some A => some A else some A => some A else some A }");
+    let deep = format!(
+        "sig A {{}}\nrun {{ {} else some A }}",
+        vec!["some A"; 250].join(" => ")
+    );
+    ast_of(&deep);
+}
+
 #[test]
 fn just_under_the_depth_limit_parses() {
     ast_of(&quantifier_chain(super::MAX_EXPR_DEPTH - 10));
