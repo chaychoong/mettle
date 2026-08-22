@@ -144,6 +144,12 @@ Source: `CompModule.resolveCommand`/`resolveCommands` (`getRawQS(4,·)` then `ge
 
 ---
 
+### LEDGER-016 — multiplicity-expression positional rule (resolve-level reject taxonomy)
+Rule: a multiplicity-tagged expression (prefix `set`/`seq` anywhere; prefix `some`/`lone`/`one` only where the grammar's `mult()` converts them — decl bounds and the RHS of `in`; arrow-mults, which propagate up an arrow chain; `exactly` only inside a defined-field bound) is LEGAL exactly in: sig-field/param/fun-return decl bounds, quantifier decl bounds (all mults), the RHS of `in`, and function/predicate BODIES; it is REJECTED with "Multiplicity expression not allowed here." in every ordinary expression position (unary/binary operands incl. the LHS of `in`, `#`, join operands, ExprList/ITE/`let` RHS, defined-field bounds with mult), REJECTED with "This cannot be a <set/some/lone>-of expression." in comprehension decl bounds (where only `one`-of is legal, and the bound must additionally be a unary set), and surfaces as a call-resolution failure in call-argument position. Parentheses never strip the flag; the flag does NOT survive macro expansion into a use site.
+Status: **approved (tech lead, no-fork delegation)** — verified 2026-08-23; a pure restatement of measured jar behavior, no fork.
+Evidence: mt-109 probe wave, 88 one-cell models against the pinned jar (`scratchpad/probe/mt109/{m,n,p,q}/`, predictions-before-runs in `PREDICTIONS.md`, full write-up `mult-flag.md`): 57 agree / 31 mettle-over-accepts / 0 drop-in. Three counterintuitive pins: fun/pred bodies ACCEPT mult (m18/q01/q02); quantifier bounds accept everything while comprehension bounds reject all but `one`-of (m10/p18 vs n04/p02/p03) — mettle serves both from one `decl_bound_type`, so an implementation needs a caller mode; `in` is asymmetric (RHS consumes n18/p16, LHS rejects m26). Bare unparenthesized forms (`A in set A`) are parse-tier rejects on BOTH sides already — the gap is exclusively bracketed/argument/body positions.
+Test: none yet — lands with ▢ mt-111 (the 88 cells become `resolve_probes.rs` tests FIRST, before the check is switched on, per the mt-109 risk note).
+
 ## Corners that NEED entries (tracked; not yet written)
 These are known to be behavior-defining and version-sensitive. Each becomes a numbered, verified, approved entry before the code that depends on it ships.
 
