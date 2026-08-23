@@ -162,6 +162,8 @@ fn variant_name(e: &ResolveError) -> &'static str {
         ResolveError::NotInt { .. } => "NotInt",
         ResolveError::UnaryNotBinary { .. } => "UnaryNotBinary",
         ResolveError::NotUnarySet { .. } => "NotUnarySet",
+        ResolveError::MultiplicityNotAllowed { .. } => "MultiplicityNotAllowed",
+        ResolveError::CannotBeMultOf { .. } => "CannotBeMultOf",
         ResolveError::IllegalJoin { .. } => "IllegalJoin",
         ResolveError::BadCall { .. } => "BadCall",
         ResolveError::FuncBodyArity { .. } => "FuncBodyArity",

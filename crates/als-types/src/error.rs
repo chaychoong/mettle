@@ -276,6 +276,34 @@ pub enum ResolveError {
         span: Span,
     },
 
+    /// A **multiplicity-tagged** expression at a position that does not consume
+    /// it (`Expr.mult != 0` at a `make` site that forbids it, [LEDGER-016]).
+    /// The reference message is "Multiplicity expression not allowed here.";
+    /// it is an `ErrorSyntax` raised bottom-up at make time, so it precedes the
+    /// ordinary sort/type errors on the same subtree.
+    ///
+    /// [LEDGER-016]: ../../../SEMANTICS_LEDGER.md
+    #[error("multiplicity expression not allowed here")]
+    MultiplicityNotAllowed {
+        /// Span of the mult-tagged expression.
+        span: Span,
+    },
+
+    /// A **comprehension** decl bound carrying a multiplicity other than
+    /// `one`-of (`ExprQt.Op.COMPREHENSION.make`, [LEDGER-016]). Quantifier
+    /// bounds accept every multiplicity; comprehension bounds accept only the
+    /// decl default, because each variable must denote a single atom. The
+    /// reference message is "This cannot be a {kind}-of expression."
+    ///
+    /// [LEDGER-016]: ../../../SEMANTICS_LEDGER.md
+    #[error("this cannot be a {kind}-of expression")]
+    CannotBeMultOf {
+        /// The multiplicity keyword (`set`/`some`/`lone`/`exactly`).
+        kind: &'static str,
+        /// Span of the offending bound.
+        span: Span,
+    },
+
     /// A relational join whose touching columns are disjoint, so the join type
     /// is empty and the node is not a valid function/predicate call either
     /// (`ExprBadJoin`, resolution-doc §4.2/§4.4). The reference message is
@@ -461,6 +489,8 @@ impl ResolveError {
             | ResolveError::NotInt { span }
             | ResolveError::UnaryNotBinary { span, .. }
             | ResolveError::NotUnarySet { span }
+            | ResolveError::MultiplicityNotAllowed { span }
+            | ResolveError::CannotBeMultOf { span, .. }
             | ResolveError::IllegalJoin { span }
             | ResolveError::BadCall { span, .. }
             | ResolveError::FuncBodyArity { span, .. }

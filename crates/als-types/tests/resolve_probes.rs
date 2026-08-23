@@ -869,16 +869,214 @@ fn mult_cells_that_fail_for_ordinary_reasons_mt111() {
         let e = reject(src);
         assert!(matches!(e, ResolveError::ArityMismatch { .. }), "{e:?}");
     }
-    for src in [
-        "sig A {}\nfact { some (set A).A }\nrun {} for 3\n", // n14
-        "sig A {}\nfact { some A.(set A) }\nrun {} for 3\n", // p14
-    ] {
-        let e = reject(src);
-        assert!(matches!(e, ResolveError::IllegalJoin { .. }), "{e:?}");
-    }
+    // n14 reports the *multiplicity* error rather than the illegal join it also
+    // is: the mult guard is a make-time `ErrorSyntax` raised ahead of the
+    // ordinary type errors, and a join's LEFT operand is a checked position. The
+    // jar agrees on the class here (it reports the mult error too). p14 is the
+    // mirror image and keeps the join message on both sides, because a join's
+    // compound RIGHT operand is only warning-scanned (mt-023), so the guard
+    // never runs there.
+    let e = reject("sig A {}\nfact { some (set A).A }\nrun {} for 3\n"); // n14
+    assert!(
+        matches!(e, ResolveError::MultiplicityNotAllowed { .. }),
+        "{e:?}"
+    );
+    let e = reject("sig A {}\nfact { some A.(set A) }\nrun {} for 3\n"); // p14
+    assert!(matches!(e, ResolveError::IllegalJoin { .. }), "{e:?}");
     let e = reject("sig A {}\nfun f: seq A { A }\nrun { some f } for 3\n"); // q04
     assert!(matches!(e, ResolveError::FuncBodyArity { .. }), "{e:?}");
     // n19: `exactly` on the builtin `int` scope is redundant, a parse-tier reject.
     let e = reject("sig A {}\nfact { A = A }\nrun {} for exactly 3 A, exactly 4 int\n");
     assert!(matches!(e, ResolveError::OpenedFileParse { .. }), "{e:?}");
+}
+
+// ---- mt-111 phase 2: the 31 over-accepts the check closes ----
+//
+// Every cell below was an mt-109 over-acceptance (jar REJECT, mettle OK). The
+// jar's message decides which variant each one asserts: 24 are "Multiplicity
+// expression not allowed here.", 4 are "This cannot be a <kind>-of expression.",
+// 1 is "This must be a unary set.", and 2 (m17/p09) surface jar-side as a call
+// resolution failure — see `mult_call_argument_rejected_mt111`.
+
+/// Asserts `src` rejects with the multiplicity error.
+fn reject_mult(src: &str) {
+    let e = reject(src);
+    assert!(
+        matches!(e, ResolveError::MultiplicityNotAllowed { .. }),
+        "{e:?}\n--- src ---\n{src}"
+    );
+}
+
+/// Unary operands never consume a multiplicity — not the formula prefixes
+/// (`some`/`no`), not `~`, not `#`. Parentheses do not strip the flag: the
+/// reference's `NOOP` propagates it and mettle has no paren node at all, so it
+/// is structurally immune (p13 double-parenthesizes and still rejects). Cells
+/// m11 m22 m42 n16 p13 m30 m14 p12.
+#[test]
+fn mult_under_a_unary_operator_rejected_mt111() {
+    reject_mult("sig A {}\nfact { some (set A) }\nrun {} for 3\n"); // m11
+    reject_mult("sig A {}\nfact { no (set A) }\nrun {} for 3\n"); // m22
+    reject_mult("sig A {}\nfact { some (seq A) }\nrun {} for 3\n"); // m42
+    reject_mult("sig A {}\nfact { not some (set A) }\nrun {} for 3\n"); // n16
+    reject_mult("sig A {}\nfact { some ((set A)) }\nrun {} for 3\n"); // p13
+    reject_mult("sig A {}\nfact { some ~(A -> lone A) }\nrun {} for 3\n"); // m30
+    reject_mult("sig A {}\nfact { #(set A) > 0 }\nrun {} for 3\n"); // m14
+    reject_mult("sig A {}\nfact { #(A -> lone A) > 0 }\nrun {} for 3\n"); // p12
+}
+
+/// Binary operands do not consume it either — both sides of `=`, `+`, `&`, a
+/// join's left operand, and `->` **used as an expression** rather than as a decl
+/// bound (m24/m29: the arrow chain propagates the flag up to the node the
+/// surrounding `some` then consumes). Cells m12 m13 m27 n12 m15 m28 m16 m24 m29.
+#[test]
+fn mult_under_a_binary_operator_rejected_mt111() {
+    reject_mult("sig A {}\nfact { (set A) = A }\nrun {} for 3\n"); // m12
+    reject_mult("sig A {}\nfact { A = (set A) }\nrun {} for 3\n"); // m13
+    reject_mult("sig A {}\nsig B { r: A -> A }\nfact { B.r = A -> lone A }\nrun {} for 3\n"); // m27
+    reject_mult("sig A { r: A }\nfact { r = A -> lone A implies some A }\nrun {} for 3\n"); // n12
+    reject_mult("sig A {}\nfact { some ((set A) + A) }\nrun {} for 3\n"); // m15
+    reject_mult("sig A {}\nfact { some ((A -> lone A) & (A -> A)) }\nrun {} for 3\n"); // m28
+    reject_mult("sig A { r: A }\nfact { some (set A).r }\nrun {} for 3\n"); // m16
+    reject_mult("sig A {}\nfact { some (A -> lone A) }\nrun {} for 3\n"); // m24
+    reject_mult("sig A {}\nfact { some (A -> (A -> lone A)) }\nrun {} for 3\n");
+    // m29
+}
+
+/// The asymmetry of `in`, from the rejecting side: its LEFT operand is an
+/// ordinary expression position. Cell m26 — the companion accept is n18/m25 in
+/// `mult_on_rhs_of_in_accepted_mt111`, and getting this pair backwards in either
+/// direction is the classic way to break this rule.
+#[test]
+fn mult_on_lhs_of_in_rejected_mt111() {
+    reject_mult("sig A {}\nsig B { r: A -> A }\nfact { (A -> lone A) in B.r }\nrun {} for 3\n");
+}
+
+/// A `let` binding value is not a consuming position, parenthesized or not.
+/// Cells m19 p07. (Contrast q05: a top-level `let` *macro* whose body is
+/// `set A` is legal, because the flag does not survive macro expansion.)
+#[test]
+fn mult_as_a_let_value_rejected_mt111() {
+    reject_mult("sig A {}\nfact { let x = set A | some x }\nrun {} for 3\n"); // m19
+    reject_mult("sig A {}\nfact { let x = (set A) | some x }\nrun {} for 3\n"); // p07
+}
+
+/// Inside an `and` list and an if-then-else, the enclosing formula operators do
+/// not launder the flag. Cells m20 m21.
+#[test]
+fn mult_inside_a_list_or_ite_rejected_mt111() {
+    reject_mult("sig A {}\nfact { some (set A) and some A }\nrun {} for 3\n"); // m20
+    reject_mult("sig A {}\nfact { some A implies some (set A) else some A }\nrun {} for 3\n");
+    // m21
+}
+
+/// A **defined** field takes a mult-free RHS only: `= e` is the reference's
+/// `EXACTLYOF`, whose own `make` rejects a mult-tagged operand. Cells n07 n09 —
+/// the accepting companions are m33/n05 above, and n08 (`f = lone A`) is the
+/// negative-space pin: `mult()` does not convert `lone` in this position, so it
+/// stays a formula operator and keeps its `NotSet` verdict rather than becoming
+/// a multiplicity error.
+#[test]
+fn mult_as_a_defined_field_bound_rejected_mt111() {
+    reject_mult("sig A {}\nsig B { f = set A }\nrun {} for 3\n"); // n07
+    reject_mult("sig A {}\nsig B { f = A -> lone A }\nrun {} for 3\n"); // n09
+    let e = reject("sig A {}\nsig B { f = lone A }\nrun {} for 3\n"); // n08
+    assert!(matches!(e, ResolveError::NotSet { .. }), "{e:?}");
+}
+
+/// Comprehension bounds are the strictest position in the language, and the one
+/// place with its own message family: every `-of` wrapper but `one` is rejected
+/// by name. Cells n04 p02 p03 p17 — and p01, in
+/// `comprehension_bound_one_of_accepted_mt111`, is the exception that makes this
+/// a *different* rule from the quantifier bounds it shares a code path with.
+#[test]
+fn comprehension_bound_rejects_all_but_one_of_mt111() {
+    for (src, kind) in [
+        (
+            "sig A {}\nfact { some { x: set A | x = x } }\nrun {} for 3\n", // n04
+            "set",
+        ),
+        (
+            "sig A {}\nfact { some { x: A, y: set A | x = y } }\nrun {} for 3\n", // p17
+            "set",
+        ),
+        (
+            "sig A {}\nfact { some { x: lone A | x = x } }\nrun {} for 3\n", // p02
+            "lone",
+        ),
+        (
+            "sig A {}\nfact { some { x: some A | x = x } }\nrun {} for 3\n", // p03
+            "some",
+        ),
+    ] {
+        let e = reject(src);
+        assert!(
+            matches!(e, ResolveError::CannotBeMultOf { kind: k, .. } if k == kind),
+            "{e:?}\n--- src ---\n{src}"
+        );
+    }
+}
+
+/// A comprehension bound must also be **unary**, and that check runs *after* the
+/// `-of` one. Cell p04: an arrow is not a `-of` wrapper, so despite carrying an
+/// arrow multiplicity it falls through to the arity check and reports the
+/// unary-set message — which is exactly what the jar does, and the reason the
+/// two checks cannot be collapsed into one.
+#[test]
+fn comprehension_bound_must_be_unary_mt111() {
+    let e = reject("sig A {}\nfact { some { x: A -> lone A | some x } }\nrun {} for 3\n");
+    assert!(matches!(e, ResolveError::NotUnarySet { .. }), "{e:?}");
+}
+
+/// `exactly`-of is rejected by **every quantifier**, and it is the only way the
+/// jar's "This cannot be an exactly-of expression." is reachable from source
+/// syntax — the mt-109 wave missed it because it probed `exactly` only as an
+/// expression *prefix*, where nothing parses. The reachable spelling is a decl
+/// written with `=` instead of `:`, which is 20 alloy4fun codes and the real
+/// referent of the mt-025 triage's "exactly-of" bucket. Cells r02 s01 s03 s04
+/// s05 (`scratchpad/probe/mt111/`, jar-verified 2026-08-23).
+#[test]
+fn exactly_of_quantifier_bound_rejected_mt111() {
+    for src in [
+        "sig A {}\nrun { all x: A, y = A | x = y } for 3\n", // s01
+        "sig A {}\nrun { some x: A, y = A | x = y } for 3\n", // s03
+        "sig A {}\nfact { (sum x: A, y = A | 1) > 0 }\nrun {} for 3\n", // s04
+        "sig A {}\nrun { no x: A, y = A | x = y } for 3\n",  // s05
+        "sig A { f: A }\nrun { all x: A, y = A.f | some y } for 3\n", // r02
+    ] {
+        let e = reject(src);
+        assert!(
+            matches!(
+                e,
+                ResolveError::CannotBeMultOf {
+                    kind: "exactly",
+                    ..
+                }
+            ),
+            "{e:?}\n--- src ---\n{src}"
+        );
+    }
+}
+
+/// The two positions that **do** take a defined (`=`) bound, which the check
+/// above must not touch: a fun/pred parameter list (cell s06 — the jar accepts,
+/// which is what puts the rejection in `ExprQt.Op.make` rather than in the decl
+/// machinery) and a sig field (m33, above). Plus the `:` control, cell s07.
+#[test]
+fn defined_bound_outside_a_quantifier_still_accepts_mt111() {
+    accept("sig A {}\npred p[x: A, y = A] { x = y }\nrun { p[A, A] } for 3\n"); // s06
+    accept("sig A {}\nrun { all x: A, y: A | x = y } for 3\n"); // s07
+}
+
+/// Call arguments. Cells m17 p09: the jar reports these as a call-resolution
+/// failure ("possible incorrect function/predicate call"), because a mult-tagged
+/// argument makes the call inapplicable before the multiplicity itself is
+/// blamed. mettle reaches the same *verdict* by the shorter route — a call
+/// argument is an ordinary checked operand position — so the message class
+/// differs while accept-vs-reject agrees, which is what the drop-in gauge
+/// measures. No special machinery is built for these.
+#[test]
+fn mult_call_argument_rejected_mt111() {
+    reject_mult("sig A {}\npred p[x: A] { some x }\nrun { p[set A] } for 3\n"); // m17
+    reject_mult("sig A {}\npred p[x: A] { some x }\nrun { p[(set A)] } for 3\n");
+    // p09
 }

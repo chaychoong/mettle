@@ -808,14 +808,39 @@ fn in_mult_arrow_rhs_enforces_columns() {
     );
 }
 
-/// A multiplicity-marked arrow anywhere except a decl bound or an `in`
-/// right-hand side (e.g. an `=` side) has no faithful plain-relation value;
-/// it must defer typed, never silently strip to a product (STYLE E5).
+/// A multiplicity-marked arrow at a position with no faithful plain-relation
+/// value must defer typed, never silently strip to a product (STYLE E5).
+///
+/// The shape this used to test — an `=` operand — no longer reaches the lowerer
+/// at all: LEDGER-016 (mt-111) made it the resolve-level "multiplicity
+/// expression not allowed here", which is the jar's own verdict for it. The
+/// guard is still live and still needed, because the reference *does* accept a
+/// mult-marked arrow in a **function body**, and that body can then be used as
+/// an ordinary value.
 #[test]
 fn mult_arrow_outside_in_rhs_defers_typed() {
     assert!(lower_defers(
-        "sig A {}\nsig B {}\nrun { some r: A -> B | r = A lone-> B } for 2\n"
+        "sig A {}\nsig B {}\nfun f: A -> B { A lone-> B }\nrun { some f } for 2\n"
     ));
+    // …including when the body's value flows into the `=` that used to be the
+    // direct spelling of this case.
+    assert!(lower_defers(
+        "sig A {}\nsig B {}\nfun f: A -> B { A lone-> B }\n\
+         run { some r: A -> B | r = f } for 2\n"
+    ));
+    // The direct `=` spelling is now rejected one phase earlier.
+    let loader = MapLoader::new().with(
+        "root.als",
+        "sig A {}\nsig B {}\nrun { some r: A -> B | r = A lone-> B } for 2\n",
+    );
+    let graph = ModuleGraph::load("root.als", &loader).expect("load");
+    assert!(
+        matches!(
+            resolve(&graph),
+            Err(als_types::ResolveError::MultiplicityNotAllowed { .. })
+        ),
+        "the `=` operand spelling must reject at resolve (LEDGER-016)"
+    );
 }
 
 /// `util/ordering`'s `min`/`max` funs, pinned against the jar (all three

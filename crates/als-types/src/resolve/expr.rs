@@ -63,6 +63,19 @@ impl R {
     }
 }
 
+/// Which binder a decl list belongs to. Quantifiers and comprehensions share
+/// one bound-resolution path but have **opposite** multiplicity rules: a
+/// quantifier bound accepts every multiplicity (`all x: set A | …`), while a
+/// comprehension bound accepts only the `one`-of default and must additionally
+/// be unary (LEDGER-016 §(b); cells m10/m31/p05/p06/p18 vs n04/p02/p03/p04).
+#[derive(Clone, Copy)]
+enum BinderKind {
+    /// `all`/`some`/`no`/`one`/`lone`/`sum` — permissive.
+    Quantifier,
+    /// `{ x: e | … }` — the strictest bound position in the language.
+    Comprehension,
+}
+
 /// A value candidate for a bare name (resolution-doc §4.4 `populate`): a typed
 /// leaf reading (sig / field-relation / implicit-`this` join / 0-ary call).
 struct Cand {
@@ -508,7 +521,7 @@ impl<'a, 'g> Cx<'a, 'g> {
     pub(super) fn run_formula(&mut self, e: ExprId) {
         let p = self.formula();
         let mut r = self.resolve(e, &p);
-        self.typecheck(&mut r, &p, self.expr(e).span);
+        self.typecheck_sorted(&mut r, &p, self.expr(e).span);
     }
 
     /// `resolve_as_set`: type-check `e` as a relational value, returning its set
@@ -517,7 +530,7 @@ impl<'a, 'g> Cx<'a, 'g> {
         // relevant = removesBoolAndInt(bottom-up type) (resolution-doc §4.3).
         let p = self.infer(e).remove_bool_and_int(self.int_sig());
         let mut r = self.resolve(e, &p);
-        self.typecheck_as_set(&mut r, self.expr(e).span);
+        self.typecheck_as_set_sorted(&mut r, self.expr(e).span);
         r.ty.as_set(self.int_sig())
     }
 
@@ -534,7 +547,7 @@ impl<'a, 'g> Cx<'a, 'g> {
     pub(super) fn run_int(&mut self, e: ExprId) {
         let p = self.small_int();
         let mut r = self.resolve(e, &p);
-        self.typecheck(&mut r, &p, self.expr(e).span);
+        self.typecheck_sorted(&mut r, &p, self.expr(e).span);
     }
 
     /// Type-checks a standalone evaluator fragment in whichever of the three
@@ -858,7 +871,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                     for &f in exprs {
                         let fp = self.formula();
                         let mut r = self.resolve(f, &fp);
-                        self.typecheck(&mut r, &fp, self.expr(f).span);
+                        self.typecheck(&mut r, &fp, f);
                         err |= r.err;
                     }
                     R {
@@ -886,17 +899,97 @@ impl<'a, 'g> Cx<'a, 'g> {
     }
 
     /// `resolve` a child, then apply the reference's `typecheck_as_{formula,int,
-    /// set}` for the position (make/`resolve_as_*` sort enforcement, §4.3).
+    /// set}` for the position (make/`resolve_as_*` sort enforcement, §4.3) —
+    /// **and** the make-time multiplicity guard, since this is an operand
+    /// position ([`Self::reject_mult`]).
     fn resolve_checked(&mut self, e: ExprId, p: &Type) -> R {
         let mut r = self.resolve(e, p);
-        self.typecheck(&mut r, p, self.expr(e).span);
+        self.typecheck(&mut r, p, e);
         r
     }
 
-    /// The sort check for a relevant type `p` (formula / int / set), emitting
-    /// `NotFormula`/`NotInt`/`NotSet` on mismatch. No cascade on an already-
-    /// errored subtree (the reference's `errors.isEmpty()` short-circuit).
-    fn typecheck(&mut self, r: &mut R, p: &Type, span: Span) {
+    /// [`Self::resolve_checked`] for the two operand positions that **consume**
+    /// a multiplicity instead of rejecting it: the operands of `->` (which
+    /// propagate the flag up the arrow chain) and the right operand of `in`
+    /// (LEDGER-016 cells m06 and n18/p16/m25/n11).
+    fn resolve_checked_consuming_mult(&mut self, e: ExprId, p: &Type) -> R {
+        let mut r = self.resolve(e, p);
+        self.typecheck_sorted(&mut r, p, self.expr(e).span);
+        r
+    }
+
+    /// The reference's `Expr.mult` — `0` none, `1` set-of, `2` arrow-mult.
+    ///
+    /// In Alloy this is a field on `Expr` because `make()` computes it once and
+    /// the node carries it; in mettle it is **fully determined by the AST node
+    /// kind** and never by resolution, so it is a pure predicate over the arena
+    /// instead of a value threaded through [`R`]. Cell q05 is what makes the
+    /// syntactic reading the faithful one: a `let` macro whose body is `set A`
+    /// resolves, so the flag must *not* survive expansion into the use site —
+    /// exactly what reading the original node gives for free.
+    ///
+    /// The arrow arm propagates up a chain (`A -> (A -> lone A)` is tagged at
+    /// the outer node), mirroring `lower.rs`'s `bound_is_higher_order` walk.
+    fn mult_of(&self, e: ExprId) -> u8 {
+        match &self.expr(e).kind {
+            ExprKind::Unary { op, .. } => u8::from(matches!(
+                op,
+                UnOp::SetOf
+                    | UnOp::SeqOf
+                    | UnOp::SomeOf
+                    | UnOp::LoneOf
+                    | UnOp::OneOf
+                    | UnOp::ExactlyOf
+            )),
+            ExprKind::Arrow {
+                lhs,
+                rhs,
+                lhs_mult,
+                rhs_mult,
+            } => {
+                if lhs_mult.is_some() || rhs_mult.is_some() {
+                    2
+                } else {
+                    self.mult_of(*lhs).max(self.mult_of(*rhs))
+                }
+            }
+            _ => 0,
+        }
+    }
+
+    /// The make-time multiplicity guard (LEDGER-016 §(a)): a mult-tagged operand
+    /// at a position that does not consume it. Returns whether it fired.
+    ///
+    /// Alloy raises this as an `ErrorSyntax` from `make()`, bottom-up and
+    /// **before** the `errors.isEmpty()` gate, so unlike the sort checks it is
+    /// not suppressed by an already-errored subtree — hence no `r.err` guard
+    /// here. It stays behind `lenient()`, so the mt-108 meta gate keeps
+    /// suppressing it along with everything else.
+    fn reject_mult(&mut self, e: ExprId) -> bool {
+        if self.lenient() || self.mult_of(e) == 0 {
+            return false;
+        }
+        let span = self.expr(e).span;
+        self.err(ResolveError::MultiplicityNotAllowed { span });
+        true
+    }
+
+    /// The sort check for a relevant type `p` (formula / int / set) at an
+    /// **operand** position: the multiplicity guard first, then the sort.
+    fn typecheck(&mut self, r: &mut R, p: &Type, e: ExprId) {
+        if self.reject_mult(e) {
+            r.err = true;
+            return;
+        }
+        self.typecheck_sorted(r, p, self.expr(e).span);
+    }
+
+    /// The sort half alone, emitting `NotFormula`/`NotInt`/`NotSet` on mismatch.
+    /// No cascade on an already-errored subtree (the reference's
+    /// `errors.isEmpty()` short-circuit). Used directly at the positions that
+    /// consume a multiplicity, and at the four `run_*` roots — nothing consumes
+    /// a root *as an operand*, which is why `fun f: A { set A }` (m18) resolves.
+    fn typecheck_sorted(&mut self, r: &mut R, p: &Type, span: Span) {
         if r.err || self.lenient() {
             return;
         }
@@ -911,14 +1004,24 @@ impl<'a, 'g> Cx<'a, 'g> {
                 r.err = true;
             }
         } else {
-            self.typecheck_as_set(r, span);
+            self.typecheck_as_set_sorted(r, span);
         }
+    }
+
+    /// `typecheck_as_set` at an **operand** position: the multiplicity guard,
+    /// then the sort check.
+    fn typecheck_as_set(&mut self, r: &mut R, e: ExprId) {
+        if self.reject_mult(e) {
+            r.err = true;
+            return;
+        }
+        self.typecheck_as_set_sorted(r, self.expr(e).span);
     }
 
     /// `typecheck_as_set`: a formula (`is_bool`) where a set is required is an
     /// error; a `small_int`/`is_int` is cast (no error). EMPTY is already an
     /// error subtree.
-    fn typecheck_as_set(&mut self, r: &mut R, span: Span) {
+    fn typecheck_as_set_sorted(&mut self, r: &mut R, span: Span) {
         if r.err || self.lenient() {
             return;
         }
@@ -946,7 +1049,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                 // relevant = removesBoolAndInt(sub.type)
                 let s = self.infer(e).remove_bool_and_int(self.int_sig());
                 let mut sub = self.resolve(e, &s);
-                self.typecheck_as_set(&mut sub, self.expr(e).span);
+                self.typecheck_as_set(&mut sub, e);
                 R {
                     ty: self.formula(),
                     err: sub.err,
@@ -956,7 +1059,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                 // multiplicity bound markers: operand as a set; result type per make.
                 let s = self.infer(e).remove_bool_and_int(self.int_sig());
                 let mut sub = self.resolve(e, &s);
-                self.typecheck_as_set(&mut sub, self.expr(e).span);
+                self.typecheck_as_set(&mut sub, e);
                 let ty = match op {
                     UnOp::SetOf | UnOp::ExactlyOf => sub.ty.remove_bool_and_int(self.int_sig()),
                     _ => sub.ty.extract(&self.r.world, 1),
@@ -971,7 +1074,7 @@ impl<'a, 'g> Cx<'a, 'g> {
             UnOp::SeqOf => {
                 let s = self.infer(e).remove_bool_and_int(self.int_sig());
                 let mut sub = self.resolve(e, &s);
-                self.typecheck_as_set(&mut sub, self.expr(e).span);
+                self.typecheck_as_set(&mut sub, e);
                 R {
                     ty: Type::unary(self.r.world.builtins.seq_int).product(&self.r.world, &sub.ty),
                     err: sub.err,
@@ -996,7 +1099,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                     subt.clone()
                 };
                 let mut sub = self.resolve(e, &s);
-                self.typecheck_as_set(&mut sub, self.expr(e).span);
+                self.typecheck_as_set(&mut sub, e);
                 let ty = sub.ty.transpose(&self.r.world);
                 if !sub.err && ty.is_error() && !self.lenient() {
                     self.err(ResolveError::UnaryNotBinary { op: "~", span });
@@ -1018,7 +1121,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                     }
                 };
                 let mut sub = self.resolve(e, &s);
-                self.typecheck_as_set(&mut sub, self.expr(e).span);
+                self.typecheck_as_set(&mut sub, e);
                 // Recording-only precise pass (mt-035): the operand type `s` above
                 // is the operand's own binary shape, which leaves a bare `next`/
                 // `prev` under `^`/`*` ambiguous between `util/ordering`'s
@@ -1082,7 +1185,7 @@ impl<'a, 'g> Cx<'a, 'g> {
             UnOp::Card => {
                 let s = self.infer(e).remove_bool_and_int(self.int_sig());
                 let mut sub = self.resolve(e, &s);
-                self.typecheck_as_set(&mut sub, self.expr(e).span);
+                self.typecheck_as_set(&mut sub, e);
                 R {
                     ty: self.small_int(),
                     err: sub.err,
@@ -1103,7 +1206,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                 }
                 let s = subt.remove_bool_and_int(self.int_sig());
                 let mut sub = self.resolve(e, &s);
-                self.typecheck_as_set(&mut sub, self.expr(e).span);
+                self.typecheck_as_set(&mut sub, e);
                 R {
                     ty: self.small_int(),
                     err: sub.err,
@@ -1286,16 +1389,21 @@ impl<'a, 'g> Cx<'a, 'g> {
         // Arrow slices: leftType' from p.intersect(aa.product(bb)); fallback a=a,b=b.
         let (ap, bp) = self.arrow_slices(&lt, &rt, p);
         let (lspan, rspan) = (self.expr(lhs).span, self.expr(rhs).span);
-        let mut l = self.resolve_checked(lhs, &ap);
-        let mut r = self.resolve_checked(rhs, &bp);
+        // `->` is the one binary that *consumes* a multiplicity rather than
+        // rejecting it: the arrow ops propagate the flag up the chain, so
+        // `f: A -> (A -> lone A)` is legal and the rejection happens one level
+        // up, wherever a non-arrow op consumes the chain (LEDGER-016 cell m06
+        // vs m24/m29).
+        let mut l = self.resolve_checked_consuming_mult(lhs, &ap);
+        let mut r = self.resolve_checked_consuming_mult(rhs, &bp);
         // `->` takes set operands whatever the slice says. A formula operand
         // empties its slice, and the documented fallback then hands the raw
         // FORMULA type back as the relevant type — so `resolve_checked` above
         // sort-checks the operand against *itself* and passes. The reference
         // checks set-ness unconditionally ("This must be a set or relation"), so
         // the check belongs here, not in the slice (mt-110).
-        self.typecheck_as_set(&mut l, lspan);
-        self.typecheck_as_set(&mut r, rspan);
+        self.typecheck_as_set_sorted(&mut l, lspan);
+        self.typecheck_as_set_sorted(&mut r, rspan);
         // A12: one side of `->` is empty while the other is not (§5.2 default).
         if !l.err && !r.err {
             let lt_tuple = lt.has_tuple(world);
@@ -1456,8 +1564,16 @@ impl<'a, 'g> Cx<'a, 'g> {
                     let b = rt.intersect(world, &a);
                     (a, b)
                 };
+                // `in` is **asymmetric** about multiplicity: its right operand
+                // is a consuming position (`r in A -> lone A` states a
+                // multiplicity constraint), its left is not, and `=` consumes on
+                // neither side (LEDGER-016 cells n18/p16/m25/n11 vs m26/m27).
                 let l = self.resolve_checked(lhs, &ap);
-                let r = self.resolve_checked(rhs, &bp);
+                let r = if matches!(op, CmpOp::In) {
+                    self.resolve_checked_consuming_mult(rhs, &bp)
+                } else {
+                    self.resolve_checked(rhs, &bp)
+                };
                 let both_int = lt.is_int(world) && rt.is_int(world);
                 let arity_ok = lt.has_common_arity(&rt) || (matches!(op, CmpOp::Eq) && both_int);
                 if !l.err && !r.err && !arity_ok && !self.lenient() {
@@ -2111,7 +2227,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                         for (i, a) in args.iter().enumerate() {
                             let ap = if i >= 2 { &tt } else { &t };
                             let mut r = self.resolve(*a, ap);
-                            self.typecheck_as_set(&mut r, self.expr(*a).span);
+                            self.typecheck_as_set(&mut r, *a);
                             err |= r.err;
                         }
                         self.record_spine(
@@ -2140,7 +2256,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                         let mut err = false;
                         for a in &args {
                             let mut r = self.resolve(*a, &p);
-                            self.typecheck_as_set(&mut r, self.expr(*a).span);
+                            self.typecheck_as_set(&mut r, *a);
                             err |= r.err;
                         }
                         self.record_spine(
@@ -2171,7 +2287,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                             }
                             let ap = at.remove_bool_and_int(self.int_sig());
                             let mut r = self.resolve(a, &ap);
-                            self.typecheck_as_set(&mut r, self.expr(a).span);
+                            self.typecheck_as_set(&mut r, a);
                             err |= r.err;
                         }
                         self.record_spine(
@@ -2776,7 +2892,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                 let lt = self.infer(left);
                 let (ap, bp) = self.join_slices(&lt, &right_ty, p);
                 let mut l = self.resolve(left, &ap);
-                self.typecheck_as_set(&mut l, self.expr(left).span);
+                self.typecheck_as_set(&mut l, left);
                 // Warning-only pass over the compound right operand (mt-023): the
                 // reference resolves it (emitting any relevance/redundancy warning
                 // inside, e.g. a `^`-closure), so mettle collects those warnings
@@ -2839,7 +2955,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                 for (k, &a) in args.iter().enumerate() {
                     let pk = params.get(offset + k).cloned().unwrap_or_else(Type::empty);
                     let mut r = self.resolve(a, &pk);
-                    self.typecheck_as_set(&mut r, self.expr(a).span);
+                    self.typecheck_as_set(&mut r, a);
                     err |= r.err;
                 }
                 R { ty: ret, err }
@@ -2992,7 +3108,7 @@ impl<'a, 'g> Cx<'a, 'g> {
         // comprehension result type is their product, in order). Re-resolving
         // the bounds here would re-pick under the now-shadowed env — wrong when
         // a decl redeclares an earlier name (`{p:A, …, p:f[p]}`).
-        let (pushed, types) = self.bind_decls_typed(decls);
+        let (pushed, types) = self.bind_decls_typed(decls, BinderKind::Comprehension);
         let fp = self.formula();
         let err = self.resolve_checked(body, &fp).err;
         let mut ty: Option<Type> = None;
@@ -3016,7 +3132,12 @@ impl<'a, 'g> Cx<'a, 'g> {
     fn let_expr(&mut self, bindings: &[LetBinding], body: ExprId, p: &Type) -> R {
         let mut pushed = 0;
         for b in bindings {
+            // `ExprLet` does not consume a multiplicity — `let x = set A | …`
+            // is the mult error, parenthesized or not (LEDGER-016 m19/p07). The
+            // binding value gets no sort check at all here (its type is whatever
+            // it is), so the guard is explicit rather than inherited.
             let bp = self.infer(b.value);
+            self.reject_mult(b.value);
             let t = self.resolve(b.value, &bp).ty;
             self.env.push((b.name.text.clone(), t));
             pushed += 1;
@@ -3044,18 +3165,18 @@ impl<'a, 'g> Cx<'a, 'g> {
     }
 
     fn bind_decls(&mut self, decls: &[DeclId]) -> usize {
-        self.bind_decls_typed(decls).0
+        self.bind_decls_typed(decls, BinderKind::Quantifier).0
     }
 
     /// Binds a decl list into the env, returning how many env frames to pop and
     /// each pushed variable's element type (in push order) — resolved **once**
     /// with the correct incremental env.
-    fn bind_decls_typed(&mut self, decls: &[DeclId]) -> (usize, Vec<Type>) {
+    fn bind_decls_typed(&mut self, decls: &[DeclId], kind: BinderKind) -> (usize, Vec<Type>) {
         let mut pushed = 0;
         let mut types = Vec::new();
         for &d in decls {
             let decl = self.ast().decls[d].clone();
-            let bt = self.decl_bound_type(&decl);
+            let bt = self.decl_bound_type(&decl, kind);
             for name in &decl.names {
                 self.env.push((name.text.clone(), bt.clone()));
                 types.push(bt.clone());
@@ -3065,11 +3186,63 @@ impl<'a, 'g> Cx<'a, 'g> {
         (pushed, types)
     }
 
-    fn decl_bound_type(&mut self, decl: &Decl) -> Type {
+    /// Resolves one binder's decl bound. The two binders that share this path
+    /// have **opposite** multiplicity rules (LEDGER-016), so the policy is
+    /// caller-supplied: see [`BinderKind`].
+    fn decl_bound_type(&mut self, decl: &Decl, kind: BinderKind) -> Type {
         let p = self.infer(decl.bound).remove_bool_and_int(self.int_sig());
         let mut r = self.resolve(decl.bound, &p);
-        self.typecheck_as_set(&mut r, self.expr(decl.bound).span);
+        self.typecheck_as_set_sorted(&mut r, self.expr(decl.bound).span);
+        self.check_binder_bound(decl.bound, &r, kind);
         r.ty.as_set(self.int_sig())
+    }
+
+    /// `ExprQt.Op.make`'s bound checks, in the reference's order (LEDGER-016
+    /// §(b)). The reference reads `Decl.expr.mult()` — the *syntactic* wrapper
+    /// op, which defaults to `ONEOF` for anything that is not one — so only the
+    /// four `-of` wrappers can trip the first check, and `one`-of always passes
+    /// because it is the decl default.
+    ///
+    /// The two binders differ in **which** wrappers they reject:
+    ///
+    /// - `exactly`-of is rejected by **every** quantifier — `all x: A, y = A | …`
+    ///   is "This cannot be an exactly-of expression." This is the only way that
+    ///   message is reachable from source syntax, since a bare `= e` is not an
+    ///   expression prefix and the grammar admits it as a bound only after a
+    ///   `:`-bound group has opened the list (mt-111 cells s01/s03/s04/s05,
+    ///   jar-verified; 20 alloy4fun codes).
+    /// - `set`/`some`/`lone`-of are rejected only by **comprehensions** (cells
+    ///   n04/p02/p03/p17), which quantifiers accept freely (m10/m31/p05/p06/p18).
+    ///   A comprehension also never sees an `exactly`-of bound: `Declz` does not
+    ///   admit `=` at all, so that spelling fails to parse.
+    ///
+    /// Then the arity: each comprehension variable ranges over single atoms, so
+    /// its bound must be unary. Running that check *after* the multiplicity one
+    /// is what makes cell p04 (`{ x: A -> lone A | … }`) report the unary-set
+    /// message rather than a multiplicity one — an arrow is not a `-of` wrapper,
+    /// so it falls through the first check whatever its arrow mult.
+    fn check_binder_bound(&mut self, bound: ExprId, r: &R, kind: BinderKind) {
+        if r.err || self.lenient() {
+            return;
+        }
+        let span = self.expr(bound).span;
+        let comprehension = matches!(kind, BinderKind::Comprehension);
+        if let ExprKind::Unary { op, .. } = &self.expr(bound).kind {
+            let bad = match op {
+                UnOp::ExactlyOf => Some("exactly"),
+                UnOp::SetOf if comprehension => Some("set"),
+                UnOp::SomeOf if comprehension => Some("some"),
+                UnOp::LoneOf if comprehension => Some("lone"),
+                _ => None,
+            };
+            if let Some(kind) = bad {
+                self.err(ResolveError::CannotBeMultOf { kind, span });
+                return;
+            }
+        }
+        if comprehension && r.ty.has_entries() && r.ty.arity() != Some(1) {
+            self.err(ResolveError::NotUnarySet { span });
+        }
     }
 
     /// Pops the `pushed` binder frames and emits an unused-variable warning for
