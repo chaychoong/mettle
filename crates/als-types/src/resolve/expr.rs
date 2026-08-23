@@ -817,7 +817,7 @@ impl<'a, 'g> Cx<'a, 'g> {
             ExprKind::Num(_) => R::ok(self.small_int()),
             ExprKind::Str(_) => R::ok(Type::unary(self.r.world.builtins.string)),
             ExprKind::Const(c) => R::ok(self.const_type(*c)),
-            ExprKind::This => R::ok(self.infer_this()),
+            ExprKind::This => self.this_r(span),
             ExprKind::Name(qn) => self.resolve_name(e, qn, p, false),
             ExprKind::AtName(qn) => self.resolve_name(e, qn, p, true),
             ExprKind::Unary { op, expr } => self.unary_r(*op, *expr, span, p),
@@ -868,6 +868,21 @@ impl<'a, 'g> Cx<'a, 'g> {
                 }
             }
         }
+    }
+
+    /// `this` in the resolve pass: a reject when there is no sig context at all.
+    /// [`Cx::infer_this`] falls back to `univ` so the bottom-up pass stays
+    /// error-free, but the reference has no `this` to bind outside a sig's own
+    /// scope and reports it as an unfindable name (mt-110).
+    fn this_r(&mut self, span: Span) -> R {
+        if self.env_get("this").is_none() && self.rootsig.is_none() && !self.lenient() {
+            self.err(ResolveError::UnknownName {
+                name: "this".to_owned(),
+                span,
+            });
+            return R::bad();
+        }
+        R::ok(self.infer_this())
     }
 
     /// `resolve` a child, then apply the reference's `typecheck_as_{formula,int,
@@ -1270,8 +1285,17 @@ impl<'a, 'g> Cx<'a, 'g> {
         let rt = self.infer(rhs);
         // Arrow slices: leftType' from p.intersect(aa.product(bb)); fallback a=a,b=b.
         let (ap, bp) = self.arrow_slices(&lt, &rt, p);
-        let l = self.resolve_checked(lhs, &ap);
-        let r = self.resolve_checked(rhs, &bp);
+        let (lspan, rspan) = (self.expr(lhs).span, self.expr(rhs).span);
+        let mut l = self.resolve_checked(lhs, &ap);
+        let mut r = self.resolve_checked(rhs, &bp);
+        // `->` takes set operands whatever the slice says. A formula operand
+        // empties its slice, and the documented fallback then hands the raw
+        // FORMULA type back as the relevant type — so `resolve_checked` above
+        // sort-checks the operand against *itself* and passes. The reference
+        // checks set-ness unconditionally ("This must be a set or relation"), so
+        // the check belongs here, not in the slice (mt-110).
+        self.typecheck_as_set(&mut l, lspan);
+        self.typecheck_as_set(&mut r, rspan);
         // A12: one side of `->` is empty while the other is not (§5.2 default).
         if !l.err && !r.err {
             let lt_tuple = lt.has_tuple(world);
@@ -1579,8 +1603,26 @@ impl<'a, 'g> Cx<'a, 'g> {
 
         let cands = self.value_candidates(&segs, at_name);
         if cands.is_empty() {
-            if !self.lookup_funcs(&segs).is_empty() || self.lookup_macro(&segs).is_some() {
+            // A macro named bare keeps its leniency: mettle binds macro params by
+            // type, so a callable passed by name (`m[ax]`) has no value reading of
+            // its own and the body approximates it (mt-040).
+            if self.lookup_macro(&segs).is_some() {
                 return R::ok(Type::unary(self.r.world.builtins.univ));
+            }
+            // A name denoting only funcs *with parameters* is the reference's
+            // `ExprBadCall` — a call spine that never gained its arguments — and
+            // rejects as "possible incorrect function/predicate call". 0-ary
+            // funcs are value candidates above, so reaching here means every
+            // reading still needs an argument (mt-110).
+            if !self.lookup_funcs(&segs).is_empty() {
+                if self.lenient() {
+                    return R::ok(Type::unary(self.r.world.builtins.univ));
+                }
+                self.err(ResolveError::BadCall {
+                    name: segs.join("/"),
+                    span: qn.span,
+                });
+                return R::bad();
             }
             // The per-name `$` test the gate used to carry here is subsumed:
             // any `$`-bearing name reference is in `dollar_names`, so a *meta*
@@ -1753,6 +1795,13 @@ impl<'a, 'g> Cx<'a, 'g> {
         let arg_types: Vec<Type> = arg_exprs
             .iter()
             .map(|&a| {
+                // A callable passed by bare name has no value reading, so
+                // resolving it would now be a `BadCall` reject (mt-110). Bind it
+                // to the lenient `univ` the name path used to hand back: the body
+                // substitutes it by name, not by type (mt-040).
+                if self.arg_is_callable_by_name(a) {
+                    return Type::unary(self.r.world.builtins.univ);
+                }
                 let ap = self.infer(a);
                 self.resolve(a, &ap).ty
             })
@@ -2461,11 +2510,13 @@ impl<'a, 'g> Cx<'a, 'g> {
                         });
                         return out;
                     }
-                    // A callable-by-name (macro arg), or a name in a meta model
-                    // → lenient `univ` leaf; a genuinely unknown name (a stray
-                    // `$` included, mt-108) → a reject reading.
-                    let callable =
-                        !self.lookup_funcs(&segs).is_empty() || self.lookup_macro(&segs).is_some();
+                    // A macro-with-params named bare (a macro arg), or a name in
+                    // a meta model → lenient `univ` leaf; a genuinely unknown
+                    // name (a stray `$` included, mt-108) → a reject reading.
+                    // Funcs never reach here: a func with params always pushed a
+                    // `BadCall` reading above and a 0-ary one is a value
+                    // candidate, so `out` was non-empty (mt-110).
+                    let callable = self.lookup_macro(&segs).is_some();
                     if callable || self.lenient() {
                         out.push(Reading {
                             ty: Type::unary(self.r.world.builtins.univ),

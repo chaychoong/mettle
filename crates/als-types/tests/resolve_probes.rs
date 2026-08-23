@@ -599,3 +599,92 @@ fn param_alias_is_not_a_meta_name_mt108() {
     let e = reject("sig A {}\nopen util/ordering[A]\nfact { some elem$ }\nrun {}\n");
     assert!(matches!(e, ResolveError::UnknownName { .. }), "{e:?}");
 }
+
+// ---- mt-110: three accept-lean leniencies the reference does not grant ----
+//
+// Each cell below was run against `oracle/org.alloytools.alloy.dist.jar`; the
+// three rejects are the jar's "possible incorrect function/predicate call",
+// "This must be a set or relation" and `The name "this" cannot be found.`
+
+/// A bare name denoting a func *with parameters*, used as a value, is the
+/// reference's `ExprBadCall` — a call spine that never gained its arguments.
+/// The dominant corpus shape is `add` from the auto-opened `util/integer`.
+#[test]
+fn bare_func_with_params_as_value_rejected_mt110() {
+    let e = reject("sig A {}\nfun add2[x: A]: A { x }\nrun { some add2 } for 3\n");
+    assert!(matches!(e, ResolveError::BadCall { .. }), "{e:?}");
+    let e = reject("sig A {}\nrun { some a: add | a in A } for 3\n");
+    assert!(matches!(e, ResolveError::BadCall { .. }), "{e:?}");
+    // A receiver func's `this` is param 0, so it too needs an argument.
+    let e = reject("sig A {}\nfun A.mine[x: A]: A { x }\nrun { some mine } for 3\n");
+    assert!(matches!(e, ResolveError::BadCall { .. }), "{e:?}");
+    // The leniency the macro path keeps is macro-only: a callable-by-name
+    // argument to an ordinary *pred* is the same uncompleted call spine, and the
+    // jar rejects it too.
+    let e = reject(
+        "sig A {}\nfun add2[x: A]: A { x }\npred p[y: univ] { some y }\nrun { p[add2] } for 3\n",
+    );
+    assert!(matches!(e, ResolveError::BadCall { .. }), "{e:?}");
+    // …and as a join base, where the spine's own `BadCall` reading rejects.
+    let e = reject("sig A {}\nfun add2[x: A]: A { x }\nrun { some add2.A } for 3\n");
+    assert!(matches!(e, ResolveError::BadCall { .. }), "{e:?}");
+}
+
+/// The carve-outs. A 0-ary func/pred is a genuine value (a value candidate, so
+/// it never reaches the bad-call path), every real call form still completes,
+/// and a callable passed to a higher-order macro by bare name stays lenient
+/// (mt-040) — the macro binds it by name, not by type.
+#[test]
+fn real_calls_and_zero_ary_funcs_still_accept_mt110() {
+    accept("sig A {}\nfun all_a: A { A }\nrun { some all_a } for 3\n");
+    accept("sig A {}\npred p0 {}\nrun { p0 } for 3\n");
+    accept("sig A {}\nfun add2[x: A]: A { x }\nrun { some add2[A] } for 3\n");
+    accept("sig A { f: set A }\nfun g[x: A]: A { x }\nrun { some A.f.g } for 3\n");
+    accept("sig A {}\nfun A.mine[x: A]: A { x }\nrun { some A.mine[A] } for 3\n");
+    accept("pred ax[x: univ] { some x }\nlet m[axiom] { axiom[univ] }\nfact { m[ax] }\n");
+    accept("sig A {}\nlet m[c] { some c[A] }\nfun add2[x: A]: A { x }\nfact { m[add2] }\n");
+}
+
+/// A meta-gate model stays accept-lean throughout: the bad-call reject is
+/// suppressed exactly as the name/ambiguity rejects are.
+#[test]
+fn meta_gate_keeps_bare_callable_lenient_mt110() {
+    accept("sig A {}\nfun add2[x: A]: A { x }\nrun { some add2 and some A$ } for 3\n");
+}
+
+/// `->` sort-checks its operands even though a formula operand empties the
+/// arrow slice (whose fallback then hands the raw FORMULA type back). The
+/// corpus shape is a student writing `->` where they meant `implies`.
+#[test]
+fn arrow_operand_must_be_a_set_mt110() {
+    let e = reject("sig A {}\nrun { some A -> (A in A) } for 3\n");
+    assert!(matches!(e, ResolveError::NotSet { .. }), "{e:?}");
+    let e = reject("sig A {}\nrun { some (A in A) -> A } for 3\n");
+    assert!(matches!(e, ResolveError::NotSet { .. }), "{e:?}");
+}
+
+/// Ordinary arrows between sets are untouched.
+#[test]
+fn arrow_between_sets_still_accepts_mt110() {
+    accept("sig A {}\nsig B {}\nrun { some A -> B } for 3\n");
+    accept("sig A { f: set A }\nrun { A -> A in A -> A } for 3\n");
+    accept("sig A {}\nsig B { g: A -> A }\nrun { some g } for 3\n");
+}
+
+/// Bare `this` outside any sig context has nothing to bind to.
+#[test]
+fn bare_this_outside_sig_rejected_mt110() {
+    let e = reject("sig A {}\nfact { this in A }\nrun {} for 3\n");
+    assert!(matches!(e, ResolveError::UnknownName { .. }), "{e:?}");
+    let e = reject("sig A {}\npred p { this in A }\nrun p for 3\n");
+    assert!(matches!(e, ResolveError::UnknownName { .. }), "{e:?}");
+}
+
+/// `this` keeps working wherever the reference binds it: a sig's appended fact,
+/// a field declaration's bound, and a receiver func's body.
+#[test]
+fn this_in_sig_context_still_accepts_mt110() {
+    accept("sig A { f: set A } { this in A }\nrun {} for 3\n");
+    accept("sig A { f: set A, g: set this }\nrun {} for 3\n");
+    accept("sig A {}\nfun A.mine: A { this }\nrun { some A.mine } for 3\n");
+}
