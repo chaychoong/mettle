@@ -17,6 +17,9 @@
 //! - [`resolve_baseline::ResolveBaseline`] (mt-110): the committed jar
 //!   resolve-verdict baseline (`baselines/alloy4fun-resolve.txt`) that lets
 //!   `resolve-gauge diff` skip the live ~4-minute JVM pass.
+//! - [`warnings_baseline::WarningsBaseline`] (mt-118): the committed jar
+//!   warning-parity baseline (`baselines/alloy4fun-warnings.txt`) that lets
+//!   `resolve-gauge warn-diff` skip the same live pass.
 //! - [`bench::run_bench`] / [`bench::BenchReport`] (mt-024): the one-command
 //!   conformance + speed benchmark (`conform bench`) -- per-stage mettle-vs-jar
 //!   agreement (parse, resolve) plus honest mettle/jar timing, reusing the
@@ -37,6 +40,7 @@ pub mod scorecard;
 pub mod shim;
 pub mod solve_gauge;
 pub mod status;
+pub mod warnings_baseline;
 
 pub use bench::{run_bench, BenchConfig, BenchReport, DEFAULT_CORPUS_ROOTS};
 pub use config::{EnumerationCap, OracleConfig};
@@ -51,3 +55,4 @@ pub use solve_gauge::telemetry::{TelemetryEvent, TelemetrySink};
 pub use solve_gauge::watch::WatchServer;
 pub use solve_gauge::{run_gauge, GaugeConfig, PerCommand, SolveGaugeReport};
 pub use status::StatusFile;
+pub use warnings_baseline::{WarningRow, WarningsBaseline, WarningsBaselineHeader};

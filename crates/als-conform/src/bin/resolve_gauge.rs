@@ -47,6 +47,24 @@
 //!   error phase+variant, sorted by file. Exit code 1 if any
 //!   jar-accepts+mettle-rejects (drop-in violations) remain.
 //!
+//! - `bake-warnings --jar <jar.jsonl> --out <file>`
+//!   Banks a live jar pass's per-file warning arrays as the committed
+//!   [`WarningsBaseline`](als_conform::warnings_baseline) artifact
+//!   (`baselines/alloy4fun-warnings.txt`): one line per jar-ACCEPTED code with
+//!   `>=1` warning, keyed by code id, under a header pinning the jar by
+//!   SHA-256. mt-118.
+//!
+//! - `warn-diff --mettle <mettle.jsonl> --jar-baseline <file>
+//!   [--verdict-baseline <file>]`
+//!   The mt-023 warning-parity gauge against the banked warnings baseline
+//!   instead of a live JVM pass. jar ACCEPT/REJECT comes from the
+//!   resolve-verdict baseline (default `baselines/alloy4fun-resolve.txt`);
+//!   warnings come from the warnings baseline. mt-118.
+//!
+//! - `warn-diff --mettle <mettle.jsonl> --jar <jar.jsonl>`
+//!   The same gauge against a live jar pass, mapping jar messages to mt-023
+//!   classes via [`als_types::jar_stem_class`].
+//!
 //! This bin prints and exits (STYLE E3), like `conform.rs`; the library never
 //! does.
 
@@ -65,6 +83,7 @@ use std::process::ExitCode;
 use std::thread;
 
 use als_conform::resolve_baseline::{self, RejectRow, ResolveBaseline, ResolveBaselineHeader};
+use als_conform::warnings_baseline::{WarningRow, WarningsBaseline, WarningsBaselineHeader};
 use als_types::{FilesystemLoader, MapLoader, ModuleGraph, ResolveError};
 
 /// The ADR-0002 pinned oracle jar, where every documented gauge command runs it
@@ -765,6 +784,104 @@ fn jar_side_from_baseline(
 }
 
 // ---------------------------------------------------------------------------
+// bake-warnings subcommand (mt-118): jar.jsonl → the committed warnings
+// baseline
+// ---------------------------------------------------------------------------
+
+/// Bakes a live `jar.jsonl` into `baselines/alloy4fun-warnings.txt`: one line
+/// per jar-ACCEPTED code with `>=1` warning, keyed by code id (the file
+/// stem). Every jar warning message must classify via
+/// [`als_types::jar_stem_class`] — an unrecognized stem is a hard error
+/// (the tripwire mt-023's own vocabulary-drift note asks for): a baseline
+/// silently missing a class would understate the jar's warning count for
+/// good, since the artifact is committed and never re-derived except on
+/// request.
+fn run_bake_warnings(jar_jsonl: &Path, jar_file: &Path, out: &Path) -> ExitCode {
+    let text = fs::read_to_string(jar_jsonl)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", jar_jsonl.display()));
+
+    let mut warnings: BTreeMap<String, Vec<WarningRow>> = BTreeMap::new();
+    let mut n_accept = 0usize;
+    for (lineno, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let v: serde_json::Value = serde_json::from_str(line).unwrap_or_else(|e| {
+            panic!(
+                "bad json line {} in {}: {e}",
+                lineno + 1,
+                jar_jsonl.display()
+            )
+        });
+        let ok = v
+            .get("ok")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        if !ok {
+            continue;
+        }
+        n_accept += 1;
+        let Some(arr) = v.get("warnings").and_then(|w| w.as_array()) else {
+            continue;
+        };
+        if arr.is_empty() {
+            continue;
+        }
+        let file = v
+            .get("file")
+            .and_then(|f| f.as_str())
+            .expect("verdict line missing `file`");
+        let id = code_id(file);
+        let mut rows = Vec::with_capacity(arr.len());
+        for w in arr {
+            let msg = w.get("message").and_then(|m| m.as_str()).unwrap_or("");
+            let Some(class) = als_types::jar_stem_class(msg) else {
+                eprintln!(
+                    "[bake-warnings] FATAL: unclassifiable jar warning stem for {file}: {:?}",
+                    msg.lines().next().unwrap_or("")
+                );
+                std::process::exit(1);
+            };
+            rows.push(WarningRow {
+                class: class.to_owned(),
+                line: num(w, "line"),
+                col: num(w, "col"),
+            });
+        }
+        rows.sort();
+        warnings.insert(id, rows);
+    }
+
+    let total: usize = warnings.values().map(Vec::len).sum();
+    let baseline = WarningsBaseline {
+        header: WarningsBaselineHeader {
+            jar_sha256: resolve_baseline::sha256_file(jar_file)
+                .unwrap_or_else(|e| panic!("cannot digest {}: {e}", jar_file.display())),
+            generated: resolve_baseline::today_utc(),
+            command: format!(
+                "resolve-gauge bake-warnings --jar <jar.jsonl> --jar-file {} --out {}",
+                jar_file.display(),
+                out.display()
+            ),
+        },
+        warnings,
+    };
+    let rendered = baseline.render();
+    fs::write(out, &rendered).unwrap_or_else(|e| panic!("cannot write {}: {e}", out.display()));
+    eprintln!(
+        "[bake-warnings] {n_accept} jar ACCEPTs, {} with >=1 warning, {total} warnings total",
+        baseline.warnings.len()
+    );
+    eprintln!(
+        "[bake-warnings] wrote {} ({} bytes)",
+        out.display(),
+        rendered.len()
+    );
+    ExitCode::SUCCESS
+}
+
+// ---------------------------------------------------------------------------
 // warn-diff subcommand (mt-023 warning parity)
 // ---------------------------------------------------------------------------
 
@@ -841,12 +958,94 @@ fn class_line_set(ws: &WarnSet) -> std::collections::BTreeSet<(String, usize)> {
     ws.iter().map(|(c, l, _)| (c.clone(), *l)).collect()
 }
 
-#[allow(clippy::too_many_lines)]
 fn run_warn_diff(mettle_path: &Path, jar_path: &Path) -> ExitCode {
     let mut unclassified: BTreeMap<String, usize> = BTreeMap::new();
     let mettle = read_warn_jsonl(mettle_path, false, &mut unclassified);
     let jar = read_warn_jsonl(jar_path, true, &mut unclassified);
+    run_warn_diff_report(&mettle, &jar, &unclassified)
+}
 
+/// The code id of a corpus path: the extraction's `codes/NNNNNN.als` file
+/// stem (mt-118) — the key both baked baselines share.
+fn code_id(path: &str) -> String {
+    Path::new(path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// Reconstructs the jar side of `warn-diff` from the two baked baselines, for
+/// every code id `mettle` mentions: ACCEPT/REJECT comes from the
+/// resolve-verdict baseline (`baselines/alloy4fun-resolve.txt`, mt-110 — it
+/// lists REJECTs, so ACCEPT is "not listed"); warnings come from the
+/// warnings baseline (mt-118 — a jar-ACCEPT id absent there had zero
+/// warnings). A code id `warn-diff`'s mettle side can't resolve against
+/// either baseline is a hard error, never a silent skip: dropping it would
+/// quietly shrink the comparison instead of reporting a real mismatch.
+fn jar_from_baselines(
+    mettle: &BTreeMap<String, (bool, WarnSet)>,
+    warnings_baseline_path: &Path,
+    verdict_baseline_path: &Path,
+) -> Result<BTreeMap<String, (bool, WarnSet)>, String> {
+    let wb_text = fs::read_to_string(warnings_baseline_path)
+        .map_err(|e| format!("cannot read {}: {e}", warnings_baseline_path.display()))?;
+    let wb = WarningsBaseline::parse(&wb_text).map_err(|e| e.to_string())?;
+    let vb_text = fs::read_to_string(verdict_baseline_path)
+        .map_err(|e| format!("cannot read {}: {e}", verdict_baseline_path.display()))?;
+    let vb = ResolveBaseline::parse(&vb_text).map_err(|e| e.to_string())?;
+
+    let mut jar = BTreeMap::new();
+    for file in mettle.keys() {
+        let id = code_id(file);
+        let idx: usize = id
+            .parse()
+            .map_err(|_| format!("{file}: code id `{id}` is not a corpus index"))?;
+        if idx >= vb.header.codes {
+            return Err(format!(
+                "{file}: code id {idx} is out of range for the resolve baseline ({} codes)",
+                vb.header.codes
+            ));
+        }
+        let ok = !vb.rejects.contains_key(&idx);
+        let ws = wb.warnings.get(&id).map_or_else(Vec::new, |rows| {
+            rows.iter()
+                .map(|w| (w.class.clone(), w.line, w.col))
+                .collect()
+        });
+        jar.insert(file.clone(), (ok, ws));
+    }
+    Ok(jar)
+}
+
+/// `warn-diff` against the two baked baselines instead of a live jar.jsonl —
+/// the `--jar-baseline` counterpart to `--jar`.
+fn run_warn_diff_baseline(
+    mettle_path: &Path,
+    warnings_baseline_path: &Path,
+    verdict_baseline_path: &Path,
+) -> ExitCode {
+    let mut unclassified: BTreeMap<String, usize> = BTreeMap::new();
+    let mettle = read_warn_jsonl(mettle_path, false, &mut unclassified);
+    let jar = match jar_from_baselines(&mettle, warnings_baseline_path, verdict_baseline_path) {
+        Ok(j) => j,
+        Err(e) => {
+            eprintln!("[baseline] {e}");
+            return ExitCode::from(1);
+        }
+    };
+    run_warn_diff_report(&mettle, &jar, &unclassified)
+}
+
+/// The differential scorecard over an already-loaded jar side — live
+/// (`read_warn_jsonl`) and baked (`jar_from_baselines`) produce the same
+/// `BTreeMap`, so the two `warn-diff` paths cannot report differently
+/// (mt-118, mirroring `run_diff`'s mt-110 precedent).
+#[allow(clippy::too_many_lines)]
+fn run_warn_diff_report(
+    mettle: &BTreeMap<String, (bool, WarnSet)>,
+    jar: &BTreeMap<String, (bool, WarnSet)>,
+    unclassified: &BTreeMap<String, usize>,
+) -> ExitCode {
     let mut agree_accept = 0usize;
     let mut files_exact = 0usize;
     let mut files_with_missing = 0usize;
@@ -860,7 +1059,7 @@ fn run_warn_diff(mettle_path: &Path, jar_path: &Path) -> ExitCode {
     let mut jar_total = 0usize;
     let mut mettle_total = 0usize;
 
-    for (file, (m_ok, m_ws)) in &mettle {
+    for (file, (m_ok, m_ws)) in mettle {
         let Some((j_ok, j_ws)) = jar.get(file) else {
             continue;
         };
@@ -899,17 +1098,28 @@ fn run_warn_diff(mettle_path: &Path, jar_path: &Path) -> ExitCode {
             }
         }
         // Column agreement among (class,line) pairs present on both sides.
+        // A (class,line) can carry more than one warning at distinct columns
+        // (e.g. several `join-empty`s on one line); comparing the full sorted
+        // column multiset (not just "the first entry each side happens to
+        // list") keeps this order-independent — mt-118's baked baseline
+        // stores each file's warnings `(class,line,col)`-sorted rather than
+        // in the jar's original emission order, and a first-entry comparison
+        // would silently pick a different representative column per source.
         for (class, line) in m_set.intersection(&j_set) {
             line_matched += 1;
-            let m_col = m_ws
+            let mut m_cols: Vec<usize> = m_ws
                 .iter()
-                .find(|(c, l, _)| c == class && l == line)
-                .map(|(_, _, col)| *col);
-            let j_col = j_ws
+                .filter(|(c, l, _)| c == class && l == line)
+                .map(|(_, _, col)| *col)
+                .collect();
+            let mut j_cols: Vec<usize> = j_ws
                 .iter()
-                .find(|(c, l, _)| c == class && l == line)
-                .map(|(_, _, col)| *col);
-            if m_col == j_col {
+                .filter(|(c, l, _)| c == class && l == line)
+                .map(|(_, _, col)| *col)
+                .collect();
+            m_cols.sort_unstable();
+            j_cols.sort_unstable();
+            if m_cols == j_cols {
                 col_matched += 1;
             }
         }
@@ -950,7 +1160,7 @@ fn run_warn_diff(mettle_path: &Path, jar_path: &Path) -> ExitCode {
     }
     if !unclassified.is_empty() {
         println!("\n--- UNCLASSIFIED jar stems (extend the stem table!) ---");
-        for (stem, n) in &unclassified {
+        for (stem, n) in unclassified {
             println!("  {n:6} {stem}");
         }
     }
@@ -982,10 +1192,16 @@ fn usage() -> ExitCode {
          \x20 resolve-gauge diff --mettle <mettle.jsonl> --jar <jar.jsonl>\n\
          \x20 resolve-gauge diff --mettle <mettle.jsonl> --jar-baseline <file> --out-dir <dir>\n\
          \x20 resolve-gauge bake-baseline --jar <jar.jsonl> --out-dir <dir> --out <file>\n\
+         \x20 resolve-gauge bake-warnings --jar <jar.jsonl> --out <file>\n\
          \x20 resolve-gauge warn-diff --mettle <mettle.jsonl> --jar <jar.jsonl>\n\
+         \x20 resolve-gauge warn-diff --mettle <mettle.jsonl> --jar-baseline <file> \
+           [--verdict-baseline <file>]\n\
          \n\
          \x20 --jar-file <path> overrides the oracle jar the baseline is pinned to\n\
-         \x20 (default {DEFAULT_JAR}, relative to the working directory)."
+         \x20 (default {DEFAULT_JAR}, relative to the working directory).\n\
+         \x20 --verdict-baseline <file> overrides the resolve-verdict baseline\n\
+         \x20 `warn-diff --jar-baseline` uses for jar ACCEPT/REJECT\n\
+         \x20 (default baselines/alloy4fun-resolve.txt)."
     );
     ExitCode::from(2)
 }
@@ -1064,11 +1280,29 @@ fn main() -> ExitCode {
                 Path::new(&out),
             )
         }
-        "warn-diff" => {
-            let (Some(m), Some(j)) = (opt(&args, "--mettle"), opt(&args, "--jar")) else {
+        "bake-warnings" => {
+            let (Some(j), Some(out)) = (opt(&args, "--jar"), opt(&args, "--out")) else {
                 return usage();
             };
-            run_warn_diff(Path::new(&m), Path::new(&j))
+            let jar_file = opt(&args, "--jar-file").unwrap_or_else(|| DEFAULT_JAR.to_owned());
+            run_bake_warnings(Path::new(&j), Path::new(&jar_file), Path::new(&out))
+        }
+        "warn-diff" => {
+            let Some(m) = opt(&args, "--mettle") else {
+                return usage();
+            };
+            match (opt(&args, "--jar"), opt(&args, "--jar-baseline")) {
+                (Some(j), None) => run_warn_diff(Path::new(&m), Path::new(&j)),
+                (None, Some(wb)) => {
+                    let vb = opt(&args, "--verdict-baseline")
+                        .unwrap_or_else(|| "baselines/alloy4fun-resolve.txt".to_owned());
+                    run_warn_diff_baseline(Path::new(&m), Path::new(&wb), Path::new(&vb))
+                }
+                _ => {
+                    eprintln!("warn-diff takes exactly one of --jar / --jar-baseline");
+                    usage()
+                }
+            }
         }
         _ => usage(),
     }

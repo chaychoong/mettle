@@ -102,4 +102,10 @@ pub enum ConformError {
         expected: String,
         actual: String,
     },
+    /// A committed warning-parity baseline could not be read as one (mt-118):
+    /// a missing header field or a malformed warning row. Half a baseline is
+    /// not a usable baseline, so this fails the load rather than dropping
+    /// rows.
+    #[error("warnings baseline is malformed: {detail}")]
+    WarningsBaselineParse { detail: String },
 }
