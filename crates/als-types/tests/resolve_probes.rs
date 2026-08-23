@@ -1526,3 +1526,96 @@ fn real_code_096462_minimized_rejected_mt113() {
     );
     assert!(matches!(e, ResolveError::IllegalJoin { .. }), "{e:?}");
 }
+
+// ---- overloaded-name empty-middle joins: rule-4 negative space (mt-114) ----
+//
+// `ExprChoice.resolveHelper`'s rule 4 (the trial-resolve-and-retry firstPass
+// step, `scratchpad/probe/mt114/MECHANISM.md`) governs a genuine overloaded
+// *dot join* whose right-name candidates tie on the first pass. These cells
+// pin the boundary the rule-4 fix must preserve: shapes with no live tie at
+// all (single candidate, left-only overload, right-only-overload-but-every-
+// trial-succeeds) already agree with the jar today, with no choice-node rule
+// 4 in play. Every cell is jar-verified (Alloy 6.2.0,
+// `scratchpad/probe/mt114/NOTES.md`).
+
+#[test]
+fn right_only_overload_single_candidate_accepted_mt114() {
+    // n01: `f.f` — `f` names only `A`'s own field, so `ExprChoice.make`'s
+    // size==1 shortcut returns the expr directly: no choice node, no rule 4.
+    // The self-join's middle (`P` against `A`) is disjoint, so the join
+    // still legally types (arity 2, NONE-filled) and warns "always empty".
+    // Jar: ACCEPT + the join-empty warning.
+    let src = "sig P {}\nsig A { f: set P }\nrun { one f.f }\n";
+    accept(src);
+    let loader = MapLoader::new().with("root.als", src);
+    let graph = ModuleGraph::load("root.als", &loader).expect("load");
+    let resolved = resolve(&graph).expect("expected ACCEPT");
+    assert!(
+        resolved
+            .warnings
+            .iter()
+            .any(|w| matches!(w, ResolveWarning::JoinEmpty { .. })),
+        "expected a join-empty warning, got {:?}",
+        resolved.warnings
+    );
+}
+
+#[test]
+fn right_only_overload_every_trial_succeeds_accepted_mt114() {
+    // n04: `g.f` — `g` is single (only `C` declares it), `f` is overloaded
+    // (`A`, `B`). Both `g.f` combinations are middle-dead (`P` vs `A`/`B`,
+    // both disjoint), but unlike the projects.projects family the LEFT
+    // operand `g` is never itself ambiguous, so every rule-4 trial resolves
+    // cleanly. The retry sees both candidates still `NONE²` — legal-match,
+    // tie — rule 6 collapses them to `none²`. This is the load-bearing
+    // boundary: the fix must not turn this all-dead-middle join into a
+    // reject. Jar: ACCEPT, no warning at all.
+    accept("sig P {}\nsig C { g: set P }\nsig A { f: set P }\nsig B { f: set P }\nrun { one g.f }\n");
+}
+
+#[test]
+fn one_live_combination_narrows_choice_accepted_mt114() {
+    // n05: `f.f` — `A`'s `f: P` and `B`'s `f: A`. Only the combination
+    // `A.f (: P) . B.f (: A)`-style pairing that actually shares a column
+    // survives block-1 slicing before rule 4 ever gets a tie of >1 dead
+    // survivors; the live candidate narrows the choice outright. Jar:
+    // ACCEPT.
+    accept("sig P {}\nsig A { f: set P }\nsig B { f: set A }\nrun { some f.f }\n");
+}
+
+#[test]
+fn left_only_overload_bare_name_ambiguous_rejected_mt114() {
+    // n03: `f.g` — `f` is overloaded (`A`, `B`), `g` is single. The bare
+    // left name `f` is ambiguous with or without the join (the join partner
+    // `g` plays no role at all — see n03x below): mettle already rejects
+    // this byte-identically to the jar via `pick_name`'s leaf-candidate
+    // path, whose first-pass retry genuinely is a fixpoint (unlike
+    // `pick_reading`'s compound readings). Jar: REJECT, "ambiguous due to
+    // multiple matches" at the left `f`.
+    let e = reject(
+        "sig P {}\nsig A { f: set P }\nsig B { f: set P }\nsig C { g: set P }\nrun { one f.g }\n",
+    );
+    assert!(matches!(e, ResolveError::AmbiguousName { .. }), "{e:?}");
+}
+
+#[test]
+fn left_only_overload_join_plays_no_role_rejected_mt114() {
+    // n03x: same sigs as n03, but `run { one f }` drops the join entirely.
+    // The jar throws the identical ambiguous-name error at the identical
+    // column, proving n03's rejection is not about the join `f.g` at all —
+    // a bare overloaded name already rejects with zero join context. Jar:
+    // REJECT, identical message/span to n03.
+    let e =
+        reject("sig P {}\nsig A { f: set P }\nsig B { f: set P }\nsig C { g: set P }\nrun { one f }\n");
+    assert!(matches!(e, ResolveError::AmbiguousName { .. }), "{e:?}");
+}
+
+#[test]
+fn appended_fact_bare_overload_ambiguous_rejected_mt114() {
+    // n08: a bare overloaded `f` (declared on `B` and `C`) inside `A`'s own
+    // appended fact — no join at all, so rule 4 is out of scope here too;
+    // this is `pick_name`'s existing ambiguous-leaf path. Jar: REJECT,
+    // "ambiguous due to multiple matches" listing `B <: f` then `C <: f`.
+    let e = reject("sig P {}\nsig B { f: set P }\nsig C { f: set P }\nsig A {} { some f }\n");
+    assert!(matches!(e, ResolveError::AmbiguousName { .. }), "{e:?}");
+}
