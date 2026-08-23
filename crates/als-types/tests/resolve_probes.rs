@@ -1570,7 +1570,9 @@ fn right_only_overload_every_trial_succeeds_accepted_mt114() {
     // tie — rule 6 collapses them to `none²`. This is the load-bearing
     // boundary: the fix must not turn this all-dead-middle join into a
     // reject. Jar: ACCEPT, no warning at all.
-    accept("sig P {}\nsig C { g: set P }\nsig A { f: set P }\nsig B { f: set P }\nrun { one g.f }\n");
+    accept(
+        "sig P {}\nsig C { g: set P }\nsig A { f: set P }\nsig B { f: set P }\nrun { one g.f }\n",
+    );
 }
 
 #[test]
@@ -1605,8 +1607,9 @@ fn left_only_overload_join_plays_no_role_rejected_mt114() {
     // column, proving n03's rejection is not about the join `f.g` at all —
     // a bare overloaded name already rejects with zero join context. Jar:
     // REJECT, identical message/span to n03.
-    let e =
-        reject("sig P {}\nsig A { f: set P }\nsig B { f: set P }\nsig C { g: set P }\nrun { one f }\n");
+    let e = reject(
+        "sig P {}\nsig A { f: set P }\nsig B { f: set P }\nsig C { g: set P }\nrun { one f }\n",
+    );
     assert!(matches!(e, ResolveError::AmbiguousName { .. }), "{e:?}");
 }
 
