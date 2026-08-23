@@ -623,3 +623,9 @@ leniency — mt-107's deferred `Sig$` metamodel feature owns that one),
 defer), declaration-order 2, name-not-found one-offs 2, `Subset abstract` 1,
 and the negated-`in` mult asymmetry 1 — full per-code table in
 `scratchpad/probe/mt105e/decomposition.md` (git-ignored, banked).
+
+**Currency note (mt-113, same day):** the 9 `univ`-triggered illegal-join
+codes above closed after the mt-112 probe wave pinned the reference's rule
+(make-time arity, `univ` genuine — record `scratchpad/probe/mt112/`); the
+residual is **18** since mt-113, with `Course$projects` the only survivor of
+the illegal-join family (mt-107's).
