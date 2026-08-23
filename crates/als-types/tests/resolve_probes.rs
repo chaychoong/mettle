@@ -1622,3 +1622,107 @@ fn appended_fact_bare_overload_ambiguous_rejected_mt114() {
     let e = reject("sig P {}\nsig B { f: set P }\nsig C { f: set P }\nsig A {} { some f }\n");
     assert!(matches!(e, ResolveError::AmbiguousName { .. }), "{e:?}");
 }
+
+// ---- overloaded-name empty-middle joins: the rule-4 fix itself (mt-115) ----
+//
+// The six cells above pin the negative space (shapes with no live rule-4 tie
+// at all). These four flip mettle's own verdict/class on the genuine ties —
+// a both-flanks-overloaded self-join whose every candidate combination is
+// middle-dead, so every rule-4 trial resolution fails and the retry lands in
+// `resolveHelper`'s rule-7 second form (`NameNotRelevant`, resolution-doc
+// §4.4). Before the fix mettle either over-accepted (n02/n06, via the
+// pre-fix `pick_reading` first-reading finalize) or mislabeled the reject as
+// `AmbiguousName` (n09, via the whole-join `Ambiguous` collapse instead of
+// the jar's per-name rule-7 form). Cells are jar-verified (Alloy 6.2.0,
+// `scratchpad/probe/mt114/NOTES.md`); sources reused verbatim from
+// `scratchpad/probe/mt114/cells/`.
+
+#[test]
+fn right_only_overload_dead_middle_ambiguous_join_rejected_mt115() {
+    // n02: `f.f` — both `A` and `B` declare `f`, so every candidate pairing
+    // of the self-join is middle-dead (`P` against `A`/`B`, both disjoint).
+    // Rule 4 trial-resolves each pooled reading; both trials fail (the
+    // block-3 arity-only join fallback hands the left choice the full field
+    // merge, which is itself ambiguous inside the trial), so the retry pool
+    // is empty. Jar: REJECT, rule-7 second form, a 1-char point span on the
+    // right `f` (`@1:51-51`) — not the whole `f.f` join.
+    let src = "sig P{} sig A{f: set P} sig B{f: set P} run{one f.f}\n";
+    let e = reject(src);
+    let ResolveError::NameNotRelevant {
+        name,
+        span,
+        candidates,
+    } = &e
+    else {
+        panic!("expected NameNotRelevant, got {e:?}");
+    };
+    assert_eq!(name, "field A <: f", "{e:?}");
+    assert_eq!(candidates, &["field A <: f", "field B <: f"], "{e:?}");
+    let head = u32::try_from(src.rfind('f').expect("source has an `f`")).unwrap();
+    assert_eq!(
+        (span.start, span.end),
+        (head, head + 1),
+        "{e:?}\n--- src ---\n{src}"
+    );
+}
+
+#[test]
+fn chained_overload_dead_middle_ambiguous_join_rejected_mt115() {
+    // n06: `p.c.p` — `C` and `R` both declare `p`, `c` names only `C`. The
+    // nested join's readings all carry the same spine-head (`p.head_expr`
+    // propagates through `process_readings`/`join_cand`), so the rule-4
+    // retry and its reject land at the rightmost `p`, exactly as for the
+    // single-dot n02 shape. Jar: REJECT, rule-7 second form, `@1:71-71`.
+    let e = reject("sig Pos{} sig C{p: one Pos} sig R{p: one Pos} run{all c: C | some p.c.p}\n");
+    let ResolveError::NameNotRelevant {
+        name, candidates, ..
+    } = &e
+    else {
+        panic!("expected NameNotRelevant, got {e:?}");
+    };
+    assert_eq!(name, "field C <: p", "{e:?}");
+    assert_eq!(candidates, &["field C <: p", "field R <: p"], "{e:?}");
+}
+
+#[test]
+fn mixed_arity_overload_dead_middle_class_realigned_mt115() {
+    // n09: `f.f` with `A.f: P` (arity 1) and `B.f: Q->Q` (arity 2) — a
+    // mixed-arity overload where every trial still fails. Before the fix
+    // mettle collapsed the whole join to `Ambiguous` (the two candidates'
+    // types never reached rule 4 as leafs to notice they don't even share
+    // an arity); the fix's rule-4 retry pool empties out exactly as n02's
+    // does, so the class realigns from `AmbiguousName` to the jar's own
+    // `NameNotRelevant`. Jar: REJECT, rule-7 second form, `@1:58-58`.
+    let e = reject("sig P{} sig Q{} sig A{f: set P} sig B{f: Q->Q} run{one f.f}\n");
+    assert!(matches!(e, ResolveError::NameNotRelevant { .. }), "{e:?}");
+}
+
+#[test]
+fn equality_context_dead_middle_ambiguous_join_rejected_mt115() {
+    // A `=`-context variant of the family (real code 068037's
+    // `one projects.projects` shape, ported to `=` to cover a relevant-type
+    // derivation other than `one`/`some`): both `A` and `B` declare `f`, and
+    // `=` pushes each side's own type down (`compare`'s `CmpOp::Eq` arm), so
+    // the left `f.f` still ties its two middle-dead readings under rule 4.
+    // Jar mechanism confirmed via the real code (NAME_NOT_RELEVANT, "This
+    // name cannot be resolved…", candidate list in declaration order).
+    let src = "sig P {}\nsig A { f: set P }\nsig B { f: set P }\nrun { f.f = f.f }\n";
+    let e = reject(src);
+    let ResolveError::NameNotRelevant {
+        name,
+        span,
+        candidates,
+    } = &e
+    else {
+        panic!("expected NameNotRelevant, got {e:?}");
+    };
+    assert_eq!(name, "field A <: f", "{e:?}");
+    assert_eq!(candidates, &["field A <: f", "field B <: f"], "{e:?}");
+    // The left `f.f`'s own spine-head, not the whole `f.f = f.f` comparison.
+    let head = u32::try_from(src.find("f.f").expect("source has `f.f`") + 2).unwrap();
+    assert_eq!(
+        (span.start, span.end),
+        (head, head + 1),
+        "{e:?}\n--- src ---\n{src}"
+    );
+}

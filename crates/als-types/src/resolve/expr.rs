@@ -218,6 +218,14 @@ pub(super) struct Cx<'a, 'g> {
     ast_override: Option<&'g als_syntax::ast::Ast>,
     /// Remaining macro-substitution budget (resolution-doc §3.7, starts at 20).
     unroll: u32,
+    /// True while `pick_reading` is trial-finalizing a first-pass-tied reading
+    /// against `p` to see whether it survives (resolution-doc §4.4 rule 4, the
+    /// reference's `c.resolve(t, null)`, warnings off). Choice recording is
+    /// suppressed for the duration ([`Self::record_name`]/[`Self::record_spine`]):
+    /// a trial that fails must leave no residue in the choice table, and a
+    /// trial that wins is re-finalized (recorded for real) once the retry has
+    /// confirmed it.
+    trial: bool,
 }
 
 impl<'a, 'g> Cx<'a, 'g> {
@@ -234,6 +242,7 @@ impl<'a, 'g> Cx<'a, 'g> {
             choices: ChoiceTable::new(),
             ast_override: None,
             unroll: 20,
+            trial: false,
         }
     }
 
@@ -254,14 +263,23 @@ impl<'a, 'g> Cx<'a, 'g> {
 
     // ---- choice recording (mt-031) ----
 
-    /// Records a bare-name resolution at `(module, expr)`.
+    /// Records a bare-name resolution at `(module, expr)`. A no-op mid-trial
+    /// (`Self::trial`): a candidate under rule-4 trial resolution has not won
+    /// anything yet, so its choice must not reach the lowerer.
     fn record_name(&mut self, expr: ExprId, choice: NameChoice) {
+        if self.trial {
+            return;
+        }
         self.choices
             .record(self.module, expr, ExprChoice::Name(choice));
     }
 
     /// Records a spine (join/call/builtin/macro) resolution at `(module, expr)`.
+    /// A no-op mid-trial; see [`Self::record_name`].
     fn record_spine(&mut self, expr: ExprId, choice: SpineChoice) {
+        if self.trial {
+            return;
+        }
         self.choices
             .record(self.module, expr, ExprChoice::Spine(choice));
     }
@@ -1692,9 +1710,15 @@ impl<'a, 'g> Cx<'a, 'g> {
     }
 
     /// The reference `ExprChoice.resolveHelper` (resolution-doc §4.4) over a
-    /// candidate type list. Leaf candidates (mettle's readings are pre-typed) so
-    /// the first-pass retry is a fixpoint — implemented as the same min-weight
-    /// selection.
+    /// candidate type list: the shared exact-else-legal-match, min-weight,
+    /// then same-arity-collapse ladder both callers select over. For
+    /// `pick_name`'s leaf candidates (pre-typed; resolving one never changes
+    /// its type) this selection alone is the whole of the reference's rule —
+    /// the first-pass retry is a fixpoint over unchanging types. `pick_reading`'s
+    /// compound (join/call) readings are not: a reading's trial resolution can
+    /// fail or narrow its type, so `pick_reading` runs its own rule-4 retry
+    /// (`Self::first_pass_pool` / `Self::trial_reading`) around a second call
+    /// into this same ladder before falling back to it directly.
     fn resolve_helper(&self, types: &[Type], weights: &[i32], p: &Type) -> Pick {
         let world = &self.r.world;
         // exact matches: (p.is_bool && c.is_bool) || p.intersects(c).
@@ -2236,7 +2260,7 @@ impl<'a, 'g> Cx<'a, 'g> {
 
         // Build the readings of this application spine and pick.
         let readings = self.build_readings(e, span);
-        self.pick_reading(e, readings, p, span)
+        self.pick_reading(e, readings, p)
     }
 
     /// Materializes the join-level `ExprChoice`: the candidate readings of an
@@ -2640,7 +2664,7 @@ impl<'a, 'g> Cx<'a, 'g> {
     /// Picks a reading of the join-level choice against relevant type `p`
     /// (`resolveHelper`), then finalizes it (resolve operands / args, emit
     /// errors).
-    fn pick_reading(&mut self, e: ExprId, mut readings: Vec<Cand>, p: &Type, span: Span) -> R {
+    fn pick_reading(&mut self, e: ExprId, mut readings: Vec<Cand>, p: &Type) -> R {
         if readings.is_empty() {
             return R::bad();
         }
@@ -2650,6 +2674,42 @@ impl<'a, 'g> Cx<'a, 'g> {
         }
         let types: Vec<Type> = readings.iter().map(|r| r.ty.clone()).collect();
         let weights: Vec<i32> = readings.iter().map(|r| r.weight).collect();
+        // The reference's rule 4 (`ExprChoice.resolveHelper` firstPass): a tie
+        // among >1 exact-else-legal min-weight survivors is settled by fully
+        // resolving every survivor against `p` with warnings off, then
+        // re-picking over the resolved types — a survivor whose trial resolution
+        // fails (e.g. a nested ambiguous left operand under the block-3
+        // arity-only join fallback) becomes EMPTY and drops out of the retry.
+        // Unlike `pick_name`'s leaf candidates, a reading is compound, so this
+        // retry can genuinely narrow the field. The lenient (meta) regime keeps
+        // the pre-trial salvage semantics below instead.
+        if !self.lenient() {
+            let pool = self.first_pass_pool(&types, &weights, p);
+            if pool.len() > 1 {
+                let mut trial_types = Vec::with_capacity(pool.len());
+                for &i in &pool {
+                    trial_types.push(self.trial_reading(readings[i].clone(), p));
+                }
+                let trial_weights: Vec<i32> = pool.iter().map(|&i| weights[i]).collect();
+                return match self.resolve_helper(&trial_types, &trial_weights, p) {
+                    Pick::One(j) => {
+                        let cand = readings.swap_remove(pool[j]);
+                        self.finalize_recorded(e, cand, p, None)
+                    }
+                    Pick::NoneArity(k) => {
+                        self.record_spine(e, SpineChoice::Empty(k));
+                        R::ok(self.none_of_arity(k))
+                    }
+                    Pick::Ambiguous(idxs) => {
+                        let idxs: Vec<usize> = idxs.into_iter().map(|j| pool[j]).collect();
+                        self.reading_ambiguous(&readings, &idxs)
+                    }
+                    // The retry found no survivor: the jar lists the pool's
+                    // candidates (the recursion's `reasons`), not every reading.
+                    Pick::NoIntersect => self.reading_no_intersect(&readings, &pool),
+                };
+            }
+        }
         match self.resolve_helper(&types, &weights, p) {
             Pick::One(i) => {
                 let cand = readings.swap_remove(i);
@@ -2664,55 +2724,115 @@ impl<'a, 'g> Cx<'a, 'g> {
                     let reading = readings.swap_remove(idxs[0]);
                     return self.finalize_lenient(reading, p);
                 }
-                // If the surviving readings are all failed calls (BadCall), it is a
-                // "possible incorrect function/predicate call", not an ambiguity.
-                let all_bad = idxs
-                    .iter()
-                    .all(|&i| matches!(readings[i].fin, Fin::BadCall { .. }));
-                if all_bad {
-                    self.err(ResolveError::BadCall {
-                        name: readings[idxs[0]].reason.clone(),
-                        span,
-                    });
-                } else {
-                    self.err(ResolveError::AmbiguousName {
-                        name: readings[idxs[0]].reason.clone(),
-                        span,
-                        candidates: idxs.iter().map(|&i| readings[i].reason.clone()).collect(),
-                    });
-                }
-                R::bad()
+                self.reading_ambiguous(&readings, &idxs)
             }
             Pick::NoIntersect => {
                 if self.lenient() {
                     let reading = readings.swap_remove(0);
                     return self.finalize_lenient(reading, p);
                 }
-                // No reading matches the relevant type. If any reading is a bad call,
-                // report BadCall; else this is `resolveHelper`'s empty-match arm —
-                // the same reject the leaf twin in `pick_name` raises, listing every
-                // reading. Until mt-105 phase (d) this arm finalized the first
-                // reading instead, which accepted the model whenever that reading
-                // happened to type-check (the `projects.projects` shape: a field
-                // label declared on both sides of a join).
-                let any_bad = readings
-                    .iter()
-                    .any(|r| matches!(r.fin, Fin::BadCall { .. }));
-                if any_bad {
-                    self.err(ResolveError::BadCall {
-                        name: readings[0].reason.clone(),
-                        span,
-                    });
-                } else {
-                    self.err(ResolveError::NameNotRelevant {
-                        name: readings[0].reason.clone(),
-                        span,
-                        candidates: readings.iter().map(|r| r.reason.clone()).collect(),
-                    });
-                }
-                R::bad()
+                // No reading matches the relevant type — `resolveHelper`'s
+                // empty-match arm, the same reject the leaf twin in `pick_name`
+                // raises, listing every reading. Until mt-105 phase (d) this arm
+                // finalized the first reading instead, which accepted the model
+                // whenever that reading happened to type-check (the
+                // `projects.projects` shape: a field label declared on both
+                // sides of a join).
+                let all: Vec<usize> = (0..readings.len()).collect();
+                self.reading_no_intersect(&readings, &all)
             }
         }
+    }
+
+    /// The exact-else-legal + min-weight first-pass survivor pool
+    /// (`resolve_helper`'s selection prefix, with indices exposed for
+    /// `pick_reading`'s rule-4 retry).
+    fn first_pass_pool(&self, types: &[Type], weights: &[i32], p: &Type) -> Vec<usize> {
+        let world = &self.r.world;
+        let mut pool: Vec<usize> = (0..types.len())
+            .filter(|&i| (p.is_bool && types[i].is_bool) || p.intersects(world, &types[i]))
+            .collect();
+        if pool.is_empty() {
+            pool = (0..types.len())
+                .filter(|&i| types[i].has_common_arity(p))
+                .collect();
+        }
+        if pool.len() > 1 {
+            let minw = pool.iter().map(|&i| weights[i]).min().unwrap_or(0);
+            pool.retain(|&i| weights[i] == minw);
+        }
+        pool
+    }
+
+    /// Rule-4 trial: fully finalizes `cand` against `p` with nothing observable
+    /// kept — errors and warnings rolled back (the jar's `c.resolve(t, null)`),
+    /// choices unrecorded (the `trial` flag). A failed trial returns `EMPTY`
+    /// (the jar's `ExprBad` type), which matches nothing on the retry.
+    fn trial_reading(&mut self, cand: Cand, p: &Type) -> Type {
+        let nerr = self.errors.len();
+        let nwarn = self.warnings.len();
+        let prev = self.trial;
+        self.trial = true;
+        let r = self.finalize_reading(cand, p, true);
+        self.trial = prev;
+        let failed = r.err || self.errors.len() > nerr;
+        self.errors.truncate(nerr);
+        self.warnings.truncate(nwarn);
+        if failed {
+            Type::empty()
+        } else {
+            r.ty
+        }
+    }
+
+    /// The ambiguity reject over readings at `idxs`: an all-`BadCall` tie
+    /// reports as a failed call, not an ambiguity; anything else is a true
+    /// ambiguity listing the tied readings. Position: every reading in a spine
+    /// shares the same `head_expr` (the spine-head, rightmost name node), which
+    /// is the reference's own error position for the choice — not the whole
+    /// spine's span (real code 068037: the 8-char field name `projects`, not
+    /// the full `projects.projects` join).
+    fn reading_ambiguous(&mut self, readings: &[Cand], idxs: &[usize]) -> R {
+        let span = self.expr(readings[idxs[0]].head_expr).span;
+        let all_bad = idxs
+            .iter()
+            .all(|&i| matches!(readings[i].fin, Fin::BadCall { .. }));
+        if all_bad {
+            self.err(ResolveError::BadCall {
+                name: readings[idxs[0]].reason.clone(),
+                span,
+            });
+        } else {
+            self.err(ResolveError::AmbiguousName {
+                name: readings[idxs[0]].reason.clone(),
+                span,
+                candidates: idxs.iter().map(|&i| readings[i].reason.clone()).collect(),
+            });
+        }
+        R::bad()
+    }
+
+    /// The empty-match reject over readings, listing the candidates at `idxs`
+    /// (every reading on the first pass; the surviving pool after a rule-4
+    /// retry, per the reference's recursion). Span: see `Self::reading_ambiguous`.
+    fn reading_no_intersect(&mut self, readings: &[Cand], idxs: &[usize]) -> R {
+        let span = self.expr(readings[idxs[0]].head_expr).span;
+        let any_bad = idxs
+            .iter()
+            .any(|&i| matches!(readings[i].fin, Fin::BadCall { .. }));
+        if any_bad {
+            self.err(ResolveError::BadCall {
+                name: readings[idxs[0]].reason.clone(),
+                span,
+            });
+        } else {
+            self.err(ResolveError::NameNotRelevant {
+                name: readings[idxs[0]].reason.clone(),
+                span,
+                candidates: idxs.iter().map(|&i| readings[i].reason.clone()).collect(),
+            });
+        }
+        R::bad()
     }
 
     /// Finalizes a join's **chosen** right operand in place, against the join's
