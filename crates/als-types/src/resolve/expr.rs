@@ -243,6 +243,22 @@ pub(super) struct Cx<'a, 'g> {
     /// one `Cx` reads exactly one arena ([`Self::ast`]), and a nested context
     /// (a macro replay) keeps its own set.
     folded_spines: std::collections::BTreeSet<ExprId>,
+    /// Name/spine nodes whose raw candidate/reading count at collection time —
+    /// **before** `resolveHelper` narrows it — was greater than one: the
+    /// reference's `ExprChoice.make` wraps such a node in its own `ExprChoice`
+    /// object rather than shortcutting straight to a sole candidate
+    /// (`ExprChoice.java:116-117`). Every textual occurrence of an overloaded
+    /// name/spine gets a *distinct* such object, so the reference's default
+    /// `Expr.isSame` — pure reference identity, never overridden by
+    /// `ExprChoice` (`Expr.java:324-328`) — fails between two occurrences even
+    /// when both eventually resolve to the identical candidate (mt-118 §3a).
+    /// [`Self::same_expr`] reads this set to reproduce that identity failure
+    /// ahead of its own structural dispatch. Marking only: never changes which
+    /// candidate wins, what gets recorded, or any type/error (STYLE-mandated
+    /// non-interference, same as [`Self::folded_spines`]).
+    ///
+    /// `BTreeSet` for determinism, scoped like `folded_spines` above.
+    choice_wrapped: std::collections::BTreeSet<ExprId>,
 }
 
 impl<'a, 'g> Cx<'a, 'g> {
@@ -262,6 +278,7 @@ impl<'a, 'g> Cx<'a, 'g> {
             unroll: 20,
             trial: false,
             folded_spines: std::collections::BTreeSet::new(),
+            choice_wrapped: std::collections::BTreeSet::new(),
         }
     }
 
@@ -310,6 +327,20 @@ impl<'a, 'g> Cx<'a, 'g> {
         }
         self.choices
             .record(self.module, expr, ExprChoice::Spine(choice));
+    }
+
+    /// Notes that `expr`'s raw candidate/reading count, as collected **before**
+    /// `resolveHelper` ever narrows it, was `raw_count` — the reference's
+    /// `ExprChoice.make` list size. `raw_count > 1` inserts `expr` into
+    /// [`Self::choice_wrapped`]; see that field's doc for why. A no-op
+    /// mid-trial, matching every other choice-adjacent record in this impl.
+    fn mark_choice_wrapped(&mut self, expr: ExprId, raw_count: usize) {
+        if self.trial {
+            return;
+        }
+        if raw_count > 1 {
+            self.choice_wrapped.insert(expr);
+        }
     }
 
     /// Records a chosen candidate's leaf choice at `expr` (mt-031). `receiver`
@@ -1655,6 +1686,10 @@ impl<'a, 'g> Cx<'a, 'g> {
         if raw.len() == 2 && raw[0] == "this" {
             let own = self.own_candidates(e, &raw[1], at_name);
             if !own.is_empty() {
+                // `this/tail` scopes to the module's own decls only, so no
+                // auto-opened util/integer collision can reach it here — the
+                // raw count is exactly this candidate list's length.
+                self.mark_choice_wrapped(e, own.len());
                 return self.pick_name(e, &own, p, &raw[1], qn.span);
             }
         }
@@ -1695,6 +1730,20 @@ impl<'a, 'g> Cx<'a, 'g> {
             });
             return R::bad();
         }
+        // The raw candidate count (mt-118 §3a) is wider than `cands`: the
+        // reference's `ExprChoice.make` list also holds funcs/preds *with*
+        // parameters (they cannot resolve as this bare name's value — that's
+        // why `value_candidates` excludes them — but they still occupy a slot
+        // in the raw collection, e.g. a field named `pos` colliding with the
+        // auto-opened `util/integer` pred `pos[i: Int]`). Add them in without
+        // touching `cands` itself, so `pick_name`'s actual selection is
+        // unaffected.
+        let with_params_funcs = self
+            .lookup_funcs(&segs)
+            .iter()
+            .filter(|&&fid| !self.r.world.funcs[fid].params.is_empty())
+            .count();
+        self.mark_choice_wrapped(e, cands.len() + with_params_funcs);
         // resolveHelper over the leaf candidates against p.
         self.pick_name(e, &cands, p, &segs.join("/"), qn.span)
     }
@@ -2718,6 +2767,12 @@ impl<'a, 'g> Cx<'a, 'g> {
     /// (`resolveHelper`), then finalizes it (resolve operands / args, emit
     /// errors).
     fn pick_reading(&mut self, e: ExprId, mut readings: Vec<Cand>, p: &Type) -> R {
+        // `readings` here, before any narrowing below, IS the raw join/call
+        // reading collection `build_readings` assembled — the exact analog of
+        // the reference's `ExprChoice.make` list for an application spine
+        // (mt-118 §3a; `e` is the whole spine's own node, matching the
+        // reference's choice, which wraps the entire join).
+        self.mark_choice_wrapped(e, readings.len());
         if readings.is_empty() {
             return R::bad();
         }
@@ -3624,13 +3679,76 @@ impl<'a, 'g> Cx<'a, 'g> {
         !src.as_bytes()[lo..hi].contains(&b'\n')
     }
 
+    /// Dereferences a `Sig <: field` node to `field` exactly when the
+    /// reference's DOMAIN case of `ExprBinary.Op.make` (`ExprBinary.java:308-
+    /// 314`) would have collapsed it identically: `right` (deNOP'd) is a
+    /// `Field` whose declaring sig is `left` (deNOP'd) — the reference
+    /// literally returns `right` from `make()`, so a no-op domain restriction
+    /// like `Node<:adj` never exists as its own node in the resolved tree at
+    /// all (mt-118 §4a). Two conditions carry over exactly:
+    ///
+    /// - `right` must have resolved to a field **without** going through an
+    ///   `ExprChoice` wrapper — i.e. its raw candidate count was 1 (not in
+    ///   [`Self::choice_wrapped`]). An overloaded `right` is still an
+    ///   `ExprChoice` object at the point `make()` runs in the reference (name
+    ///   resolution there is bottom-up before the parent DOMAIN node is
+    ///   rebuilt), which is not `instanceof Field`, so the optimization does
+    ///   not fire.
+    /// - `left` must resolve to **exactly** the field's declaring sig — owner
+    ///   identity, not a descendant (the reference compares `Sig` object
+    ///   identity, and a subtype is a different `Sig` object).
+    ///
+    /// mettle keeps the surface `<:` node rather than rewriting the AST
+    /// (`PORTING_RULES` M1/R1 — pin behavior, not structure): `same_expr` sees
+    /// through it here instead. Recursive, so a chain of such no-op
+    /// restrictions all dereference down to the underlying field.
+    fn deref_domain(&self, e: ExprId) -> ExprId {
+        let ExprKind::Binary {
+            op: BinOp::DomRestrict,
+            lhs,
+            rhs,
+        } = &self.expr(e).kind
+        else {
+            return e;
+        };
+        let (lhs, rhs) = (*lhs, *rhs);
+        if self.choice_wrapped.contains(&rhs) {
+            return e;
+        }
+        let Some(ExprChoice::Name(NameChoice::Field { field, .. })) =
+            self.choices.get(self.module, rhs)
+        else {
+            return e;
+        };
+        let Some(ExprChoice::Name(NameChoice::Sig(sig))) = self.choices.get(self.module, lhs)
+        else {
+            return e;
+        };
+        if self.r.world.fields[*field].owner != *sig {
+            return e;
+        }
+        self.deref_domain(rhs)
+    }
+
     /// Structural expression equality ignoring spans (the reference's
     /// `Expr.isSame`, resolution-doc §5.2 A3/A4 "same value"). Conservative: a
     /// `false` never causes a *missing* reject (this only gates a warning), so
     /// unhandled shapes simply do not fire the redundancy warning.
     fn same_expr(&self, a: ExprId, b: ExprId) -> bool {
+        let a = self.deref_domain(a);
+        let b = self.deref_domain(b);
         if a == b {
             return true;
+        }
+        // The reference's default `Expr.isSame` is pure reference identity,
+        // and an overloaded name/spine occupies a *distinct* `ExprChoice`
+        // object per textual occurrence (mt-118 §3a) — so two such occurrences
+        // never compare same, even when they'd resolve to the identical
+        // candidate. Checked here, ahead of the structural dispatch below,
+        // because the reference's identity check runs before any recursion
+        // could reach a match.
+        if self.choice_wrapped.contains(&a) || self.choice_wrapped.contains(&b) {
+            return false;
         }
         let (ka, kb) = (&self.expr(a).kind, &self.expr(b).kind);
         match (ka, kb) {

@@ -192,6 +192,122 @@ fn duplicate_names_within_one_decl_mt118() {
     assert_unused_at_occurrences("sig U {}\nfact { all disj u, u: U | some u }\n", "u", &[0]);
 }
 
+// ---- A3/A4 (mt-118): the isSame non-firing family ----
+//
+// The reference's default `Expr.isSame` (no `ExprChoice` override) is pure
+// reference identity, and every textual occurrence of an overloaded name/
+// spine gets its own distinct `ExprChoice` object — so two occurrences that
+// resolve to the identical candidate still fail the identity check, and the
+// eq-/subset-redundant "same value" warning never fires.
+
+#[test]
+fn overloaded_util_integer_name_suppresses_eq_redundant_mt118() {
+    // `pos` collides with the auto-opened `util/integer` pred `pos[n: Int]`
+    // even though the field is declared once — two visible candidates at
+    // name-collection time, so both occurrences wrap in their own choice.
+    assert_no_warn(
+        "sig A { pos: lone A }\nfact { pos = pos }\n",
+        "eq-redundant",
+    );
+}
+
+#[test]
+fn non_colliding_name_still_warns_eq_redundant_mt118() {
+    // Control for the probe above: `f` collides with nothing, so the ordinary
+    // single-candidate shortcut applies and the redundancy still fires.
+    assert_warns_at("sig A { f: lone A }\nfact { f = f }\n", "eq-redundant", 2);
+}
+
+#[test]
+fn overloaded_join_suppresses_eq_redundant_mt118() {
+    // `t.pos` reads as {join `t.pos`, call `pos[t]`} — two readings — so the
+    // whole join node is choice-wrapped, exactly as the bare name is.
+    assert_no_warn(
+        "sig Track {}\nsig Train { pos: lone Track }\nfact { all t: Train | t.pos = t.pos }\n",
+        "eq-redundant",
+    );
+}
+
+#[test]
+fn overloaded_field_join_suppresses_eq_redundant_mt118() {
+    // `position` is declared on two sigs (no util/integer involvement at
+    // all): every `c.position` occurrence is its own choice of two field
+    // readings.
+    assert_no_warn(
+        concat!(
+            "sig Component { position: lone Int }\n",
+            "sig Robot { position: lone Int }\n",
+            "fact { all c: Component | c.position = c.position }\n",
+        ),
+        "eq-redundant",
+    );
+}
+
+#[test]
+fn unique_field_join_still_warns_eq_redundant_mt118() {
+    // Control: `position` declared on exactly one sig, so the join is never
+    // choice-wrapped and the ordinary structural isSame recursion applies.
+    assert_warns_at(
+        concat!(
+            "sig Component { position: lone Int }\n",
+            "fact { all c: Component | c.position = c.position }\n",
+        ),
+        "eq-redundant",
+        2,
+    );
+}
+
+#[test]
+fn domain_restrict_own_field_dereferences_to_subset_redundant_mt118() {
+    // `Node<:adj` is exactly `adj`'s own declaring sig restricting `adj` — the
+    // reference's DOMAIN-case optimization in `ExprBinary.Op.make` returns
+    // `adj` itself, so `adj in Node<:adj` compares `adj` against `adj` by
+    // identity.
+    assert_warns_at(
+        "sig Node { adj: set Node }\nfact { adj in Node<:adj }\n",
+        "subset-redundant",
+        2,
+    );
+}
+
+#[test]
+fn domain_restrict_other_sig_does_not_dereference_mt118() {
+    // Control: `Other` is not `adj`'s declaring sig, so the reference's DOMAIN
+    // optimization never fires and `Other<:adj` stays a genuine, distinct
+    // node — no identity-based redundancy. (`Other` is disjoint from `Node`,
+    // so `Other<:adj` is still statically empty and warns via the *other*
+    // A4 disjunct — has-no-tuple — not via `isSame`; this probe pins that the
+    // warning survives for the right reason, not the identity one.)
+    assert_warns_at(
+        concat!(
+            "sig Node { adj: set Node }\n",
+            "sig Other {}\n",
+            "fact { adj in Other<:adj }\n",
+        ),
+        "subset-redundant",
+        3,
+    );
+}
+
+#[test]
+fn disjoint_eq_redundant_independent_of_overload_mt118() {
+    // Negative space: the DISJOINT branch (types provably disjoint) is
+    // ORed alongside `same`, not gated by it, so it must keep firing even
+    // when one side is an overloaded, choice-wrapped join (`t.pos` collides
+    // with the auto-opened `util/integer` pred, same as the tests above) and
+    // structurally can't be `same` as the other side anyway.
+    assert_warns_at(
+        concat!(
+            "sig Track {}\n",
+            "sig OtherSig {}\n",
+            "sig Train { pos: lone Track }\n",
+            "fact { all t: Train | t.pos = OtherSig }\n",
+        ),
+        "eq-redundant",
+        4,
+    );
+}
+
 // ---- A1/A2: closure ----
 
 #[test]
