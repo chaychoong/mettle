@@ -1672,11 +1672,16 @@ impl<'a, 'g> Cx<'a, 'g> {
                 });
                 R::bad()
             }
+            // No candidate intersects `p` and none shares its arity. The
+            // reference reports this as its own message, listing *every*
+            // candidate — the survivor set is empty, so there is no narrower
+            // list to print (mt-105 phase d; before it this arm mislabeled
+            // itself as an ambiguity).
             Pick::NoIntersect => {
                 if self.lenient() {
                     return R::ok(cands[0].ty.clone());
                 }
-                self.err(ResolveError::AmbiguousName {
+                self.err(ResolveError::NameNotRelevant {
                     name: name.to_owned(),
                     span,
                     candidates: cands.iter().map(|c| c.reason.clone()).collect(),
@@ -2684,7 +2689,12 @@ impl<'a, 'g> Cx<'a, 'g> {
                     return self.finalize_lenient(reading, p);
                 }
                 // No reading matches the relevant type. If any reading is a bad call,
-                // report BadCall; else the join is illegal (both operands unary).
+                // report BadCall; else this is `resolveHelper`'s empty-match arm —
+                // the same reject the leaf twin in `pick_name` raises, listing every
+                // reading. Until mt-105 phase (d) this arm finalized the first
+                // reading instead, which accepted the model whenever that reading
+                // happened to type-check (the `projects.projects` shape: a field
+                // label declared on both sides of a join).
                 let any_bad = readings
                     .iter()
                     .any(|r| matches!(r.fin, Fin::BadCall { .. }));
@@ -2693,12 +2703,14 @@ impl<'a, 'g> Cx<'a, 'g> {
                         name: readings[0].reason.clone(),
                         span,
                     });
-                    R::bad()
                 } else {
-                    // finalize the first reading to surface a precise join error.
-                    let cand = readings.swap_remove(0);
-                    self.finalize_recorded(e, cand, p, None)
+                    self.err(ResolveError::NameNotRelevant {
+                        name: readings[0].reason.clone(),
+                        span,
+                        candidates: readings.iter().map(|r| r.reason.clone()).collect(),
+                    });
                 }
+                R::bad()
             }
         }
     }
@@ -2710,21 +2722,13 @@ impl<'a, 'g> Cx<'a, 'g> {
     /// name the join had already disambiguated (a model declaring the same field
     /// label on three sigs resolves at the join and would go ambiguous alone).
     ///
-    /// The operand's **errors** are discarded, exactly as the truncated walks
-    /// this replaces did, so the accept/reject verdict is unmoved; its warnings
-    /// survive only for a directly-compound operand, the one shape mettle
-    /// already collected warnings from (mt-023). Un-truncating both is the next
-    /// phase's whole subject.
-    fn finalize_join_base(&mut self, base: Cand, bp: &Type, receiver: ExprId) {
-        let keep_warnings = matches!(base.fin, Fin::Sub(_));
+    /// The operand's errors and warnings are the join's own: nothing is
+    /// truncated. That is the whole of ADR-0023's tightening — the leniency
+    /// ADR-0009 recorded was exactly this discard, which let a right operand
+    /// that failed against its slice pass for a well-typed one.
+    fn finalize_join_base(&mut self, base: Cand, bp: &Type, receiver: ExprId) -> R {
         let at = base.head_expr;
-        let nerr = self.errors.len();
-        let nwarn = self.warnings.len();
-        let _ = self.finalize_recorded(at, base, bp, Some(receiver));
-        self.errors.truncate(nerr);
-        if !keep_warnings {
-            self.warnings.truncate(nwarn);
-        }
+        self.finalize_recorded(at, base, bp, Some(receiver))
     }
 
     /// Records the winning candidate's choice (mt-031) — the node as a join or
@@ -2800,11 +2804,14 @@ impl<'a, 'g> Cx<'a, 'g> {
                 let (ap, bp) = self.join_slices(&lt, &right_ty, p);
                 let mut l = self.resolve(left, &ap);
                 self.typecheck_as_set(&mut l, left);
+                // Whether the right operand itself failed against its slice.
+                // On the lenient salvage path it cannot: that pass discards the
+                // operand's errors (it collects a compound operand's warnings
+                // and nothing else, mt-023) and records no choice.
+                let mut r_err = false;
                 if authoritative {
-                    self.finalize_join_base(*base, &bp, left);
+                    r_err = self.finalize_join_base(*base, &bp, left).err;
                 } else if let Fin::Sub(re) = base.fin {
-                    // The lenient path records nothing, but still collects a
-                    // compound operand's warnings (mt-023).
                     let nerr = self.errors.len();
                     let _ = self.resolve(re, &bp);
                     self.errors.truncate(nerr);
@@ -2812,8 +2819,11 @@ impl<'a, 'g> Cx<'a, 'g> {
                 let joined = lt.join(&self.r.world, &right_ty);
                 // Meta models resolve leniently (meta atoms mettle approximates
                 // as `univ`); a lenient `univ`/placeholder operand is never a
-                // genuine illegal join.
+                // genuine illegal join. An operand that already rejected is not
+                // re-reported as one either — the reference reports a join
+                // illegal only when both its resolved operands are error-free.
                 if !l.err
+                    && !r_err
                     && joined.is_error()
                     && !self.lenient()
                     && !self.contains_univ(&lt)
@@ -2827,6 +2837,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                 // path above; a `univ` operand is a lenient placeholder, not a
                 // genuine empty join.
                 if !l.err
+                    && !r_err
                     && !joined.is_error()
                     && joined.has_no_tuple(&self.r.world)
                     && !self.contains_univ(&lt)
@@ -2836,7 +2847,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                 }
                 R {
                     ty: joined,
-                    err: l.err,
+                    err: l.err || r_err,
                 }
             }
             Fin::Call {

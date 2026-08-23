@@ -157,6 +157,7 @@ fn variant_name(e: &ResolveError) -> &'static str {
         ResolveError::UnknownName { .. } => "UnknownName",
         ResolveError::ArityMismatch { .. } => "ArityMismatch",
         ResolveError::AmbiguousName { .. } => "AmbiguousName",
+        ResolveError::NameNotRelevant { .. } => "NameNotRelevant",
         ResolveError::NotFormula { .. } => "NotFormula",
         ResolveError::NotSet { .. } => "NotSet",
         ResolveError::NotInt { .. } => "NotInt",

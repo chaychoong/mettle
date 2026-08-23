@@ -229,6 +229,25 @@ pub enum ResolveError {
         candidates: Vec<String>,
     },
 
+    /// The other end of the disambiguation ladder: **no** candidate survives —
+    /// none intersects the relevant type and none even shares its arity
+    /// (`ExprChoice.resolveHelper`'s empty-match arm, resolution-doc §4.4).
+    /// Distinct from [`ResolveError::AmbiguousName`], which is too *many*
+    /// survivors; the reference prints a different message for each, and this
+    /// one lists every candidate, there being no survivor subset to name
+    /// (ADR-0023 phase d).
+    #[error(
+        "the name `{name}` cannot be resolved: its relevant type does not intersect any candidate"
+    )]
+    NameNotRelevant {
+        /// The unresolvable name.
+        name: String,
+        /// Span of the reference.
+        span: Span,
+        /// Human-readable candidate descriptions (the reference's reasons).
+        candidates: Vec<String>,
+    },
+
     /// An expression is used where a **formula** is required but its type is a
     /// relational value, not boolean (`typecheck_as_formula`, resolution-doc
     /// §4.3). E.g. a set expression as a fact/pred body or a quantifier body.
@@ -484,6 +503,7 @@ impl ResolveError {
             | ResolveError::UnknownName { span, .. }
             | ResolveError::ArityMismatch { span, .. }
             | ResolveError::AmbiguousName { span, .. }
+            | ResolveError::NameNotRelevant { span, .. }
             | ResolveError::NotFormula { span }
             | ResolveError::NotSet { span }
             | ResolveError::NotInt { span }

@@ -1179,27 +1179,33 @@ fn ordering_closure_cliff_shape_still_accepts_mt105b() {
     accept("open util/ordering[S]\nsig S {}\nfact { S = first.*next }\nrun {} for 3\n");
 }
 
-/// The six jar-REJECT cells, asserted as **still accepting** — phase (b)'s
-/// negative space in the other direction. Each one's reject route is an error
-/// raised inside a compound right operand and thrown away by `Fin::Join`'s
-/// truncation, so the closure fix cannot reach it yet. Phase (d) un-truncates
-/// and turns this test into its flip list: x02/w03 (inner left types `univ`
-/// because `*` yields `univ->univ`), v06/v08/w09 (`some` pushes the operand's
-/// own type), w02 (left matches no ordering), w11 (`in` keeps the left's own
-/// type), w07/w08 (two orderings linked by `resolveClosure` reachability across
-/// `sig B extends A`).
+/// The six jar-REJECT cells, now **rejecting** — the whole point of phase (d).
+/// Each one's reject route is an error raised inside a compound right operand,
+/// which `Fin::Join` truncated until this phase; un-truncating lets it reach the
+/// verdict, so mettle agrees with the jar on all six. The jar's message on every
+/// one is "This name is ambiguous due to multiple matches:" over the *post*-
+/// filter candidate list — `AmbiguousName` here, with `next` named and the
+/// survivors listed (mt-102 `{v,w,x}/`, jar verdicts 2026-08-22).
+///
+/// Their causes stay distinct: x02/w03 the inner left types `univ` because `*`
+/// yields `univ->univ`; v06/v08/w09 `some` pushes the operand's own type; w02
+/// the left matches no ordering; w11 `in` keeps the left's own type; w07/w08 two
+/// orderings linked by `resolveClosure` reachability across `sig B extends A`.
 #[test]
-fn compound_operand_rejects_are_still_deferred_to_phase_d_mt105b() {
-    accept(&ord4(
-        "some tr: Train, t: Time | tr.MA.((t.*T/next).*next) = V/last", // x02, w03
-    ));
-    accept(&ord4("some t6: Time | some (t6.*next)")); // v06, v08, w09
-    accept(&ord4("some tr: Train, x: Train | some (x.*next)")); // w02
-    accept(&ord4("some t: Time | (t.*next) in Time")); // w11
-
+fn compound_operand_rejects_reach_the_verdict_mt105d() {
+    let mut cells = vec![
+        // x02, w03.
+        ord4("some tr: Train, t: Time | tr.MA.((t.*T/next).*next) = V/last"),
+        // v06, v08, w09.
+        ord4("some t6: Time | some (t6.*next)"),
+        // w02.
+        ord4("some tr: Train, x: Train | some (x.*next)"),
+        // w11.
+        ord4("some t: Time | (t.*next) in Time"),
+    ];
     // w07/w08 — orderings over both `A` and `B extends A`.
     for (v, s) in [("b", "B"), ("a", "A")] {
-        accept(&format!(
+        cells.push(format!(
             "module m\n\
              open util/ordering[A] as OA\n\
              open util/ordering[B] as OB\n\
@@ -1209,6 +1215,67 @@ fn compound_operand_rejects_are_still_deferred_to_phase_d_mt105b() {
              run {{ some h: Holder, {v}: {s} | h.f.({v}.*next) = h.f.({v}.*next) }} for 3\n"
         ));
     }
+    for src in &cells {
+        let e = reject(src);
+        let ResolveError::AmbiguousName {
+            name, candidates, ..
+        } = &e
+        else {
+            panic!("expected AmbiguousName, got {e:?}\n--- src ---\n{src}");
+        };
+        assert_eq!(name, "next", "{e:?}");
+        // The list is the survivors, not every `next` in scope: the four-opens
+        // cells keep all four, the two-orderings cells keep exactly the two the
+        // closure's reachability leaves (`integer/next` is dropped) — which is
+        // the list the jar prints for w07/w08.
+        assert!(candidates.len() >= 2, "{e:?}");
+    }
+}
+
+/// The other end of `resolveHelper`'s ladder, and phase (d)'s new variant: no
+/// candidate intersects the relevant type and none shares its arity. The jar
+/// prints its own message here ("This name cannot be resolved; its relevant type
+/// does not intersect with any of the following candidates:") over **every**
+/// candidate — there being no survivor subset — and mettle mislabeled it as an
+/// ambiguity until this phase.
+#[test]
+fn no_candidate_matches_the_relevant_type_mt105d() {
+    // The leaf twin (`pick_name`): `f` is binary on two sigs, and `&`'s slice
+    // hands it the unary right operand's arity — which neither candidate has, so
+    // neither the intersect rung nor the common-arity rung keeps anything. The
+    // jar rejects this too, on `&`'s own arity rule (alloy4fun 032006's shape).
+    let e = reject(
+        "sig N {}\n\
+         sig P { f: set N }\n\
+         sig Q { f: set N }\n\
+         run { one (f & N) } for 3\n",
+    );
+    let ResolveError::NameNotRelevant {
+        name, candidates, ..
+    } = &e
+    else {
+        panic!("expected NameNotRelevant, got {e:?}");
+    };
+    assert_eq!(name, "f", "{e:?}");
+    assert_eq!(candidates.len(), 2, "{e:?}");
+    assert!(
+        candidates.iter().all(|c| c.starts_with("field ")),
+        "the full candidate list, not a survivor subset: {candidates:?}"
+    );
+
+    // The spine twin (`pick_reading`): the same label on both sides of a join,
+    // under `#`. Before this phase the arm finalized the first reading instead
+    // of reporting, so the model was accepted (alloy4fun 046692's shape).
+    let e = reject(
+        "sig Project {}\n\
+         sig Person { projects: set Project }\n\
+         sig Course { projects: set Project }\n\
+         run { all pro: Project | #Course.projects.iden.pro = 1 } for 3\n",
+    );
+    assert!(
+        matches!(e, ResolveError::NameNotRelevant { .. }),
+        "expected NameNotRelevant, got {e:?}"
+    );
 }
 
 // ---- ADR-0023 phase (c): the chosen base is finalized, never re-resolved ----

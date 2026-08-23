@@ -395,7 +395,7 @@ fn run_check(args: &[String]) -> Result<(), ExitCode> {
             let file = graph.files.file(err.span().file);
             eprint!(
                 "{}",
-                diagnostics::render(&file.source, &file.path, err.span(), &err.to_string())
+                diagnostics::render_error(&file.source, &file.path, &err)
             );
             Err(ExitCode::from(1))
         }

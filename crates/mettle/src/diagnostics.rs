@@ -22,7 +22,7 @@
 use std::fmt::Write as _;
 
 use als_syntax::Span;
-use als_types::ResolveWarning;
+use als_types::{ResolveError, ResolveWarning};
 
 /// A precomputed byte-offset index of line starts, so repeated line/column
 /// lookups over one source file don't rescan from the beginning each time.
@@ -95,13 +95,57 @@ pub fn render(source: &str, path: &str, span: Span, message: &str) -> String {
     render_label(source, path, span, "error", message)
 }
 
+/// Like [`render`], but trailing `= note:` lines carry `notes` beneath the
+/// caret. Used for the disambiguation rejects, whose candidate list the
+/// reference prints after the message and which no `Display` impl can reach
+/// (mt-105).
+#[must_use]
+pub fn render_with_notes(
+    source: &str,
+    path: &str,
+    span: Span,
+    message: &str,
+    notes: &[String],
+) -> String {
+    let index = LineIndex::new(source);
+    render_with_index(&index, source, path, span, "error", message, notes)
+}
+
+/// The candidate list a [`ResolveError`] carries, as one note line each — the
+/// reference's `reasons`, which the error message itself does not name.
+#[must_use]
+pub fn error_notes(err: &ResolveError) -> Vec<String> {
+    let (ResolveError::AmbiguousName { candidates, .. }
+    | ResolveError::NameNotRelevant { candidates, .. }) = err
+    else {
+        return Vec::new();
+    };
+    candidates
+        .iter()
+        .map(|c| format!("candidate: {c}"))
+        .collect()
+}
+
+/// Renders a [`ResolveError`] with its candidate list, the caret form every
+/// resolve reject reaches the terminal through.
+#[must_use]
+pub fn render_error(source: &str, path: &str, err: &ResolveError) -> String {
+    render_with_notes(
+        source,
+        path,
+        err.span(),
+        &err.to_string(),
+        &error_notes(err),
+    )
+}
+
 /// Like [`render`], but with the severity label parameterized so `mettle
 /// check` (mt-019) can share this one renderer for non-fatal
 /// [`ResolveWarning`]s (`label = "warning"`) instead of hardcoding `error:`.
 #[must_use]
 pub fn render_label(source: &str, path: &str, span: Span, label: &str, message: &str) -> String {
     let index = LineIndex::new(source);
-    render_with_index(&index, source, path, span, label, message)
+    render_with_index(&index, source, path, span, label, message, &[])
 }
 
 fn render_with_index(
@@ -111,6 +155,7 @@ fn render_with_index(
     span: Span,
     label: &str,
     message: &str,
+    notes: &[String],
 ) -> String {
     let (line1, col1) = index.line_col(source, span.start);
     // The last byte actually covered by the (end-exclusive) span, so a span
@@ -167,6 +212,9 @@ fn render_with_index(
             out,
             "{blank_gutter} = note: span continues to line {end_line}, column {end_col}"
         );
+    }
+    for note in notes {
+        let _ = writeln!(out, "{blank_gutter} = note: {note}");
     }
     out
 }
@@ -261,6 +309,51 @@ mod tests {
 
     fn span(file: FileId, start: u32, end: u32) -> Span {
         Span::new(file, start, end)
+    }
+
+    /// The disambiguation rejects carry the reference's candidate list, which
+    /// no `Display` impl can reach; the CLI prints it as `= note:` lines under
+    /// the caret (mt-105 phase d). Before that the list was collected and
+    /// silently dropped, so the terminal never said *which* candidates.
+    #[test]
+    fn candidate_list_prints_as_notes_under_the_caret() {
+        let file = FileId::from_index(0);
+        let source = "run { one (f & N) }\n";
+        let err = ResolveError::NameNotRelevant {
+            name: "f".to_owned(),
+            span: span(file, 11, 12),
+            candidates: vec!["field P <: f".to_owned(), "field Q <: f".to_owned()],
+        };
+        let out = render_error(source, "model.als", &err);
+        assert_eq!(
+            out,
+            "error: the name `f` cannot be resolved: its relevant type does not intersect any candidate\n\
+             \x20--> model.als:1:12\n\
+             \x20\x20|\n\
+             1 | run { one (f & N) }\n\
+             \x20\x20|            ^\n\
+             \x20\x20= note: candidate: field P <: f\n\
+             \x20\x20= note: candidate: field Q <: f\n"
+        );
+    }
+
+    /// `AmbiguousName` carries the same list and had the same silent drop.
+    #[test]
+    fn ambiguity_candidates_print_too_and_other_errors_add_no_notes() {
+        let file = FileId::from_index(0);
+        let ambiguous = ResolveError::AmbiguousName {
+            name: "next".to_owned(),
+            span: span(file, 0, 4),
+            candidates: vec!["fun T/next".to_owned(), "fun V/next".to_owned()],
+        };
+        assert_eq!(
+            error_notes(&ambiguous),
+            ["candidate: fun T/next", "candidate: fun V/next"]
+        );
+        assert!(error_notes(&ResolveError::IllegalJoin {
+            span: span(file, 0, 4)
+        })
+        .is_empty());
     }
 
     #[test]

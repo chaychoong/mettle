@@ -673,7 +673,7 @@ pub(crate) fn resolve_graph(graph: &ModuleGraph) -> Result<ResolvedSession<'_>, 
             let file = graph.files.file(err.span().file);
             eprint!(
                 "{}",
-                crate::diagnostics::render(&file.source, &file.path, err.span(), &err.to_string())
+                crate::diagnostics::render_error(&file.source, &file.path, &err)
             );
             return Err(ExitCode::from(1));
         }

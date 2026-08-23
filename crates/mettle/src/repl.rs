@@ -575,6 +575,10 @@ pub(crate) fn render_value(value: &ReplValue, universe: &Universe) -> String {
 /// fact: the higher-order rejection here, and the no-instance message in
 /// [`crate::exec`].
 pub(crate) fn render_error(err: &ReplError, input: &str, fragment_file: FileId) -> String {
+    let notes = match err {
+        ReplError::Resolve(e) => crate::diagnostics::error_notes(e),
+        _ => Vec::new(),
+    };
     let (span, message) = match err {
         ReplError::Parse(FragmentError::Parse(e)) => (Some(e.span()), e.to_string()),
         ReplError::Parse(e @ FragmentError::NotAnExpression) => (None, e.to_string()),
@@ -590,7 +594,9 @@ pub(crate) fn render_error(err: &ReplError, input: &str, fragment_file: FileId) 
         ReplError::Translate(e) => (Some(e.span()), e.to_string()),
     };
     match span.and_then(|s| fragment_span(s, input, fragment_file)) {
-        Some(span) => crate::diagnostics::render(input, REPL_PATH, span, &message),
+        Some(span) => {
+            crate::diagnostics::render_with_notes(input, REPL_PATH, span, &message, &notes)
+        }
         None => crate::diagnostics::render_spanless("error", Some(REPL_PATH), &message),
     }
 }
