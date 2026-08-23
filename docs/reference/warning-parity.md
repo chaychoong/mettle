@@ -1,6 +1,7 @@
-# Warning parity — the §5.2 catalog vs the reference jar (mt-023)
+# Warning parity — the §5.2 catalog vs the reference jar (mt-023, mt-118)
 
-This is the evidence document for **bead mt-023**: mettle's implementation of the
+This is the evidence document for **bead mt-023** (closed to a single residual cell
+by **mt-118**): mettle's implementation of the
 full [alloy6-resolution.md](alloy6-resolution.md) **§5.2 warning catalog** and the
 measured parity of its warning *sets* against the reference Alloy 6.2.0 jar. It
 is the discharge of the **LEDGER-002 owner requirement**: *wherever the jar warns,
@@ -120,12 +121,21 @@ files) and the **167-file corpus** (all agree-ACCEPT). Match key `(class, line)`
 
 | corpus | agree-ACCEPT files | identical warn set | mettle-MISSING | mettle-EXTRA | jar warnings | mettle warnings | matched (col-exact) |
 |---|---|---|---|---|---|---|---|
-| alloy4fun | 101,970 | **101,767 (99.80%)** | 192 (in 184 files) | 20 (in 18 files) | 14,180 | 14,001 | 13,981 (3,144) |
+| alloy4fun | 101,970 | **101,969 (99.999%)** | 1 | 1 | 14,180 | 14,180 | 14,179 (3,370) |
 | corpus (167) | 167 | **166** | **0** | 1 | 9 | 10 | 9 (1) |
 
-**mettle-missing = 0 on the corpus.** On alloy4fun the missing rate is
-**0.19%** of agree-ACCEPT files (192 `(class,line)` misses / 14,180 jar warnings =
-**98.6% recall**), each individually root-caused in §6.
+**Campaign arc.** mt-023 first measured full-catalog parity at 101,767/101,970
+identical (99.80%), missing 192 `(class,line)` cells and extra 20. Every resolve-
+level campaign from mt-105 through mt-117 explicitly measured **zero warning
+changes** across all 150,891 codes while reshaping the agree-ACCEPT population
+underneath — so parity held flat, and the count drifted only through that
+population shift: mt-118 started from 101,772/101,970 identical, missing 194
+(192 `unused-var` + 2 `subset-redundant`), extra 20 (18 `eq-redundant` + 2
+`subset-redundant`). mt-118 (§5 items 7–10) closed all of it but one
+line-attribution artifact, landing at **101,969/101,970 (99.999%)**, missing 1,
+extra 1 — the jar's and mettle's total `(class,line)` warning counts are now
+**exactly equal** (14,180 = 14,180). The one remaining cell pair is root-caused
+in §6.
 
 ## 5. Fixes and iterations
 
@@ -158,47 +168,140 @@ parity took these measured iterations:
    path. → 0.
 
 Each iteration re-ran the verdict diff: **314 over-accepts, 0 drop-in violations,
-167/167 corpus — unchanged throughout.**
+167/167 corpus — unchanged throughout.** Iterations 7–10 below (**mt-118**,
+2026-08-24) closed the entire remainder that iterations 1–6 left standing,
+pinned against the reference source at commit `794226dd` and validated cell-
+for-cell against the banked jar baseline (`crates/als-types/tests/warning_probes.rs`).
+
+7. **unused-var, overload-collapse-to-`none` (missing 192 → 0)** — an ambiguous
+   overloaded join (`x.field` where `field` is declared on ≥2 sigs, all
+   type-disjoint from `x`'s domain) is silently folded to the `none` constant by
+   the reference's `ExprChoice.resolveHelper` *before* `ExprQt.resolve()`/
+   `ExprLet.resolve()` ever walk the body — erasing the binder from the tree the
+   reference's `hasVar` inspects, so the jar flags it unused even though the
+   textual occurrence is right there. mettle's rule-6 empty-spine accept is the
+   analog of that fold: `record_spine` now notes the folded `ExprId`s in a `fold`
+   set on `Cx` (trial-gated like the choice table below — marking only, pick
+   outcomes untouched), and `references_name` treats a folded subtree as
+   containing no references. This retires the mt-023 "resolve-time survival
+   tracking needed" note and the rejected over-firing proxy — the fold set is the
+   cheap, precisely-targeted mechanism that proxy was missing.
+8. **unused-var, duplicate binders (bundled into the same 192 → 0)** — a
+   quantifier that binds one source name twice (`all x : A, x : B | …`) shadows
+   by reference identity in the reference: every body occurrence of the name
+   binds to the *last* `Decl`'s `ExprVar` object, so the *first* declared binder
+   is the one flagged unused, never the second. The unused-var check now
+   replicates that shadow interval exactly (body and later-decl-bound references
+   resolve to the last matching binder) instead of crediting a textual
+   occurrence to every binder of the name.
+9. **eq-redundant + subset-redundant, choice-identity non-firing (extra 18 eq +
+   1 of 2 subset → 0)** — the reference's redundancy check (`left.isSame(right)`
+   in `ExprBinary`'s
+   `=`/`!=`/`in`/`!in` arms) runs on the pre-disambiguation operands, and
+   `ExprChoice` never overrides `isSame` — it falls to `Expr`'s default, pure
+   Java object identity. Every textual occurrence of an overloaded name or join
+   gets its own distinct `ExprChoice` object from `CompModule.process()`, so two
+   occurrences of the same overloaded field never compare same even when both
+   resolve to the identical candidate — the redundancy warning silently doesn't
+   fire. mettle's structural `same_expr` doesn't share that blind spot by
+   default, so it was firing where the jar wasn't: nodes whose raw candidate
+   count exceeded one at collection time are now noted in a `choice_wrapped` set
+   on `Cx` (trial-gated marking, mirroring the `fold` set), and `same_expr`
+   reports not-same whenever either side is marked. This closes all 18
+   eq-redundant extras (the `Component`/`Robot`/`Photo`/`Album` field-overload
+   family plus the `029361–029370` train-model family) and one of the two
+   subset-redundant extras (`062913.als:55`, `Person.projects`/`Course.projects`
+   overloaded) — the other subset-redundant extra, `059866.als:99`, is unrelated
+   to choice identity; it's the line-attribution artifact in §6. Discovery along
+   the way: `util/integer` is auto-opened into every module and exports
+   `pos`/`neg`/`zero`/`min`/`max`/… as funs/preds, so a field literally named
+   `pos` (or `neg`, `zero`, …) is invisibly overloaded even when declared
+   exactly once — this is what the train-model cells actually were, not the
+   "var relation in a temporal formula" mt-023 originally characterized them as
+   (refuted; see §6).
+10. **subset-redundant, `Sig<:field` domain-collapse identity (missing 1 → 0)** —
+    `005586.als:13`, `adj in Node<:adj`. The reference's `ExprBinary.Op.make`
+    DOMAIN case returns the right operand outright when it is a `Field` whose
+    declaring sig is exactly the left operand, so a no-op restriction like
+    `Node<:adj` never exists as a distinct node — `adj in Node<:adj` is, by
+    identity, `adj in adj`, and the subset-redundant warning fires by the same
+    `isSame` reference-identity path as item 9. mettle keeps the surface
+    `Node<:adj` node (no construction-time collapse) and instead teaches
+    `same_expr` to dereference such restrictions before comparing — owner-
+    identity only, unwrapped operands only, recursive for chains.
 
 ## 6. Honest remainder (each root-caused)
 
-### mettle-MISSING (LEDGER-002 direction)
+**mt-118 (2026-08-24) closed the whole EXTRA family and all but one cell of the
+MISSING family** (§5 items 7–10). What's left is a single cell pair, plus one
+unrelated corpus item mt-118 never touched.
 
-- **`unused-var` (192, dominant).** A variable whose *only* occurrence is inside an
-  **overloaded join that collapses to `none`** — the reference's ambiguous-
-  `ExprChoice` → `none` rule (§4.4 case 6) replaces the sub-expression with `none`,
-  eliminating the variable from the resolved tree its `hasVar` inspects, so the jar
-  flags it unused. Example (`031193.als:74`): `all pr : Project | … p in pr.projects
-  …` where `projects` is declared in two sigs → `Project.projects` collapses to
-  `none` → `pr` eliminated → jar warns `pr` unused. mettle's syntactic `hasVar`
-  counts the textual occurrence as a use. Matching this needs resolve-time
-  survival tracking (materialize the resolved tree, or head-marking plumbing with
-  cross-binder-scoping hazards); a proxy "empty-typed join eliminates its vars" was
-  measured and **rejected** (it over-fired: +1,324 extra to save 17 misses).
-  0.18% of files; the safe syntactic choice keeps **0 unused-var extra**.
-- **`closure-redundant` (2), `join-empty` (3), `subset-redundant` (2).** Deep
-  resolved-vs-bottom-up-type edges (e.g. `003056.als:42` `^(~(i.trans).^(i.trans))`
-  nested in a comprehension; `005586.als:13` `adj in Node<:adj`, where the jar's
-  `isSame` sees the full-domain `<:` as identity to `adj` — a semantic
-  simplification mettle's structural `same_expr` does not perform).
+### The residual: `059866.als:99`/`100` — a line-attribution artifact, not a semantic miss
 
-### mettle-EXTRA (measured; the acceptable direction)
+The formula spans two source lines:
 
-- **`eq-redundant` (18) + `subset-redundant` (2).** The `=`/`in` "same value" branch
-  (`left.isSame(right)`, which the reference makes structural for `ExprBinary`).
-  mettle's structural `same_expr` matches it — **except** the reference's `isSame`
-  fails to fire on `+`/`-` compounds over a **var relation in a temporal formula**
-  (`always ((A→B - f) + f) = (same)`, the train models `029361–029368`,
-  `059866.als:99`), for temporal-resolution reasons mettle does not model at Rung 2
-  (temporal is typed-but-not-solved). A guard that suppressed *all* var references
-  was measured and **rejected** — it also suppressed the common `Protected =
-  Protected` (var-sig) cases the jar *does* warn, trading ~12 new misses for ~9
-  fewer extras (the wrong direction under LEDGER-002). Kept structural; the extras
-  are one narrow, named pattern.
+```
+99:  all s : Student, c : s.enrolled | ( s.(c.grades)
+100: in max[c.grades]) implies some(s.projects & c.projects)
+```
+
+The reference's CUP grammar constructs the `IN` `ExprBinary` with `pos` bound to
+the **`in` token's own position** (`Alloy.cup:985`, `CompareExprA ::= ... IN:o
+...`), not the left operand's span-start, so the jar's subset-redundant warning is
+anchored to line 100 (the operator glyph) — confirmed against `jar.jsonl`.
+mettle's surface AST carries **one `Span` per node** with no separate
+operator-glyph position (already flagged as out of scope for the `als-syntax`
+shape in §1 above), so the binary-operator warning is emitted at the node's
+overall span start — line 99, the left operand. The gauge's `(class, line)` match
+key can't merge these back together: it shows as a MISSING at
+`(subset-redundant, 100)` and an EXTRA at `(subset-redundant, 99)` for what is,
+underneath, the same logical warning firing in the same place for the same
+reason. **Future fix:** thread an operator-glyph `Pos` distinct from the node's
+full `Span` from the parser through to warning emission. Deferred as
+disproportionate for one cell in 150,891 — the change touches `als-syntax`'s AST
+shape for every binary node, not just this warning path.
+
+### Superseded root-causes (mt-023-era characterizations, struck by mt-118)
+
+- ~~**`unused-var` (192, dominant)… resolve-time survival tracking needed
+  (materialize the resolved tree, or head-marking plumbing with cross-binder-
+  scoping hazards); a proxy "empty-typed join eliminates its vars" was measured
+  and rejected (it over-fired: +1,324 extra to save 17 misses).**~~ The pinned
+  mechanism (§5 items 7–8: a `fold` set marking overload-collapsed spines plus
+  duplicate-binder shadow-interval tracking) landed **without** needing that
+  proxy or a materialized resolved tree — the fold set targets exactly the
+  reference's silent `ExprChoice` → `none` collapse and nothing else, which is
+  what the rejected proxy was missing.
+- ~~**`eq-redundant` (18) + `subset-redundant` (2)… the reference's `isSame` fails
+  to fire on `+`/`-` compounds over a var relation in a temporal formula**~~
+  **REFUTED**, for the train-model half of the family (`029361–029370`, 9
+  files — the other 9 eq-redundant files, `Component`/`Robot`/`Photo`/`Album`,
+  were never characterized as temporal/var at all; they were always correctly
+  understood as an overloaded-field `isSame` gap). The train-model cells don't
+  turn on `var`-ness or the temporal operator either — they turn on the field
+  being named `pos`, which collides with `util/integer`'s auto-opened funs/preds
+  of the same name and is therefore invisibly overloaded (§5 item 9), exactly
+  the same mechanism as the non-temporal half of the family. `var`-ness and the
+  temporal wrapper were coincidental to the train models, not causal.
+  Probe-verified: `scratchpad/mt118/probe3b/` isolated the suppression to the
+  literal name `pos` (24 probes, 91/91 corpus cells, clean controls) before
+  proposing a name carve-out; `scratchpad/mt118/tlprobe/` then refuted that
+  carve-out by showing fields named `neg`/`zero` suppress identically while `f`
+  warns normally — the real mechanism is the namespace collision, not the
+  string `"pos"`.
+- ~~**`closure-redundant` (2), `join-empty` (3), `subset-redundant` (2 — the
+  `005586.als:13` `Node<:adj` case)**~~ The closure/join-empty pair closed
+  silently at **mt-105** (the compound-right-operand resolve fixes, ADR-0023);
+  `005586.als:13` closed at **mt-118** (§5 item 10, the DOMAIN construction-
+  collapse deref). Neither is part of the remainder above.
+
+### mettle-EXTRA, untouched by mt-118 (one corpus item, unrelated mechanism)
+
 - **`plus-irrelevant` (1, corpus).** `util/seqrel.als:97` `s1 + shift.s2` inside a
   `let` with a comprehension bound — a mettle type-precision edge where the `+`
   relevant-slice intersection is empty for the comprehension operand only in
-  mettle's approximation. One stdlib fun; not user-reachable divergence.
+  mettle's approximation. One stdlib fun; not user-reachable divergence; not part
+  of the mt-118 campaign (a different mechanism from the choice-identity family).
 
 ## 7. `mettle check --strict`
 
@@ -213,6 +316,28 @@ any warning to **exit 1** with a summary line that says why
 
 ## 8. Reproducing
 
+**Default: JVM-free, from the committed jar baseline (mt-118).** The reference's
+per-file warning sets over all 150,891 alloy4fun codes are baked into
+`baselines/alloy4fun-warnings.txt` (one line per jar-accepted code with ≥1
+warning, keyed by code id, warnings as sorted `class@line:col` triples under a
+jar-sha-pinned header) — the same "immutable fact, stop re-deriving it" move
+mt-110 made for verdicts. `warn-diff --jar-baseline` reconstructs the jar side
+from this file plus the existing resolve-verdict baseline instead of running a
+live JVM pass; it shares one report body with the live-jar path, so the two
+cannot drift, and a full parity run drops from a multi-minute chunked JVM sweep
+to seconds:
+
+```sh
+# mettle side (writes mettle.jsonl with warnings)
+resolve-gauge alloy4fun --corpus corpus/alloy4fun/<set> --out <out>/a4f
+
+# parity, JVM-free
+resolve-gauge warn-diff --mettle <out>/a4f/mettle.jsonl \
+  --jar-baseline baselines/alloy4fun-warnings.txt
+```
+
+**Re-baking the baseline** (only needed after a jar upgrade or a corpus change):
+
 ```sh
 # jar side (one batch pass; chunk for memory safety on the 150k set)
 javac -cp oracle/org.alloytools.alloy.dist.jar -d <out>/shim \
@@ -220,11 +345,10 @@ javac -cp oracle/org.alloytools.alloy.dist.jar -d <out>/shim \
 java -cp <out>/shim:oracle/org.alloytools.alloy.dist.jar \
   ResolveGaugeShim <filelist.txt> > jar.jsonl
 
-# mettle side (writes mettle.jsonl with warnings)
-resolve-gauge alloy4fun --corpus corpus/alloy4fun/<set> --out <out>/a4f
-resolve-gauge paths <corpus-paths.txt> --out <out>/corpus
+resolve-gauge bake-warnings --jar jar.jsonl --out baselines/alloy4fun-warnings.txt
 
-# parity
+# corpus (167) and any one-off comparison still take the live-jar path
+resolve-gauge paths <corpus-paths.txt> --out <out>/corpus
 resolve-gauge warn-diff --mettle <out>/a4f/mettle.jsonl --jar jar.jsonl
 ```
 

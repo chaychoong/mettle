@@ -56,7 +56,7 @@ Four independent nets, all differential against the pinned jar:
 
 The remaining commands are honest, *typed* defers, never wrong answers: 117 beyond the default capacity ceiling, 62 beyond the default solve budget (deeper budgets convert more — 0 disagreements at every depth tried), 7 known unsupported corners (documented in [LIMITATIONS.md](LIMITATIONS.md)), 6 where mettle types out with the same rejection the jar itself gives, and 16 where the jar produces no verdict at all. **0 panics** across the corpus, always.
 
-Beyond the corpus: a 150,891-snippet differential parse pass against the [Alloy4Fun](https://github.com/haslab/Alloy4Fun) dataset found **zero cases where the jar accepts and mettle rejects** and 99.79% exact agreement on error positions; warning emission matches the jar on 99.80% of files (both measured 2026-07); and a mutation fuzzer (~4,200 mutants per CI run, verified to 88,500 offline) holds three properties: no panic, sane spans, round-trip stable.
+Beyond the corpus: a 150,891-snippet differential parse pass against the [Alloy4Fun](https://github.com/haslab/Alloy4Fun) dataset found **zero cases where the jar accepts and mettle rejects** and 99.79% exact agreement on error positions; warning emission matches the jar on 99.999% of files — 101,969 of 101,970, with the jar's and mettle's warning counts exactly equal (measured 2026-08); and a mutation fuzzer (~4,200 mutants per CI run, verified to 88,500 offline) holds three properties: no panic, sane spans, round-trip stable.
 
 Every behavioral rule mettle matches is written down in the [Semantics Ledger](SEMANTICS_LEDGER.md); every disagreement ever found was root-caused and is pinned by a regression test in-tree.
 
