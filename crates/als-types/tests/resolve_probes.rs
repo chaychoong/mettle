@@ -596,7 +596,7 @@ fn one_meta_name_leniences_the_whole_model_mt108() {
 /// `util/ordering`'s own module.
 #[test]
 fn param_alias_is_not_a_meta_name_mt108() {
-    let e = reject("sig A {}\nopen util/ordering[A]\nfact { some elem$ }\nrun {}\n");
+    let e = reject("open util/ordering[A]\nsig A {}\nfact { some elem$ }\nrun {}\n");
     assert!(matches!(e, ResolveError::UnknownName { .. }), "{e:?}");
 }
 
@@ -1825,4 +1825,141 @@ fn mult_on_not_in_lhs_stays_a_sort_reject_mt117() {
         ),
         "{e:?}\n--- src ---\n{src}"
     );
+}
+
+// ---- mt-116/mt-117: the four resolve-level closes ----
+//
+// The flips. Three of the wave's five rules land here (the `open`-placement
+// and `abstract`-subset rules are parse-level and live in `als-syntax`): what a
+// field bound may name, the name a `;`-terminated binder body frees, and the
+// multiplicity a negated `in` refuses. Every expected class/span below is the
+// jar's, recorded verbatim in `scratchpad/probe/mt116/NOTES.md`.
+
+/// Cells f01/f02: a field bound cannot name **another sig's** field, and the
+/// probe's own key result is that this has nothing to do with name collisions —
+/// f01's `position` shadows the bound's own label, f02's `pos2` collides with
+/// nothing, and the jar rejects both identically at the joined name. The bound
+/// of sig `S`'s field sees sigs, `S`'s earlier fields, and `S`'s inherited
+/// fields; nothing else.
+#[test]
+fn cross_sig_field_in_a_bound_rejected_mt116() {
+    for (src, label) in [
+        (
+            "sig P {}\nsig C { position: one P }\nsig R { position: one C.position }\n",
+            "position",
+        ), // f01
+        (
+            "sig P {}\nsig C { position: one P }\nsig R { pos2: one C.position }\n",
+            "position",
+        ), // f02
+    ] {
+        let e = reject(src);
+        let ResolveError::UnknownName { name, span } = &e else {
+            panic!("expected UnknownName, got {e:?}\n--- src ---\n{src}");
+        };
+        assert_eq!(name, label, "{e:?}");
+        // The joined name itself (`C.position`'s right half), not the bound.
+        let at = u32::try_from(src.rfind("C.position").expect("source has `C.position`") + 2)
+            .expect("offset fits");
+        assert_eq!(
+            (span.start, span.end),
+            (at, at + u32::try_from(label.len()).expect("label fits")),
+            "{e:?}\n--- src ---\n{src}"
+        );
+    }
+}
+
+/// Cell f06: an inherited field is still visible, so the rule cannot be "no
+/// fields at all" — `sig B extends A { g: set f }` reads `A`'s `f`. Three
+/// corpus models (`ins.als`, `etl_scd.als`, `INSLabel.als`) depend on exactly
+/// this, which is why the check keys on the declared sig's *inheritance chain*
+/// rather than on identity.
+#[test]
+fn inherited_field_in_a_bound_accepted_mt116() {
+    accept("sig P {}\nsig A { f: set P }\nsig B extends A { g: set f }\n");
+}
+
+/// Cell f06 again, now for its **mechanism**: `sig R { position: one position }`
+/// used to reject for an unrelated reason — mettle resolved the bare name to
+/// the half-built field itself and then failed a sort check on `one position`
+/// at the mult keyword. With the bound's name pool restricted, it rejects where
+/// the jar does, on the name, as an unfindable one.
+#[test]
+fn bare_self_reference_reject_realigned_mt116() {
+    let src = "sig P {}\nsig C { position: one P }\nsig R { position: one position }\n";
+    let e = reject(src);
+    let ResolveError::UnknownName { name, span } = &e else {
+        panic!("expected UnknownName, got {e:?}");
+    };
+    assert_eq!(name, "position", "{e:?}");
+    let at = u32::try_from(src.rfind("one position").expect("source has the bound") + 4)
+        .expect("offset fits");
+    assert_eq!(
+        (span.start, span.end),
+        (
+            at,
+            at + u32::try_from("position".len()).expect("label fits")
+        ),
+        "{e:?}\n--- src ---\n{src}"
+    );
+}
+
+/// Cells g02/g04/x02: with the binder body ending at the `;`, the tail formula
+/// sits *outside* the binder, so a binder variable used there is free — the
+/// reference's unfindable-name reject, and mettle's now too. Probed across a
+/// `pred` body, a `fact` body, and a `let` (all three carriers of the `|`).
+#[test]
+fn binder_variable_after_a_seq_is_free_mt116() {
+    for (src, var) in [
+        (
+            "sig A {}\npred P { all u: A | some u; u in A }\nrun P\n",
+            "u",
+        ), // g02
+        ("sig A {}\nfact { all u: A | some u; u in A }\n", "u"), // g04
+        (
+            "sig A {}\npred P { let y = A | some y; y in A }\nrun P\n",
+            "y",
+        ), // x02
+    ] {
+        let e = reject(src);
+        let ResolveError::UnknownName { name, .. } = &e else {
+            panic!("expected UnknownName, got {e:?}\n--- src ---\n{src}");
+        };
+        assert_eq!(name, var, "{e:?}\n--- src ---\n{src}");
+    }
+}
+
+/// Cells h01/h04/h05 (mt-117): the right operand of `not in`/`!in` consumes no
+/// multiplicity — only the plain `in` states one. LEDGER-016's positional rule
+/// therefore fires there like at any ordinary operand, over the parenthesized
+/// mult expression, uniformly across both spellings of the operator and every
+/// mult keyword.
+#[test]
+fn mult_on_not_in_rhs_rejected_mt117() {
+    for (src, mult) in [
+        (
+            "sig Project {}\nsig Course { projects: set Project }\nfact { Project not in (some Course.projects) }\n",
+            "some Course.projects",
+        ), // h01
+        (
+            "sig Project {}\nsig Course { projects: set Project }\nfact { Project !in (some Course.projects) }\n",
+            "some Course.projects",
+        ), // h04
+        (
+            "sig Project {}\nsig Course { projects: set Project }\nfact { Project not in (lone Course.projects) }\n",
+            "lone Course.projects",
+        ), // h05
+    ] {
+        let e = reject(src);
+        let ResolveError::MultiplicityNotAllowed { span } = &e else {
+            panic!("expected MultiplicityNotAllowed, got {e:?}\n--- src ---\n{src}");
+        };
+        // The mult expression inside the parens, not the parens or the formula.
+        let at = u32::try_from(src.find(mult).expect("source has the mult")).expect("offset fits");
+        assert_eq!(
+            (span.start, span.end),
+            (at, at + u32::try_from(mult.len()).expect("mult fits")),
+            "{e:?}\n--- src ---\n{src}"
+        );
+    }
 }

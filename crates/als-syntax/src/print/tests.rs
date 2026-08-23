@@ -109,6 +109,21 @@ fn seq_tier_parenthesizes_when_nested() {
     assert!(rt_expr("a ; b ; c").contains("a ; b ; c"));
 }
 
+/// A `;` inside a binder or comprehension body must keep its parentheses: the
+/// body slot stops at the level-1 `;` (mt-116), so printing the same tree bare
+/// would re-parse as a `;` *around* the binder — a different formula. The
+/// round-trip harness proves the printed text parses back to the same AST.
+#[test]
+fn seq_inside_a_binder_body_keeps_its_parens() {
+    for case in [
+        "all x: A | (p ; q)",
+        "let x = a | (p ; q)",
+        "{ x: A | (p ; q) }",
+    ] {
+        assert!(rt_expr(case).contains("(p ; q)"), "{case}");
+    }
+}
+
 // -- Round-trip coverage across every construct family --------------------
 
 #[test]

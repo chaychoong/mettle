@@ -41,6 +41,12 @@ pub(crate) const BP_PRIME_CLOSURE: u8 = 42;
 /// A binding power no operator reaches: an atom (or any fully self-delimited
 /// node) never needs parentheses, so its exposed edges use this.
 pub(crate) const BP_ATOM: u8 = u8::MAX;
+/// Minimum binding power of a binder/comprehension body (`| …`). The body is a
+/// `parse_expr_no_seq` slot, so the one tier looser than it — the level-1
+/// sequencing `;`, whose left edge is [`binary_bp`]`(Seq).0` = 3 — must be
+/// parenthesized there (`all x: A | (p ; q)`), while every other operator (the
+/// loosest, `Or`, exposes 6) still prints bare.
+pub(crate) const BP_BINDER_BODY: u8 = 4;
 
 /// Left/right binding power of the `->` arrow (with or without
 /// multiplicities) — right-associative (`A->B->C` ≡ `A->(B->C)`).

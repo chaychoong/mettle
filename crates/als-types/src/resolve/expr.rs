@@ -204,6 +204,11 @@ pub(super) struct Cx<'a, 'g> {
     pub rootsig: Option<SigId>,
     /// A non-defined field bound: func/pred calls are disallowed (§3.4).
     pub no_calls: bool,
+    /// Set while typing a field's declared bound: the only fields a bound may
+    /// name are [`Self::rootsig`]'s own, already-declared ones (mt-116 cells
+    /// f01/f02/f05, the reference's `rootfield` guard). Not propagated into a
+    /// macro replay, matching [`Self::no_calls`].
+    pub in_field_bound: bool,
     /// The field label being bound (for the call-in-bound reject message).
     pub field_name: String,
     pub errors: Vec<ResolveError>,
@@ -236,6 +241,7 @@ impl<'a, 'g> Cx<'a, 'g> {
             env: Vec::new(),
             rootsig: None,
             no_calls: false,
+            in_field_bound: false,
             field_name: String::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
@@ -762,7 +768,12 @@ impl<'a, 'g> Cx<'a, 'g> {
             | ExprKind::BoxJoin { .. } => self.applicative(e, span, p),
             ExprKind::Binary { op, lhs, rhs } => self.binary(*op, *lhs, *rhs, span, p),
             ExprKind::Arrow { lhs, rhs, .. } => self.arrow(*lhs, *rhs, span, p),
-            ExprKind::Compare { op, lhs, rhs, .. } => self.compare(*op, *lhs, *rhs, span),
+            ExprKind::Compare {
+                op,
+                negated,
+                lhs,
+                rhs,
+            } => self.compare(*op, *negated, *lhs, *rhs, span),
             ExprKind::IfThenElse {
                 cond,
                 then_branch,
@@ -1435,7 +1446,7 @@ impl<'a, 'g> Cx<'a, 'g> {
         }
     }
 
-    fn compare(&mut self, op: CmpOp, lhs: ExprId, rhs: ExprId, span: Span) -> R {
+    fn compare(&mut self, op: CmpOp, negated: bool, lhs: ExprId, rhs: ExprId, span: Span) -> R {
         let world = &self.r.world;
         match op {
             CmpOp::Lt | CmpOp::Gt | CmpOp::Le | CmpOp::Ge => {
@@ -1471,8 +1482,14 @@ impl<'a, 'g> Cx<'a, 'g> {
                 // is a consuming position (`r in A -> lone A` states a
                 // multiplicity constraint), its left is not, and `=` consumes on
                 // neither side (LEDGER-016 cells n18/p16/m25/n11 vs m26/m27).
+                // The consuming position belongs to the **plain** operator
+                // only: `not in`/`!in` states no multiplicity, so its right
+                // operand rejects the flag like any ordinary operand (mt-116
+                // cells h01/h04/h05 — and h03 shows the trigger is the negated
+                // operator, not a negated membership formula: `!(x in (some
+                // y))` carries no `negated` flag here and stays accepted).
                 let l = self.resolve_checked(lhs, &ap);
-                let r = if matches!(op, CmpOp::In) {
+                let r = if matches!(op, CmpOp::In) && !negated {
                     self.resolve_checked_consuming_mult(rhs, &bp)
                 } else {
                     self.resolve_checked(rhs, &bp)
@@ -2031,6 +2048,20 @@ impl<'a, 'g> Cx<'a, 'g> {
         at_name: bool,
         out: &mut Vec<Cand>,
     ) {
+        // Inside a field's declared bound, the only nameable fields are the
+        // ones the sig being declared already *has*: its own earlier fields and
+        // the ones it inherits. An unrelated sig's field is not nameable at
+        // all — not bare, not through a join, whatever it is called (mt-116
+        // cells f01/f02). Later fields of the sig itself need no test: they are
+        // not allocated yet when the earlier bounds resolve, which is what
+        // rejects a self- or forward reference (cells f04/f05).
+        if self.in_field_bound
+            && !self
+                .rootsig
+                .is_some_and(|root| self.r.world.sig_is_same_or_descendent(root, field.owner))
+        {
+            return;
+        }
         let reason = format!(
             "field {} <: {}",
             self.r.world.sigs[field.owner].name, field.name

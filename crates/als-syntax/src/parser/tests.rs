@@ -1279,6 +1279,57 @@ fn abstract_extends_and_bare_subset_parse_mt116() {
     assert_eq!(ast.paragraphs.len(), 2);
 }
 
+/// Cells d02/d03/d05/d06: an `open` after **any** paragraph kind rejects, at
+/// the `open`'s own span. Probed across sig-only, fact-only, enum-only and
+/// sig+pred prefixes; the jar's span is column 1 through the end of the `open`
+/// statement in every one.
+#[test]
+fn open_after_a_paragraph_is_rejected_mt116() {
+    for (src, open) in [
+        ("sig A {}\nopen util/ordering[A]", "open util/ordering[A]"), // d02
+        ("fact G { no none }\nopen util/natural", "open util/natural"), // d03
+        ("enum E { X, Y }\nopen util/natural", "open util/natural"),  // d05
+        (
+            "sig A {}\npred P { some A }\nopen util/ternary",
+            "open util/ternary",
+        ), // d06
+    ] {
+        let e = err_of(src);
+        let ParseError::OpenNotFirst { span } = e else {
+            panic!("expected OpenNotFirst, got {e:?}\n--- src ---\n{src}");
+        };
+        let at = u32::try_from(src.find(open).expect("source has the open")).unwrap();
+        assert_eq!(
+            (span.start, span.end),
+            (at, at + u32::try_from(open.len()).unwrap()),
+            "{src}"
+        );
+    }
+}
+
+/// Cells e01/e03/e05: `abstract` on a subset sig rejects whatever the parent
+/// union shape (`Person`, `Person + Robot`) or extra multiplicity qualifier
+/// (`lone`), and the span is the `abstract` keyword alone.
+#[test]
+fn abstract_subset_sig_is_rejected_mt116() {
+    for src in [
+        "sig Person {}\nabstract sig Teacher in Person {}", // e01
+        "sig Person {}\nsig Robot {}\nabstract sig T in Person + Robot {}", // e03
+        "sig Person {}\nabstract lone sig T in Person {}",  // e05
+    ] {
+        let e = err_of(src);
+        let ParseError::AbstractSubsetSig { span } = e else {
+            panic!("expected AbstractSubsetSig, got {e:?}\n--- src ---\n{src}");
+        };
+        let at = u32::try_from(src.find("abstract").expect("source has `abstract`")).unwrap();
+        assert_eq!(
+            (span.start, span.end),
+            (at, at + u32::try_from("abstract".len()).unwrap()),
+            "{src}"
+        );
+    }
+}
+
 #[test]
 fn private_paragraphs() {
     let ast = ast_of("private sig A {}");
@@ -1511,25 +1562,41 @@ fn block_seq_nests_right() {
     assert_eq!(name_text(&a, inner_rhs), "r");
 }
 
-/// `all x: A | p ; q` — the quantifier-body `;` takes the remaining
-/// EXPRESSION (here exactly `q`) as its rhs (`SuperOrBar ::= BAR ExprNoSeq
-/// TRCSEQ Expr`).
+/// `all x: A | p ; q` — the binder body **ends at the `;`**, which the
+/// enclosing level then folds around the whole quantifier: `Seq(all x: A | p,
+/// q)`, leaving `x` out of scope in `q`. `;` is grammar-doc level 1, looser
+/// than the level-2 body; mettle previously folded the `;` *inside* the body,
+/// which is what let cell g05 come back SAT where the jar says UNSAT (mt-116).
 #[test]
-fn quant_body_seq_rhs_is_expression() {
-    let (a, id) = expr_ast("all x: A | p ; q");
-    let ExprKind::Quant { body, .. } = kind(&a, id) else {
-        panic!("expected quantifier");
-    };
-    let ExprKind::Binary {
-        op: BinOp::Seq,
-        lhs,
-        rhs,
-    } = kind(&a, body)
-    else {
-        panic!("expected Seq body");
-    };
-    assert_eq!(name_text(&a, lhs), "p");
-    assert_eq!(name_text(&a, rhs), "q");
+fn quant_body_ends_at_the_seq_mt116() {
+    for src in ["all x: A | p ; q", "let x = A | p ; q"] {
+        let (a, id) = expr_ast(src);
+        let ExprKind::Binary {
+            op: BinOp::Seq,
+            lhs,
+            rhs,
+        } = kind(&a, id)
+        else {
+            panic!("expected a Seq at the top of {src:?}");
+        };
+        let body = match kind(&a, lhs) {
+            ExprKind::Quant { body, .. } | ExprKind::Let { body, .. } => body,
+            other => panic!("expected the binder as the Seq's lhs of {src:?}, got {other:?}"),
+        };
+        assert_eq!(name_text(&a, body), "p", "{src}");
+        assert_eq!(name_text(&a, rhs), "q", "{src}");
+    }
+}
+
+/// Cell x01: a comprehension body ends at the `;` too, but a comprehension has
+/// no enclosing expression level to fold the tail into — so the `;` is stranded
+/// where only `}` may appear, exactly the jar's "1 possible tokens: }".
+#[test]
+fn comprehension_body_seq_is_a_parse_error_mt116() {
+    assert!(matches!(
+        err_of("sig A {}\nfact { some { x: A | some x; no A } }"),
+        ParseError::Expected { .. }
+    ));
 }
 
 /// Parens confine a `;`: `{ (p ; q) r }` is two block formulas, the first a

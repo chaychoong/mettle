@@ -36,8 +36,8 @@ use crate::ast::{
 };
 use crate::prec::{
     arrow_bp, binary_bp, child_binder_budget, cmp_bp, prefix_operand_budget, BinderOperator,
-    ARROW_BP, BINDER_BUDGET_HOP, BINDER_BUDGET_NONE, BINDER_BUDGET_TOP, BP_ATOM, BP_IMPLIES_R,
-    BP_NOT, BP_NUMUNOP, BP_PRIME_CLOSURE, BP_TEST, CMP_BP, JOIN_BP, TIER_TEST,
+    ARROW_BP, BINDER_BUDGET_HOP, BINDER_BUDGET_NONE, BINDER_BUDGET_TOP, BP_ATOM, BP_BINDER_BODY,
+    BP_IMPLIES_R, BP_NOT, BP_NUMUNOP, BP_PRIME_CLOSURE, BP_TEST, CMP_BP, JOIN_BP, TIER_TEST,
 };
 
 /// A binding power no operator reaches; an atom's exposed edges use it, so an
@@ -1096,12 +1096,21 @@ impl Pretty<'_> {
         w.write_char(' ')?;
         self.write_inline_decls(w, decls, indent)?;
         w.write_str(" | ")?;
-        // A binder's body is a fresh `parse_quant_body`/`parse_expr` context
-        // in the parser (`BINDER_BUDGET_TOP`), independent of whatever
-        // budget got us to this Quant/Let node itself (that was already
-        // resolved by the caller's `needs_parens` before it decided to
-        // print this node bare vs. parenthesized).
-        self.write_expr(w, *body, indent, rightmost, BINDER_BUDGET_TOP)
+        // A binder's body is a fresh `parse_quant_body` context in the parser
+        // (`BINDER_BUDGET_TOP`), independent of whatever budget got us to this
+        // Quant/Let node itself (that was already resolved by the caller's
+        // `needs_parens` before it decided to print this node bare vs.
+        // parenthesized) -- but it stops at the level-1 `;`, so a `Seq` body
+        // takes parentheses ([`BP_BINDER_BODY`]).
+        self.write_operand(
+            w,
+            *body,
+            BP_BINDER_BODY,
+            false,
+            rightmost,
+            BINDER_BUDGET_TOP,
+            indent,
+        )
     }
 
     fn write_comprehension<W: Write>(&self, w: &mut W, e: ExprId, indent: usize) -> fmt::Result {
@@ -1116,8 +1125,18 @@ impl Pretty<'_> {
         let empty_body = matches!(&self.ast.exprs[body].kind, ExprKind::Block(v) if v.is_empty());
         if !empty_body {
             w.write_str(" | ")?;
-            // Also a fresh `parse_quant_body` context, `BINDER_BUDGET_TOP`.
-            self.write_expr(w, body, indent, true, BINDER_BUDGET_TOP)?;
+            // Also a fresh `parse_quant_body` context, `BINDER_BUDGET_TOP`,
+            // and equally `;`-terminated -- a comprehension has no enclosing
+            // expression level to fold a bare `;` into at all.
+            self.write_operand(
+                w,
+                body,
+                BP_BINDER_BODY,
+                false,
+                true,
+                BINDER_BUDGET_TOP,
+                indent,
+            )?;
         }
         w.write_str(" }")
     }
@@ -1150,7 +1169,16 @@ impl Pretty<'_> {
             self.write_operand(w, b.value, 0, false, false, BINDER_BUDGET_NONE, indent)?;
         }
         w.write_str(" | ")?;
-        self.write_expr(w, *body, indent, rightmost, BINDER_BUDGET_TOP)
+        // As for a quantifier: a fresh body context that ends at the `;`.
+        self.write_operand(
+            w,
+            *body,
+            BP_BINDER_BODY,
+            false,
+            rightmost,
+            BINDER_BUDGET_TOP,
+            indent,
+        )
     }
 
     fn write_inline_decls<W: Write>(

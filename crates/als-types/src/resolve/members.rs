@@ -160,6 +160,7 @@ impl Resolver<'_> {
             let mut cx = Cx::new(self, module);
             cx.rootsig = Some(sig);
             cx.no_calls = !defined;
+            cx.in_field_bound = true;
             cx.field_name.clone_from(&field_name);
             cx.env
                 .push(("this".to_owned(), self.world.sigs[sig].ty.clone()));

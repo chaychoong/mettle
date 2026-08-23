@@ -686,3 +686,35 @@ fn an_inconclusive_length_never_becomes_unsat() {
         "{e:?}"
     );
 }
+
+// ===================== `;` ends the binder body (mt-116) =====================
+//
+// `;` desugars to `lhs and after rhs`, so a command carrying one is temporal
+// (mt-069 K3) and lands in this driver. Where the `;` sits relative to an
+// enclosing binder is therefore a **verdict** question, not a diagnostic one:
+// cells g05/g06 of the mt-116 wave (`scratchpad/probe/mt116/NOTES.md`) are the
+// pair that separates the two readings, both UNSAT against the reference jar
+// (`scratchpad/probe/mt069/PerCommandProbe.java`, jar defaults symmetry=20
+// noOverflow=false sat4j).
+
+/// **Cell g06** — the control: with no binder in scope, `;` is the plain
+/// top-level sequencing both tools always agreed on. `some A ; no A` at
+/// `exactly 1 A` cannot hold, in either reading.
+#[test]
+fn top_level_sequencing_solves_unsat_mt116() {
+    let src = "sig A {}\npred P { some A; no A }\nrun P for exactly 1 A\n";
+    assert_eq!(minimal_k(src, 0), None, "{src}");
+}
+
+/// **Cell g05 — the witness.** `pred P { all u: A - A | some u; no A }` at
+/// `exactly 2 A`. `A - A` is empty, so the two readings of the `;` disagree on
+/// the *verdict*, not just on a diagnostic: with the `no A` folded inside the
+/// body (mettle's parse before mt-116) the whole formula is vacuously true and
+/// mettle returned SAT with `A = {A$0, A$1}`; with the body ending at the `;`
+/// the run reduces to `after no A` alongside a vacuous quantifier, which cannot
+/// hold at `exactly 2 A`. The jar answers UNSAT.
+#[test]
+fn a_seq_after_a_vacuous_quantifier_solves_unsat_mt116() {
+    let src = "sig A {}\npred P { all u: A - A | some u; no A }\nrun P for exactly 2 A\n";
+    assert_eq!(minimal_k(src, 0), None, "{src}");
+}

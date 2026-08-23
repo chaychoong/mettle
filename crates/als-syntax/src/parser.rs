@@ -109,6 +109,24 @@ pub enum ParseError {
         /// Span of the misplaced header.
         span: Span,
     },
+    /// An `open` written after some other paragraph. Any number of `open`s may
+    /// precede each other, but the first `sig`/`fact`/`enum`/`pred`/`fun`/
+    /// `assert`/`let`/command closes the section (mt-116 cells d02/d03/d05/d06).
+    #[error(
+        "the \"open\" declaration must occur before any sig/pred/fun/fact/assert/check/run command"
+    )]
+    OpenNotFirst {
+        /// Span of the misplaced `open` paragraph.
+        span: Span,
+    },
+    /// `abstract sig S in P` — a subset signature cannot be abstract (mt-116
+    /// cells e01/e03/e05; the reference's `addSig`, which rejects the pair
+    /// whatever multiplicity qualifier or parent-union shape accompanies it).
+    #[error("subset signature cannot be abstract")]
+    AbstractSubsetSig {
+        /// Span of the `abstract` keyword itself, not of the whole sig.
+        span: Span,
+    },
     /// A scope bound outside the non-negative `u32` range.
     #[error("scope bound must be a non-negative integer")]
     BadScopeNumber {
@@ -169,6 +187,8 @@ impl ParseError {
             | Self::QualifiedDeclName { span }
             | Self::EmptyEnum { span }
             | Self::ModuleHeaderNotFirst { span }
+            | Self::OpenNotFirst { span }
+            | Self::AbstractSubsetSig { span }
             | Self::BadScopeNumber { span }
             | Self::BinderNeedsParens { span }
             | Self::TooDeep { span, .. } => *span,
@@ -673,13 +693,20 @@ impl<'src> Parser<'src> {
             end = tok.span;
             alias = Some(self.ident_of(&tok));
         }
-        self.push_para_open(Open {
+        let open = Open {
             module,
             args,
             alias,
             is_private,
             span: start.merge(end),
-        });
+        };
+        // The whole `open` section precedes every other paragraph. The
+        // reference reports the offender at its own span, so the check runs
+        // once the statement is fully parsed rather than at the keyword.
+        if !self.ast.paragraphs.is_empty() {
+            return Err(ParseError::OpenNotFirst { span: open.span });
+        }
+        self.push_para_open(open);
         Ok(())
     }
 
@@ -878,13 +905,18 @@ impl<'src> Parser<'src> {
     /// `[quals] sig A, B [extends P | in Ps | = Ps] { fields } [appended fact]`.
     fn parse_sig(&mut self) -> Result<(), ParseError> {
         let start = self.cur_span();
-        let qual = self.parse_sig_quals()?;
+        let (qual, abstract_span) = self.parse_sig_quals()?;
         self.expect(&TokenKind::Sig, "`sig`")?;
         let mut names = vec![self.parse_decl_ident()?];
         while self.eat(&TokenKind::Comma) {
             names.push(self.parse_decl_ident()?);
         }
         let parent = self.parse_sig_parent()?;
+        // `abstract` is legal on a top-level or `extends` sig, never on a
+        // subset (`in`) one — reported at the keyword, not the sig.
+        if let (Some(span), SigParent::In(_)) = (abstract_span, &parent) {
+            return Err(ParseError::AbstractSubsetSig { span });
+        }
         self.expect(&TokenKind::LBrace, "`{`")?;
         let fields = self.parse_decl_seq(&TokenKind::RBrace)?;
         let mut end = self.expect(&TokenKind::RBrace, "`}`")?.span;
@@ -906,13 +938,20 @@ impl<'src> Parser<'src> {
         Ok(())
     }
 
-    /// Zero or more `sig` qualifiers in any order, each at most once.
-    fn parse_sig_quals(&mut self) -> Result<SigQual, ParseError> {
+    /// Zero or more `sig` qualifiers in any order, each at most once, plus the
+    /// `abstract` keyword's own span when one was written (the position the
+    /// reference reports an illegal `abstract` on a subset sig at; [`SigQual`]
+    /// itself carries no spans).
+    fn parse_sig_quals(&mut self) -> Result<(SigQual, Option<Span>), ParseError> {
         let mut qual = SigQual::default();
+        let mut abstract_span = None;
         loop {
             let span = self.cur_span();
             match self.cur() {
-                TokenKind::Abstract => set_flag(&mut qual.is_abstract, span)?,
+                TokenKind::Abstract => {
+                    set_flag(&mut qual.is_abstract, span)?;
+                    abstract_span = Some(span);
+                }
                 TokenKind::Var => set_flag(&mut qual.is_var, span)?,
                 TokenKind::Private => set_flag(&mut qual.is_private, span)?,
                 TokenKind::Lone => set_mult(&mut qual.mult, SigMult::Lone, span)?,
@@ -922,7 +961,7 @@ impl<'src> Parser<'src> {
             }
             self.bump();
         }
-        Ok(qual)
+        Ok((qual, abstract_span))
     }
 
     /// `extends P` / `in P + …` / `= P + …` / nothing.
@@ -1952,25 +1991,20 @@ impl<'src> Parser<'src> {
         Ok(id)
     }
 
-    /// A binder/comprehension body: `| expr [; expr]` or a `{ block }`.
+    /// A binder/comprehension body: `| expr` or a `{ block }`.
+    ///
+    /// The `|` body **ends at the level-1 `;`** (grammar-doc section 3: `;`
+    /// sequences formulas looser than a binder body binds). The `;` is left for
+    /// the enclosing expression level to fold, so `all u: A | F ; G` is
+    /// `(all u: A | F) ; G` and `u` is free in `G` — the reference rejects it
+    /// as an unfindable name (mt-116 cells g02/g04/x02), and the two readings
+    /// are not merely a diagnostic difference: over an empty domain the
+    /// vacuous quantifier would swallow `G` entirely (cell g05, jar UNSAT).
+    /// A comprehension body has no such enclosing level, so its stranded `;`
+    /// is a parse error at the expected `}` (cell x01), again as the reference.
     fn parse_quant_body(&mut self) -> Result<ExprId, ParseError> {
         if self.eat(&TokenKind::Bar) {
-            let e = self.parse_expr_no_seq()?;
-            if self.at(&TokenKind::Semi) {
-                self.bump();
-                let rest = self.parse_expr()?;
-                let span = self.espan(e).merge(self.espan(rest));
-                Ok(self.alloc(
-                    ExprKind::Binary {
-                        op: BinOp::Seq,
-                        lhs: e,
-                        rhs: rest,
-                    },
-                    span,
-                ))
-            } else {
-                Ok(e)
-            }
+            self.parse_expr_no_seq()
         } else if self.at(&TokenKind::LBrace) {
             self.parse_block()
         } else {
