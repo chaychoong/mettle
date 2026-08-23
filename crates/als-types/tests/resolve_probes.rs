@@ -7,7 +7,7 @@
 //! (mt-015) supplies `util/*` through the normal search order, so enum/ordering
 //! and `util/integer` probes resolve without disk.
 
-use als_types::{resolve, MapLoader, ModuleGraph, ResolveError};
+use als_types::{resolve, MapLoader, ModuleGraph, ResolveError, ResolveWarning};
 
 /// Loads + resolves `src` as `root.als`, returning the first-by-position
 /// resolve error (or `Ok`). Load-phase rejects surface here too.
@@ -1311,4 +1311,127 @@ fn same_label_on_three_sigs_resolves_through_the_chosen_base_mt105c() {
         "{m}run {{ all u, u2: U | u2.dist[u] = u.dist[u2] }} for 3\n"
     ));
     accept(&format!("{m}run {{ all v: V | some v.dist[v] }} for 3\n"));
+}
+
+// ---- mt-112: join legality — arity collapse vs empty-but-legal (probe record) ----
+//
+// mt-112 pinned the reference's `IllegalJoin` rule against the jar: it fires
+// on a make-time arity collapse (result arity < 1) alone, independent of
+// whether either operand's type contains `univ`. These are the agreeing
+// cells from that probe wave — both mettle and the jar reach the same
+// verdict today, on the unmodified resolver. The accept-lean
+// `contains_univ` suppression that still overrides the rule for genuine
+// `univ` operands is exercised separately (mt-113).
+
+#[test]
+fn closure_star_join_accepted_mt112() {
+    // `A.*r`: `*r` is `univ->univ ∪ closure(r)`, but the left join keeps
+    // arity 1 (`A.(univ->univ)` = `univ`, still unary) so the whole
+    // expression never collapses. Jar: ACCEPT.
+    accept("sig A { r: A }\nrun { some A.*r }\n");
+}
+
+#[test]
+fn univ_binary_joins_accepted_mt112() {
+    // A join between `univ` and a genuine binary field never collapses
+    // arity (1 + 2 - 2 = 1), regardless of join order. Jar: ACCEPT (both).
+    accept("sig A { r: A }\nrun { some univ.r }\n");
+    accept("sig A { r: A }\nrun { some r.univ }\n");
+}
+
+#[test]
+fn ambiguous_field_merged_join_accepted_mt112() {
+    // `f` is ambiguous (A's own `f: A->A` and B's own `f: B->B`), but the
+    // merged make-time type still has a non-empty candidate: `B.f: B->B`
+    // joined with `B` survives even though `A.f: A->A` joined with `B` is
+    // empty. The make-time union check only rejects when NO candidate
+    // combination yields a legal, non-empty join. Jar: ACCEPT.
+    accept("sig A { f: A }\nsig B { f: B }\nrun { some f.B }\n");
+}
+
+#[test]
+fn column_disjoint_legal_arity_join_accepted_with_warning_mt112() {
+    // `f.B`: arity 2 . arity 1 = arity 1 — a LEGAL resultant arity — even
+    // though `A`'s own `f: A->A` shares no column type with `B`. This is
+    // not an illegal join (the arity is fine); it is a statically-empty
+    // *legal* relation, which is the A9 "join always empty" warning's
+    // territory, not `IllegalJoin`'s. (mt-112 Block B's one miss: the
+    // original prediction for this cell assumed column-disjointness alone
+    // rejects, which conflates the two mechanisms — corrected here.)
+    // Jar: ACCEPT.
+    let src = "sig A { f: A }\nsig B {}\nrun { some f.B }\n";
+    accept(src);
+    let loader = MapLoader::new().with("root.als", src);
+    let graph = ModuleGraph::load("root.als", &loader).expect("load");
+    let resolved = resolve(&graph).expect("expected ACCEPT");
+    assert!(
+        resolved
+            .warnings
+            .iter()
+            .any(|w| matches!(w, ResolveWarning::JoinEmpty { .. })),
+        "expected a join-empty warning, got {:?}",
+        resolved.warnings
+    );
+}
+
+#[test]
+fn closure_over_comprehension_arity_one_accepted_mt112() {
+    // A closure over a comprehension (`*{a,b: S | ...}`) that reduces to a
+    // binary relation joins cleanly with a unary operand — no arity
+    // collapse, regardless of the closure's internal complexity. Jar:
+    // ACCEPT.
+    accept(
+        "sig S {}\nsig E {}\nsig T { tr: S->E->S }\n\
+         run { some s: S | some s.(*{a,b: S | some e: E | a->e->b in T.tr}) }\n",
+    );
+}
+
+#[test]
+fn meta_model_join_stays_lenient_mt112() {
+    // `A$r.univ`: a genuine meta name (`A$r`) joined with `univ`. mettle's
+    // `lenient()` guard keeps a meta model accepting regardless of arity,
+    // matching the meta-model leniency already pinned by mt-108.
+    accept("sig A { r: A }\nrun { some A$r.univ }\n");
+}
+
+#[test]
+fn arity_collapse_no_univ_rejected_mt112() {
+    // `(A.^r).A`: `^r` keeps `A->A` (no `univ` involved, unlike `*r`), so
+    // `A.^r` is unary `A`, and joining that with `A` again collapses to
+    // arity 0. Jar: REJECT ("this cannot be a legal relational join").
+    let e = reject("sig A { r: A }\nrun { some (A.^r).A }\n");
+    assert!(matches!(e, ResolveError::IllegalJoin { .. }), "{e:?}");
+}
+
+#[test]
+fn narrowed_two_sig_join_rejected_mt112() {
+    // `A.f.B` and `(B.f).A`: with two sigs each owning their own `f`, the
+    // left operand narrows the ambiguous `f` to its own candidate before
+    // the outer join is even considered — `A.f`/`B.f` never survives
+    // against the other sig's relevant type. mettle rejects earlier, on
+    // its candidate-disambiguation ladder (`NameNotRelevant`: no candidate
+    // for `f` intersects the relevant type here), not on the join-arity
+    // check `IllegalJoin` fires for elsewhere in this suite. The jar's own
+    // rejection message for both is its "legal relational join" text (it
+    // resolves the merged make-time type and finds every combination
+    // empty) — same REJECT verdict, different internal mechanism; mt-112
+    // Block B notes these as non-separating consistency cells. Jar: REJECT.
+    let e = reject("sig A { f: A }\nsig B { f: B }\nrun { some A.f.B }\n");
+    assert!(matches!(e, ResolveError::NameNotRelevant { .. }), "{e:?}");
+
+    let e = reject("sig A { f: A }\nsig B { f: B }\nrun { some (B.f).A }\n");
+    assert!(matches!(e, ResolveError::NameNotRelevant { .. }), "{e:?}");
+}
+
+#[test]
+fn unrelated_unary_sigs_arity_collapse_rejected_mt112() {
+    // The column-disjoint-warning-cell follow-up control: two unrelated
+    // unary sigs joined directly (`A.B`) collapse to arity 0 regardless of
+    // type overlap — the same mechanism as
+    // `arity_collapse_no_univ_rejected_mt112`, with no field indirection
+    // at all. Confirms `IllegalJoin` is an arity rule, not a
+    // type-disjointness rule (the column-disjoint-but-legal-arity case
+    // above only warns). Jar: REJECT.
+    let e = reject("sig A {}\nsig B {}\nrun { some A.B }\n");
+    assert!(matches!(e, ResolveError::IllegalJoin { .. }), "{e:?}");
 }
