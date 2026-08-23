@@ -1104,3 +1104,32 @@ fn elevator_spl_events_command0_no_relation_position_defer() {
         );
     }
 }
+
+/// ADR-0023 phase (b) (mt-105): a bare `next` under `^`/`*` still records a
+/// choice, so an ordering model still lowers.
+///
+/// This is the regression pin for a deletion. Before the phase, the closure arm
+/// pushed the operand's own binary shape — which for a bare `next` is the whole
+/// candidate merge and therefore disambiguates nothing — and a separate
+/// recording-only retry (mt-035) re-walked the operand against `p.extract(2)`
+/// with its errors and warnings truncated, purely so lowering would find a
+/// recorded leaf. The arm now pushes the reference's `resolveClosure(p,
+/// sub.type)` on the authoritative pass, which narrows at least as far, so the
+/// retry was removed as a duplicate walk.
+///
+/// The two are genuinely coupled: with the retry deleted and the old
+/// approximate type restored, these commands defer with "name without a
+/// recorded resolution". Keep them here so a future edit to the closure arm's
+/// pushed type cannot quietly reintroduce that deferral — the resolve gauge
+/// measures verdicts only and would not see it.
+#[test]
+fn ordering_closure_records_its_leaf_choice_mt105b() {
+    for src in [
+        "open util/ordering[S]\nsig S {}\nrun { all s: S | s in first.*next } for 3\n",
+        "open util/ordering[S]\nsig S { f: S }\nrun { all s: S | s.f in s.*next } for 3\n",
+        "open util/ordering[S]\nsig S { f: S }\nrun { all s: S | s.f in s.^next } for 3\n",
+        "open util/ordering[S]\nsig S {}\nfact { S = first.*next }\nrun {} for 3\n",
+    ] {
+        assert!(try_build(src).is_ok(), "expected lower, deferred\n{src}");
+    }
+}

@@ -1080,3 +1080,133 @@ fn mult_call_argument_rejected_mt111() {
     reject_mult("sig A {}\npred p[x: A] { some x }\nrun { p[(set A)] } for 3\n");
     // p09
 }
+
+// ---- ADR-0023 phase (b): the faithful closure operand type (mt-105) ----
+//
+// The `^`/`*` arm now pushes the reference's `resolveClosure(p, sub.type)` to
+// its operand instead of the operand's own binary shape. Measured effect on the
+// 150,891-code alloy4fun gauge: **none** — verdicts, error variants and
+// warnings are byte-identical to the pre-change run. That is not an accident
+// and it is what these tests pin: every route by which the narrower operand
+// type could turn an ACCEPT into a REJECT runs through a *compound right
+// operand* of a join, whose errors `Fin::Join` still truncates. Phase (d)
+// removes that truncation, and only then do the six jar-REJECT cells below
+// flip. Until it does, they are load-bearing ACCEPTs: a premature flip here
+// means the tightening escaped its phase.
+//
+// Cells are `scratchpad/probe/mt102/{v,w,x}/`, each with a jar verdict from
+// mt-102's `ParseOnly` harness (2026-08-22).
+
+/// The four-`next` ambiguity fixture the whole thread is built on: three
+/// `util/ordering` opens plus the auto-opened `util/integer`, so a bare `next`
+/// has four candidates. `body` goes inside `run { ... }`.
+fn ord4(body: &str) -> String {
+    format!(
+        "module m\n\
+         open util/ordering[Time] as T\n\
+         open util/ordering[VSS] as V\n\
+         open util/ordering[TTD] as D\n\
+         sig Time {{}}\n\
+         sig VSS {{}}\n\
+         sig TTD {{}}\n\
+         sig Train {{ MA: VSS one -> Time }}\n\
+         run {{ {body} }} for 3\n"
+    )
+}
+
+/// The jar-OK half of the cell matrix — every one reaches the closure arm and
+/// every one must stay accepted, in this phase and in all later ones. x05 and
+/// v01 are called out by ADR-0023 as the live negative space: x05's inner left
+/// operand types `Time` (against x02's `univ`), which is the single type
+/// difference that decides accept-vs-reject, and v01 is the `ertms_1A[5]`
+/// shape phase (c) has to lower.
+#[test]
+fn closure_operand_jar_ok_cells_still_accept_mt105b() {
+    // v01/x01/w01 — the ertms shape; x03 parenthesized; v09 parenthesized left.
+    accept(&ord4(
+        "some tr1: Train, t6: Time | tr1.MA.(t6.*next) = V/last",
+    ));
+    accept(&ord4(
+        "some tr1: Train, t6: Time | (tr1.MA).(t6.*next) = V/last",
+    ));
+    accept(&ord4(
+        "some tr1: Train, t6: Time | tr1.MA.((t6).*next) = V/last",
+    ));
+    // x05 — compound (join) left operand, types `Time`. ADR-0023 negative space.
+    accept(&ord4(
+        "some tr: Train, t: Time, v: VSS | tr.MA.((v.(tr.MA)).*next) = V/last",
+    ));
+    // v02/v03 — the same shape reached through `let`.
+    accept(&ord4(
+        "some tr1: Train | let t6 = T/first | tr1.MA.(t6.*next) = V/last",
+    ));
+    accept(&ord4(
+        "some tr1: Train | let t0 = T/first, t6 = t0.next | tr1.MA.(t6.*next) = V/last",
+    ));
+    // v04/v05 — the unambiguous controls: no closure, and qualified.
+    accept(&ord4(
+        "some tr1: Train, t6: Time | tr1.MA.(t6.next) = V/last",
+    ));
+    accept(&ord4(
+        "some tr1: Train, t6: Time | tr1.MA.(t6.*T/next) = V/last",
+    ));
+    // w04/w05/w06 — `^`, `~`, and a union operand under the same slice.
+    accept(&ord4("some tr: Train, t: Time | tr.MA.(t.^next) = V/last"));
+    accept(&ord4("some tr: Train, t: Time | tr.MA.(t.~next) = V/last"));
+    accept(&ord4(
+        "some tr: Train, t: Time | tr.MA.(t.(next+next)) = V/last",
+    ));
+    // w10 — `=` intersects both sides, so the slice is `Time->Time`. Contrast
+    // w11 below, which is the same join under `in` and rejects jar-side.
+    accept(&ord4("some t: Time, t2: Time | (t.*next) = t2"));
+    // v07/x04 — the closure under an outer `some` / `in`, both jar-OK.
+    accept(&ord4("some tr1: Train, t6: Time | some tr1.MA.(t6.*next)"));
+    accept(&ord4("some tr: Train, t: Time | tr.MA.(t.*next) in VSS"));
+}
+
+/// The 28,402-cliff guard. ADR-0009's failed tightening filtered `*next`
+/// against the compound's *own* bottom-up type (`univ->univ`, which excludes
+/// nothing) and rejected essentially every `util/ordering` model. Nothing in
+/// this phase may put those back: an ordering model whose `next` is ambiguous
+/// only with the auto-opened `util/integer` — the overwhelmingly common shape —
+/// stays accepted under `*`, `^` and `~` alike.
+#[test]
+fn ordering_closure_cliff_shape_still_accepts_mt105b() {
+    accept("open util/ordering[S]\nsig S {}\nrun { all s: S | s in first.*next } for 3\n");
+    accept("open util/ordering[S]\nsig S { f: S }\nrun { all s: S | s.f in s.*next } for 3\n");
+    accept("open util/ordering[S]\nsig S { f: S }\nrun { all s: S | s.f in s.^next } for 3\n");
+    accept("open util/ordering[S]\nsig S { f: S }\nrun { all s: S | s.f in s.~next } for 3\n");
+    accept("open util/ordering[S]\nsig S {}\nfact { S = first.*next }\nrun {} for 3\n");
+}
+
+/// The six jar-REJECT cells, asserted as **still accepting** — phase (b)'s
+/// negative space in the other direction. Each one's reject route is an error
+/// raised inside a compound right operand and thrown away by `Fin::Join`'s
+/// truncation, so the closure fix cannot reach it yet. Phase (d) un-truncates
+/// and turns this test into its flip list: x02/w03 (inner left types `univ`
+/// because `*` yields `univ->univ`), v06/v08/w09 (`some` pushes the operand's
+/// own type), w02 (left matches no ordering), w11 (`in` keeps the left's own
+/// type), w07/w08 (two orderings linked by `resolveClosure` reachability across
+/// `sig B extends A`).
+#[test]
+fn compound_operand_rejects_are_still_deferred_to_phase_d_mt105b() {
+    accept(&ord4(
+        "some tr: Train, t: Time | tr.MA.((t.*T/next).*next) = V/last", // x02, w03
+    ));
+    accept(&ord4("some t6: Time | some (t6.*next)")); // v06, v08, w09
+    accept(&ord4("some tr: Train, x: Train | some (x.*next)")); // w02
+    accept(&ord4("some t: Time | (t.*next) in Time")); // w11
+
+    // w07/w08 — orderings over both `A` and `B extends A`.
+    for (v, s) in [("b", "B"), ("a", "A")] {
+        accept(&format!(
+            "module m\n\
+             open util/ordering[A] as OA\n\
+             open util/ordering[B] as OB\n\
+             sig A {{}}\n\
+             sig B extends A {{}}\n\
+             sig Holder {{ f: A one -> A }}\n\
+             run {{ some h: Holder, {v}: {s} | h.f.({v}.*next) = h.f.({v}.*next) }} for 3\n"
+        ));
+    }
+}

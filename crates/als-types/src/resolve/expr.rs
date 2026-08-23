@@ -1109,38 +1109,21 @@ impl<'a, 'g> Cx<'a, 'g> {
             }
             UnOp::Closure | UnOp::ReflexiveClosure => {
                 let subt = self.infer(e);
-                // resolveClosure(p, sub.type) narrows the operand to its binary
-                // part; mettle approximates with the operand's own binary shape
-                // (closure-operand ambiguity is negligible for the verdict).
-                let s = {
-                    let c = subt.extract(&self.r.world, 2);
-                    if c.has_entries() {
-                        c
-                    } else {
-                        subt.clone()
-                    }
+                // `resolveClosure(p, sub.type)`: the operand's binary tuples that
+                // lie on a closure path through the relevant type `p`. This is the
+                // reference's own narrowing, so an ambiguous `next`/`prev` under
+                // `^`/`*` inside a join sees the disambiguating binary shape.
+                let s_pre = self.resolve_closure(p, &subt);
+                // A2 (does not contribute), decided here so `s_pre` can be moved
+                // into `s`; pushed below, after A1, to keep the warning order.
+                let a2 = s_pre.is_error() && p.has_tuple(&self.r.world);
+                let s = if s_pre.has_entries() {
+                    s_pre
+                } else {
+                    subt.clone()
                 };
                 let mut sub = self.resolve(e, &s);
                 self.typecheck_as_set(&mut sub, e);
-                // Recording-only precise pass (mt-035): the operand type `s` above
-                // is the operand's own binary shape, which leaves a bare `next`/
-                // `prev` under `^`/`*` ambiguous between `util/ordering`'s
-                // `elem->elem` and the auto-opened `util/integer`'s `Int->Int` — so
-                // no choice is recorded and lowering an ordering model defers. When
-                // this closure sits inside a join, the context relevant type `p`
-                // carries the disambiguating binary shape (the reference's
-                // `resolveClosure(p, sub.type)`). Re-resolve the operand against
-                // `p`'s binary part purely to record the right leaf choice; discard
-                // the type AND truncate errors + warnings so the accept/reject +
-                // warning gauge stays byte-identical (invariance rule).
-                let pbin = p.extract(&self.r.world, 2);
-                if pbin.has_entries() {
-                    let nerr = self.errors.len();
-                    let nwarn = self.warnings.len();
-                    let _ = self.resolve(e, &pbin);
-                    self.errors.truncate(nerr);
-                    self.warnings.truncate(nwarn);
-                }
                 let closed = sub.ty.closure(&self.r.world);
                 if !sub.err && closed.is_error() && !self.lenient() {
                     self.err(ResolveError::UnaryNotBinary {
@@ -1169,13 +1152,11 @@ impl<'a, 'g> Cx<'a, 'g> {
                             .push(ResolveWarning::ClosureRedundant { span });
                     }
                 }
-                // A2 (does not contribute): the operand's relevant contribution
-                // to the parent type is empty (`resolveClosure(p, sub.type) ==
-                // EMPTY && p.hasTuple()`, §5.2). Computed on the bottom-up operand
-                // type; used for the warning decision only (the *pushed* relevant
-                // type is unchanged, so the verdict is untouched).
-                let s_a2 = self.resolve_closure(p, &self.infer(e));
-                if s_a2.is_error() && p.has_tuple(&self.r.world) {
+                // A2 (does not contribute): the operand's relevant contribution to
+                // the parent type is empty (`resolveClosure(p, sub.type) == EMPTY
+                // && p.hasTuple()`, §5.2) — decided above, on the bottom-up operand
+                // type, before `s_pre` was consumed.
+                if a2 {
                     self.warnings.push(ResolveWarning::DoesNotContribute {
                         span: self.expr(e).span,
                     });
