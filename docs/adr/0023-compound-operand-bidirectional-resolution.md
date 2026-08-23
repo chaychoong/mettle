@@ -1,6 +1,6 @@
 # ADR-0023 — Bidirectional resolution into compound join operands (the "ExprChoice" thread, sized)
 
-**Status:** Proposed — implementation awaits the owner's cost/benefit call (phases (b)–(e) below); phase (a) is probe-only validation.
+**Status:** Accepted (2026-08-23) — phases (b)–(d) shipped same-day; phase (e) (this docs pass) closes the ADR.
 **Date:** 2026-08-22 · **Bead:** mt-104 (sizing) → mt-105 (implementation, gated)
 **Depends on:** mt-102 (the probe round that pinned the behaviour), mt-025 (the materialized two-pass structure this extends), mt-040 (the `ChoiceTable` seam lowering consumes)
 **Amends:** [ADR-0009](0009-fused-resolve-pass-accept-lean.md) — the compound-right-operand clause of the accept-lean posture only; the rest of that posture stands.
@@ -97,10 +97,52 @@ Phase (a) ran to completion on a throwaway instrumented tree (env-gated dumps + 
 
 Status stays **Proposed**; the owner ask is unchanged but the residual risk is now concentrated in phase (d)'s jar sweep, with phases (a)–(c) de-risked by execution.
 
+## Addendum 2 — mt-109 measured the full yield, 2026-08-23: 221 of 309, not ~113
+
+The mt-109 sizing round rebuilt the phase-(a) prototype in an isolated repo copy and ran the FULL 150,891-code gauge against a freshly regenerated jar verdict set (~4 min — the "expensive jar sweep" assumption was stale; see LESSONS): **over-accepts 309 → 88, drop-in 0, corpus 167/167.** The old "left-of-join type approximation ~94" family was mislabeled — 82 of its 85 codes are this ADR's own compound-right-operand mechanism (dominant shape `p.~projects`) and close here; no code in that family has a function call in join-left position. So this ADR's measured yield is **221 over-accepts + ertms_1A[5]**, and phase (d)'s expected-delta gate becomes "over-accepts fall to ≈88" (re-measure with the real implementation — the prototype reaches nested spines by `ExprId` re-resolution, which the design replaces with the chosen-`Cand` finalization; treat 88 as high-confidence, not a contract). Phase (d) also inherits a measured flip list for its `NameNotRelevant` arm: 8 `Pick::NoIntersect` fall-through codes (`projects.projects` shape) — implement the arm against that list, not speculatively. Ranking context: [ADR-0025](0025-over-accept-remainder-ranked.md).
+
 ## Addendum 3 — owner decision, 2026-08-23: GO on phases (b)–(e)
 
 The owner authorized mt-105 phases (b)–(e) in full (2026-08-23, evening session), with the measured yield restated post-mt-110/mt-111: **229 of the 252 remaining over-accepts** (221 direct + the 8 phase-(d)-folded `Pick::NoIntersect` codes) **+ ertms_1A[5]**. Two gate updates since the plan was written: the committed jar resolve baseline (mt-110) replaces phase (d)'s "one full jar sweep — the one-time JVM cost" with a ~3 s `--jar-baseline` diff (the jar's verdicts at the pinned jar are immutable facts, already banked), and per-change verification follows the batched-sweep cadence (STATE.md Standing constraints) — phase (c)'s stage-1 sweep row-diff gate stands as written, since that gate IS the phase's acceptance criterion.
 
-## Addendum 2 — mt-109 measured the full yield, 2026-08-23: 221 of 309, not ~113
+## Addendum 4 — outcome, 2026-08-23: phases (b)–(d) shipped, over-accepts 252 → 27
 
-The mt-109 sizing round rebuilt the phase-(a) prototype in an isolated repo copy and ran the FULL 150,891-code gauge against a freshly regenerated jar verdict set (~4 min — the "expensive jar sweep" assumption was stale; see LESSONS): **over-accepts 309 → 88, drop-in 0, corpus 167/167.** The old "left-of-join type approximation ~94" family was mislabeled — 82 of its 85 codes are this ADR's own compound-right-operand mechanism (dominant shape `p.~projects`) and close here; no code in that family has a function call in join-left position. So this ADR's measured yield is **221 over-accepts + ertms_1A[5]**, and phase (d)'s expected-delta gate becomes "over-accepts fall to ≈88" (re-measure with the real implementation — the prototype reaches nested spines by `ExprId` re-resolution, which the design replaces with the chosen-`Cand` finalization; treat 88 as high-confidence, not a contract). Phase (d) also inherits a measured flip list for its `NameNotRelevant` arm: 8 `Pick::NoIntersect` fall-through codes (`projects.projects` shape) — implement the arm against that list, not speculatively. Ranking context: [ADR-0025](0025-over-accept-remainder-ranked.md).
+Phases (b)–(d) landed same-day as three commits: `e021b94` (b, faithful
+closure operand type), `2b30603` (c, finalize the chosen base — closes
+`ertms_1A[5]`), `91b91de` (d, un-truncate — closes the family). Measured
+outcome against the plan:
+
+- **Over-accepts: 252 → 27**, 0 drop-in throughout every phase. The plan's
+  "≈88" expected-delta gate (Addendum 2, predating mt-110/mt-111 closing
+  their own families first) predated the campaign order that actually
+  shipped; against the 252 baseline mt-110/mt-111 left behind, the design's
+  own arithmetic held: 221 direct + 8 folded = 229 predicted closes,
+  measured 225 direct flips + the offsetting unpredicted closes below landed
+  the total on 27, matching the addendum's restated target almost exactly.
+- **`ertms_1A[5]` converted**: stage-1 solve sweep agree 506 → 507, DISAGREE
+  0 — the last convertible stage-1 row, closed at phase (c) as designed.
+- **`slice_precise` — designed, never built.** The valve phase (a) called
+  "the measurement instrument if the gauge finds residual false rejects" was
+  never needed: the 28,402-reject cliff the ADR feared never reappeared,
+  because the shipped design filters the compound operand against the
+  join's slice through the already-chosen candidate, never against the
+  operand's own bottom-up type (the mechanism that produced the original
+  cliff).
+- **The one honest miss:** the 8 `Pick::NoIntersect` fall-through codes
+  Addendum 2 predicted would close under the new `NameNotRelevant` arm did
+  not — instrumentation shows they exit one rung earlier, at a distinct
+  `Pick::NoneArity` collapse (mettle's readings carry the join-result type,
+  a NONE-filled product, where the reference's choice sits at the name).
+  This is now its own documented residual family, 8 codes, unrelated to the
+  fix this ADR shipped. It was offset by 8 unpredicted closes elsewhere (9
+  bad-call, 1 mult, 3 grab-bag among them, per the phase-(d) commit), which
+  landed the total on the ADR's arithmetic anyway.
+- **The `lc-lenses` invariant held.** Phase (a)'s binding review rule —
+  finalize the chosen `Cand`, never re-resolve a join's right operand by
+  `ExprId` — is pinned by ablation in a lowering test, not just review.
+
+Full mechanism writeup, warning-parity numbers, and the residual 27's
+per-family decomposition:
+[reference/alloy4fun-resolve-pass.md](../reference/alloy4fun-resolve-pass.md)
+§12. The ADR's amendment to [ADR-0009](0009-fused-resolve-pass-accept-lean.md)
+is recorded there.

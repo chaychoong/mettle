@@ -87,3 +87,29 @@ starts firing). Full data: [reference/alloy4fun-resolve-pass.md](../reference/al
   ends at the same fidelity.
 - **Keep the deviation as a report footnote.** Rejected: ADR-0008 is a binding
   Accepted decision; deviating from it silently would rot the decision trail.
+
+## Amendment (mt-105/ADR-0023, 2026-08-23): the compound-right-operand clause deleted
+
+The accept-lean posture this ADR accepted had one specific clause: a join's
+compound right operand (`t.*next`, `x.(y.z)`) kept its bottom-up type for the
+verdict, with any resolve errors from resolving it truncated. mt-025 measured
+the naive alternative — resolving the compound standalone — at 28,402 false
+rejects, so the leniency stood.
+
+[ADR-0023](0023-compound-operand-bidirectional-resolution.md), shipped as
+mt-105 phases (b)–(d) (2026-08-23, commits `e021b94`/`2b30603`/`91b91de`),
+deletes that clause from the shipped resolver. The compound right operand now
+finalizes in place through the join's already-chosen candidate against the
+join's precise right slice, and its errors reach the verdict — the feared
+28,402-reject cliff never reappeared, because the new pass never filters the
+operand against its own bottom-up type (the mechanism that produced the
+cliff); it filters against the join's slice instead. Measured over all
+150,891 alloy4fun codes: 225 accept→reject flips, every one jar-rejected,
+zero flips the other way, 0 drop-in throughout.
+
+**The rest of the accept-lean posture stands** — the lenient `$`-meta gate
+(narrowed but not removed at mt-108), the `univ`-guard suppression of
+`IllegalJoin`, and the general "mettle never wrongly rejects" bias are all
+still in force. Only the compound-right-operand clause is gone. Full record:
+[reference/alloy4fun-resolve-pass.md](../reference/alloy4fun-resolve-pass.md)
+§12, LIMITATIONS.md.

@@ -495,3 +495,131 @@ reference's `seenDollar` is) — a model containing one genuine meta name
 resolves accept-lean everywhere. Pinned by
 `one_meta_name_leniences_the_whole_model_mt108` so it reads as a decision, not
 a hole. Tests: 6 `_mt108` fns in `crates/als-types/tests/resolve_probes.rs`.
+
+## 12. mt-105 phases (b)–(d) — bidirectional resolution into compound join operands (2026-08-23)
+
+[ADR-0023](../adr/0023-compound-operand-bidirectional-resolution.md), shipped
+same-day as three commits:
+
+- `e021b94` (types(resolve): push the faithful resolveClosure type into
+  closure operands (mt-105 phase b), 2026-08-23)
+- `2b30603` (types(resolve): finalize a join's compound right operand
+  through the chosen candidate (mt-105 phase c), 2026-08-23)
+- `91b91de` (types(resolve): let compound-operand errors reach the verdict
+  (mt-105 phase d), 2026-08-23)
+
+Between them (and mt-110/mt-111 landing the same day — see the campaign-trail
+note below), the resolver's last deliberate leniency from ADR-0009 — a join's
+compound right operand keeping its bottom-up type with resolve errors
+truncated — is gone, and over-accepts fall **252 → 27** with **0 drop-in**
+throughout.
+
+### 12.1 What changed mechanically
+
+The reference distributes candidate sets bottom-up through compound operators
+(`ExprUnary.Op.make` keeps the merged type) and disambiguates later, when the
+enclosing operator pushes a narrowed relevant type down onto the choice node
+(`ExprChoice.resolveHelper`). mettle already had both halves of that shape —
+the bottom-up merge in `Cx::infer`, the top-down filter in
+`pick_name`/`pick_reading` → `resolve_helper` — but the relevant type never
+reached the choice node in two positions:
+
+- **Phase (b) — G1, the closure arm.** `unary_r`'s `Closure`/`ReflexiveClosure`
+  arm pushed `subt.extract(2)` (the operand's own binary shape) instead of the
+  faithful `resolve_closure(p, subt)`, which already existed but was only used
+  for the A2 warning. For an ambiguous `next` that approximation is the full
+  merge, so the filter excludes nothing. The fix pushes `resolve_closure`
+  itself; the mt-035 recording-only retry that existed solely to paper over
+  the gap is deleted (net −19 lines). Verified byte-identical on every
+  measurable surface — the resolve gauge shows zero changed verdicts, phases,
+  error variants, or warning lists over all 150,891 codes.
+- **Phase (c) — G2 structure.** `Cand` (bare names) and `Reading` (application
+  spines) unify into one struct, and `Fin::Join` carries the chosen base
+  candidate itself (`base: Box<Cand>`) rather than a `RecNode` shadow of it —
+  deleting `RecNode`, `flush_rec`, `rec_of`, and `record_operand` (net −75
+  lines). Finalization now resolves a join's compound right operand **in
+  place**, through the already-chosen candidate, against the join's right
+  slice, recursively — so every recorded choice is by construction one the
+  verdict path validated. This closes the mechanism behind `ertms_1A[5]`: the
+  old `record_operand` filtered the compound operand against its own
+  bottom-up type (`univ->univ` for `*next`, which excludes nothing), so no
+  choice was ever recorded and lowering deferred forever. Errors stay
+  truncated in this phase (verdict-neutral by construction); the resolve
+  gauge is byte-identical (sha `3bdbac93…`); the stage-1 solve sweep's only
+  row-diff is exactly `ertms_1A.als[5]` moving lowering-defer → agree_sat
+  (agree 506 → **507**, DISAGREE 0).
+- **Phase (d) — un-truncate.** `finalize_join_base` now returns its `R`, so an
+  error inside a join's compound right operand counts against the verdict
+  instead of being discarded; the join arm propagates the base's error and
+  suppresses `IllegalJoin`/the A9 join-empty warning whenever either resolved
+  operand already errored (the reference's error-cascade rule). Measured over
+  all 150,891 codes: **225 accept→reject flips, every one jar-rejected, zero
+  flips the other way** — over-accepts fall **252 → 27**, drop-in still 0. The
+  feared 28,402-reject cliff (the reason the leniency existed in the first
+  place, per ADR-0009) never appeared, because the operand is finalized
+  through the already-chosen candidate against the join's right slice, never
+  re-filtered against its own type — the `slice_precise` valve the ADR
+  designed as a fallback instrument was never needed.
+
+A new error variant, `ResolveError::NameNotRelevant`, carries the jar's third
+message form (probed live: "This name cannot be resolved; its relevant type
+does not intersect with any of the following candidates", followed by the
+**full** candidate list — the no-intersect case has no survivor subset, so
+`pick_name`'s existing list was already right and only its label was wrong).
+Both the leaf arm (formerly mislabeled `AmbiguousName`) and the spine
+fall-through (formerly a silent accept) emit it; the CLI renders both
+variants' candidate lists as note lines under the caret
+(`crates/mettle/src/diagnostics.rs::error_notes`/`render_error`), wired
+through `check`, `exec`, and the REPL.
+
+### 12.2 Warning parity moved strictly jar-ward
+
+Verified exhaustively rather than sampled: 136 codes gained warnings with
+unchanged verdicts, every new warning on a line the jar also warns on.
+Matched files **101,767 → 101,772**; mettle-missing **186 → 181**;
+mettle-extra unchanged.
+
+### 12.3 The lc-lenses invariant
+
+Phase (a)'s validation caught a prototype defect that became a binding
+phase-(c) review invariant: **finalize the chosen `Cand`, never re-resolve a
+join's right operand by `ExprId`** — re-resolving re-runs candidate
+selection and wrongly rejects a model with the same-named field declared on
+several sigs (`lc-lenses.als`, three sigs each declaring a field `dist`; jar
+OK). The shipped design cannot do this by construction (`Fin::Join` carries
+the already-chosen candidate, not an id to re-look-up), and it is pinned by
+ablation, not just review: a lowering test with the re-resolve spelling
+restored fails while `corpus_resolve` still reports 167/167 — the damage is
+invisible to every verdict-level instrument under phase (c)'s truncation and
+would only surface as a drop-in violation once the truncation goes.
+
+### 12.4 The `Pick::NoneArity` residual family
+
+One prediction failed honestly: mt-109 §3.2 predicted 8 `Pick::NoIntersect`
+fall-through codes (the `projects.projects` same-named-field-on-both-sides
+shape) would close under the new `NameNotRelevant` arm. Measured, they did
+not — instrumentation shows they exit one rung earlier, at a distinct
+`Pick::NoneArity` collapse: mettle's readings there carry the join-result
+type (a NONE-filled product) rather than the name-level candidate set
+`NameNotRelevant` filters against, so `finalize_reading` falls through to the
+first reading and accepts. This is now its own documented residual family (8
+codes; LIMITATIONS.md, resolve/typecheck-level divergences). Eight
+unpredicted codes closed elsewhere instead (9 bad-call, 1 mult, 3 grab-bag
+among them, per the phase-(d) commit) and landed the ADR's arithmetic on the
+predicted total anyway.
+
+### 12.5 Campaign trail and the residual 27
+
+mt-105 phases (b)–(d) were the last of four same-day landings against the
+[ADR-0025](../adr/0025-over-accept-remainder-ranked.md) ranking: **mt-108**
+narrowed the `seen_dollar` gate (314 → 309, §11 above); **mt-110** closed the
+three cheap resolver leniencies (309 → 290); **mt-111** shipped the
+LEDGER-016 multiplicity positional rule (290 → 252); this bead closed the
+compound-right-operand family (252 → 27). The residual 27 decomposes as:
+illegal join / `univ`-`$` placeholder suppression 10 (7 via a literal `*`
+closure, 2 via a plain `univ`-quantified variable, 1 via the `$`-meta-name
+leniency — mt-107's deferred `Sig$` metamodel feature owns that one),
+`Pick::NoneArity` 8 (§12.4), int-cast slice 3 (mt-109 §2.2, documented
+defer), declaration-order 2, name-not-found one-offs 2, `Subset abstract` 1,
+and the negated-`in` mult asymmetry 1 — full per-code table in
+`scratchpad/probe/mt105e/decomposition.md` (git-ignored, banked).

@@ -113,6 +113,10 @@ pub fn render_with_notes(
 
 /// The candidate list a [`ResolveError`] carries, as one note line each — the
 /// reference's `reasons`, which the error message itself does not name.
+///
+/// Doc contract: the `_ =>` catch-all below means a future `ResolveError`
+/// variant that carries its own `candidates` renders NO candidate list until
+/// it is added to the match here explicitly.
 #[must_use]
 pub fn error_notes(err: &ResolveError) -> Vec<String> {
     let (ResolveError::AmbiguousName { candidates, .. }

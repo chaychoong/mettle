@@ -33,3 +33,63 @@ The ADR-0023 phase-(a) prototype (closure fix + un-truncation + nested-spine rea
 
 - The owner's decision surface is now exactly three calls: **ADR-0023 go/no-go** (measured 221 + ertms_1A[5]), **ADR-0024/mt-107** (recommended never), and the standing compute-tail fork. Everything else is authorized tech-lead-scope work or documented defers.
 - LIMITATIONS gains the three defer families with their mechanisms so none is re-derived a third time.
+
+## Outcome, 2026-08-23: the packet's arithmetic landed
+
+All four ranked items shipped same-day: **mt-108** narrowed the `seen_dollar`
+gate (314 → 309), **mt-110** closed the 19 cheap leniencies (309 → 290),
+**mt-111** shipped LEDGER-016 (290 → 252), and **ADR-0023 phases (b)–(d)**
+(mt-105) closed the compound-right-operand family (252 → **27**), 0 drop-in
+throughout every step. The residual 27 is decomposed per-code at
+[reference/alloy4fun-resolve-pass.md](../reference/alloy4fun-resolve-pass.md)
+§12 and `scratchpad/probe/mt105e/decomposition.md` (banked); the family
+totals against this ADR's items:
+
+- **Item 6, illegal-join under `*`-closure — predicted 12, measured 10, and
+  the mechanism is narrower than the label.** Of the 10 residual: 7 are the
+  predicted `*`/`^` closure shape; 2 are a plain variable quantified
+  directly over `univ` reaching the same `IllegalJoin`-suppression guard
+  (not a `*` at all, but the identical guard); 1 (`Course$projects`) is a
+  **different** mechanism entirely — a genuine `S$f` meta-field name the
+  mt-108-narrowed gate correctly recognizes but cannot fully resolve, owned
+  by the deferred `Sig$` metamodel (mt-107), not by the `IllegalJoin` guard.
+  The open probe question (resolved-vs-make-time join legality) stays filed
+  against the 9 `univ`-triggered codes; it does not apply to the
+  `$`-triggered one.
+- **Item 5, int-cast slice — predicted 3, measured 3, unchanged.** Still the
+  documented defer: cliff-shaped risk (every `int x.f` would route through
+  the broadest slice) against a 3-code yield.
+- **Item 7, grab-bag — predicted 9, 6 remain (measured), the other 3 closed
+  unpredicted.** Of the original 9 (mt-109 §3.6: 3 name-not-found misc, 2
+  declaration-order, 1 `Subset abstract`, 1 `set-of`-adjacent mult, 1
+  failed-to-typecheck residue, 1 `Ad.p`/`iden` illegal-join misc): 1
+  (`Ad.p`/`iden`) is now correctly re-bucketed under item 6's illegal-join
+  family rather than left as grab-bag, leaving 5 measured in the current 27
+  (2 declaration-order, 1 `Subset abstract`, 2 of the 3 name-not-found
+  one-offs). The remaining 3 of the original 9 — the third name-not-found
+  code, the `set-of`-adjacent mult code, and the failed-to-typecheck residue
+  — closed, matching the phase-(d) commit's own "3 grab-bag" count among its
+  offsetting unpredicted closes; which specific codes is not independently
+  traceable, since mt-109 sized this family by jar-reject-class count from a
+  fresh sweep, not a preserved per-code list.
+- **Item 6's 12→10 delta (the "2 bonus defer closes") is likewise not
+  individually traceable for the same reason** — mt-109's illegal-join
+  count came from a class-level jar tally, not a banked code list, so which
+  2 of the originally-estimated 12 converted cannot be recovered after the
+  fact. What is measured directly, from the current 27: the residual 10 is
+  narrower than the label suggests — see item 6 above.
+- **A new family this ADR did not predict: `Pick::NoneArity`, 8 codes.**
+  Item 3 (folded into ADR-0023 phase (d) as the `Pick::NoIntersect`
+  fall-through, 8 codes, `projects.projects` shape) turned out to be the
+  wrong mechanism — the codes exit at a distinct `Pick::NoneArity` collapse
+  one rung earlier, not the `NameNotRelevant` arm phase (d) built for them.
+  **Correction to mt-109 §3.2 (and anywhere it is cited from this ADR): the
+  attribution is wrong — read "8 `Pick::NoneArity` codes", not
+  "`Pick::NoIntersect`".** The 8 codes still ship inside phase (d)'s scope
+  as claimed; only the arm that would have closed them was the wrong one.
+  Now its own documented residual family (LIMITATIONS.md,
+  reference-doc §12.4).
+
+**Net:** every item this ADR ranked was acted on the same day it was
+authorized, and the honest floor it forecast (~25–30 residual, each
+individually understood) landed almost exactly at 27.
