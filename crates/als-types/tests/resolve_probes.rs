@@ -1435,3 +1435,94 @@ fn unrelated_unary_sigs_arity_collapse_rejected_mt112() {
     let e = reject("sig A {}\nsig B {}\nrun { some A.B }\n");
     assert!(matches!(e, ResolveError::IllegalJoin { .. }), "{e:?}");
 }
+
+// ---- mt-113: the fix — `univ`-typed operands are no longer a suppression ----
+//
+// The two `contains_univ` conjuncts removed from the `IllegalJoin` condition
+// (mt-112's H3 prototype, confirmed against the 150,891-code alloy4fun diff:
+// 0 drop-in violations, over-accepts 27 → 18). These are the 9 real
+// over-accepts that fix closes — every one now REJECTs, matching the jar.
+
+#[test]
+fn univ_dot_univ_rejected_mt113() {
+    // `univ.univ`: both operands are the genuine `univ` unary type — arity
+    // 1.1 = 0. Jar: REJECT.
+    let e = reject("sig A {}\nrun { some univ.univ }\n");
+    assert!(matches!(e, ResolveError::IllegalJoin { .. }), "{e:?}");
+}
+
+#[test]
+fn closure_star_join_then_unary_rejected_mt113() {
+    // `(A.*r).A`: `A.*r` is unary (`univ`, via `*r`'s `univ->univ` leg), so
+    // the outer join with `A` collapses to arity 0 — the 076666 shape.
+    // Jar: REJECT.
+    let e = reject("sig A { r: A }\nrun { some (A.*r).A }\n");
+    assert!(matches!(e, ResolveError::IllegalJoin { .. }), "{e:?}");
+}
+
+#[test]
+fn quantified_univ_var_joined_with_sig_rejected_mt113() {
+    // `A.x` with `x: univ`: `A` and `x` are both unary — the 096458 shape.
+    // Jar: REJECT.
+    let e = reject("sig A { r: A }\nrun { all x: univ | some A.x }\n");
+    assert!(matches!(e, ResolveError::IllegalJoin { .. }), "{e:?}");
+}
+
+#[test]
+fn quantified_univ_var_self_joined_rejected_mt113() {
+    // `p.p` with `p: univ`: both operands are the same unary quantified
+    // variable. Jar: REJECT.
+    let e = reject("sig A {}\nrun { all p: univ | some p.p }\n");
+    assert!(matches!(e, ResolveError::IllegalJoin { .. }), "{e:?}");
+}
+
+#[test]
+fn real_code_076666_minimized_rejected_mt113() {
+    // `Track.*succs.Entry`: `Track.*succs` is unary `univ` (via `*succs`'s
+    // `univ->univ` leg), then `.Entry` collapses arity to 0.
+    let e = reject(
+        "sig Track { succs: set Track }\nsig Entry in Track {}\n\
+         pred p { no Track.*succs.Entry }\n",
+    );
+    assert!(matches!(e, ResolveError::IllegalJoin { .. }), "{e:?}");
+}
+
+#[test]
+fn real_code_083413_minimized_rejected_mt113() {
+    // `e.*succs.t` under a quantifier: same `*`-closure arity collapse as
+    // 076666, with both flanks quantified variables.
+    let e = reject(
+        "sig Track { succs: set Track }\nsig Exit in Track {}\n\
+         pred p { all t: Track, e: Exit | no e.*succs.t }\n",
+    );
+    assert!(matches!(e, ResolveError::IllegalJoin { .. }), "{e:?}");
+}
+
+#[test]
+fn real_code_003167_minimized_rejected_mt113() {
+    // `i.(*{s1,s2: State | ...}).s`: closure over a comprehension, same
+    // mechanism — the comprehension's closure carries `univ->univ`.
+    let e = reject(
+        "sig State { trans: Event -> State }\nsig Init in State {}\nsig Event {}\n\
+         pred p { all i: Init, s: State | some i.(*{s1, s2: State | s1->Event->s2 in trans}).s }\n",
+    );
+    assert!(matches!(e, ResolveError::IllegalJoin { .. }), "{e:?}");
+}
+
+#[test]
+fn real_code_096458_minimized_rejected_mt113() {
+    // `lone (Ad.p)` with `p: univ`: `Ad` and `p` are both unary.
+    let e =
+        reject("sig Photo {}\nsig Ad extends Photo {}\npred pr { all x: univ | lone (Ad.x) }\n");
+    assert!(matches!(e, ResolveError::IllegalJoin { .. }), "{e:?}");
+}
+
+#[test]
+fn real_code_096462_minimized_rejected_mt113() {
+    // `u.posts.p` with `p, u: univ`: `u.posts` is unary, `.p` collapses it.
+    let e = reject(
+        "sig User { posts: set Photo }\nsig Photo {}\n\
+         pred pr { all p, u: univ | lone (u.posts.p) }\n",
+    );
+    assert!(matches!(e, ResolveError::IllegalJoin { .. }), "{e:?}");
+}

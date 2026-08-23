@@ -2817,18 +2817,24 @@ impl<'a, 'g> Cx<'a, 'g> {
                     self.errors.truncate(nerr);
                 }
                 let joined = lt.join(&self.r.world, &right_ty);
-                // Meta models resolve leniently (meta atoms mettle approximates
-                // as `univ`); a lenient `univ`/placeholder operand is never a
-                // genuine illegal join. An operand that already rejected is not
-                // re-reported as one either — the reference reports a join
-                // illegal only when both its resolved operands are error-free.
-                if !l.err
-                    && !r_err
-                    && joined.is_error()
-                    && !self.lenient()
-                    && !self.contains_univ(&lt)
-                    && !self.contains_univ(&right_ty)
-                {
+                // The reference's illegal-join check is a make-time arity rule
+                // (result arity < 1) over the merged/bottom-up types; `univ` is
+                // a genuine unary type to it, not a placeholder, so an operand
+                // containing `univ` (the `univ` keyword, `iden`, `*`-closure)
+                // rejects exactly like any other unary operand (mt-112 probe
+                // record). Meta models are the one real exception: mettle
+                // approximates meta atoms as `univ`, so a lenient model's
+                // operand may be a placeholder rather than a genuine value —
+                // `!self.lenient()` is the only suppression left. Outside a
+                // lenient model, every other placeholder-`univ` site lives in
+                // the bottom-up `infer()` pass only (never in the operand's own
+                // authoritative `resolve()`), so it cannot leave `l.err`/
+                // `r_err` false while the operand is genuinely unresolvable —
+                // `!l.err && !r_err` already screens those out. An operand that
+                // already rejected is not re-reported as one either — the
+                // reference reports a join illegal only when both its resolved
+                // operands are error-free.
+                if !l.err && !r_err && joined.is_error() && !self.lenient() {
                     self.err(ResolveError::IllegalJoin { span });
                     return R::bad();
                 }
