@@ -688,3 +688,197 @@ fn this_in_sig_context_still_accepts_mt110() {
     accept("sig A { f: set A, g: set this }\nrun {} for 3\n");
     accept("sig A {}\nfun A.mine: A { this }\nrun { some A.mine } for 3\n");
 }
+
+// ---- mt-111: the multiplicity-flag positional rule (LEDGER-016) ----
+//
+// A multiplicity-tagged expression — prefix `set`/`seq` anywhere, prefix
+// `some`/`lone`/`one` only where the grammar's `mult()` converts them, arrow
+// multiplicities (which propagate up an arrow chain), and `exactly` inside a
+// defined-field bound — is legal in six consuming positions and rejected
+// everywhere else. Every cell below is one file from the mt-109 probe wave
+// (`scratchpad/probe/mt109/{m,n,p,q}/`), verdict-pinned against
+// `oracle/org.alloytools.alloy.dist.jar` (Alloy 6.2.0).
+//
+// The accepts are the drop-in guards: this is the one residual family whose fix
+// can *create* drop-in violations (a check placed one level too broadly turns
+// legal models into rejects), so they are pinned before the check is switched on.
+
+/// Consume site 1: **sig field decl bounds** take every multiplicity, including
+/// an arrow mult and a nested arrow chain. Cells m01 m02 m06 m08 m43 n20 p08.
+#[test]
+fn mult_in_field_decl_bound_accepted_mt111() {
+    accept("sig A {}\nsig B { f: lone A }\nrun {} for 3\n"); // m01
+    accept("sig A {}\nsig B { f: A -> lone A }\nrun {} for 3\n"); // m02
+    accept("sig A {}\nsig B { f: A -> (A -> lone A) }\nrun {} for 3\n"); // m06
+    accept("sig A {}\nsig B { f: set A }\nrun {} for 3\n"); // m08
+    accept("sig A {}\nsig B { f: seq A }\nrun {} for 3\n"); // m43
+    accept("sig A {}\nsig B { f: A one -> lone A }\nrun {} for 3\n"); // n20
+    accept("sig A {}\nsig B { f: some A }\nrun {} for 3\n"); // p08
+}
+
+/// Consume sites 2 and 3: **fun/pred parameter decl bounds** (m07 n13) and
+/// **function return decls** (m04 q03 m32).
+#[test]
+fn mult_in_param_and_return_decl_accepted_mt111() {
+    accept("sig A {}\npred p[x: lone A] { x = x }\nrun { p[A] } for 3\n"); // m07
+    accept("sig A {}\npred p[x: set A] { some x }\nrun { p[A] } for 3\n"); // n13
+    accept("sig A {}\nfun f: lone A { A }\nrun { some f } for 3\n"); // m04
+    accept("sig A {}\nfun f: set A { A }\nrun { some f } for 3\n"); // q03
+    accept("sig A {}\nfun f: A -> lone A { A -> A }\nrun { some f } for 3\n"); // m32
+}
+
+/// Consume site 4: **quantifier decl bounds accept every multiplicity** — this
+/// is the half of `decl_bound_type` that must stay permissive (the comprehension
+/// half is strict; see `comprehension_bound_rejects_all_but_one_of_mt111`).
+/// Cells m03 m10 m31 p05 p06 p18, across `all`/`some`/`sum` and multi-decls.
+#[test]
+fn mult_in_quantifier_bound_accepted_mt111() {
+    accept("sig A {}\nrun { all x: lone A | x = x } for 3\n"); // m03
+    accept("sig A {}\nrun { some x: set A | x = x } for 3\n"); // m10
+    accept("sig A {}\nrun { all x: A -> lone A | some x } for 3\n"); // m31
+    accept("sig A {}\nrun { some x: some A | x = x } for 3\n"); // p05
+    accept("sig A {}\nfact { (sum x: one A | 1) > 0 }\nrun {} for 3\n"); // p06
+    accept("sig A {}\nrun { all x: set A, y: lone A | x = y } for 3\n"); // p18
+}
+
+/// Consume site 5: `in` is **asymmetric** — its RIGHT operand consumes the flag.
+/// Cells n18 p16 m25 n11 p11. (The left operand rejects: cell m26, below.)
+#[test]
+fn mult_on_rhs_of_in_accepted_mt111() {
+    accept("sig A {}\nfact { A in (set A) }\nrun {} for 3\n"); // n18
+    accept("sig A {}\nsig B { f: A }\nfact { B.f in (some A) }\nrun {} for 3\n"); // p16
+    accept("sig A {}\nsig B { r: A -> A }\nfact { B.r in A -> lone A }\nrun {} for 3\n"); // m25
+    accept("sig A { r: A }\nfact { r in A -> lone A }\nrun {} for 3\n"); // n11
+    accept("sig A {}\nfact { let x = A | x in (set A) }\nrun {} for 3\n"); // p11
+}
+
+/// Consume site 6, the counterintuitive one: **function and predicate BODIES
+/// accept mult.** A "reject everywhere outside the decl list" design breaks
+/// these three, so they are the sharpest guard in the suite. Cells m18 q01 q02,
+/// plus q06/q07 where such a body's result is then used in an ordinary formula.
+#[test]
+fn mult_in_fun_body_accepted_mt111() {
+    accept("sig A {}\nfun f: A { set A }\nrun { some f } for 3\n"); // m18
+    accept("sig A {}\nfun f: A -> A { A -> lone A }\nrun { some f } for 3\n"); // q01
+    accept("sig A {}\nfun f: A { (set A) }\nrun { some f } for 3\n"); // q02
+    accept("sig A {}\npred p { some A }\nfun f: A { set A }\nfact { f = A }\nrun {} for 3\n"); // q06
+    accept("sig A {}\nfun f: A -> lone A { A -> A }\nfact { some f and f = f }\nrun {} for 3\n");
+    // q07
+}
+
+/// A comprehension bound may be `one`-of, because `ONEOF` is the decl default.
+/// Cell p01 — the single accept inside the otherwise-strict comprehension rule.
+#[test]
+fn comprehension_bound_one_of_accepted_mt111() {
+    accept("sig A {}\nfact { some { x: one A | x = x } }\nrun {} for 3\n"); // p01
+}
+
+/// A **defined field** (`f = e`) takes a mult-*free* RHS. Cells m33 n05 m37 q08;
+/// the mult-carrying spellings n07/n09 reject (below).
+#[test]
+fn mult_free_defined_field_accepted_mt111() {
+    accept("sig A {}\nsig B { f = A }\nrun {} for 3\n"); // m33
+    accept("sig A {}\nsig B { f = A, g = f }\nrun {} for 3\n"); // n05
+    accept("sig A {}\nsig B { f = A }\nfact { some B.f }\nrun {} for 3\n"); // m37
+    accept("sig A {}\nsig B { f = A }\nfact { some { x: B | some x.f } }\nrun {} for 3\n");
+    // q08
+}
+
+/// The flag does **not** survive macro expansion into the use site: a top-level
+/// `let` macro whose body is `set A` is legal, and `some S` at the use site is
+/// legal too. Cell q05 — this is why the flag can stay a syntactic predicate on
+/// the original node instead of a value carried through resolution.
+#[test]
+fn mult_does_not_survive_macro_expansion_mt111() {
+    accept("sig A {}\nlet S = set A\nfact { some S }\nrun {} for 3\n"); // q05
+}
+
+/// `exactly` in a scope is untouched by any of this. Cell m36.
+#[test]
+fn exactly_in_a_scope_accepted_mt111() {
+    accept("sig A {}\nrun {} for exactly 3 A\n"); // m36
+}
+
+/// The **precedence trap**, not the mult rule: a bare unparenthesized mult after
+/// `in` is a *parse* reject on both sides (mettle's operand tier, "this prefix
+/// operator binds too loosely"; the jar's `mult()` tier). Parenthesizing makes
+/// the same shape legal — see `mult_on_rhs_of_in_accepted_mt111` (n18). This is
+/// why the residual gap lives exclusively in bracketed/argument/body positions.
+/// Cells m05 m09 m23 n15.
+#[test]
+fn bare_mult_after_in_is_a_parse_reject_mt111() {
+    for src in [
+        "sig A {}\nfact { A in lone A }\nrun {} for 3\n", // m05
+        "sig A {}\nfact { A in set A }\nrun {} for 3\n",  // m09
+        "sig A {}\nfact { all x: A | x in set A }\nrun {} for 3\n", // m23
+        "sig A {}\nrun { some x: A | x in set A } for 3\n", // n15
+    ] {
+        let e = reject(src);
+        assert!(matches!(e, ResolveError::OpenedFileParse { .. }), "{e:?}");
+    }
+}
+
+/// `exactly` is **not an expression prefix at all** — it is reachable only from
+/// a defined-field bound, so every other spelling fails to parse. This refuted
+/// the pre-run prediction that `exactly` would merely be a narrower mult; it
+/// also makes the jar's "This cannot be an exactly-of expression." effectively
+/// unreachable from source syntax. Cells m34 m35 m38 m39 n01 n02 n03 p15.
+#[test]
+fn exactly_is_not_an_expression_prefix_mt111() {
+    for src in [
+        "sig A {}\nrun { all x: exactly A | x = x } for 3\n", // m34
+        "sig A {}\nfact { some exactly A }\nrun {} for 3\n",  // m35
+        "sig A {}\npred p[x: exactly A] { some x }\nrun { p[A] } for 3\n", // m38
+        "sig A {}\nsig B { f: A }\nfact { B.f in exactly A }\nrun {} for 3\n", // m39
+        "sig A {}\nsig B { f: exactly A }\nrun {} for 3\n",   // n01
+        "sig A {}\nfun f: exactly A { A }\nrun { some f } for 3\n", // n02
+        "sig A {}\nsig C in exactly A {}\nrun {} for 3\n",    // n03
+        "sig A {}\nsig B { f: A -> exactly A }\nrun {} for 3\n", // p15
+    ] {
+        let e = reject(src);
+        assert!(matches!(e, ResolveError::OpenedFileParse { .. }), "{e:?}");
+    }
+}
+
+/// Where `mult()` does **not** convert them, `some`/`lone`/`one` stay *formula*
+/// operators — so these reject as non-sets, for a different reason than the mult
+/// rule, and mettle already agrees. Cells m41 (`some (lone A)`) and n08
+/// (`f = lone A`, a defined field whose RHS is a formula).
+#[test]
+fn unconverted_lone_stays_a_formula_mt111() {
+    let e = reject("sig A {}\nfact { some (lone A) }\nrun {} for 3\n"); // m41
+    assert!(matches!(e, ResolveError::NotSet { .. }), "{e:?}");
+    let e = reject("sig A {}\nsig B { f = lone A }\nrun {} for 3\n"); // n08
+    assert!(matches!(e, ResolveError::NotSet { .. }), "{e:?}");
+}
+
+/// Rejects the mult rule must not swallow: these cells carry a multiplicity but
+/// fail first for an ordinary typing reason, and mettle already agrees with the
+/// jar on all of them. Cells n06 (a defined field is not a type), n10/n17/p10
+/// (arity), n14/p14 (a mult operand under a join that is illegal anyway), q04
+/// (`seq` makes the return binary, so a unary body mismatches).
+#[test]
+fn mult_cells_that_fail_for_ordinary_reasons_mt111() {
+    let e = reject("sig A {}\nsig B { f = A, g: f }\nrun {} for 3\n"); // n06
+    assert!(matches!(e, ResolveError::UnknownName { .. }), "{e:?}");
+    for src in [
+        "sig A {}\nfact { A in A -> lone A }\nrun {} for 3\n", // n10
+        "sig A { r: A }\nfact { r in A -> A -> lone A }\nrun {} for 3\n", // n17
+        "sig A { r: A -> A -> A }\nfact { r in A -> (A -> lone A) }\nrun {} for 3\n", // p10
+    ] {
+        let e = reject(src);
+        assert!(matches!(e, ResolveError::ArityMismatch { .. }), "{e:?}");
+    }
+    for src in [
+        "sig A {}\nfact { some (set A).A }\nrun {} for 3\n", // n14
+        "sig A {}\nfact { some A.(set A) }\nrun {} for 3\n", // p14
+    ] {
+        let e = reject(src);
+        assert!(matches!(e, ResolveError::IllegalJoin { .. }), "{e:?}");
+    }
+    let e = reject("sig A {}\nfun f: seq A { A }\nrun { some f } for 3\n"); // q04
+    assert!(matches!(e, ResolveError::FuncBodyArity { .. }), "{e:?}");
+    // n19: `exactly` on the builtin `int` scope is redundant, a parse-tier reject.
+    let e = reject("sig A {}\nfact { A = A }\nrun {} for exactly 3 A, exactly 4 int\n");
+    assert!(matches!(e, ResolveError::OpenedFileParse { .. }), "{e:?}");
+}
