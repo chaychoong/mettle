@@ -50,6 +50,42 @@ fn assert_no_warn(src: &str, class: &str) {
     );
 }
 
+/// Byte offsets of the unused-variable warnings, in emission order. Used where
+/// two binders share a source line and only the *span* separates them.
+fn unused_offsets(src: &str) -> Vec<u32> {
+    let loader = MapLoader::new().with("root.als", src);
+    let graph = ModuleGraph::load("root.als", &loader).expect("load");
+    let resolved = resolve(&graph).expect("expected ACCEPT (warnings never reject)");
+    resolved
+        .warnings
+        .iter()
+        .filter(|w| w.class() == "unused-var")
+        .map(|w| w.span().start)
+        .collect()
+}
+
+/// Asserts the unused-variable warnings land on exactly the `n`th occurrences
+/// of `needle` in `src` (0-based, in source order).
+fn assert_unused_at_occurrences(src: &str, needle: &str, occurrences: &[usize]) {
+    let mut want = Vec::new();
+    let mut from = 0;
+    let mut seen = 0;
+    while let Some(rel) = src[from..].find(needle) {
+        let at = from + rel;
+        if occurrences.contains(&seen) {
+            want.push(u32::try_from(at).expect("offset fits"));
+        }
+        seen += 1;
+        from = at + needle.len();
+    }
+    assert_eq!(want.len(), occurrences.len(), "needle `{needle}` not found");
+    assert_eq!(
+        unused_offsets(src),
+        want,
+        "unused-var spans\n--- src ---\n{src}"
+    );
+}
+
 // ---- B: unused binder ----
 
 #[test]
@@ -75,6 +111,85 @@ fn used_via_join_spine_head_not_flagged_mt023() {
 fn comprehension_var_never_flagged_mt023() {
     // `ExprQt.resolve` exempts comprehensions from the unused-var warning.
     assert_no_warn("sig A {}\nfact { some { x: A | some A } }\n", "unused-var");
+}
+
+// ---- B (mt-118): the overload-collapse and duplicate-binder subfamilies ----
+//
+// Both mechanisms are the reference's `hasVar` reading the *resolved* tree by
+// binder identity, so a variable can be textually present yet unreferenced.
+
+/// The alloy4fun `projects` shape (031193.als:74 vs :101), reduced: one
+/// overloaded field, two quantifiers, opposite outcomes.
+const OVERLOADED_PROJECTS: &str = concat!(
+    "sig Project {}\n",
+    "sig Person { projects: set Project }\n",
+    "sig Student extends Person {}\n",
+    "sig Course { projects: set Project }\n",
+);
+
+#[test]
+fn overload_collapse_erases_the_binder_mt118() {
+    // `Project` is disjoint from both declarers of `projects`, so every reading
+    // of `pr.projects` is empty at arity 1 and `resolveHelper` replaces the whole
+    // join with `none` — `pr` is gone from the resolved tree before `hasVar`.
+    assert_warns_at(
+        &format!("{OVERLOADED_PROJECTS}fact {{ all pr: Project | some pr.projects }}\n"),
+        "unused-var",
+        5,
+    );
+}
+
+#[test]
+fn surviving_overloaded_reading_keeps_the_binder_mt118() {
+    // Same field, same file shape: `Student` is under `Person`, so the
+    // `Person <: projects` reading survives the exact-match filter alone and the
+    // join resolves normally — no collapse, `s` is used.
+    assert_no_warn(
+        &format!("{OVERLOADED_PROJECTS}fact {{ all s: Student | lone s.projects }}\n"),
+        "unused-var",
+    );
+}
+
+#[test]
+fn collapse_does_not_hide_a_use_elsewhere_mt118() {
+    // Negative space: the fold erases only its own subtree. `pr` occurs both
+    // inside the collapsed join and outside it, so it stays used.
+    assert_no_warn(
+        &format!(
+            "{OVERLOADED_PROJECTS}fact {{ all pr: Project | some pr.projects and pr in Project }}\n"
+        ),
+        "unused-var",
+    );
+}
+
+#[test]
+fn duplicate_binder_flags_the_shadowed_one_mt118() {
+    // `all x: A, x: B | …`: the body's `x` is the second binder's, so only the
+    // first is unreferenced (148377.als:34's shape).
+    assert_unused_at_occurrences(
+        "sig A {}\nsig B { f: set A }\nfact { all x: A, x: B | some x.f }\n",
+        "x",
+        &[0],
+    );
+}
+
+#[test]
+fn later_decl_bound_keeps_the_shadowed_binder_alive_mt118() {
+    // 049900.als:84's shape: decl 2's bound `A - p` references `p`, so `p` is
+    // used even though the body never names it; the first `k` still warns
+    // because neither `B` nor the body reaches it.
+    assert_unused_at_occurrences(
+        "sig A {}\nsig B {}\nfact { all p: A, k: A - p, k: B | some k }\n",
+        "k",
+        &[0],
+    );
+}
+
+#[test]
+fn duplicate_names_within_one_decl_mt118() {
+    // 130578.als:40's shape: both `u`s are in one name list, and the later one
+    // wins the environment, so the first is unreferenced.
+    assert_unused_at_occurrences("sig U {}\nfact { all disj u, u: U | some u }\n", "u", &[0]);
 }
 
 // ---- A1/A2: closure ----

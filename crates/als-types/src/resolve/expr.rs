@@ -231,6 +231,18 @@ pub(super) struct Cx<'a, 'g> {
     /// trial that wins is re-finalized (recorded for real) once the retry has
     /// confirmed it.
     trial: bool,
+    /// Spine nodes whose overloaded reading set collapsed to the empty set
+    /// ([`SpineChoice::Empty`], the reference's `ExprChoice.resolveHelper`
+    /// all-candidates-empty fold). The reference *replaces* such a node with the
+    /// `none` constant in the resolved tree, so its operands — including any
+    /// quantifier variable used as the join's spine head — are gone before
+    /// `hasVar` walks it (mt-118). [`Self::references_name`] reads this set to
+    /// see the same erased subtree.
+    ///
+    /// `BTreeSet` for determinism (STYLE D2/C2); keyed by `ExprId` alone because
+    /// one `Cx` reads exactly one arena ([`Self::ast`]), and a nested context
+    /// (a macro replay) keeps its own set.
+    folded_spines: std::collections::BTreeSet<ExprId>,
 }
 
 impl<'a, 'g> Cx<'a, 'g> {
@@ -249,6 +261,7 @@ impl<'a, 'g> Cx<'a, 'g> {
             ast_override: None,
             unroll: 20,
             trial: false,
+            folded_spines: std::collections::BTreeSet::new(),
         }
     }
 
@@ -282,9 +295,18 @@ impl<'a, 'g> Cx<'a, 'g> {
 
     /// Records a spine (join/call/builtin/macro) resolution at `(module, expr)`.
     /// A no-op mid-trial; see [`Self::record_name`].
+    ///
+    /// An [`SpineChoice::Empty`] fold is also noted in [`Self::folded_spines`]:
+    /// it is the one choice that *erases* its subtree rather than selecting a
+    /// reading, and the unused-variable walk has to see that erasure (mt-118).
+    /// Sharing the trial gate is deliberate — a trial fold has not won anything
+    /// yet, exactly as with the choice table.
     fn record_spine(&mut self, expr: ExprId, choice: SpineChoice) {
         if self.trial {
             return;
+        }
+        if matches!(choice, SpineChoice::Empty(_)) {
+            self.folded_spines.insert(expr);
         }
         self.choices
             .record(self.module, expr, ExprChoice::Spine(choice));
@@ -3326,21 +3348,39 @@ impl<'a, 'g> Cx<'a, 'g> {
     /// reference `x`**. "References" is the reference's syntactic `hasVar`
     /// ([`Self::references_name`]), not a resolve-time side effect — a variable
     /// used only as a join spine head (`proc.p`) still counts as used.
+    ///
+    /// One quantifier may bind the same name twice (`all x: A, x: B | …`), which
+    /// nothing rejects. The reference's `hasVar` compares binder *identity*, and
+    /// each decl's names enter the environment in order, so a reference to that
+    /// name picks the **most recent** binder in scope at that point: the body
+    /// sees only the last binder of the name, and decl `j`'s bound only the last
+    /// one declared before `j`. Every earlier same-name binder is therefore
+    /// unreferenced and warns (mt-118).
     fn pop_and_warn_unused(&mut self, decls: &[DeclId], body: ExprId, pushed: usize) {
         for _ in 0..pushed {
             self.env.pop();
         }
-        for (i, &d) in decls.iter().enumerate() {
-            let decl = self.ast().decls[d].clone();
-            let later_bounds: Vec<ExprId> = decls[i + 1..]
-                .iter()
-                .map(|&dj| self.ast().decls[dj].bound)
-                .collect();
-            for n in &decl.names {
-                let used_later = later_bounds
-                    .iter()
-                    .any(|&b| self.references_name(b, &n.text));
-                if !used_later && !self.references_name(body, &n.text) {
+        let groups: Vec<Decl> = decls.iter().map(|&d| self.ast().decls[d].clone()).collect();
+        for (i, decl) in groups.iter().enumerate() {
+            for (k, n) in decl.names.iter().enumerate() {
+                // A redeclaration later in this same name list already shadows
+                // this binder everywhere it could be seen.
+                let shadowed_in_group = decl.names[k + 1..].iter().any(|m| m.text == n.text);
+                let mut used = false;
+                for (j, later) in groups.iter().enumerate().skip(i + 1) {
+                    let shadowed_before_j =
+                        shadowed_in_group || Self::declares(&groups[i + 1..j], &n.text);
+                    if !shadowed_before_j && self.references_name(later.bound, &n.text) {
+                        used = true;
+                        break;
+                    }
+                }
+                let shadowed_in_body =
+                    shadowed_in_group || Self::declares(&groups[i + 1..], &n.text);
+                if !used && !shadowed_in_body && self.references_name(body, &n.text) {
+                    used = true;
+                }
+                if !used {
                     self.warnings.push(ResolveWarning::UnusedVariable {
                         name: n.text.clone(),
                         span: n.span,
@@ -3348,6 +3388,13 @@ impl<'a, 'g> Cx<'a, 'g> {
                 }
             }
         }
+    }
+
+    /// Whether any of `groups` binds `name`.
+    fn declares(groups: &[Decl], name: &str) -> bool {
+        groups
+            .iter()
+            .any(|g| g.names.iter().any(|m| m.text == name))
     }
 
     /// The reference's `ExprUnary.resolveClosure(parent, child)` (A2): the child
@@ -3444,6 +3491,14 @@ impl<'a, 'g> Cx<'a, 'g> {
     /// `name`, honoring shadowing (a nested binder that rebinds `name` hides it
     /// in the shadowed scope) — the reference's `Expr.hasVar`.
     fn references_name(&self, e: ExprId, name: &str) -> bool {
+        // `hasVar` walks the *resolved* tree, and a collapsed overloaded join is
+        // not in it: `resolveHelper` substituted the `none` constant for the
+        // whole node, operands and all (mt-118). So `all pr: Project | some
+        // pr.projects`, where `projects` is declared only on sigs disjoint from
+        // `Project`, leaves `pr` with no occurrence at all and warns.
+        if self.folded_spines.contains(&e) {
+            return false;
+        }
         match &self.expr(e).kind {
             ExprKind::Name(qn) | ExprKind::AtName(qn) => {
                 qn.segments.len() == 1 && qn.segments[0].text == name
