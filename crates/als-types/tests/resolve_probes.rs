@@ -1726,3 +1726,103 @@ fn equality_context_dead_middle_ambiguous_join_rejected_mt115() {
         "{e:?}\n--- src ---\n{src}"
     );
 }
+
+// ---- mt-116/mt-117: the negative space of five positional rules ----
+//
+// The mt-116 probe wave (32 cells, `scratchpad/probe/mt116/NOTES.md`, jar =
+// Alloy 6.2.0) pinned five rules the reference enforces and mettle did not:
+// `open` placement, `abstract` on a subset sig, what a field bound may name,
+// where a binder body ends, and multiplicity on a negated `in`'s right
+// operand. The cells below are the half where the two tools already agree —
+// the guards that say each new check fires only where the jar's does. Sources
+// are the cell files verbatim; the `open`/`abstract` half of the negative
+// space is pinned at the parse level, in `als-syntax`.
+
+/// Cell f03: a field bound may name an **earlier** field of its own sig — the
+/// one field reference a bound is allowed, and the reason the fix cannot be a
+/// blanket "no fields in bounds".
+#[test]
+fn earlier_own_field_in_a_bound_accepted_mt116() {
+    accept("sig P {}\nsig R { a: set P, b: one a }\n"); // f03
+}
+
+/// Cells f04/f05: a bound naming its own field, or a **later** field of the
+/// same sig, is unresolvable — mettle already agrees with the jar here (same
+/// message, same one-char span), because a field is not registered until its
+/// own bound has been typed.
+#[test]
+fn self_and_later_own_field_in_a_bound_rejected_mt116() {
+    for src in [
+        "sig P {}\nsig R { a: set a }\n",           // f04
+        "sig P {}\nsig R { b: one a, a: set P }\n", // f05
+    ] {
+        let e = reject(src);
+        let ResolveError::UnknownName { name, span } = &e else {
+            panic!("expected UnknownName, got {e:?}\n--- src ---\n{src}");
+        };
+        assert_eq!(name, "a", "{e:?}");
+        // The bare name itself, not the bound or the decl.
+        assert_eq!(span.end - span.start, 1, "{e:?}\n--- src ---\n{src}");
+    }
+}
+
+/// Cell f06: `sig R { position: one position }` where another sig also has a
+/// `position` — a reject either way, pinned here at verdict level only (the
+/// mechanism realigns with the fix; see the class assertion in the mt-116 fix
+/// section).
+#[test]
+fn bare_self_reference_in_a_bound_rejected_mt116() {
+    reject("sig P {}\nsig C { position: one P }\nsig R { position: one position }\n");
+    // f06
+}
+
+/// Cells g01/g03/x03: a `;` whose tail formula closes over nothing bound by the
+/// binder is legal whichever side of the binder it lands on, and the brace-body
+/// form (`all u: A { … }`) never involved a `;` at all.
+#[test]
+fn sequenced_tail_without_a_freed_name_accepted_mt116() {
+    accept("sig A {}\npred P { all u: A | some u; some A }\nrun P\n"); // g01
+    accept("sig A {}\npred P { all u: A { some u u in A } }\nrun P\n"); // g03
+    accept("sig A {}\npred P { let y = A | some y; some A }\nrun P\n"); // x03
+}
+
+/// Cell g06: `;` with no binder in scope is the plain top-level sequencing
+/// both tools already agreed on — the control for the binder-body change.
+#[test]
+fn top_level_sequencing_accepted_mt116() {
+    accept("sig A {}\npred P { some A; no A }\nrun P for exactly 1 A\n"); // g06
+}
+
+/// Cells h02/h03 (mt-117): the multiplicity stays legal on a **plain** `in`'s
+/// right operand, and h03 is the boundary that says the trigger is the negated
+/// membership *operator*, not a negated membership formula — `!(x in (some
+/// y))` parses as `!` applied to an ordinary `in`, and is accepted.
+#[test]
+fn mult_on_plain_in_rhs_and_under_outer_negation_accepted_mt117() {
+    accept("sig Project {}\nsig Course { projects: set Project }\nfact { Project in (some Course.projects) }\n"); // h02
+    accept("sig Project {}\nsig Course { projects: set Project }\nfact { !(Project in (some Course.projects)) }\n");
+    // h03
+}
+
+/// Cell h06 (mt-117): a mult keyword on the **left** of `not in` is not a
+/// multiplicity at all — `mult()` converts only the right operand, so the
+/// leftover set test fails the sort check. Jar and mettle already agree on
+/// class and span alike (`[ErrorType]` over `(some Course.projects)`), which
+/// is why the LHS needs no new handling.
+#[test]
+fn mult_on_not_in_lhs_stays_a_sort_reject_mt117() {
+    let src = "sig Project {}\nsig Course { projects: set Project }\nfact { (some Course.projects) not in Project }\n";
+    let e = reject(src);
+    let ResolveError::NotSet { span, .. } = &e else {
+        panic!("expected NotSet, got {e:?}");
+    };
+    let open = u32::try_from(src.find("(some").expect("source has `(some`")).unwrap();
+    assert_eq!(
+        (span.start, span.end),
+        (
+            open + 1,
+            open + 1 + u32::try_from("some Course.projects".len()).unwrap()
+        ),
+        "{e:?}\n--- src ---\n{src}"
+    );
+}

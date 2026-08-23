@@ -1248,6 +1248,37 @@ fn module_header_not_first_is_error() {
     ));
 }
 
+// -- Paragraph order & subset-sig qualifiers (mt-116) ----------------------
+//
+// Two positional rules the reference enforces from the grammar, both pinned
+// against Alloy 6.2.0 by the mt-116 probe wave (32 cells,
+// `scratchpad/probe/mt116/NOTES.md`): every `open` precedes every other
+// paragraph, and a subset (`in`) signature cannot be abstract. The cells here
+// are the negative space — the neighbouring shapes each check must leave
+// alone. Sources are the cell files verbatim.
+
+/// Cells d01/d04: `open`s ahead of the first paragraph, in any number.
+#[test]
+fn opens_before_any_paragraph_parse_mt116() {
+    assert_eq!(ast_of("open util/ordering[A]\nsig A {}").opens.len(), 1);
+    assert_eq!(
+        ast_of("open util/natural\nopen util/ternary\nsig A {}")
+            .opens
+            .len(),
+        2
+    );
+}
+
+/// Cells e02/e04: `abstract` is fine on an `extends` sig and a subset sig is
+/// fine without it — only the pair is rejected.
+#[test]
+fn abstract_extends_and_bare_subset_parse_mt116() {
+    let ast = ast_of("sig Person {}\nabstract sig Teacher extends Person {}");
+    assert_eq!(ast.paragraphs.len(), 2);
+    let ast = ast_of("sig Person {}\nsig Teacher in Person {}");
+    assert_eq!(ast.paragraphs.len(), 2);
+}
+
 #[test]
 fn private_paragraphs() {
     let ast = ast_of("private sig A {}");
