@@ -71,3 +71,12 @@ thiserror = "1"
 # consume an external (Java-side) protocol.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# sha2: content identity for the committed resolve-verdict baseline (mt-110) --
+# the header pins the oracle jar's SHA-256 (the same digest
+# docs/reference/alloy6-reference.md pins the jar by) and a digest over the
+# extracted corpus, so a baseline can never be diffed against a corpus or jar it
+# was not produced from. Not hand-rolled: a wrong digest silently disarms the
+# anti-rot check. Adds exactly one crate to the tree -- als-sterling's `sha1`
+# already brings `digest`/`cpufeatures`/`block-buffer`/`crypto-common`, which
+# sha2 0.11 shares.
+sha2 = "0.11"

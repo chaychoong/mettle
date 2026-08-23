@@ -28,6 +28,18 @@
 //!   honored) and its mettle verdict written to `<out>/mettle.jsonl` +
 //!   `<out>/filelist.txt` (the same paths, for the jar side).
 //!
+//! - `bake-baseline --jar <jar.jsonl> --out-dir <dir> --out <file>`
+//!   Banks a live jar pass as the committed
+//!   [`ResolveBaseline`](als_conform::resolve_baseline) artifact
+//!   (`baselines/alloy4fun-resolve.txt`): one line per jar reject keyed by code
+//!   index, under a header pinning the jar and the corpus by SHA-256. mt-110.
+//!
+//! - `diff --mettle <mettle.jsonl> --jar-baseline <file> --out-dir <dir>`
+//!   The same differential against that banked artifact instead of a live
+//!   ~4-minute JVM pass — the jar's verdicts at a pinned jar are immutable
+//!   facts. Hard-errors if the baseline's header does not describe `<dir>`'s
+//!   extraction (code count / corpus digest), or the jar on disk.
+//!
 //! - `diff --mettle <mettle.jsonl> --jar <jar.jsonl>`
 //!   Joins the two verdict streams by `file` and prints the differential
 //!   scorecard (agree-accept / agree-reject / jar-accepts+mettle-rejects /
@@ -52,7 +64,12 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::thread;
 
+use als_conform::resolve_baseline::{self, RejectRow, ResolveBaseline, ResolveBaselineHeader};
 use als_types::{FilesystemLoader, MapLoader, ModuleGraph, ResolveError};
+
+/// The ADR-0002 pinned oracle jar, where every documented gauge command runs it
+/// from (the repository root).
+const DEFAULT_JAR: &str = "oracle/org.alloytools.alloy.dist.jar";
 
 /// One resolve warning as the parity gauge sees it: its class and 1-based
 /// (line, col). mt-023.
@@ -492,9 +509,11 @@ fn read_jsonl(path: &Path) -> BTreeMap<String, Row> {
     map
 }
 
-fn run_diff(mettle_path: &Path, jar_path: &Path) -> ExitCode {
+/// The differential scorecard over an already-loaded jar side — live
+/// (`--jar <jar.jsonl>`) and banked (`--jar-baseline`) produce the same
+/// `BTreeMap`, so the two paths cannot report differently (mt-110).
+fn run_diff(mettle_path: &Path, jar: &BTreeMap<String, Row>) -> ExitCode {
     let mettle = read_jsonl(mettle_path);
-    let jar = read_jsonl(jar_path);
 
     let mut agree_accept = 0usize;
     let mut agree_reject = 0usize;
@@ -581,6 +600,165 @@ fn run_diff(mettle_path: &Path, jar_path: &Path) -> ExitCode {
     } else {
         ExitCode::from(1)
     }
+}
+
+// ---------------------------------------------------------------------------
+// bake-baseline subcommand (mt-110): jar.jsonl → the committed baseline
+// ---------------------------------------------------------------------------
+
+/// The extraction's code paths in index order (`<out-dir>/filelist.txt`).
+fn read_filelist(out_dir: &Path) -> Vec<String> {
+    let path = out_dir.join("filelist.txt");
+    let text =
+        fs::read_to_string(&path).unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Every jar reject in `jar_jsonl`, keyed by the index `files` gives it. A file
+/// with no jar verdict at all is an error, not an implicit accept: a truncated
+/// JVM pass would otherwise bake as a clean run.
+fn jar_rejects(jar_jsonl: &Path, files: &[String]) -> Result<BTreeMap<usize, RejectRow>, String> {
+    let text = fs::read_to_string(jar_jsonl)
+        .map_err(|e| format!("cannot read {}: {e}", jar_jsonl.display()))?;
+    let mut rows: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        let v: serde_json::Value = serde_json::from_str(line)
+            .map_err(|e| format!("bad json line in {}: {e}", jar_jsonl.display()))?;
+        let file = v
+            .get("file")
+            .and_then(|f| f.as_str())
+            .ok_or_else(|| format!("{}: a line has no `file`", jar_jsonl.display()))?
+            .to_owned();
+        rows.insert(file, v);
+    }
+
+    let mut rejects = BTreeMap::new();
+    for (idx, file) in files.iter().enumerate() {
+        let v = rows
+            .get(file)
+            .ok_or_else(|| format!("no jar verdict for {file}"))?;
+        if v.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
+            continue;
+        }
+        rejects.insert(
+            idx,
+            RejectRow {
+                phase: v
+                    .get("phase")
+                    .and_then(|p| p.as_str())
+                    .unwrap_or("resolve")
+                    .to_owned(),
+                line: num(v, "line"),
+                col: num(v, "col"),
+                message: resolve_baseline::first_line(
+                    v.get("message").and_then(|m| m.as_str()).unwrap_or(""),
+                ),
+            },
+        );
+    }
+    Ok(rejects)
+}
+
+/// Bakes a live `jar.jsonl` into `baselines/alloy4fun-resolve.txt`: one line per
+/// jar reject, keyed by the extraction's code index, under a header that pins
+/// the jar and the corpus by SHA-256.
+fn run_bake(jar_jsonl: &Path, out_dir: &Path, jar_file: &Path, out: &Path) -> ExitCode {
+    let files = read_filelist(out_dir);
+    eprintln!("[bake] {} codes from {}", files.len(), out_dir.display());
+    let rejects = match jar_rejects(jar_jsonl, &files) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("[bake] FATAL: {e}");
+            return ExitCode::from(1);
+        }
+    };
+
+    let baseline = ResolveBaseline {
+        header: ResolveBaselineHeader {
+            jar_sha256: resolve_baseline::sha256_file(jar_file)
+                .unwrap_or_else(|e| panic!("cannot digest {}: {e}", jar_file.display())),
+            codes: files.len(),
+            corpus_sha256: resolve_baseline::sha256_corpus(&files)
+                .unwrap_or_else(|e| panic!("cannot digest the corpus: {e}")),
+            generated: resolve_baseline::today_utc(),
+            command: format!(
+                "resolve-gauge bake-baseline --jar <jar.jsonl> --out-dir <extraction> --jar-file {} --out {}",
+                jar_file.display(),
+                out.display()
+            ),
+        },
+        rejects,
+    };
+    let rendered = baseline.render();
+    fs::write(out, &rendered).unwrap_or_else(|e| panic!("cannot write {}: {e}", out.display()));
+    eprintln!(
+        "[bake] wrote {} ({} jar rejects, {} accepts implicit, {} bytes)",
+        out.display(),
+        baseline.rejects.len(),
+        files.len() - baseline.rejects.len(),
+        rendered.len()
+    );
+    ExitCode::SUCCESS
+}
+
+fn num(v: &serde_json::Value, key: &str) -> usize {
+    v.get(key)
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0)
+        .try_into()
+        .unwrap_or(0)
+}
+
+/// Reconstructs the jar side from a committed baseline, after checking that it
+/// describes this extraction (and, when the jar is on disk, this jar).
+fn jar_side_from_baseline(
+    baseline_path: &Path,
+    out_dir: &Path,
+    jar_file: &Path,
+) -> Result<BTreeMap<String, Row>, String> {
+    let text = fs::read_to_string(baseline_path)
+        .map_err(|e| format!("cannot read {}: {e}", baseline_path.display()))?;
+    let baseline = ResolveBaseline::parse(&text).map_err(|e| e.to_string())?;
+    let files = read_filelist(out_dir);
+    baseline.verify_corpus(&files).map_err(|e| e.to_string())?;
+    if jar_file.exists() {
+        baseline.verify_jar(jar_file).map_err(|e| e.to_string())?;
+    } else {
+        eprintln!(
+            "[baseline] note: {} is absent — jar identity not verified",
+            jar_file.display()
+        );
+    }
+    eprintln!(
+        "[baseline] {} verified against {} codes ({} jar rejects, baked {})",
+        baseline_path.display(),
+        baseline.header.codes,
+        baseline.rejects.len(),
+        baseline.header.generated
+    );
+    Ok(files
+        .into_iter()
+        .enumerate()
+        .map(|(idx, file)| {
+            let row = baseline.rejects.get(&idx).map_or_else(
+                || Row {
+                    ok: true,
+                    phase: "accept".to_owned(),
+                    variant: String::new(),
+                },
+                |r| Row {
+                    ok: false,
+                    phase: r.phase.clone(),
+                    variant: String::new(),
+                },
+            );
+            (file, row)
+        })
+        .collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -799,7 +977,12 @@ fn usage() -> ExitCode {
          \x20 resolve-gauge alloy4fun --corpus <dir> --out <dir> [--threads N] [--limit N]\n\
          \x20 resolve-gauge paths <list-file> --out <dir>\n\
          \x20 resolve-gauge diff --mettle <mettle.jsonl> --jar <jar.jsonl>\n\
-         \x20 resolve-gauge warn-diff --mettle <mettle.jsonl> --jar <jar.jsonl>"
+         \x20 resolve-gauge diff --mettle <mettle.jsonl> --jar-baseline <file> --out-dir <dir>\n\
+         \x20 resolve-gauge bake-baseline --jar <jar.jsonl> --out-dir <dir> --out <file>\n\
+         \x20 resolve-gauge warn-diff --mettle <mettle.jsonl> --jar <jar.jsonl>\n\
+         \n\
+         \x20 --jar-file <path> overrides the oracle jar the baseline is pinned to\n\
+         \x20 (default {DEFAULT_JAR}, relative to the working directory)."
     );
     ExitCode::from(2)
 }
@@ -832,10 +1015,51 @@ fn main() -> ExitCode {
             run_paths(Path::new(list), Path::new(&out))
         }
         "diff" => {
-            let (Some(m), Some(j)) = (opt(&args, "--mettle"), opt(&args, "--jar")) else {
+            let Some(m) = opt(&args, "--mettle") else {
                 return usage();
             };
-            run_diff(Path::new(&m), Path::new(&j))
+            let jar_file = opt(&args, "--jar-file").unwrap_or_else(|| DEFAULT_JAR.to_owned());
+            let jar = match (opt(&args, "--jar"), opt(&args, "--jar-baseline")) {
+                (Some(j), None) => read_jsonl(Path::new(&j)),
+                (None, Some(b)) => {
+                    let Some(out_dir) = opt(&args, "--out-dir") else {
+                        eprintln!("--jar-baseline needs --out-dir (the extraction it answers for)");
+                        return usage();
+                    };
+                    match jar_side_from_baseline(
+                        Path::new(&b),
+                        Path::new(&out_dir),
+                        Path::new(&jar_file),
+                    ) {
+                        Ok(rows) => rows,
+                        Err(e) => {
+                            eprintln!("[baseline] {e}");
+                            return ExitCode::from(1);
+                        }
+                    }
+                }
+                _ => {
+                    eprintln!("diff takes exactly one of --jar / --jar-baseline");
+                    return usage();
+                }
+            };
+            run_diff(Path::new(&m), &jar)
+        }
+        "bake-baseline" => {
+            let (Some(j), Some(out_dir), Some(out)) = (
+                opt(&args, "--jar"),
+                opt(&args, "--out-dir"),
+                opt(&args, "--out"),
+            ) else {
+                return usage();
+            };
+            let jar_file = opt(&args, "--jar-file").unwrap_or_else(|| DEFAULT_JAR.to_owned());
+            run_bake(
+                Path::new(&j),
+                Path::new(&out_dir),
+                Path::new(&jar_file),
+                Path::new(&out),
+            )
         }
         "warn-diff" => {
             let (Some(m), Some(j)) = (opt(&args, "--mettle"), opt(&args, "--jar")) else {

@@ -153,6 +153,49 @@ reach the report — so there a mismatch is downgraded to "ignored, with a
 warning". Otherwise every deep-budget sweep, and the jar smoke test, would fail
 on an artifact they were never going to consult.
 
+## alloy4fun-resolve.txt (2026-08-23, mt-110)
+
+The reference jar's **resolve/typecheck verdict** for all 150,891 unique
+alloy4fun codes, so a resolver gate no longer pays a live ~4-minute JVM pass to
+learn facts that cannot change at a pinned jar. `resolve-gauge diff
+--jar-baseline` reproduces the live scorecard byte-for-byte in ~3 seconds.
+
+Unlike the JSON artifacts above this one is a flat text file: a `#`-comment
+header, then one line per jar-**rejected** code in extraction-index order —
+`<index> <phase> <line>:<col> <first line of the jar's message>`. Accepts are
+implicit (101,970 of them; recording them would treble the file for no
+information). 48,921 reject lines, 3.0 MB. The message line is what buckets an
+over-accept family, so a triage round needs no jar either.
+
+**Anti-rot.** The header pins the oracle jar by SHA-256
+(`6b8c1cb5…`, the same digest `docs/reference/alloy6-reference.md` pins it by)
+and the corpus by SHA-256 over the extracted code files' bytes concatenated in
+index order, plus the code count. All three are **hard errors** at load, never
+warnings: the artifact keys rows by index, so answering for a different
+extraction would compare row *i* of one corpus against row *i* of another. (The
+jar check is skipped, with a printed note, when the jar is absent from the
+working tree — it is git-ignored.)
+
+Capture it from a live jar pass (~4 minutes for the JVM side):
+
+    ./target/release/resolve-gauge alloy4fun --corpus corpus/alloy4fun/2024-25 \
+      --out <OUT> --threads 8
+    javac -cp oracle/org.alloytools.alloy.dist.jar \
+      crates/als-conform/shim/ResolveGaugeShim.java -d <SHIM>
+    java -cp <SHIM>:oracle/org.alloytools.alloy.dist.jar \
+      ResolveGaugeShim <OUT>/filelist.txt > <OUT>/jar.jsonl
+    ./target/release/resolve-gauge bake-baseline --jar <OUT>/jar.jsonl \
+      --out-dir <OUT> --out baselines/alloy4fun-resolve.txt
+
+and use it with:
+
+    ./target/release/resolve-gauge diff --mettle <OUT>/mettle.jsonl \
+      --jar-baseline baselines/alloy4fun-resolve.txt --out-dir <OUT>
+
+Recapture is needed only when the jar moves (ADR-0002 repin) or the alloy4fun
+corpus does. At capture the scorecard was: agree ACCEPT 101,970 / agree REJECT
+48,631 / **drop-in violations 0** / over-acceptance 290 (mt-110).
+
 ## portus-63-slow-verdict.json (2026-07-25, mt-050)
 
 Verdict supplement for 8 of the 10 portus files that were file-level 60s

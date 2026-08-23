@@ -14,6 +14,9 @@
 //! - [`model`]: typed per-command/per-file results.
 //! - [`scorecard::Scorecard`]: deterministic aggregation and rendering.
 //! - [`error::ConformError`]: harness-level (not oracle-verdict-level) failures.
+//! - [`resolve_baseline::ResolveBaseline`] (mt-110): the committed jar
+//!   resolve-verdict baseline (`baselines/alloy4fun-resolve.txt`) that lets
+//!   `resolve-gauge diff` skip the live ~4-minute JVM pass.
 //! - [`bench::run_bench`] / [`bench::BenchReport`] (mt-024): the one-command
 //!   conformance + speed benchmark (`conform bench`) -- per-stage mettle-vs-jar
 //!   agreement (parse, resolve) plus honest mettle/jar timing, reusing the
@@ -29,6 +32,7 @@ pub mod config;
 pub mod error;
 pub mod model;
 mod parse;
+pub mod resolve_baseline;
 pub mod scorecard;
 pub mod shim;
 pub mod solve_gauge;
@@ -38,6 +42,7 @@ pub use bench::{run_bench, BenchConfig, BenchReport, DEFAULT_CORPUS_ROOTS};
 pub use config::{EnumerationCap, OracleConfig};
 pub use error::ConformError;
 pub use model::{CommandResult, FileOutcome, FileResult, Outcome, ShimErrorKind};
+pub use resolve_baseline::{RejectRow, ResolveBaseline, ResolveBaselineHeader};
 pub use scorecard::{Scorecard, Totals};
 pub use shim::{ensure_shim_compiled, run_oracle_on_file, run_oracle_on_files};
 pub use solve_gauge::refresh::refresh_counts;

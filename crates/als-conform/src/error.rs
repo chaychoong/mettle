@@ -86,4 +86,20 @@ pub enum ConformError {
     /// session and reads exactly like a deliberate one.
     #[error("refusing to capture a sweep baseline: {reason}")]
     SweepCaptureRefused { reason: &'static str },
+    /// A committed resolve-verdict baseline could not be read as one (mt-110):
+    /// a missing header field or a malformed reject row. Half a baseline is not
+    /// a usable baseline, so this fails the load rather than dropping rows.
+    #[error("resolve baseline is malformed: {detail}")]
+    ResolveBaselineParse { detail: String },
+    /// A resolve-verdict baseline's header does not describe the corpus (or the
+    /// jar) it is being used against. A hard tool error, never a warning
+    /// (mt-110): the baseline keys rows by code index, so answering for a
+    /// different extraction compares row `i` of one corpus with row `i` of
+    /// another.
+    #[error("resolve baseline: `{field}` mismatch (baseline={expected}, run={actual})")]
+    ResolveBaselineMismatch {
+        field: String,
+        expected: String,
+        actual: String,
+    },
 }

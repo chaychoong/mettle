@@ -202,7 +202,7 @@ fn detect_phase(line: &str) -> Option<String> {
     }
 }
 
-fn unix_secs() -> u64 {
+pub(crate) fn unix_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs())
@@ -215,7 +215,7 @@ fn unix_secs() -> u64 {
     clippy::many_single_char_names,
     reason = "the civil-from-days reference algorithm names its intermediates y/m/d/z/era/doe"
 )]
-fn fmt_unix_utc(secs: u64) -> String {
+pub(crate) fn fmt_unix_utc(secs: u64) -> String {
     let days = (secs / 86_400) as i64;
     let rem = secs % 86_400;
     let (h, m, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
