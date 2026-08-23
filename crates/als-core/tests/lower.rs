@@ -1133,3 +1133,64 @@ fn ordering_closure_records_its_leaf_choice_mt105b() {
         assert!(try_build(src).is_ok(), "expected lower, deferred\n{src}");
     }
 }
+
+/// ADR-0023 phase (c): a join's compound right operand is now resolved **in
+/// place**, through the candidate the join chose, against the join's right
+/// slice. That is what puts the operand's recording on the verdict path: before
+/// this phase the only pass that reached a nested-spine right operand was a
+/// discarded side-walk that filtered the ambiguous `next` against the operand's
+/// own type (`univ->univ`, which excludes nothing), so no choice was recorded
+/// and the command deferred with "name without a recorded resolution".
+///
+/// `ertms_1A.als[5]` is this shape — `tr1.MA.(t6.*next)` under three
+/// `util/ordering` opens — and was the last convertible row of the stage-1
+/// sweep. The verdict was ACCEPT before and after, so the resolve gauge cannot
+/// see this; only lowering can.
+#[test]
+fn compound_right_operand_records_its_leaf_choice_mt105c() {
+    let ord3 = "module m\n\
+                open util/ordering[Time] as T\n\
+                open util/ordering[VSS] as V\n\
+                open util/ordering[TTD] as D\n\
+                sig Time {}\n\
+                sig VSS {}\n\
+                sig TTD {}\n\
+                sig Train { MA: VSS one -> Time }\n";
+    for body in [
+        // The ertms_1A[5] shape: a nested spine as the right operand.
+        "some tr1: Train, t6: Time | tr1.MA.(t6.*next) = V/last",
+        // …its `^` and `~` siblings, and a union operand.
+        "some tr: Train, t: Time | tr.MA.(t.^next) = V/last",
+        "some tr: Train, t: Time | tr.MA.(t.~next) = V/last",
+        "some tr: Train, t: Time | tr.MA.(t.(next+next)) = V/last",
+        // A compound (join) left operand inside the right operand.
+        "some tr: Train, t: Time, v: VSS | tr.MA.((v.(tr.MA)).*next) = V/last",
+    ] {
+        let src = format!("{ord3}run {{ {body} }} for 3\n");
+        assert!(try_build(&src).is_ok(), "expected lower, deferred\n{src}");
+    }
+}
+
+/// The same recursion, guarded from the other side: the right operand is
+/// finalized through the candidate the join already chose, never re-resolved by
+/// `ExprId`. With the same field label declared on three sigs, a re-resolution
+/// re-runs candidate selection over three equally-good `dist` fields, fails to
+/// pick one, and records nothing — so the command would defer here even though
+/// the verdict (whose errors this phase still truncates) stays ACCEPT.
+/// `corpus/portus-63/.../lc-lenses.als` is the real instance.
+#[test]
+fn same_label_on_three_sigs_lowers_through_the_chosen_base_mt105c() {
+    let m = "module m\n\
+             sig N {}\n\
+             sig S { dist: S -> one N }\n\
+             sig U { dist: U -> one N }\n\
+             sig V { dist: V -> one N }\n";
+    for body in [
+        "all s, s2: S | dist[s, s2] = dist[s2, s]",
+        "all s, s2: S | s2.(s.dist) = s.(s2.dist)",
+        "all u, u2: U | u2.dist[u] = u.dist[u2]",
+    ] {
+        let src = format!("{m}run {{ {body} }} for 3\n");
+        assert!(try_build(&src).is_ok(), "expected lower, deferred\n{src}");
+    }
+}

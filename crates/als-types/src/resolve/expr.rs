@@ -76,17 +76,27 @@ enum BinderKind {
     Comprehension,
 }
 
-/// A value candidate for a bare name (resolution-doc §4.4 `populate`): a typed
-/// leaf reading (sig / field-relation / implicit-`this` join / 0-ary call).
+/// One candidate of an `ExprChoice` — a bare name's value candidate
+/// (resolution-doc §4.4 `populate`: sig / field-relation / implicit-`this` join
+/// / 0-ary call) or one materialized reading of a join/application spine (the
+/// reference's `Context.process` output). They are the same thing: a name
+/// candidate is the [`Fin::Leaf`] case.
+#[derive(Clone)]
 struct Cand {
+    /// The candidate's bottom-up (merged) result type.
     ty: Type,
     /// Disambiguation weight (implicit-`this`/cross-branch fields cost 1).
     weight: i32,
     /// Human-readable origin (the reference's `reasons`), for the ambiguity msg.
     reason: String,
-    /// The resolved leaf (mt-031 choice recording): what this candidate *is*, so
-    /// the winning candidate is recorded for the lowerer.
-    origin: CandOrigin,
+    /// How to finalize this candidate once it wins.
+    fin: Fin,
+    /// The `ExprId` this candidate's choice is recorded at (mt-031): the name
+    /// node, or the spine's rightmost base node.
+    head_expr: ExprId,
+    /// The resolved leaf, when the candidate *is* a name — so the winning
+    /// candidate is recorded for the lowerer without re-deriving §4.4.
+    head_choice: Option<CandOrigin>,
 }
 
 /// What a chosen name candidate resolves to, for choice recording (mt-031).
@@ -106,10 +116,11 @@ enum CandOrigin {
     Var(String),
     /// A 0-param relation-valued `let` macro used as a value — a spine base
     /// (`s.adjacent`, `adjacent[s]`) where `adjacent` is a top-level 0-param
-    /// macro (mt-040). The winning reading carries the macro id so [`Cx::flush_rec`]
-    /// can expand + record a [`NameChoice::Macro`] at the macro name's node (the
-    /// bare-name path records this directly via [`Cx::expand_macro`]; the spine
-    /// path is the immutable readings pass, so recording is deferred to flush).
+    /// macro (mt-040). The winning candidate carries the macro id so
+    /// [`Cx::record_leaf`] can expand + record a [`NameChoice::Macro`] at the
+    /// macro name's node (the bare-name path records this directly via
+    /// [`Cx::expand_macro`]; the spine path is the immutable readings pass, so
+    /// recording is deferred to finalization).
     Macro(MacroId),
 }
 
@@ -129,32 +140,17 @@ impl CandOrigin {
             CandOrigin::Call0(f) => NameChoice::Call0(*f),
             CandOrigin::Builtin(b) => NameChoice::Builtin(*b),
             CandOrigin::Var(n) => NameChoice::Var(n.clone()),
-            // A macro base needs expansion (resolve its body for this site), which
-            // is mutable; [`Cx::flush_rec`] handles it before reaching `to_choice`.
+            // A macro base needs expansion (resolve its body for this site),
+            // which is mutable; [`Cx::record_leaf`] handles it before reaching
+            // `to_choice`.
             CandOrigin::Macro(_) => {
-                unreachable!("CandOrigin::Macro is expanded in flush_rec, never via to_choice")
+                unreachable!("CandOrigin::Macro is expanded in record_leaf, never via to_choice")
             }
         }
     }
 }
 
-/// One materialized reading of a join/application spine — a candidate in the
-/// join-level `ExprChoice` (the reference's `Context.process` output).
-#[derive(Clone)]
-struct Reading {
-    /// The reading's bottom-up (merged) result type.
-    ty: Type,
-    weight: i32,
-    reason: String,
-    fin: Fin,
-    /// The `ExprId` of the spine's rightmost base (mt-031 choice recording).
-    head_expr: ExprId,
-    /// The base name's resolved leaf, when it is a name (recorded so the lowerer
-    /// knows a join base's meaning without re-deriving §4.4).
-    head_choice: Option<CandOrigin>,
-}
-
-/// How to *finalize* a chosen [`Reading`]: resolve its operands against the
+/// How to *finalize* a chosen [`Cand`]: resolve its operands against the
 /// slices derived from the relevant type, and emit any make-error.
 #[derive(Clone)]
 enum Fin {
@@ -162,17 +158,16 @@ enum Fin {
     Leaf,
     /// A relational join `left . right`: resolve `left` against the join
     /// left-slice; fire `IllegalJoin` if the join type is the `EMPTY` sentinel.
-    /// `right_expr` is the compound right-operand expr when it is not a
-    /// distributed name leaf (a field candidate needs no further resolution) —
-    /// carried so its own warnings can be collected (a warning-only resolve that
-    /// discards errors, so the verdict is unaffected; mt-023).
+    /// `base` is the right operand's **chosen** candidate (so `base.ty` is the
+    /// join's right type), finalized in place against the join right-slice
+    /// (ADR-0023 G2). Carrying the winning candidate rather than a shadow of it
+    /// is what makes the recursion safe: the operand is never re-resolved by
+    /// `ExprId`, which would re-run candidate selection over a name whose
+    /// candidates the enclosing join already disambiguated.
     Join {
         left: ExprId,
-        right_ty: Type,
-        right_expr: Option<ExprId>,
+        base: Box<Cand>,
         span: Span,
-        /// The recordable structure of the join base (mt-031 choice recording).
-        base: Box<RecNode>,
     },
     /// A function/predicate call: resolve each arg against its parameter type.
     Call {
@@ -196,41 +191,6 @@ enum Fin {
     /// A name with no candidate reading at all (unknown in a join/box spine):
     /// a reject unless the model is `$`-lenient.
     Unknown { name: String, span: Span },
-}
-
-/// The recordable structure of a join base (mt-031 choice recording): mirrors
-/// the spine tree of the *winning* reading so [`Cx::flush_rec`] can record each
-/// nested join node and base name without re-deriving §4.4.
-#[derive(Clone)]
-enum RecNode {
-    /// A leaf base name resolved to `choice`, recorded at `expr`.
-    Name {
-        /// The base name's `ExprId`.
-        expr: ExprId,
-        /// Its resolved leaf.
-        choice: CandOrigin,
-    },
-    /// A nested relational-join subspine node `expr` (join `arg . base`) whose
-    /// base name(s) are `base` and whose argument operand is `arg`.
-    Join {
-        /// The nested spine node's `ExprId`.
-        expr: ExprId,
-        /// Its argument operand (the join left) — resolved standalone at flush to
-        /// record its choices (it is never finalized in place, being buried as a
-        /// base of the outer spine).
-        arg: ExprId,
-        /// Its base.
-        base: Box<RecNode>,
-    },
-    /// A compound base (paren/closure/nested sub-expr) at `expr` — the base of a
-    /// join whose right operand is not a distributed name leaf. When such a base
-    /// is buried inside an *outer* spine (`fr . (w.*co_pa)`), the verdict path's
-    /// warning-only compound-right resolve never reaches it, so [`Cx::flush_rec`]
-    /// resolves it standalone (recording-only) to record its inner choices
-    /// (mt-040).
-    Sub(ExprId),
-    /// Nothing to record here.
-    Opaque,
 }
 
 /// The expression-typing context (see the module note). Borrows `&Resolver`
@@ -306,46 +266,26 @@ impl<'a, 'g> Cx<'a, 'g> {
             .record(self.module, expr, ExprChoice::Spine(choice));
     }
 
-    /// Walks the winning reading's base structure, recording each nested join
-    /// node and base name (mt-031). `receiver` is the operand the base is joined
-    /// onto (the join arg to its left), used to decide whether a sig-field base
-    /// keeps its implicit `this` (see [`Self::field_base_uses_raw`]).
-    fn flush_rec(&mut self, rec: &RecNode, receiver: Option<ExprId>) {
-        match rec {
-            RecNode::Name { expr, choice } => {
-                if let CandOrigin::Macro(mid) = choice {
-                    // A 0-param macro used as a spine base (`s.adjacent`,
-                    // `adjacent[s]`): expand its body for this site and record a
-                    // `NameChoice::Macro`, exactly as the bare-name path does via
-                    // `expand_macro` (mt-040).
-                    self.record_zero_macro(*expr, *mid);
-                } else {
-                    let join_base = self.field_base_uses_raw(choice, receiver);
-                    let nc = choice.to_choice(join_base);
-                    self.record_name(*expr, nc);
-                }
-            }
-            RecNode::Join { expr, arg, base } => {
-                self.record_spine(*expr, SpineChoice::Join);
-                // The base is joined onto `arg` (`arg . base`), so `arg` is its
-                // receiver for the implicit-`this` decision.
-                self.flush_rec(base, Some(*arg));
-                // The nested join's argument is never finalized in place (it is
-                // buried as a base), so resolve it standalone to record its
-                // choices — discarding any errors/warnings (verdict-neutral, the
-                // node already resolved as part of the outer spine).
-                self.record_operand(*arg);
-            }
-            RecNode::Sub(e) => {
-                // A compound base (`*co_pa`, `(w.*co_pa)`) buried under an outer
-                // spine: the verdict never re-resolves it (LIMITATIONS
-                // compound-right rule), so record its inner choices standalone —
-                // errors/warnings discarded, so the verdict/warning set is
-                // byte-identical (mt-040).
-                self.record_operand(*e);
-            }
-            RecNode::Opaque => {}
+    /// Records a chosen candidate's leaf choice at `expr` (mt-031). `receiver`
+    /// is the operand the leaf is joined onto (the join arg to its left), used
+    /// to decide whether a sig-field base keeps its implicit `this` (see
+    /// [`Self::field_base_uses_raw`]); `None` at a bare name, which has no
+    /// receiver. A candidate with no origin (a lenient `univ` placeholder, an
+    /// unknown name) records nothing.
+    fn record_leaf(&mut self, expr: ExprId, cand: &Cand, receiver: Option<ExprId>) {
+        let Some(choice) = cand.head_choice.clone() else {
+            return;
+        };
+        if let CandOrigin::Macro(mid) = choice {
+            // A 0-param macro used as a spine base (`s.adjacent`, `adjacent[s]`):
+            // expand its body for this site and record a `NameChoice::Macro`,
+            // exactly as the bare-name path does via `expand_macro` (mt-040).
+            self.record_zero_macro(expr, mid);
+            return;
         }
+        let join_base = self.field_base_uses_raw(&choice, receiver);
+        let nc = choice.to_choice(join_base);
+        self.record_name(expr, nc);
     }
 
     /// Whether a sig-field appearing as a join base uses the **raw** relation
@@ -377,18 +317,6 @@ impl<'a, 'g> Cx<'a, 'g> {
         let recv_ty = self.infer(recv);
         let raw = &self.r.world.fields[*field].ty;
         recv_ty.join(&self.r.world, raw).has_tuple(&self.r.world)
-    }
-
-    /// Resolves `arg` against its own bottom-up type solely to **record** its
-    /// resolution choices (mt-031), suppressing every error and warning so the
-    /// accept/reject verdict and warning set stay byte-identical.
-    fn record_operand(&mut self, arg: ExprId) {
-        let nerr = self.errors.len();
-        let nwarn = self.warnings.len();
-        let p = self.infer(arg).remove_bool_and_int(self.int_sig());
-        let _ = self.resolve(arg, &p);
-        self.errors.truncate(nerr);
-        self.warnings.truncate(nwarn);
     }
 
     /// Records a [`NameChoice::Macro`] for a 0-param relation-valued macro used
@@ -445,32 +373,6 @@ impl<'a, 'g> Cx<'a, 'g> {
             func: *only,
             is_pred: self.r.world.funcs[*only].is_pred,
         })
-    }
-
-    /// The [`RecNode`] describing a base reading (its head name / nested join /
-    /// compound sub-expr), for recording the winning spine.
-    fn rec_of(reading: &Reading) -> RecNode {
-        match &reading.fin {
-            Fin::Leaf => match &reading.head_choice {
-                Some(origin) => RecNode::Name {
-                    expr: reading.head_expr,
-                    choice: origin.clone(),
-                },
-                None => RecNode::Opaque,
-            },
-            Fin::Join { left, base, .. } => RecNode::Join {
-                expr: reading.head_expr,
-                arg: *left,
-                base: base.clone(),
-            },
-            Fin::Sub(e) => RecNode::Sub(*e),
-            // A nested func/pred call buried as a compound-right base
-            // (`rf_pa.(Ghost[g])`): its spine node (`head_expr`) is never
-            // finalized in place, so record it by standalone resolve (mt-040).
-            Fin::Call { .. } | Fin::BadCall { .. } => RecNode::Sub(reading.head_expr),
-            // A genuinely-unknown / lenient placeholder base has nothing to record.
-            Fin::Unknown { .. } => RecNode::Opaque,
-        }
     }
 
     fn ast(&self) -> &'g als_syntax::ast::Ast {
@@ -581,8 +483,8 @@ impl<'a, 'g> Cx<'a, 'g> {
             ExprKind::Str(_) => Type::unary(self.r.world.builtins.string),
             ExprKind::Const(c) => self.const_type(*c),
             ExprKind::This => self.infer_this(),
-            ExprKind::Name(qn) => self.infer_name(qn, false),
-            ExprKind::AtName(qn) => self.infer_name(qn, true),
+            ExprKind::Name(qn) => self.infer_name(e, qn, false),
+            ExprKind::AtName(qn) => self.infer_name(e, qn, true),
             ExprKind::Unary { op, expr } => self.infer_unary(*op, *expr),
             ExprKind::Binary {
                 op: BinOp::Join, ..
@@ -645,8 +547,10 @@ impl<'a, 'g> Cx<'a, 'g> {
         )
     }
 
-    /// The bottom-up merge of a name's candidate types (no resolution).
-    fn infer_name(&self, qn: &QualName, at_name: bool) -> Type {
+    /// The bottom-up merge of a name's candidate types (no resolution). `e` is
+    /// the name node itself, carried only so the candidates it builds name the
+    /// node their choice would be recorded at (the merge discards them).
+    fn infer_name(&self, e: ExprId, qn: &QualName, at_name: bool) -> Type {
         let segs = super::strip_this(qn.segments.iter().map(|s| s.text.clone()).collect());
         if !at_name && segs.len() == 1 {
             if let Some(t) = self.env_get(&segs[0]) {
@@ -665,7 +569,7 @@ impl<'a, 'g> Cx<'a, 'g> {
         // (getRawQS) — the merge over just those candidates.
         let raw: Vec<String> = qn.segments.iter().map(|s| s.text.clone()).collect();
         if raw.len() == 2 && raw[0] == "this" {
-            let own = self.own_candidates(&raw[1], at_name);
+            let own = self.own_candidates(e, &raw[1], at_name);
             if !own.is_empty() {
                 let mut merge = Type::empty();
                 for c in &own {
@@ -675,7 +579,7 @@ impl<'a, 'g> Cx<'a, 'g> {
             }
         }
 
-        let cands = self.value_candidates(&segs, at_name);
+        let cands = self.value_candidates(e, &segs, at_name);
         if cands.is_empty() {
             // A 0-param macro used as a value expands to its body type (needed so
             // `macro[x]` box joins the body relation, not a lenient `univ`).
@@ -1692,13 +1596,13 @@ impl<'a, 'g> Cx<'a, 'g> {
         // that makes `~this/next` unambiguous where `~next` is ambiguous.
         let raw: Vec<String> = qn.segments.iter().map(|s| s.text.clone()).collect();
         if raw.len() == 2 && raw[0] == "this" {
-            let own = self.own_candidates(&raw[1], at_name);
+            let own = self.own_candidates(e, &raw[1], at_name);
             if !own.is_empty() {
                 return self.pick_name(e, &own, p, &raw[1], qn.span);
             }
         }
 
-        let cands = self.value_candidates(&segs, at_name);
+        let cands = self.value_candidates(e, &segs, at_name);
         if cands.is_empty() {
             // A macro named bare keeps its leniency: mettle binds macro params by
             // type, so a callable passed by name (`m[ax]`) has no value reading of
@@ -1743,16 +1647,14 @@ impl<'a, 'g> Cx<'a, 'g> {
     /// reject at a definite position.
     fn pick_name(&mut self, e: ExprId, cands: &[Cand], p: &Type, name: &str, span: Span) -> R {
         if let [only] = cands {
-            let nc = only.origin.to_choice(false);
-            self.record_name(e, nc);
+            self.record_leaf(e, only, None);
             return R::ok(only.ty.clone());
         }
         let types: Vec<Type> = cands.iter().map(|c| c.ty.clone()).collect();
         let weights: Vec<i32> = cands.iter().map(|c| c.weight).collect();
         match self.resolve_helper(&types, &weights, p) {
             Pick::One(i) => {
-                let nc = cands[i].origin.to_choice(false);
-                self.record_name(e, nc);
+                self.record_leaf(e, &cands[i], None);
                 R::ok(cands[i].ty.clone())
             }
             Pick::NoneArity(k) => {
@@ -1969,7 +1871,7 @@ impl<'a, 'g> Cx<'a, 'g> {
         if segs.len() == 1 && self.env_get(&segs[0]).is_some() {
             return false;
         }
-        if !self.value_candidates(&segs, false).is_empty() {
+        if !self.value_candidates(e, &segs, false).is_empty() {
             return false;
         }
         let callable_func = self
@@ -1993,15 +1895,18 @@ impl<'a, 'g> Cx<'a, 'g> {
     }
 
     /// Collects value candidates for a (possibly qualified) name: sigs/params,
-    /// 0-ary funcs, and fields (with implicit-`this` inside a sig context).
-    fn value_candidates(&self, segs: &[String], at_name: bool) -> Vec<Cand> {
+    /// 0-ary funcs, and fields (with implicit-`this` inside a sig context). `at`
+    /// is the name node the winner records its choice at (mt-031).
+    fn value_candidates(&self, at: ExprId, segs: &[String], at_name: bool) -> Vec<Cand> {
         let mut out = Vec::new();
         if let Some(sig) = self.r.lookup_sig_from(self.module, segs) {
             out.push(Cand {
                 ty: self.r.world.sigs[sig].ty.clone(),
                 weight: 0,
                 reason: format!("sig {}", self.r.world.sigs[sig].name),
-                origin: CandOrigin::Sig(sig),
+                fin: Fin::Leaf,
+                head_expr: at,
+                head_choice: Some(CandOrigin::Sig(sig)),
             });
         }
         for fid in self.lookup_funcs(segs) {
@@ -2015,20 +1920,22 @@ impl<'a, 'g> Cx<'a, 'g> {
                     },
                     weight: 0,
                     reason: format!("{} {}", if f.is_pred { "pred" } else { "fun" }, f.name),
-                    origin: CandOrigin::Call0(fid),
+                    fin: Fin::Leaf,
+                    head_expr: at,
+                    head_choice: Some(CandOrigin::Call0(fid)),
                 });
             }
         }
         let label = &segs[segs.len() - 1];
         if segs.len() == 1 {
-            self.collect_field_cands(label, at_name, &mut out);
+            self.collect_field_cands(at, label, at_name, &mut out);
         }
         out
     }
 
     /// Candidates for a `this/tail` name: sigs/0-ary funcs/fields declared in
     /// the **current module only** (the reference's `getRawQS` own-module scope).
-    fn own_candidates(&self, tail: &str, at_name: bool) -> Vec<Cand> {
+    fn own_candidates(&self, at: ExprId, tail: &str, at_name: bool) -> Vec<Cand> {
         let mut out = Vec::new();
         let m = &self.r.mods[self.module.index()];
         if let Some(&sig) = m.sigs.get(tail).or_else(|| m.param_sigs.get(tail)) {
@@ -2036,7 +1943,9 @@ impl<'a, 'g> Cx<'a, 'g> {
                 ty: self.r.world.sigs[sig].ty.clone(),
                 weight: 0,
                 reason: format!("sig {}", self.r.world.sigs[sig].name),
-                origin: CandOrigin::Sig(sig),
+                fin: Fin::Leaf,
+                head_expr: at,
+                head_choice: Some(CandOrigin::Sig(sig)),
             });
         }
         if let Some(fids) = m.funcs.get(tail) {
@@ -2051,7 +1960,9 @@ impl<'a, 'g> Cx<'a, 'g> {
                         },
                         weight: 0,
                         reason: format!("{} {}", if f.is_pred { "pred" } else { "fun" }, f.name),
-                        origin: CandOrigin::Call0(fid),
+                        fin: Fin::Leaf,
+                        head_expr: at,
+                        head_choice: Some(CandOrigin::Call0(fid)),
                     });
                 }
             }
@@ -2061,14 +1972,14 @@ impl<'a, 'g> Cx<'a, 'g> {
             if field.name != tail || self.r.world.sigs[field.owner].module != self.module {
                 continue;
             }
-            self.push_field_cand(fid, field, at_name, &mut out);
+            self.push_field_cand(at, fid, field, at_name, &mut out);
         }
         out
     }
 
     /// Field candidates for a bare label (resolution-doc §3.3/§3.4, weights per
     /// `populate` resolution-mode 1).
-    fn collect_field_cands(&self, label: &str, at_name: bool, out: &mut Vec<Cand>) {
+    fn collect_field_cands(&self, at: ExprId, label: &str, at_name: bool, out: &mut Vec<Cand>) {
         for (fid, field) in self.r.world.fields.iter() {
             if field.name != *label {
                 continue;
@@ -2077,7 +1988,7 @@ impl<'a, 'g> Cx<'a, 'g> {
             if !self.reachable_contains(owner_mod) {
                 continue;
             }
-            self.push_field_cand(fid, field, at_name, out);
+            self.push_field_cand(at, fid, field, at_name, out);
         }
     }
 
@@ -2085,6 +1996,7 @@ impl<'a, 'g> Cx<'a, 'g> {
     /// resolution-mode 1: implicit-`this`/bare 0, cross-branch 1).
     fn push_field_cand(
         &self,
+        at: ExprId,
         fid: FieldId,
         field: &crate::world::ResolvedField,
         at_name: bool,
@@ -2109,7 +2021,9 @@ impl<'a, 'g> Cx<'a, 'g> {
                 ty: field.ty.clone(),
                 weight: 0,
                 reason,
-                origin,
+                fin: Fin::Leaf,
+                head_expr: at,
+                head_choice: Some(origin),
             }),
             Some(root) if self.r.world.sig_is_same_or_descendent(root, field.owner) => {
                 if at_name {
@@ -2117,7 +2031,9 @@ impl<'a, 'g> Cx<'a, 'g> {
                         ty: field.ty.clone(),
                         weight: 0,
                         reason,
-                        origin,
+                        fin: Fin::Leaf,
+                        head_expr: at,
+                        head_choice: Some(origin),
                     });
                 } else {
                     let this_ty = self.r.world.sigs[root].ty.clone();
@@ -2125,7 +2041,9 @@ impl<'a, 'g> Cx<'a, 'g> {
                         ty: this_ty.join(&self.r.world, &field.ty),
                         weight: 0,
                         reason,
-                        origin,
+                        fin: Fin::Leaf,
+                        head_expr: at,
+                        head_choice: Some(origin),
                     });
                 }
             }
@@ -2133,7 +2051,9 @@ impl<'a, 'g> Cx<'a, 'g> {
                 ty: field.ty.clone(),
                 weight: 1,
                 reason,
-                origin,
+                fin: Fin::Leaf,
+                head_expr: at,
+                head_choice: Some(origin),
             }),
         }
     }
@@ -2316,7 +2236,7 @@ impl<'a, 'g> Cx<'a, 'g> {
 
     /// Materializes the join-level `ExprChoice`: the candidate readings of an
     /// application spine (the reference's `Context.visit(JOIN)` + `process`).
-    fn build_readings(&self, e: ExprId, span: Span) -> Vec<Reading> {
+    fn build_readings(&self, e: ExprId, span: Span) -> Vec<Cand> {
         match &self.expr(e).kind {
             ExprKind::Binary {
                 op: BinOp::Join,
@@ -2344,22 +2264,22 @@ impl<'a, 'g> Cx<'a, 'g> {
     /// anything else → a single sub-expr reading of its bottom-up type. Every
     /// reading records `head_expr = e` so the winning spine's base (mt-031) is
     /// recorded at the right node.
-    fn readings_of(&self, e: ExprId, span: Span) -> Vec<Reading> {
+    fn readings_of(&self, e: ExprId, span: Span) -> Vec<Cand> {
         match &self.expr(e).kind {
             ExprKind::Name(_) => self.spine_head(e),
             ExprKind::Binary {
                 op: BinOp::Join, ..
             }
             | ExprKind::BoxJoin { .. } => {
-                // A nested spine: keep its readings but point `head_expr` at this
-                // node so `flush_rec` records it as `Spine(Join)`.
+                // A nested spine: keep its readings but point `head_expr` at
+                // this node, so the winning one records `Spine(Join)` there.
                 let mut rs = self.build_readings(e, span);
                 for r in &mut rs {
                     r.head_expr = e;
                 }
                 rs
             }
-            _ => vec![Reading {
+            _ => vec![Cand {
                 ty: self.infer(e),
                 weight: 0,
                 reason: "(expr)".to_owned(),
@@ -2370,123 +2290,114 @@ impl<'a, 'g> Cx<'a, 'g> {
         }
     }
 
-    /// Applies argument `arg` to each reading (`Context.process`): a pending
-    /// call gains the arg (→ `Call`/`BadCall`), a value/field reading becomes a
-    /// relational join `arg . reading`.
-    fn process_readings(&self, base: Vec<Reading>, arg: ExprId, span: Span) -> Vec<Reading> {
-        let world = &self.r.world;
+    /// Applies argument `arg` to each candidate (`Context.process`): a pending
+    /// call gains the arg (→ `Call`/`BadCall`), anything else becomes a
+    /// relational join `arg . cand`.
+    fn process_readings(&self, base: Vec<Cand>, arg: ExprId, span: Span) -> Vec<Cand> {
         let argt = self.infer(arg);
         let mut out = Vec::with_capacity(base.len());
-        for reading in base {
-            let head_expr = reading.head_expr;
-            let head_choice = reading.head_choice.clone();
-            let base_rec = Box::new(Self::rec_of(&reading));
-            match reading.fin {
+        for cand in base {
+            match &cand.fin {
                 Fin::BadCall {
                     func,
-                    mut args,
+                    args,
                     this_arg,
-                    span: cspan,
+                    ..
                 } => {
-                    // `Context.process`: if bc.args.size() < count, append arg;
-                    // applicable(newargs) → Call, else BadCall. Otherwise (already
-                    // full) → relational join `arg . badcall`.
-                    let f = &self.r.world.funcs[func];
-                    let count = f.params.len();
-                    let params: Vec<Type> = f.params.iter().map(|pp| pp.ty.clone()).collect();
-                    let this_ty = self
-                        .rootsig
-                        .map_or_else(Type::empty, |s| self.r.world.sigs[s].ty.clone());
-                    let bc_size = usize::from(this_arg) + args.len();
-                    if bc_size < count {
-                        args.push(arg);
-                        if self.args_applicable(&params, &args, this_arg.then(|| this_ty.clone())) {
-                            let ret =
-                                self.specialize_ret(func, this_arg.then_some(&this_ty), &args);
-                            out.push(Reading {
-                                ty: ret,
-                                weight: reading.weight,
-                                reason: reading.reason,
-                                fin: Fin::Call {
-                                    func,
-                                    this_arg: this_arg.then_some(this_ty),
-                                    args,
-                                    span: cspan,
-                                },
-                                head_expr,
-                                head_choice,
-                            });
-                        } else {
-                            out.push(Reading {
-                                ty: Type::empty(),
-                                weight: reading.weight,
-                                reason: reading.reason,
-                                fin: Fin::BadCall {
-                                    func,
-                                    args,
-                                    this_arg,
-                                    span: cspan,
-                                },
-                                head_expr,
-                                head_choice,
-                            });
-                        }
-                    } else {
-                        // Already full: a relational join of arg with the (bad) call.
-                        let ty = argt.join(world, &reading.ty);
-                        out.push(Reading {
-                            ty,
-                            weight: reading.weight,
-                            reason: reading.reason,
-                            fin: Fin::Join {
-                                left: arg,
-                                right_ty: reading.ty.clone(),
-                                right_expr: None,
-                                span,
-                                base: base_rec,
-                            },
-                            head_expr,
-                            head_choice,
-                        });
+                    let count = self.r.world.funcs[*func].params.len();
+                    if usize::from(*this_arg) + args.len() < count {
+                        out.push(self.apply_arg(cand, arg));
+                        continue;
                     }
+                    // Already full: a relational join of arg with the (bad) call.
                 }
                 // An unknown-name spine head stays a reject, not a relational join.
-                Fin::Unknown { .. } => out.push(reading),
-                other => {
-                    // Relational join arg . reading (right is a resolved leaf).
-                    // A `Sub(e)` right operand (a compound expr — closure,
-                    // paren, nested join) is otherwise never resolved; carry it
-                    // so `finalize` can collect its warnings (mt-023).
-                    let right_expr = match other {
-                        Fin::Sub(e) => Some(e),
-                        _ => None,
-                    };
-                    let ty = argt.join(world, &reading.ty);
-                    out.push(Reading {
-                        ty,
-                        weight: reading.weight,
-                        reason: reading.reason,
-                        fin: Fin::Join {
-                            left: arg,
-                            right_ty: reading.ty.clone(),
-                            right_expr,
-                            span,
-                            base: base_rec,
-                        },
-                        head_expr,
-                        head_choice,
-                    });
+                Fin::Unknown { .. } => {
+                    out.push(cand);
+                    continue;
                 }
+                Fin::Leaf | Fin::Join { .. } | Fin::Call { .. } | Fin::Sub(_) => {}
             }
+            out.push(self.join_cand(arg, &argt, cand, span));
         }
         out
+    }
+
+    /// `Context.process` for a pending call that still wants arguments: append
+    /// `arg` and re-check applicability — a complete applicable call becomes a
+    /// `Fin::Call` carrying its specialized return type, anything else stays a
+    /// `Fin::BadCall` (a reject unless a later argument completes it).
+    fn apply_arg(&self, cand: Cand, arg: ExprId) -> Cand {
+        let Fin::BadCall {
+            func,
+            mut args,
+            this_arg,
+            span,
+        } = cand.fin
+        else {
+            unreachable!("apply_arg is called only on a pending call")
+        };
+        let f = &self.r.world.funcs[func];
+        let params: Vec<Type> = f.params.iter().map(|pp| pp.ty.clone()).collect();
+        let this_ty = self
+            .rootsig
+            .map_or_else(Type::empty, |s| self.r.world.sigs[s].ty.clone());
+        args.push(arg);
+        let (ty, fin) = if self.args_applicable(&params, &args, this_arg.then(|| this_ty.clone())) {
+            (
+                self.specialize_ret(func, this_arg.then_some(&this_ty), &args),
+                Fin::Call {
+                    func,
+                    this_arg: this_arg.then_some(this_ty),
+                    args,
+                    span,
+                },
+            )
+        } else {
+            (
+                Type::empty(),
+                Fin::BadCall {
+                    func,
+                    args,
+                    this_arg,
+                    span,
+                },
+            )
+        };
+        Cand {
+            ty,
+            weight: cand.weight,
+            reason: cand.reason,
+            fin,
+            head_expr: cand.head_expr,
+            head_choice: cand.head_choice,
+        }
+    }
+
+    /// The relational-join candidate `arg . base` (`argt` is `arg`'s bottom-up
+    /// type, hoisted out of the per-candidate loop). The right operand is kept
+    /// **whole** as the join's base, so finalization resolves the very candidate
+    /// the join-level choice picked (ADR-0023 G2).
+    fn join_cand(&self, arg: ExprId, argt: &Type, base: Cand, span: Span) -> Cand {
+        Cand {
+            ty: argt.join(&self.r.world, &base.ty),
+            weight: base.weight,
+            reason: base.reason.clone(),
+            head_expr: base.head_expr,
+            head_choice: base.head_choice.clone(),
+            fin: Fin::Join {
+                left: arg,
+                base: Box::new(base),
+                span,
+            },
+        }
     }
 
     /// The head readings of a spine: a bare name → its value candidates (leaf/
     /// this-join) + call/badcall readings; anything else → a single leaf reading
     /// of its bottom-up type.
     #[allow(clippy::too_many_lines)]
-    fn spine_head(&self, e: ExprId) -> Vec<Reading> {
+    fn spine_head(&self, e: ExprId) -> Vec<Cand> {
         match &self.expr(e).kind {
             ExprKind::Name(qn) => {
                 let at_name = false;
@@ -2495,7 +2406,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                 // env var shadows.
                 if segs.len() == 1 {
                     if let Some(t) = self.env_get(&segs[0]) {
-                        out.push(Reading {
+                        out.push(Cand {
                             ty: t,
                             weight: 0,
                             reason: format!("var {}", segs[0]),
@@ -2509,7 +2420,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                 // …and an evaluator atom label carrying a module alias matches
                 // the environment by its whole text (mt-098).
                 if let Some((joined, t)) = self.env_get_qualified(qn) {
-                    out.push(Reading {
+                    out.push(Cand {
                         ty: t,
                         weight: 0,
                         reason: format!("var {joined}"),
@@ -2520,7 +2431,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                     return out;
                 }
                 if let Some(t) = self.builtin_value(&segs) {
-                    out.push(Reading {
+                    out.push(Cand {
                         ty: t,
                         weight: 0,
                         reason: segs.join("/"),
@@ -2531,16 +2442,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                     return out;
                 }
                 // value candidates (leaf readings).
-                for c in self.value_candidates(&segs, at_name) {
-                    out.push(Reading {
-                        ty: c.ty,
-                        weight: c.weight,
-                        reason: c.reason,
-                        fin: Fin::Leaf,
-                        head_expr: e,
-                        head_choice: Some(c.origin),
-                    });
-                }
+                out.extend(self.value_candidates(e, &segs, at_name));
                 // call/badcall readings.
                 for fid in self.lookup_funcs(&segs) {
                     let f = &self.r.world.funcs[fid];
@@ -2554,7 +2456,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                         if this_ty.has_arity(1)
                             && f.params[0].ty.intersects(&self.r.world, &this_ty)
                         {
-                            out.push(Reading {
+                            out.push(Cand {
                                 ty: Type::empty(),
                                 weight: 1,
                                 reason: format!(
@@ -2573,7 +2475,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                             });
                         }
                     }
-                    out.push(Reading {
+                    out.push(Cand {
                         ty: Type::empty(),
                         weight: 0,
                         reason,
@@ -2597,7 +2499,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                         let mid = self
                             .lookup_macro(&segs)
                             .filter(|&m| self.r.world.macros[m].params.is_empty());
-                        out.push(Reading {
+                        out.push(Cand {
                             ty: t,
                             weight: 0,
                             reason: segs.join("/"),
@@ -2615,7 +2517,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                     // candidate, so `out` was non-empty (mt-110).
                     let callable = self.lookup_macro(&segs).is_some();
                     if callable || self.lenient() {
-                        out.push(Reading {
+                        out.push(Cand {
                             ty: Type::unary(self.r.world.builtins.univ),
                             weight: 0,
                             reason: segs.join("/"),
@@ -2624,7 +2526,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                             head_choice: None,
                         });
                     } else {
-                        out.push(Reading {
+                        out.push(Cand {
                             ty: Type::unary(self.r.world.builtins.univ),
                             weight: 0,
                             reason: segs.join("/"),
@@ -2642,7 +2544,7 @@ impl<'a, 'g> Cx<'a, 'g> {
             // A parenthesized / compound right operand: a single leaf reading of
             // its bottom-up type (join-level ambiguity within it is resolved when
             // that subtree resolves).
-            _ => vec![Reading {
+            _ => vec![Cand {
                 ty: self.infer(e),
                 weight: 0,
                 reason: "(expr)".to_owned(),
@@ -2733,20 +2635,20 @@ impl<'a, 'g> Cx<'a, 'g> {
     /// Picks a reading of the join-level choice against relevant type `p`
     /// (`resolveHelper`), then finalizes it (resolve operands / args, emit
     /// errors).
-    fn pick_reading(&mut self, e: ExprId, mut readings: Vec<Reading>, p: &Type, span: Span) -> R {
+    fn pick_reading(&mut self, e: ExprId, mut readings: Vec<Cand>, p: &Type, span: Span) -> R {
         if readings.is_empty() {
             return R::bad();
         }
         if readings.len() == 1 {
             let only = readings.swap_remove(0);
-            return self.finalize_recorded(e, only, p);
+            return self.finalize_recorded(e, only, p, None);
         }
         let types: Vec<Type> = readings.iter().map(|r| r.ty.clone()).collect();
         let weights: Vec<i32> = readings.iter().map(|r| r.weight).collect();
         match self.resolve_helper(&types, &weights, p) {
             Pick::One(i) => {
-                let reading = readings.swap_remove(i);
-                self.finalize_recorded(e, reading, p)
+                let cand = readings.swap_remove(i);
+                self.finalize_recorded(e, cand, p, None)
             }
             Pick::NoneArity(k) => {
                 self.record_spine(e, SpineChoice::Empty(k));
@@ -2794,23 +2696,49 @@ impl<'a, 'g> Cx<'a, 'g> {
                     R::bad()
                 } else {
                     // finalize the first reading to surface a precise join error.
-                    let reading = readings.swap_remove(0);
-                    self.finalize_recorded(e, reading, p)
+                    let cand = readings.swap_remove(0);
+                    self.finalize_recorded(e, cand, p, None)
                 }
             }
         }
     }
 
-    /// Records the winning spine reading's choice (mt-031) — the node as a
-    /// join / call, and (for a join) its base name — then finalizes it.
-    fn finalize_recorded(&mut self, e: ExprId, reading: Reading, p: &Type) -> R {
-        match &reading.fin {
-            Fin::Join { base, left, .. } => {
-                self.record_spine(e, SpineChoice::Join);
-                let base = base.clone();
-                let receiver = *left;
-                self.flush_rec(&base, Some(receiver));
-            }
+    /// Finalizes a join's **chosen** right operand in place, against the join's
+    /// right slice `bp` (ADR-0023 G2). Finalizing through the candidate the
+    /// join-level choice already picked — never re-resolving the operand by
+    /// `ExprId` — is what keeps this from re-running candidate selection over a
+    /// name the join had already disambiguated (a model declaring the same field
+    /// label on three sigs resolves at the join and would go ambiguous alone).
+    ///
+    /// The operand's **errors** are discarded, exactly as the truncated walks
+    /// this replaces did, so the accept/reject verdict is unmoved; its warnings
+    /// survive only for a directly-compound operand, the one shape mettle
+    /// already collected warnings from (mt-023). Un-truncating both is the next
+    /// phase's whole subject.
+    fn finalize_join_base(&mut self, base: Cand, bp: &Type, receiver: ExprId) {
+        let keep_warnings = matches!(base.fin, Fin::Sub(_));
+        let at = base.head_expr;
+        let nerr = self.errors.len();
+        let nwarn = self.warnings.len();
+        let _ = self.finalize_recorded(at, base, bp, Some(receiver));
+        self.errors.truncate(nerr);
+        if !keep_warnings {
+            self.warnings.truncate(nwarn);
+        }
+    }
+
+    /// Records the winning candidate's choice (mt-031) — the node as a join or
+    /// call, a base name as its leaf — then finalizes it. `receiver` is the
+    /// operand the candidate is joined onto (`None` at a spine's own node).
+    fn finalize_recorded(
+        &mut self,
+        e: ExprId,
+        cand: Cand,
+        p: &Type,
+        receiver: Option<ExprId>,
+    ) -> R {
+        match &cand.fin {
+            Fin::Join { .. } => self.record_spine(e, SpineChoice::Join),
             Fin::Call {
                 func,
                 this_arg,
@@ -2826,60 +2754,57 @@ impl<'a, 'g> Cx<'a, 'g> {
                     }),
                 );
             }
-            Fin::Leaf | Fin::Sub(_) | Fin::BadCall { .. } | Fin::Unknown { .. } => {}
+            Fin::Leaf => self.record_leaf(e, &cand, receiver),
+            // A compound / pending-call / unknown base has no choice of its own:
+            // resolving it records whatever its own subtree decides.
+            Fin::Sub(_) | Fin::BadCall { .. } | Fin::Unknown { .. } => {}
         }
-        self.finalize_reading(reading, p)
+        self.finalize_reading(cand, p, true)
     }
 
     /// Lenient finalize (a `$`-meta model): resolve the chosen reading but never
-    /// let it reject — a `BadCall` becomes a lenient `univ` value.
-    fn finalize_lenient(&mut self, reading: Reading, p: &Type) -> R {
-        if matches!(reading.fin, Fin::BadCall { .. } | Fin::Unknown { .. }) {
+    /// let it reject — a `BadCall` becomes a lenient `univ` value. Nothing is
+    /// recorded: the reading was salvaged from an ambiguity the verdict never
+    /// resolved, so it is not a choice the lowerer may replay (mt-031).
+    fn finalize_lenient(&mut self, cand: Cand, p: &Type) -> R {
+        if matches!(cand.fin, Fin::BadCall { .. } | Fin::Unknown { .. }) {
             return R::ok(Type::unary(self.r.world.builtins.univ));
         }
-        let mut r = self.finalize_reading(reading, p);
+        let mut r = self.finalize_reading(cand, p, false);
         r.err = false;
         r
     }
 
-    /// Finalizes a chosen reading: resolves its operands against slices derived
-    /// from `p`, and emits any make-error (illegal join / bad call).
-    fn finalize_reading(&mut self, reading: Reading, p: &Type) -> R {
-        match reading.fin {
-            Fin::Leaf => R::ok(reading.ty),
+    /// Finalizes a chosen candidate: resolves its operands against slices
+    /// derived from `p`, and emits any make-error (illegal join / bad call).
+    /// `authoritative` is false on the lenient salvage path, which resolves but
+    /// records nothing (see [`Self::finalize_lenient`]).
+    fn finalize_reading(&mut self, cand: Cand, p: &Type, authoritative: bool) -> R {
+        match cand.fin {
+            Fin::Leaf => R::ok(cand.ty),
             Fin::Sub(e) => self.resolve(e, p),
             Fin::Unknown { name, span } => {
                 if self.lenient() {
-                    return R::ok(reading.ty);
+                    return R::ok(cand.ty);
                 }
                 self.err(ResolveError::UnknownName { name, span });
                 R::bad()
             }
-            Fin::Join {
-                left,
-                right_ty,
-                right_expr,
-                span,
-                base: _,
-            } => {
-                // Resolve the left operand (which may itself be a join/choice).
-                // A compound right operand (`s.*next`, `x.(y.z)`) keeps its
-                // bottom-up type for the *verdict* rather than being resolved
-                // standalone — standalone resolution loses the join's
-                // disambiguation (`*next` becomes ambiguous with the auto-opened
-                // `integer/next`); a documented over-acceptance for an unknown
-                // name inside a compound right operand (LIMITATIONS), never a
-                // false reject.
+            Fin::Join { left, base, span } => {
+                // Resolve both operands against the join's slices: the left as
+                // it always was, the right *through the candidate this join
+                // already chose* (ADR-0023 G2), which is what puts the right
+                // operand's recording on the verdict path.
                 let lt = self.infer(left);
+                let right_ty = base.ty.clone();
                 let (ap, bp) = self.join_slices(&lt, &right_ty, p);
                 let mut l = self.resolve(left, &ap);
                 self.typecheck_as_set(&mut l, left);
-                // Warning-only pass over the compound right operand (mt-023): the
-                // reference resolves it (emitting any relevance/redundancy warning
-                // inside, e.g. a `^`-closure), so mettle collects those warnings
-                // too — but discards any *errors* it raises, keeping the verdict
-                // byte-identical (the LIMITATIONS over-acceptance is preserved).
-                if let Some(re) = right_expr {
+                if authoritative {
+                    self.finalize_join_base(*base, &bp, left);
+                } else if let Fin::Sub(re) = base.fin {
+                    // The lenient path records nothing, but still collects a
+                    // compound operand's warnings (mt-023).
                     let nerr = self.errors.len();
                     let _ = self.resolve(re, &bp);
                     self.errors.truncate(nerr);

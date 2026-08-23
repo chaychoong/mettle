@@ -1210,3 +1210,38 @@ fn compound_operand_rejects_are_still_deferred_to_phase_d_mt105b() {
         ));
     }
 }
+
+// ---- ADR-0023 phase (c): the chosen base is finalized, never re-resolved ----
+//
+// `Fin::Join` now carries the right operand's **winning candidate** and
+// finalizes it in place against the join's right slice, so the operand's
+// resolution — and its recording — happen on the verdict path. What it must
+// never do is re-resolve the operand by `ExprId`: that re-runs candidate
+// selection at a name the enclosing join had already disambiguated.
+
+/// The invariant phase (a) paid for. This model declares the same field label
+/// on three sigs, so `dist` alone is ambiguous; only the join that supplies the
+/// receiver picks one. A prototype that re-resolved the operand by `ExprId`
+/// rejected `corpus/portus-63/.../lc-lenses.als` here, which the jar accepts —
+/// a drop-in violation. Both spellings of the fold reach the same base.
+#[test]
+fn same_label_on_three_sigs_resolves_through_the_chosen_base_mt105c() {
+    let m = "module m\n\
+             sig N {}\n\
+             sig S { dist: S -> one N }\n\
+             sig U { dist: U -> one N }\n\
+             sig V { dist: V -> one N }\n";
+    // The box-join fold: the second argument's base is the bare name `dist`.
+    accept(&format!(
+        "{m}run {{ all s, s2: S | dist[s, s2] = dist[s2, s] }} for 3\n"
+    ));
+    // The same spine written as an explicit join.
+    accept(&format!(
+        "{m}run {{ all s, s2: S | s2.(s.dist) = s.(s2.dist) }} for 3\n"
+    ));
+    // A mixed spine, and the other two owners, so no single sig is load-bearing.
+    accept(&format!(
+        "{m}run {{ all u, u2: U | u2.dist[u] = u.dist[u2] }} for 3\n"
+    ));
+    accept(&format!("{m}run {{ all v: V | some v.dist[v] }} for 3\n"));
+}
