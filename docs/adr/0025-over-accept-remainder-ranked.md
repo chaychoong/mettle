@@ -55,7 +55,15 @@ totals against this ADR's items:
   by the deferred `Sig$` metamodel (mt-107), not by the `IllegalJoin` guard.
   The open probe question (resolved-vs-make-time join legality) stays filed
   against the 9 `univ`-triggered codes; it does not apply to the
-  `$`-triggered one.
+  `$`-triggered one. **Answered later the same day by the mt-112 probe wave
+  (24 cells, 23/24 predictions held): the check is a make-time ARITY rule —
+  result arity < 1 rejects, arity-legal-but-empty joins accept with only a
+  warning — and `univ` is a genuine unary type with no special casing. The
+  merged-vs-resolved halves of the question are observationally equal (the
+  candidate-union typing means no reachable program separates them). A
+  measured prototype closes the 9 with 0 drop-in (27 → 18); the fix is
+  owner-gated as mt-113. Record: TASKS ✔ mt-112,
+  `scratchpad/probe/mt112/`.**
 - **Item 5, int-cast slice — predicted 3, measured 3, unchanged.** Still the
   documented defer: cliff-shaped risk (every `int x.f` would route through
   the broadest slice) against a 3-code yield.
