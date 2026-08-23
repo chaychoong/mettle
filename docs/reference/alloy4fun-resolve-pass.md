@@ -643,6 +643,10 @@ reference's rule (make-time arity, `univ` genuine — record
 `scratchpad/probe/mt112/`), taking the residual to **18**, with
 `Course$projects` the only survivor of the illegal-join family (mt-107's);
 mt-115 then closed the `Pick::NoneArity` family (§12.4 currency note),
-taking it to **10**: int-cast 3, declaration-order 2, one-offs 2,
-`Subset abstract` 1, negated-`in` mult 1, `Course$projects` 1 — every one a
-documented defer.
+taking it to **10**; mt-116/mt-117 (same day, owner GO on the "safe 6")
+closed the five loader/structural codes and the negated-`in` mult code via
+five probe-pinned positional rules (32-cell wave
+`scratchpad/probe/mt116/`; the `;`-binder item was additionally a live
+wrong-verdict bug with a jar-pinned UNSAT witness), taking it to **4**:
+int-cast 3 and `Course$projects` 1 — both explicitly deferred by the same
+owner decision (cliff-shaped fix risk / the mt-107 metamodel).

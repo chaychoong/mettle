@@ -164,7 +164,7 @@ productions).
 | # | Operators | Assoc / shape |
 |---|---|---|
 | 1 | `;` (formula sequencing) | right; `a ; b` ≡ `a && after b` — keep as a `Seq` node in the AST |
-| 2 | `let`, quantifiers `all no some lone one sum` + decls + `\|`/block | body extends maximally right; a binder may appear as a **rightmost operand, subject to the one-hop budget rule** (see §3.1) |
+| 2 | `let`, quantifiers `all no some lone one sum` + decls + `\|`/block | body extends maximally right **but ends at the level-1 `;`** (jar-verified, mt-116 cells g02/g05/x01/x02: `all u: A \| F ; G` is `(all u: A \| F) ; G` — `u` is free in `G`, and over an empty domain the two readings differ in verdict; a comprehension body likewise ends at `;`, stranding it at the expected `}`); a binder may appear as a **rightmost operand, subject to the one-hop budget rule** (see §3.1) |
 | 3 | `\|\|` `or` | left |
 | 4 | `<=>` `iff` | left |
 | 5 | `=>` `implies` (optional `else`) | right; `else` binds to the nearest unmatched `implies` (dangling-else) |
