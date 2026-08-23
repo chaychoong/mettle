@@ -608,6 +608,19 @@ unpredicted codes closed elsewhere instead (9 bad-call, 1 mult, 3 grab-bag
 among them, per the phase-(d) commit) and landed the ADR's arithmetic on the
 predicted total anyway.
 
+**Currency note (mt-114/mt-115, same day):** this family is **CLOSED**. The
+mt-114 probe wave plus a reference-source reading at `794226dd` pinned the
+real mechanism — `ExprChoice.resolveHelper` **rule 4** (a first-pass tie is
+settled by trial-resolving every survivor with warnings off and retrying
+over the resolved types; the nested ambiguous left overload under the
+block-3 arity-only join fallback poisons every trial to EMPTY, and the
+retry rule-7-rejects at the spine-head name). mt-115 implemented the trial
+retry in `pick_reading`: exactly the 8 codes flip to the jar's
+`NameNotRelevant`, over-accepts 18 → 10, drop-in 0, zero warning changes;
++211 verdict-neutral reject realignments. Record:
+`scratchpad/probe/mt114/` (PREDICTIONS/NOTES/MECHANISM/proto.diff);
+LIMITATIONS carries the closed-family entry.
+
 ### 12.5 Campaign trail and the residual 27
 
 mt-105 phases (b)–(d) were the last of four same-day landings against the
@@ -624,8 +637,12 @@ defer), declaration-order 2, name-not-found one-offs 2, `Subset abstract` 1,
 and the negated-`in` mult asymmetry 1 — full per-code table in
 `scratchpad/probe/mt105e/decomposition.md` (git-ignored, banked).
 
-**Currency note (mt-113, same day):** the 9 `univ`-triggered illegal-join
-codes above closed after the mt-112 probe wave pinned the reference's rule
-(make-time arity, `univ` genuine — record `scratchpad/probe/mt112/`); the
-residual is **18** since mt-113, with `Course$projects` the only survivor of
-the illegal-join family (mt-107's).
+**Currency note (mt-113/mt-115, same day):** the 9 `univ`-triggered
+illegal-join codes above closed after the mt-112 probe wave pinned the
+reference's rule (make-time arity, `univ` genuine — record
+`scratchpad/probe/mt112/`), taking the residual to **18**, with
+`Course$projects` the only survivor of the illegal-join family (mt-107's);
+mt-115 then closed the `Pick::NoneArity` family (§12.4 currency note),
+taking it to **10**: int-cast 3, declaration-order 2, one-offs 2,
+`Subset abstract` 1, negated-`in` mult 1, `Course$projects` 1 — every one a
+documented defer.
