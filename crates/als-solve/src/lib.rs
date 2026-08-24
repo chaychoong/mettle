@@ -1,9 +1,13 @@
 //! The `Solver` trait and CNF interface types (Var, Lit, Cnf, Assignment).
 //!
-//! This crate is deliberately dependency-free (not even `als-syntax`): it is
-//! the pure boolean-satisfiability boundary. `Solver` is a trait because the
-//! backend set is genuinely open — pure-Rust SAT first, FFI solvers later
-//! behind the same boundary (STYLE P3, `PORTING_RULES` R2b).
+//! This crate depends on nothing of mettle's (not even `als-syntax`): it is the
+//! pure boolean-satisfiability boundary. `Solver` is a trait because the backend
+//! set is genuinely open (`PORTING_RULES` R2b) — pure-Rust SAT first, an FFI
+//! solver behind the same boundary later, which is what STYLE P3 anticipated and
+//! [ADR-0027](../../../docs/adr/0027-cadical-only-solver.md) has now made the
+//! default. Its one outside dependency is the vendored `cadical` binding, and it
+//! reaches no further than [`CadicalSolver`]: the trait, the CNF types and the
+//! own CDCL are untouched by it.
 
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 

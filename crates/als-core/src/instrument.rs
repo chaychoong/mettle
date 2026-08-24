@@ -36,9 +36,11 @@ use crate::solve::{translate, SolveOptions, Translated};
 /// Which SAT backend decides the CNF.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum InstrumentBackend {
-    /// mettle's own CDCL — the default and the conformance yardstick.
+    /// mettle's own CDCL — the conformance yardstick (the default until
+    /// ADR-0027 / mt-121 moved that to the other arm).
     Cdcl,
-    /// CaDiCaL, via the `cadical` binding (ADR-0019).
+    /// CaDiCaL, via the vendored `cadical` binding (ADR-0019) — the default
+    /// production solver since mt-121.
     Cadical,
 }
 

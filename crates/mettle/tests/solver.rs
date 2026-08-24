@@ -3,9 +3,10 @@
 //!
 //! Three properties are pinned here:
 //!
-//! 1. **The default has not moved.** `mettle exec` and `mettle exec --solver
-//!    mettle` produce byte-identical stdout, so naming the default is a no-op
-//!    and every recorded command keeps its meaning (ADR-0019 §2).
+//! 1. **Naming the default is a no-op.** `mettle exec` and `mettle exec
+//!    --solver <the default>` produce byte-identical stdout, so the flag is a
+//!    selector rather than a mode switch (ADR-0019 §2). The default itself is
+//!    read from the type, not spelled here — mt-121 moved it to `cadical`.
 //! 2. **No silent fallback.** An unknown name is a usage error listing the
 //!    names this build has — never a quiet substitution of the default (the
 //!    mt-006 rule). A *compiled-out* name would say so in different words; no
@@ -43,17 +44,20 @@ fn stderr(out: &Output) -> String {
 }
 
 /// Naming the default backend changes nothing about the output — the flag is a
-/// selector, not a mode switch.
+/// selector, not a mode switch. Read off [`als_solve::Backend::default`] rather
+/// than spelled, so this keeps testing the property when the default moves
+/// (mt-121 moved it to `cadical`).
 #[test]
 fn naming_the_default_solver_is_byte_identical_to_omitting_the_flag() {
     let file = fixture("commands.als");
+    let default = als_solve::Backend::default().name();
     for command in ["0", "1", "2"] {
         let bare = run_exec(&file, &["--command", command]);
-        let named = run_exec(&file, &["--command", command, "--solver", "mettle"]);
+        let named = run_exec(&file, &["--command", command, "--solver", default]);
         assert_eq!(
             stdout(&bare),
             stdout(&named),
-            "--solver mettle changed command {command}'s output"
+            "--solver {default} changed command {command}'s output"
         );
         assert_eq!(bare.status.code(), named.status.code());
     }
@@ -71,7 +75,10 @@ fn unknown_solver_name_is_a_usage_error_listing_the_available_names() {
         "expected the name back verbatim, got: {text}"
     );
     assert!(
-        text.contains("available: mettle"),
+        text.contains(&format!(
+            "available: {}",
+            als_solve::Backend::AVAILABLE.join(", ")
+        )),
         "expected the available list, got: {text}"
     );
     assert!(

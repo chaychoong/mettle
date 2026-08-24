@@ -64,8 +64,8 @@ Correctness over everything. Do not take on unnecessary tech debt. Write idiomat
 
 - P1. Every dependency is justified in writing (one line in the PR and in `Cargo.toml` comment): what it does, why not std, why this crate.
 - P2. Small tree, single static binary. Prefer std; prefer one well-known crate over several overlapping ones.
-- P3. Pure-Rust SAT first — **zero FFI in v1**. FFI solvers arrive later behind a `Solver` trait; no FFI leaks into core crates.
-- P4. No dep pulls in async runtimes, C toolchains, or proc-macro-heavy trees without explicit lead sign-off.
+- P3. FFI solvers live behind the backend seam only — no FFI leaks into core crates, and all `unsafe` stays inside the vendored binding (`vendor/cadical`), never in mettle's own crates. _(Amended by [ADR-0027](docs/adr/0027-cadical-only-solver.md)/mt-121: the original "pure-Rust SAT first, zero FFI in v1" rule did its job — the own CDCL built and verified the whole pipeline — and the vendored CaDiCaL is now the default backend behind exactly the `Solver`/`Backend` seam this rule reserved for it.)_
+- P4. No dep pulls in async runtimes, C toolchains, or proc-macro-heavy trees without explicit lead sign-off. _(The one signed-off C++ toolchain dependency is the vendored CaDiCaL build — ADR-0027.)_
 
 ## 9. Spans & diagnostics
 
@@ -78,7 +78,7 @@ Correctness over everything. Do not take on unnecessary tech debt. Write idiomat
 - L1. `cargo fmt` clean; CI fails on diff. No manual alignment that fmt would undo.
 - L2. `cargo clippy` clean. Workspace denies: `clippy::all` and `clippy::pedantic` (opt out per-line with a justified `#[allow(...)]` + reason).
 - L3. Library crates deny `clippy::unwrap_used` and `clippy::expect_used`; genuine-invariant exceptions use `#[allow(..)]` with a reason naming the invariant. The CLI crate may relax this at its top-level entry only.
-- L4. Deny `unsafe` workspace-wide in v1 (`#![forbid(unsafe_code)]`); lifting it anywhere needs lead sign-off (ties to P3, zero-FFI).
+- L4. Deny `unsafe` workspace-wide in v1 (`#![forbid(unsafe_code)]`); lifting it anywhere needs lead sign-off (ties to P3 — all `unsafe` stays in the vendored binding, outside the workspace).
 - L5. Warnings are errors in CI (`-D warnings`).
 
 ## 11. Temporal & unsupported features

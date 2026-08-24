@@ -202,8 +202,12 @@ fn the_loop_target_is_part_of_a_solutions_identity() {
         2,
         "probe P-076-4: exactly 2 at k=2, got {seen:?}"
     );
-    let loops: Vec<usize> = seen.iter().map(|&(_, l)| l).collect();
-    assert_eq!(loops, vec![1, 0], "the two differ only in the loop target");
+    // Both loop targets appear, and nothing else distinguishes the two. Sorted
+    // because which one the solver hands back first is its own business
+    // (ADR-0027 consequences) — the *set* is the probe's claim.
+    let mut loops: Vec<usize> = seen.iter().map(|&(_, l)| l).collect();
+    loops.sort_unstable();
+    assert_eq!(loops, vec![0, 1], "the two differ only in the loop target");
     assert!(seen.iter().all(|&(k, _)| k == 2));
 }
 
@@ -250,30 +254,114 @@ fn across_lengths_an_infinite_trace_is_emitted_once() {
 
 // ================== P-076-5: the configuration is held ==================
 
+/// How many distinct traces ONE configuration of [`STATIC_MULTI_CONFIG`] holds,
+/// for a configuration of `|X| = n`.
+///
+/// The probe's claim is that plain `next()` enumerates exactly one
+/// configuration, completely. The *size* of that set therefore depends on which
+/// configuration the first solution landed on — the backend's own business
+/// (LEDGER-014, ADR-0027 consequences) — so it is derived here rather than
+/// hardcoded to whichever one a particular solver picks.
+///
+/// A trace is `A ⊆ X` chosen per state (2 states) plus a loop target (0 or 1).
+/// At `symmetry = 0` that is every ordered pair of subsets: `4^n × 2`. With the
+/// SBP on, X's `n!` atom permutations collapse those pairs into orbits — 4, 10
+/// and 20 for n = 1, 2, 3 by Burnside — so `orbits × 2`.
+fn traces_in_one_configuration(x: usize, symmetry: u32) -> usize {
+    let pairs = if symmetry == 0 {
+        4usize.pow(u32::try_from(x).expect("a scope this small fits u32"))
+    } else {
+        match x {
+            1 => 4,
+            2 => 10,
+            3 => 20,
+            other => panic!("the fixture scopes X at 3; no orbit count for |X|={other}"),
+        }
+    };
+    pairs * 2
+}
+
+/// Walks a whole enumeration, returning every trace's `(k, loop)` plus the
+/// configuration — `|X|`, the fixture's only free static sig — that they all
+/// share, asserting on the way that it never moves.
+///
+/// `x` is passed in rather than guessed at: a state holds every relation the
+/// model has, builtins included, so "the biggest one" is `Int`.
+fn walk_one_configuration(
+    en: &mut TraceEnumerator<'_>,
+    x: als_core::ir::RelId,
+    cap: usize,
+) -> (Vec<(usize, usize)>, usize) {
+    let mut out = Vec::new();
+    let mut config: Option<usize> = None;
+    for _ in 0..cap {
+        match en.advance(TraceStep::NextPath).expect("advance") {
+            TraceAdvance::Trace(t) => {
+                let size = t.states[0]
+                    .get(x)
+                    .map_or(0, als_core::bounds::TupleSet::len);
+                match config {
+                    None => config = Some(size),
+                    Some(first) => {
+                        assert_eq!(size, first, "the configuration moved mid-enumeration");
+                    }
+                }
+                out.push((t.k(), t.loop_state));
+            }
+            TraceAdvance::Exhausted => return (out, config.expect("the fixture is SAT")),
+            other => panic!("unexpected advance: {other:?}"),
+        }
+    }
+    panic!("enumeration did not terminate within {cap} steps: {out:?}")
+}
+
+/// The [`RelId`](als_core::ir::RelId) of the sig named `this/<name>`.
+fn sig_rel(built: &Built, name: &str) -> als_core::ir::RelId {
+    let want = format!("this/{name}");
+    let Some((id, _)) = built.ir.relations.iter().find(|(_, r)| r.name == want) else {
+        panic!("no relation named {want}")
+    };
+    id
+}
+
 /// P-076-5, the wave's headline and the correction to §(i): plain `next()`
 /// **never leaves the configuration the first solution landed on**. Three
 /// configurations exist here (`|X|` = 1, 2, 3 — cardinality is
-/// symmetry-invariant, so no SB collapses them), yet the enumeration is exactly
-/// 8 traces: 4 per-state `A` combinations times 2 loop targets, all in one
-/// configuration.
+/// symmetry-invariant, so no SB collapses them), yet the enumeration covers
+/// exactly one of them, exhaustively.
 #[test]
 fn plain_next_never_changes_the_configuration() {
     let s = Session::new(STATIC_MULTI_CONFIG, 0);
+    let x = sig_rel(&s.built, "X");
     let mut en = s.open(0, 20);
-    let seen = walk(&mut en, 64);
-    assert_eq!(seen.len(), 8, "probe P-076-5: got {seen:?}");
+    let (seen, config) = walk_one_configuration(&mut en, x, 256);
+    assert_eq!(
+        seen.len(),
+        traces_in_one_configuration(config, 20),
+        "probe P-076-5: |X|={config}, got {seen:?}"
+    );
+    assert!(
+        seen.iter().all(|(k, l)| *k == 2 && *l < 2),
+        "every trace is a 2-state lasso: {seen:?}"
+    );
 }
 
-/// The same at `symmetry = 0`, which is what the SB-0 counting net runs: the
-/// raw space there holds all seven non-empty subsets of a 3-atom `X`, and the
-/// answer is still 8. This is the cell that rules out "it is just symmetry
-/// breaking".
+/// The same at `symmetry = 0`, which is what the SB-0 counting net runs: the raw
+/// space there holds every subset of X per state, with nothing collapsed, and
+/// the enumeration still covers exactly one configuration. This is the cell that
+/// rules out "it is just symmetry breaking".
 #[test]
 fn the_configuration_is_held_at_symmetry_zero_too() {
     let s = Session::new(STATIC_MULTI_CONFIG, 0);
+    let x = sig_rel(&s.built, "X");
     let mut en = s.open(0, 0);
-    let seen = walk(&mut en, 64);
-    assert_eq!(seen.len(), 8, "probe P-076-5 at sym=0: got {seen:?}");
+    let (seen, config) = walk_one_configuration(&mut en, x, 512);
+    assert_eq!(
+        seen.len(),
+        traces_in_one_configuration(config, 0),
+        "probe P-076-5 at sym=0: |X|={config}, got {} traces",
+        seen.len()
+    );
 }
 
 /// Every trace of one enumeration agrees on every static relation — stated

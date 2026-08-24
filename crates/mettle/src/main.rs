@@ -24,9 +24,9 @@
 //! pipeline and prints the verdict (and any SAT instance / counterexample).
 //! `serve` (mt-072, [`serve`]) solves **one** command and then answers the
 //! Sterling provider protocol about it on a local port until Ctrl-C. Both
-//! solving subcommands take `--solver <name>` (mt-089, ADR-0019): the default
-//! `mettle` backend is the deterministic yardstick, and an optional stronger one
-//! can be selected where a build has it ([`parse_solver`], [`solver_help`]).
+//! solving subcommands take `--solver <name>` (mt-089, ADR-0019): `cadical` is
+//! the default (ADR-0027), and `mettle` selects the own CDCL — the deterministic
+//! yardstick — for anyone who wants it ([`parse_solver`], [`solver_help`]).
 //! Parse/lex/resolve errors render to stderr as a rustc-style caret-and-label
 //! block (mt-013, [`diagnostics`]) with exit code 1; usage or I/O problems
 //! exit with code 2.
@@ -200,22 +200,22 @@ fn solver_help() -> String {
             als_solve::Backend::COMPILED_OUT.join(", ")
         );
     }
-    // The honesty the alternative backend owes the user, stated here as well as
-    // in LIMITATIONS (ADR-0019 §4): what it gives up, and the one budget flag
-    // whose meaning narrows under it.
+    // What each backend is for, stated here as well as in LIMITATIONS: both
+    // reach the same verdicts, and the difference is what their determinism is
+    // anchored to.
     help.push_str(
         "\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\
-         `mettle` is the deterministic yardstick: a fixed build gives\n\
+         `cadical` is the production solver: a far stronger search, and\n\
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\
-         byte-identical answers everywhere, and it is what the conformance\n\
+         deterministic for a fixed build. `mettle` is the own CDCL, the\n\
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\
-         scorecard measures. Any other backend searches harder but is only\n\
+         conformance yardstick, which answers byte-identically on every\n\
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\
-         deterministic per build (which instance/trace you see, and the\n\
+         platform. Verdicts agree; which instance/trace you see and the\n\
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\
-         enumeration order, are its own). --conflicts caps each solve on\n\
+         enumeration order are each backend's own. --conflicts caps each\n\
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\
-         every backend.",
+         solve on both.",
     );
     help
 }

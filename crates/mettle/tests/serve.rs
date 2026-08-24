@@ -198,10 +198,11 @@ fn data_is_byte_identical_to_the_xml_export() {
     );
     // The verdict block printed at startup is `exec`'s, too.
     assert!(server.banner.contains("SAT"), "{}", server.banner);
+    // Which colour the one node got is the solver's choice; that the banner
+    // renders the *solved* instance is the claim, and the byte-identity assert
+    // above already pins it to the same instance the XML carries.
     assert!(
-        server
-            .banner
-            .contains("this/Node.color = {Node$0->Green$0}"),
+        server.banner.contains("this/Node.color = {Node$0->"),
         "{}",
         server.banner
     );
@@ -421,6 +422,21 @@ fn a_temporal_command_enumerates_traces_and_configurations() {
     let mut ids = vec![first["id"].as_str().expect("id").to_owned()];
     let mut xmls = vec![first["data"].as_str().expect("xml").to_owned()];
 
+    // How many traces one configuration holds. `A ⊆ X` is free at each of the 2
+    // states and the loop target is part of a trace's identity, so at |X| = 1
+    // that is 2 subsets ^ 2 states * 2 loops = 8, and at |X| = 2 the SBP folds
+    // the 16 subset-pairs into 10 orbits, so 20. Which configuration the first
+    // solution lands on is the backend's own business (ADR-0027 consequences),
+    // so it is read off the picture rather than assumed.
+    let x_atoms = (0..2)
+        .filter(|i| xmls[0].contains(&format!("X${i}")))
+        .count();
+    let expected = match x_atoms {
+        1 => 8,
+        2 => 20,
+        other => panic!("the fixture scopes X at 2, got |X|={other}"),
+    };
+
     // "New Trace" walks the whole path space of one configuration and then
     // retires its own button.
     loop {
@@ -432,21 +448,29 @@ fn a_temporal_command_enumerates_traces_and_configurations() {
         let datum = entered(&reply).clone();
         ids.push(datum["id"].as_str().expect("id").to_owned());
         xmls.push(datum["data"].as_str().expect("xml").to_owned());
-        assert!(ids.len() <= 16, "enumeration did not terminate");
+        assert!(ids.len() <= 64, "enumeration did not terminate");
     }
     assert_eq!(
         ids.len(),
-        8,
-        "probe P-076-5: 8 traces inside one configuration"
+        expected,
+        "probe P-076-5: every trace of the |X|={x_atoms} configuration, and no more"
     );
     let mut unique = xmls.clone();
     unique.sort();
     unique.dedup();
-    assert_eq!(unique.len(), 8, "every trace shown is a different trace");
+    assert_eq!(
+        unique.len(),
+        expected,
+        "every trace shown is a different trace"
+    );
     let mut unique_ids = ids.clone();
     unique_ids.sort();
     unique_ids.dedup();
-    assert_eq!(unique_ids.len(), 8, "every advance mints a fresh datum id");
+    assert_eq!(
+        unique_ids.len(),
+        expected,
+        "every advance mints a fresh datum id"
+    );
 
     // The exhausted verb's button is gone; the other three remain, because
     // they ask different questions of the same command.

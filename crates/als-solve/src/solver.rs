@@ -1,4 +1,4 @@
-//! A deterministic CDCL SAT solver (mt-032) — the default `Solver` backend.
+//! A deterministic CDCL SAT solver (mt-032) — mettle's own `Solver` backend.
 //!
 //! This is the hand-rolled, zero-dependency CDCL solver mandated by
 //! [ADR-0011](../../../docs/adr/0011-rung3-translation-solving-architecture.md)
@@ -1133,9 +1133,10 @@ pub fn block(assignment: &Assignment, vars: &[Var]) -> Vec<Lit> {
         .collect()
 }
 
-/// The one-shot [`Solver`] backend: the default CDCL solver behind the trait
-/// seam (ADR-0011 keeps `Solver` as the open boundary for a future optional FFI
-/// backend). For enumeration, construct a [`CdclSolver`] directly.
+/// The one-shot [`Solver`] backend for the own CDCL, behind the trait seam
+/// (ADR-0011 kept `Solver` as the open boundary for exactly the FFI backend
+/// ADR-0027 has since made the default). For enumeration, construct a
+/// [`CdclSolver`] directly.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Cdcl;
 

@@ -324,9 +324,9 @@ impl CadicalSolver {
 /// Why a proof trace could not be started
 /// ([`CadicalSolver::with_proof_trace`]).
 ///
-/// Hand-rolled rather than `thiserror`-derived because this crate is
-/// deliberately dependency-free (crate docs) — the enum is two variants and one
-/// `Display`, which is less code than the dependency would be.
+/// Hand-rolled rather than `thiserror`-derived: this crate keeps its dependency
+/// list to the one binding it cannot do without (crate docs), and the enum is
+/// two variants and one `Display` — less code than the dependency would be.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum ProofTraceError {
     /// CaDiCaL could not open the path for writing (a missing directory, no

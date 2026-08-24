@@ -12,6 +12,7 @@
 </sig>
 
 <sig label="this/A" ID="4" parentID="2">
+   <atom label="A$0"/>
    <atom label="A$1"/>
    <atom label="A$2"/>
 </sig>

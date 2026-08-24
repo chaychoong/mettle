@@ -124,17 +124,20 @@ fn temporal_model_solves_and_renders_its_trace() {
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     let text = stdout(&out);
     assert!(text.contains("[0] run p"), "{text}");
-    // `A' = A` is satisfied by the minimal, self-looping single-state trace.
+    // `A' = A` is satisfied by any constant trace, so the *framing* is the pin:
+    // one state, looping onto itself, with the full `---Trace---` block. Which
+    // value of `A` is constant is the backend's own choice (ADR-0027
+    // consequences), so the sig line is asserted to exist, not to hold a
+    // particular subset.
+    let shape = trace_shape(&text);
+    let (framing, sigs) = shape.split_at(3);
     assert_eq!(
-        trace_shape(&text),
-        vec![
-            "SAT",
-            "---Trace---",
-            "------State 0 (loop)-------",
-            "  this/A = {}"
-        ],
+        framing,
+        ["SAT", "---Trace---", "------State 0 (loop)-------"],
         "{text}"
     );
+    assert_eq!(sigs.len(), 1, "one state renders one sig line: {text}");
+    assert!(sigs[0].starts_with("  this/A = {"), "{text}");
 }
 
 /// (e1) T-12 (mt-069): `expect` on a temporal command is checked the same

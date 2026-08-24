@@ -101,16 +101,19 @@ pub struct SolveOptions {
     /// enumerates the raw (SB-0) count. Callers that compare against the jar apply
     /// that override before handing the options here.
     pub symmetry: u32,
-    /// Which SAT backend decides the CNF (ADR-0019, mt-089). The default
-    /// [`Backend::Cdcl`] is the own deterministic CDCL: the conformance
-    /// yardstick, the only backend the byte-identical determinism contract binds
-    /// (STYLE D1), and the only one the scorecard, the counting nets and the
-    /// sweep baselines are ever measured on. Selecting another backend
-    /// (`mettle exec --solver <name>`) trades that contract for search power
-    /// knowingly: verdicts are backend-independent truths — a difference is a
-    /// bug, which is what the cross-backend check exists to catch — but the
-    /// *instance chosen*, the *enumeration order*, and the effort a budget buys
-    /// are all the backend's own.
+    /// Which SAT backend decides the CNF (ADR-0019 mt-089; ADR-0027 mt-121 made
+    /// [`Backend::Cadical`] the default). Whichever is selected, verdicts are
+    /// backend-independent truths — a difference is a bug, which is what the
+    /// cross-backend instrument exists to catch — while the *instance chosen*,
+    /// the *enumeration order*, and the effort a budget buys are all the
+    /// backend's own.
+    ///
+    /// `--solver mettle` selects the own CDCL, which stays the conformance
+    /// yardstick and the only backend the byte-identical determinism contract
+    /// binds *across builds and platforms* (STYLE D1). The default's determinism
+    /// is by pinning instead: the exact vendored source, built with pinned
+    /// flags, reproduces itself — which is what ADR-0027's gate measured before
+    /// this field's default moved.
     pub backend: Backend,
 }
 

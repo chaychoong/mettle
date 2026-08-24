@@ -111,8 +111,9 @@ fn test1_count_smoke_matches_jar() {
 ///
 /// Jar-free (cached committed baselines, no live JVM). What it pins, in order:
 /// nothing lands in the retired bucket; the two comparable commands match; the
-/// third is the *existing* typed `skip_enum_budget`, not a new bucket and not a
-/// fabricated count; no mismatch is manufactured.
+/// third lands in an *existing* typed size skip — which one is the backend's
+/// business (see below) — rather than a new bucket or a fabricated count; no
+/// mismatch is manufactured.
 #[test]
 fn leader_als_counts_match_its_real_jar_baseline() {
     let root = workspace_root();
@@ -193,11 +194,21 @@ fn leader_als_counts_match_its_real_jar_baseline() {
          trace enumeration reproduces them; buckets={:?}",
         report.count_buckets
     );
+    // Command 0's space is bigger than stage 2 will walk, so it must land in an
+    // EXISTING typed skip — never a new bucket, never a truncated count. Which
+    // of the two it is depends on the backend and is not the point: the own CDCL
+    // runs out of the 250M effort budget first (`skip_enum_budget`), while
+    // CaDiCaL buys enough search with the same budget to reach the 10,000
+    // instance cap instead (`skip_mettle_cap`) — the movement mt-120 measured
+    // across the whole corpus and ADR-0017's re-pair will re-price. Either way
+    // the command is skipped loudly and no count is fabricated for it.
+    let skipped_for_size = ["skip_enum_budget", "skip_mettle_cap"]
+        .iter()
+        .filter_map(|b| report.count_buckets.get(*b))
+        .sum::<usize>();
     assert_eq!(
-        report.count_buckets.get("skip_enum_budget"),
-        Some(&1),
-        "command 0's space is past the enumeration budget — the EXISTING typed \
-         skip, never a new bucket and never a truncated count; buckets={:?}",
+        skipped_for_size, 1,
+        "command 0 must be one typed size skip; buckets={:?}",
         report.count_buckets
     );
     assert!(

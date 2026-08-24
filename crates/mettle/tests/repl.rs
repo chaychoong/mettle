@@ -297,17 +297,24 @@ fn higher_order_quantification_is_refused_verbatim() {
 /// command**, not from any global default. The same two expressions, against
 /// the same model's two commands, give different answers — `3+4` fits a 4-bit
 /// range and wraps to `-1` in a 3-bit one.
+///
+/// `plus[3,4]` carries the claim on its own: it is instance-independent, so it
+/// says "4 int" and "3 int" and nothing else. `sum x: A | 7` sums over the
+/// solved `A`, whose size the backend chooses (`some A for 3` admits 1, 2 or 3
+/// atoms), so its cell is `7 * |A|` wrapped into the command's range: at |A|=3
+/// that is 21, which is 5 in `-8..7` and -3 in `-4..3`. Both cells are asserted
+/// because the *pair* is what shows the wrap following the command.
 #[test]
 fn bitwidth_is_inherited_from_the_solved_command() {
     assert_cells(
         "bitwidth.als",
         &["--command", "0"],
-        &[("plus[3,4]", "{7}"), ("sum x: A | 7", "7")],
+        &[("plus[3,4]", "{7}"), ("sum x: A | 7", "5")],
     );
     assert_cells(
         "bitwidth.als",
         &["--command", "1"],
-        &[("plus[3,4]", "{-1}"), ("sum x: A | 7", "-1")],
+        &[("plus[3,4]", "{-1}"), ("sum x: A | 7", "-3")],
     );
 }
 
@@ -532,7 +539,18 @@ fn past_operators_at_a_revisited_state_see_the_real_history() {
 
 /// The degenerate one-state trace is not a special case anywhere: every index
 /// normalizes to 0, `'` follows the self-loop back to the same state, and
-/// `before` is still false at the start of time (P-A1/A2).
+/// `before` is still false at the **start of time** (P-A1/A2).
+///
+/// The fixture is `A' = A`, which every constant trace satisfies, so *which*
+/// value of `A` the solver settled on is its own business (ADR-0027
+/// consequences). The state-invariant cells are therefore phrased as
+/// comparisons rather than literal tuple sets: `A = A'` is the self-loop, and it
+/// holding at every index — including 7 and -3 — is the normalization.
+///
+/// `before` is the one cell that is *not* index-invariant, and deliberately so:
+/// index 0 (and anything clamping to it) has no past, while 1 and 7 do, having
+/// walked the self-loop to get there. An empty `A` would make every one of them
+/// false for the trivial reason and pin nothing.
 #[test]
 fn a_one_state_trace_evaluates_like_any_other() {
     let single = exec_fixture("temporal.als");
@@ -540,13 +558,18 @@ fn a_one_state_trace_evaluates_like_any_other() {
         assert_cells_at(
             &single,
             &["--state", state],
-            &[
-                ("A", "{}"),
-                ("A'", "{}"),
-                ("always no A", "true"),
-                ("before some A", "false"),
-            ],
+            &[("A = A'", "true"), ("always A = A'", "true")],
         );
+    }
+    // No past at the start of time; a past at every index that walked to get
+    // there. `-3` clamps to 0, `7` wraps through the loop (mt-068).
+    for (state, expected) in [
+        ("0", "false"),
+        ("-3", "false"),
+        ("1", "true"),
+        ("7", "true"),
+    ] {
+        assert_cells_at(&single, &["--state", state], &[("before some A", expected)]);
     }
 }
 

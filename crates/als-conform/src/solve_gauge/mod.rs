@@ -170,10 +170,13 @@ pub struct GaugeConfig {
     /// mt-057 (3): the commit to stamp a captured artifact with, for triage.
     /// Advisory metadata only — never validated at load.
     pub capture_commit: Option<String>,
-    /// Which SAT backend decides every command (`--solver`, mt-121). The
-    /// standing backend selector after ADR-0027 — not a dev knob — but the sweep
-    /// and count **baselines are measured on the default**, so a run under any
-    /// other backend is comparing against numbers a different solver produced.
+    /// Which SAT backend decides every command (`--solver`, mt-121) — the
+    /// standing backend selector after ADR-0027, not a dev knob. `cadical` is
+    /// the default; `mettle` re-runs the net on the own CDCL.
+    ///
+    /// An artifact records the backend that produced it
+    /// ([`sweep_baseline::SweepConfig::backend`]), and a run refuses a baseline
+    /// banked on another one, so this can never silently compare across solvers.
     pub backend: als_core::Backend,
 }
 

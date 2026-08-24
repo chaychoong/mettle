@@ -77,21 +77,34 @@ use crate::{Cnf, Lit, Outcome};
 /// Which SAT backend decides a CNF.
 #[derive(Copy, Clone, PartialEq, Eq, Default, Debug)]
 pub enum Backend {
-    /// mettle's own deterministic CDCL ([`CdclSolver`](crate::CdclSolver)) — the
-    /// default, the conformance yardstick, and the only backend under the
-    /// byte-identical determinism contract.
+    /// CaDiCaL via the vendored `cadical` binding — **the default production
+    /// solver** as of [ADR-0027](../../../docs/adr/0027-cadical-only-solver.md)
+    /// decision 1: verdicts, instance and trace enumeration, and both counting
+    /// nets, across `exec`, `serve`, the REPL and the conformance gauge.
+    ///
+    /// Its determinism is **by pinning**, not by construction: an exact
+    /// vendored source built with pinned flags reproduces itself run for run
+    /// (mt-120's gate measured that across repeated runs, job counts and
+    /// instruction sets), but the guarantee is tied to the build rather than
+    /// derived from integer-only arithmetic the way [`Backend::Cdcl`]'s is.
     #[default]
-    Cdcl,
-    /// CaDiCaL via the vendored `cadical` binding (ADR-0019, made
-    /// unconditional by ADR-0027): a far stronger search, deliberately **not**
-    /// held to byte-identical determinism across builds or platforms.
     Cadical,
+    /// mettle's own deterministic CDCL ([`CdclSolver`](crate::CdclSolver)) — the
+    /// conformance yardstick, and still the only backend under the
+    /// byte-identical determinism contract **across builds and platforms**
+    /// (it has no floating point at all, STYLE D1).
+    ///
+    /// No longer the default (ADR-0027 decision 1). It stays selectable as
+    /// `--solver mettle` until its scheduled deletion in mt-124, which is what
+    /// keeps a second opinion one flag away for as long as the migration is
+    /// still being audited.
+    Cdcl,
 }
 
 impl Backend {
     /// Every backend name **this build** can select, in a stable order with the
     /// default first. The CLI lists these when a name does not resolve.
-    pub const AVAILABLE: &'static [&'static str] = &["mettle", "cadical"];
+    pub const AVAILABLE: &'static [&'static str] = &["cadical", "mettle"];
 
     /// Backend names mettle *has* but this build left out, so a CLI can tell
     /// "there is no such solver" apart from "that solver was not compiled in" —
@@ -201,7 +214,7 @@ impl Backend {
               32-byte handle, but exactly ONE LiveSolver exists per solve (never a \
               collection of them) and both variants own multi-megabyte heap arenas \
               behind that header — boxing would add an indirection to every \
-              propagation on the default path to save 288 stack bytes once"
+              propagation on every solve to save 288 stack bytes once"
 )]
 pub enum LiveSolver {
     /// The own CDCL.
@@ -301,11 +314,16 @@ mod tests {
         }
     }
 
+    /// The default is CaDiCaL (ADR-0027 decision 1), and `AVAILABLE` leads with
+    /// it — the CLI's help text reads the default off this list, so the two can
+    /// never drift into telling a user different things.
     #[test]
-    fn default_backend_is_the_own_cdcl() {
-        assert_eq!(Backend::default(), Backend::Cdcl);
-        assert_eq!(Backend::default().name(), "mettle");
-        assert_eq!(Backend::AVAILABLE[0], "mettle");
+    fn the_default_backend_is_cadical_and_leads_the_available_list() {
+        assert_eq!(Backend::default(), Backend::Cadical);
+        assert_eq!(Backend::default().name(), "cadical");
+        assert_eq!(Backend::AVAILABLE[0], Backend::default().name());
+        // The own solver did not go anywhere; it is one flag away until mt-124.
+        assert_eq!(Backend::parse("mettle"), Some(Backend::Cdcl));
     }
 
     #[test]
@@ -393,9 +411,10 @@ mod tests {
         assert!(Backend::Cadical.supports_proof_trace());
         assert!(!Backend::Cdcl.supports_proof_trace());
         assert!(
-            !Backend::default().supports_proof_trace(),
-            "the default backend has no proof logger, so a certificate is opt-in \
-             onto another backend rather than something a default solve provides"
+            Backend::default().supports_proof_trace(),
+            "the default backend is the one with a proof logger, so UNSAT \
+             certification needs no backend switch — only the instrument that asks \
+             for the trace (mt-123)"
         );
     }
 

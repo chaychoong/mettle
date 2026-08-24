@@ -12,10 +12,14 @@
 </sig>
 
 <sig label="this/A" ID="4" parentID="2" var="yes">
+   <atom label="A$0"/>
+   <atom label="A$1"/>
    <atom label="A$2"/>
 </sig>
 
 <sig label="this/Fixed" ID="5" parentID="2">
+   <atom label="Fixed$0"/>
+   <atom label="Fixed$1"/>
    <atom label="Fixed$2"/>
 </sig>
 
@@ -38,6 +42,8 @@
 </sig>
 
 <sig label="this/Fixed" ID="5" parentID="2">
+   <atom label="Fixed$0"/>
+   <atom label="Fixed$1"/>
    <atom label="Fixed$2"/>
 </sig>
 
@@ -57,10 +63,14 @@
 </sig>
 
 <sig label="this/A" ID="4" parentID="2" var="yes">
+   <atom label="A$0"/>
+   <atom label="A$1"/>
    <atom label="A$2"/>
 </sig>
 
 <sig label="this/Fixed" ID="5" parentID="2">
+   <atom label="Fixed$0"/>
+   <atom label="Fixed$1"/>
    <atom label="Fixed$2"/>
 </sig>
 

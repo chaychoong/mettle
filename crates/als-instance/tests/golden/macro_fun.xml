@@ -12,6 +12,8 @@
 </sig>
 
 <sig label="this/A" ID="4" parentID="2">
+   <atom label="A$0"/>
+   <atom label="A$1"/>
    <atom label="A$2"/>
 </sig>
 
@@ -19,6 +21,8 @@
 </sig>
 
 <skolem label="$this/Best" ID="m0">
+   <tuple> <atom label="A$0"/> </tuple>
+   <tuple> <atom label="A$1"/> </tuple>
    <tuple> <atom label="A$2"/> </tuple>
    <types> <type ID="4"/> </types>
 </skolem>
