@@ -155,3 +155,65 @@ it available as a future one-off instrument anyway.
 counting nets — is preserved by this ADR's gate rather than by the hand-rolled
 implementation: the spike must prove pinned-build reproducibility and count
 parity before anything ships.
+
+## Addendum (2026-08-24, same day — the §3 spike PASSED on all three criteria; migration is GO)
+
+The mt-120 spike ran the gate and every criterion passed, with evidence
+tech-lead re-verified from the banked artifacts (`scratchpad/mt120/`):
+
+1. **Bit-reproducibility: PASS.** Five independent full 564-row CaDiCaL
+   sweeps — two quiet native runs, one under CPU contention, one with stage-2
+   attached at a different job count, and one cross-ISA (x86_64 under
+   Rosetta) — all hash to the same report byte-for-byte (`706f8513…`), across
+   a 27% wall swing. Conflict-limited runs are reproducible to the exact
+   conflict (the 7 still-deferring rows land on identical spend twice, wall
+   limiter off). The own-solver default path is byte-identical to the mt-118
+   reference with the spike diff in (`01ff2391…` both sides). Structural
+   note: the gauge never installs the wall-clock terminator, so nothing
+   time-dependent exists on the sweep path. Honest caveat, already scheduled:
+   Rosetta exercises x86-64 codegen on the same silicon; the release
+   battery's real Intel/Linux host remains the stronger cross-hardware check.
+2. **Count parity: PASS — and it depends on criterion 3.** Both nets on
+   CaDiCaL: COUNT_MISMATCH 0, every moved row in one of three explainable
+   classes (enum now finishes → count_match, +4 SB-0 / +3 SB-20 all matching
+   the jar; enum runs to the instance cap; newly-answered stage-1 rows reach
+   stage 2 as jar-timeout skips), no comparison lost, no existing count
+   changed, temporal posture (LEDGER-014's 3 skips) unchanged. Sharp finding:
+   on the unpatched backend the enumeration path *panics* (an
+   `enum_effort_budget ⇒ reports_effort` assert), taking the row's stage-1
+   verdict with it — so effort observability is a hard prerequisite of
+   counting, and the assert must become a typed refusal (debt 1).
+3. **Budget observability: PASS (working prototype).** The published binding
+   has no route; a vendored fork adds three read-only stats accessors
+   (conflicts/decisions/search-propagations) through the C shim — search
+   untouched, deterministic, binding exactly at the limit, cumulative across
+   the incremental seam. The proof tracer (`ccadical_trace_proof`) sits
+   behind the same missing-binding wall, so the fork is permanent, not a
+   spike artifact.
+
+**Bonus data (non-gating), now measured:** at the standing 250k×64M defaults
+CaDiCaL takes **agree 507 → 529 (+22), DISAGREE 0, self-check 0**: all 22
+convertible `over_budget` rows convert (16 unsat + 6 sat, self-checked), the
+20 `capacity` rows move zero (encoding halts before any solver is constructed
+— confirming the mt-119 mechanism), and 5 of the 7 residual defers are
+budget-bound (the mt-092 cross-run answered them at 1M/900s), leaving a
+durable residue of 2 (fullsub2[0], correctChord[13]). Stage-1 wall 932s →
+567s; summed per-row solve wall −78%. `enum_effort_budget` never fires on
+CaDiCaL (13→0 / 8→0) — same budget, cheaper units; the re-pair re-prices it.
+
+**Migration debts carried forward (from the spike's anomaly list, binding on
+the beads):** (1) enum-budget assert → typed refusal at the gauge boundary;
+(2) sweep/telemetry artifact headers must record the mettle-side backend and
+CaDiCaL's `signature()` before any CaDiCaL artifact is banked (today they
+carry only the JAR-side solver name); (3) proof-tracer bindings ride the same
+vendored fork as the counters; (4) the enum budget and instance cap get
+re-priced at the ADR-0017 re-pair; (5) the spike's `[patch.crates-io]` points
+into `scratchpad/` — the migration houses the fork properly (vendored
+in-tree, or direct FFI with a scoped `unsafe` allowance).
+
+The spike's code changes are reverted from the tree (banked byte-exact as
+`spike.diff`, 339 lines, verified equal to the pre-revert working diff); the
+migration re-derives them cleanly. Migration beads: mt-121 (fork housing +
+default flip + debts 1–3), mt-122 (ADR-0017 re-pair + re-baseline + goldens
+re-pin), mt-123 (proof-certification instrument), mt-124 (packaging battery +
+`CdclSolver` deletion + docs sweep).
