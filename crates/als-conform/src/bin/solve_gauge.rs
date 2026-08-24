@@ -82,8 +82,8 @@ fn print_usage() {
          \x20\x20--symmetry N           stage-1 (verdict net) symmetry cap (default 20; 0 = no SBP)\n\
          \x20\x20--count-symmetry N     stage-2 (count net) symmetry on BOTH sides (default 0 = SB-0 yardstick)\n\
          \x20\x20--solver NAME          SAT backend: cadical (default) or mettle, the own CDCL\n\
-         \x20\x20--conflicts N          per-command SAT conflict budget (default 250000)\n\
-         \x20\x20--encode-budget N      per-command encode-effort budget (default 64000000)\n\
+         \x20\x20--conflicts N          per-command SAT conflict budget (default 1000000)\n\
+         \x20\x20--encode-budget N      per-command encode-effort budget (default 256000000)\n\
          \x20\x20--primary-var-cap N    skip a command past this many primary vars (default 20000)\n\
          \x20\x20--count-cap N          enumerate at most N instances per command (default 10000)\n\
          \x20\x20--enum-budget N        total effort across one command's enumeration (default 250000000)\n\
@@ -129,21 +129,23 @@ fn parse_args() -> Option<Cli> {
         // Measured budgets that keep the two-corpus sweep tractable (mt-037,
         // re-tuned mt-049, encode raised mt-079/ADR-0017, conflicts re-paired
         // mt-082 after the ADR-0018 encoder reshape, both knobs re-paired
-        // mt-087 after gate-level sharing, conflicts re-paired again mt-092
-        // after the solver-side wall work). The pair is chosen on a measured
-        // grid, never one knob in isolation — the knobs interact through the
-        // temporal step-sweep, and an encoder or solver change moves the same
-        // boundaries, so any change to either knob, the encoder's CNF shape,
-        // OR the solver's search/wall behaviour warrants re-pairing. On the
-        // mt-092 solver (flat arena + decision heap + blocking literals),
-        // conflicts became cheaper again and the 250k point converts 16 more
-        // rows than 100k with zero regressions and DISAGREE 0 (grid in
-        // scratchpad/mt092grid/: 250k = 502 agree at 973s vs 1M = 507 at
-        // 3,874s — the 1M point stays a per-run flag). The 20k primary-var
-        // cap is unchanged. Scale any of them up per-run via the flags for a
-        // deeper (slower) gauge.
-        conflict_budget: 250_000,
-        encode_budget: 64_000_000,
+        // mt-087 after gate-level sharing, conflicts re-paired mt-092 after
+        // the solver-side wall work, and both knobs re-paired again mt-122
+        // when CaDiCaL became the default backend). The pair is chosen on a
+        // measured grid, never one knob in isolation — the knobs interact
+        // through the temporal step-sweep, and an encoder or solver change
+        // moves the same boundaries, so any change to either knob, the
+        // encoder's CNF shape, OR the solver's search/wall behaviour warrants
+        // re-pairing. On CaDiCaL the corner 1M × 256M is purely additive
+        // (grid in scratchpad/mt122/: conflicts convert over_budget rows,
+        // encode converts capacity rows, disjoint buckets): 552 agree at 681s
+        // vs the old 250k × 64M point's 529 at 567s — +23 for 1.2× wall,
+        // DISAGREE 0, and the capacity bucket EMPTIES (the encode-bound
+        // correctChord/TransForm rows solve in seconds once encoded, max
+        // ~14k conflicts). The 20k primary-var cap is unchanged. Scale any
+        // of them up per-run via the flags for a deeper (slower) gauge.
+        conflict_budget: 1_000_000,
+        encode_budget: 256_000_000,
         primary_var_cap: 20_000,
         allow_overflow: false,
         // SB-20 is the default-config verdict net (translation-ref §16.4); SB-0

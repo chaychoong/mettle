@@ -194,3 +194,40 @@ Re-baseline at the new default: fresh no-flag stage-1 row-identical to
 the 250k grid point; SB-0/SB-20 count nets mismatch-free (counting is
 enum-effort-bound, not conflict-bound — unchanged by this move); the
 sweep-baseline artifact recaptured at 250000/64M.
+
+## Fourth amendment (mt-122, 2026-08-25): the corner 1M × 256M on the CaDiCaL default
+
+The rule fired on its extended trigger — [ADR-0027](0027-cadical-only-solver.md)
+made CaDiCaL the default backend (mt-121), the largest search/wall change the
+gauge has seen. Probes first, per the standing owner rule: the 7 residual
+`over_budget` rows at 1M conflicts (5 answer — but only 3 are agreements;
+correctChord[22]/[25] have FILE_TIMEOUT jar baselines and convert to
+jar_nonverdict), and the 20 `capacity` rows at 256M encode (**20/20 answer and
+agree** — 13 UNSAT + 7 SAT, self-checked, beating the own-solver G3 census's
+19/20; conflict spend is trivial, max ~14k, confirming the mt-119 finding that
+this bucket was purely encode-bound). The grid, sequential and quiet at
+`--jobs 8`, row-diffed against the incumbent (artifacts `scratchpad/mt122/`):
+
+| point | agree | Δ | capacity | over_budget | jar_nonverdict | wall |
+|---|---|---|---|---|---|---|
+| 250k × 64M (incumbent) | 529 | — | 20 | 7 | 0 | 567s |
+| 1M × 64M | 532 | +3 | 20 | 2 | 2 | 691s |
+| 250k × 256M | 549 | +20 | 0 | 7 | 0 | 664s |
+| **1M × 256M (new default)** | **552** | **+23** | **0** | **2** | **2** | **681s** |
+
+DISAGREE 0, self-check 0, panics 0 at every point; the corner is exactly the
+union of the two single-axis moves (the mt-087 disjoint-buckets structure
+holds on the new backend). **The defaults become conflicts 1M × encode 256M**:
++23 agreements for 1.2× wall — the cheapest point on any grid this ADR has
+recorded — and the `capacity` bucket **empties** for the first time. The
+residual `over_budget` 2 (fullsub2[0], the one remaining jar-agreeable row,
+still spending its full 1M conflicts at 338s; correctChord[13], jar-nonverdict
+anyway) is the durable residue ADR-0026 predicted.
+
+The enumeration knobs were re-examined per ADR-0027 debt 4 and deliberately
+kept: the 10k instance cap stays because no committed jar count baseline holds
+a real count above it (every >10k entry is the 10,001 cap sentinel — raising
+it buys zero comparisons), and the 250M enum-effort budget stays as the
+runaway backstop it now is (it no longer fires at these defaults on CaDiCaL;
+tightening it to make it fire would only re-lose the count matches the
+backend's speed bought).
