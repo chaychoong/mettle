@@ -139,3 +139,20 @@ dead three times); CaDiCaL as default (owner-decided the other way, ADR-0019).
 Covered above as Options 2–4 and the not-recommended list — this ADR is
 itself the alternatives analysis; the decision it proposes is the ranking and
 the recommendation to take Option 1 first.
+
+## Addendum (2026-08-24, same day — the option space is reshaped by ADR-0027)
+
+The owner, with this ranking in front of them, reopened the solver-posture
+question directly and decided **[ADR-0027](0027-cadical-only-solver.md)**:
+CaDiCaL becomes the default solver behind the maintained `Solver` plugin seam,
+and the own CDCL is deleted after a gated migration. Effect on this ADR's
+options: **Option 3 (own-solver strength stage) is retired outright** — its
+premise (improving the hand-rolled solver toward CaDiCaL) is moot; **Option 1
+(deep-retry tier) is deferred** until after the migration's mandatory ADR-0017
+budget re-pair, then re-derived against whatever tail remains (CaDiCaL's speed
+is expected to convert much of the 49 at re-paired defaults); **Option 2
+(Simplifier bound-tightening) survives in principle** — encode size is
+solver-independent — but is re-priced after the re-pair. The fact base
+(Context above, `scratchpad/mt119/`) is unaffected and is part of ADR-0027's
+evidentiary record. Status stays Proposed as a record of the ranking; the
+live decision now lives in ADR-0027.

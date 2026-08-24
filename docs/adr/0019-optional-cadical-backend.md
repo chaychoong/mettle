@@ -1,7 +1,8 @@
 # ADR-0019 — An optional CaDiCaL SAT backend behind the `Solver` trait; the own CDCL stays the yardstick
 
-**Status:** Accepted (owner-decided, 2026-07-29)
+**Status:** Accepted (owner-decided, 2026-07-29) — **posture half SUPERSEDED by [ADR-0027](0027-cadical-only-solver.md) (owner-decided, 2026-08-24): CaDiCaL becomes the default solver and the own CDCL is deleted after the gated migration; the integration record below (trait boundary, backend mapping, instrument) remains accurate and is what ADR-0027 builds on**
 **Date:** 2026-07-29
+**Superseded by:** [ADR-0027](0027-cadical-only-solver.md) (the "own CDCL stays default + yardstick" decision only)
 **Revises:** [ADR-0011](0011-rung3-translation-solving-architecture.md)'s single-backend posture (the own-solver decision itself stands — it remains the default and the conformance yardstick).
 
 ## Context
