@@ -38,6 +38,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+/// The backend an event that predates the field must have come from: mt-121
+/// added `--solver` to the gauge, so every earlier run was the own CDCL by
+/// construction, not by assumption.
+///
+/// Deliberately the literal name, not `Backend::default().name()` — this states
+/// a fact about the past, and must not move when the default backend does.
+fn default_backend() -> String {
+    "mettle".to_owned()
+}
+
 /// One row's identity in the sweep's grid order (file-sorted,
 /// index-ascending — the same order [`super::execute::command_items`]
 /// builds and [`super::fold_command`] folds in).
@@ -59,7 +69,31 @@ pub struct RunStartEvent {
     /// wall times on, so a stage-1 row is never compared against a
     /// counting-net baseline time.
     pub mode: String,
+    /// The **jar-side** solver the counting net pins (`sat4j`, see
+    /// [`super::JAR_SOLVER`]) — not mettle's own backend, which is
+    /// [`Self::backend`]. The name predates there being two solver identities
+    /// to tell apart and is kept as it is because dashboards and banked JSONL
+    /// read it; renaming it would break them for no gain.
     pub solver: String,
+    /// Which mettle backend decided every row
+    /// ([`als_core::Backend::name`]) — the field
+    /// that stops a CaDiCaL-produced artifact reading as an own-solver one
+    /// (ADR-0027 migration debt 2).
+    ///
+    /// `#[serde(default)]` to `mettle`: JSONL written before mt-121 has no such
+    /// field, and every such run was own-solver by construction — the backend
+    /// was not selectable on the gauge at all.
+    #[serde(default = "default_backend")]
+    pub backend: String,
+    /// The versioned identity of that backend
+    /// ([`als_core::Backend::version_signature`]) — `cadical-1.9.5`,
+    /// `mettle-cdcl-0.1.1`. Provenance, never an identity check: it moves with
+    /// a version bump, and [`Self::backend`] is what a comparison uses.
+    ///
+    /// `None` in JSONL written before mt-121; no real signature is empty, so
+    /// absence is its own answer rather than a blank string pretending to be one.
+    #[serde(default)]
+    pub backend_signature: Option<String>,
     pub jobs: usize,
     pub conflict_budget: u64,
     pub encode_budget: u64,
@@ -214,6 +248,8 @@ mod tests {
             ts_ms: 1,
             mode: "stage1".to_owned(),
             solver: "sat4j".to_owned(),
+            backend: "cadical".to_owned(),
+            backend_signature: Some("cadical-1.9.5".to_owned()),
             jobs: 4,
             conflict_budget: 250_000,
             encode_budget: 64_000_000,
@@ -235,7 +271,30 @@ mod tests {
         let json = serde_json::to_string(&ev).unwrap();
         let back: TelemetryEvent = serde_json::from_str(&json).unwrap();
         match back {
-            TelemetryEvent::RunStart(r) => assert_eq!(r.rows.len(), 2),
+            TelemetryEvent::RunStart(r) => {
+                assert_eq!(r.rows.len(), 2);
+                assert_eq!(r.backend, "cadical");
+                assert_eq!(r.backend_signature.as_deref(), Some("cadical-1.9.5"));
+                assert_eq!(r.solver, "sat4j", "the jar-side field is untouched");
+            }
+            other => panic!("expected RunStart, got {other:?}"),
+        }
+    }
+
+    /// JSONL banked before mt-121 has no backend fields. It must still read —
+    /// the dashboard is pointed at whatever file is on disk — and it must read
+    /// as the own solver, which is what produced it (the gauge had no
+    /// `--solver` then). The signature stays absent rather than being invented.
+    #[test]
+    fn a_pre_mt121_run_start_reads_as_the_own_solver() {
+        let line = r#"{"event":"run_start","ts_ms":1,"mode":"stage1","solver":"sat4j","jobs":8,"conflict_budget":250000,"encode_budget":64000000,"primary_var_cap":20000,"symmetry":20,"count":false,"count_symmetry":0,"rows":[{"i":0,"key":"a.als[0]"}]}"#;
+        let back: TelemetryEvent = serde_json::from_str(line).unwrap();
+        match back {
+            TelemetryEvent::RunStart(r) => {
+                assert_eq!(r.backend, "mettle");
+                assert_eq!(r.backend_signature, None);
+                assert_eq!(r.rows.len(), 1, "the rest of the event still parses");
+            }
             other => panic!("expected RunStart, got {other:?}"),
         }
     }

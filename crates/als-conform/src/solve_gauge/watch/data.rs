@@ -262,6 +262,8 @@ mod tests {
                 primary_var_cap: 3,
                 no_overflow: true,
                 solver: "sat4j".to_owned(),
+                backend: "mettle".to_owned(),
+                backend_signature: Some("mettle-cdcl-test".to_owned()),
                 count_enabled: false,
                 count_symmetry: 0,
                 count_cap: 0,
@@ -278,6 +280,11 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(v["waiting"], serde_json::json!(false));
         assert_eq!(v["run"]["mode"], serde_json::json!("stage1"));
+        // The JSONL above predates mt-121's backend fields — a dashboard pointed
+        // at a banked file must still render, reading it as the own solver
+        // (which produced it) with no signature invented for it.
+        assert_eq!(v["run"]["backend"], serde_json::json!("mettle"));
+        assert!(v["run"]["backend_signature"].is_null());
 
         let rows = v["rows"].as_array().unwrap();
         assert_eq!(rows.len(), 3);

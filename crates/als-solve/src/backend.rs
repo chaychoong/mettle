@@ -143,6 +143,34 @@ impl Backend {
         }
     }
 
+    /// The backend's **versioned** identity — what an artifact header stamps so
+    /// a measurement names the solver that produced it (ADR-0027 migration debt
+    /// 2; [`Self::name`] is the selector, this is the provenance).
+    ///
+    /// `mettle-cdcl-<crate version>` for the own solver, whose behavior is
+    /// pinned by this workspace's source, and CaDiCaL's own signature
+    /// (`cadical-1.9.5`) for the other, read from the linked library rather than
+    /// written down — a hardcoded version here could disagree with the code that
+    /// actually answered, which is the whole failure this string exists to
+    /// prevent.
+    ///
+    /// Deliberately *not* what a stale-artifact check compares (that is
+    /// [`Self::name`]): a rebuilt own solver with a bumped crate version must
+    /// not orphan every baseline banked before it.
+    #[must_use]
+    pub fn version_signature(self) -> String {
+        match self {
+            Backend::Cdcl => concat!("mettle-cdcl-", env!("CARGO_PKG_VERSION")).to_owned(),
+            // Constructing an empty solver just to ask its version is cheap
+            // (CaDiCaL allocates nothing until clauses arrive) and is the only
+            // route the binding offers — `ccadical_signature` is behind
+            // `&self`.
+            Backend::Cadical => crate::CadicalSolver::new(&Cnf::new())
+                .signature()
+                .to_owned(),
+        }
+    }
+
     /// Whether this backend can emit a DRAT/LRAT proof of an UNSAT verdict —
     /// capability (e) of the module's contract, and what ADR-0027 decision 4
     /// certifies UNSAT with.
@@ -322,6 +350,39 @@ mod tests {
             assert_eq!(solver.backend(), backend);
             assert_eq!(solver.effort().is_some(), backend.reports_effort());
         }
+    }
+
+    /// Every backend's stamped identity names *it* and carries a version, so an
+    /// artifact header can never be read as having come from the other one.
+    #[test]
+    fn every_backend_signs_itself_with_a_version() {
+        assert_eq!(
+            Backend::Cdcl.version_signature(),
+            format!("mettle-cdcl-{}", env!("CARGO_PKG_VERSION"))
+        );
+        assert!(
+            Backend::Cadical.version_signature().starts_with("cadical-"),
+            "expected CaDiCaL's own signature, got {:?}",
+            Backend::Cadical.version_signature()
+        );
+        let signatures: Vec<String> = Backend::AVAILABLE
+            .iter()
+            .map(|name| backend_of(name).version_signature())
+            .collect();
+        for signature in &signatures {
+            assert!(
+                signature.contains(|c: char| c.is_ascii_digit()),
+                "a signature without a version pins nothing: {signature}"
+            );
+        }
+        assert_eq!(
+            signatures
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            signatures.len(),
+            "two backends signed identically: {signatures:?}"
+        );
     }
 
     /// Capability (e) is a query with an answer, not a hope: exactly the

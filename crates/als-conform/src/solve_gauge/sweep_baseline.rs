@@ -23,8 +23,12 @@
 //! caches could disagree with each other; one cannot — hence the single file.
 //!
 //! **Anti-rot.** The header pins every config field that changes what a bucket
-//! *means* (symmetry, the conflict/encode/primary-var budgets, overflow, solver,
-//! and — when the run counts — the counting budgets). A mismatch is a **hard
+//! *means* (symmetry, the conflict/encode/primary-var budgets, overflow, the
+//! jar-side solver, the mettle-side backend, and — when the run counts — the
+//! counting budgets). It also *records* the backend's version
+//! ([`SweepConfig::backend_signature`]) without comparing it: which solver
+//! answered is identity, which build of it answered is provenance. A mismatch is
+//! a **hard
 //! error** whenever the artifact's *content* can reach the answer, which since
 //! the skip lane's removal means exactly one consumer: `--delta`, whose whole
 //! output is a comparison against these buckets. Diffing against buckets
@@ -76,6 +80,16 @@ pub fn mode_key(cfg: &SweepConfig) -> String {
     format!("count-sb{}{all}", cfg.count_symmetry)
 }
 
+/// The backend an artifact that predates the field must have come from: mt-121
+/// added `--solver` to the gauge, so every earlier capture is an own-solver one
+/// by construction, not by assumption.
+///
+/// Deliberately the literal name, not `Backend::default().name()` — this states
+/// a fact about the past, and must not move when the default backend does.
+fn default_backend() -> String {
+    "mettle".to_owned()
+}
+
 /// The `relpath` part of a `relpath[idx]` key (the whole key if it has no `[`).
 fn relpath_of(key: &str) -> &str {
     key.rsplit_once('[').map_or(key, |(rel, _)| rel)
@@ -93,10 +107,34 @@ pub struct SweepConfig {
     pub encode_budget: u64,
     pub primary_var_cap: usize,
     pub no_overflow: bool,
-    /// The jar-side solver the counting net pins (see [`super::JAR_SOLVER`]).
-    /// Constant today; recorded so a future `--solver` cannot silently rot an
-    /// artifact.
+    /// The **jar-side** solver the counting net pins (see
+    /// [`super::JAR_SOLVER`]). Constant today, and deliberately *not* mettle's
+    /// own backend — that is [`Self::backend`]. The name predates there being
+    /// two solver identities to tell apart; renaming it would invalidate every
+    /// committed artifact for no gain.
     pub solver: String,
+    /// Which mettle backend produced these buckets
+    /// ([`als_core::Backend::name`]). Compared field-by-field like every other
+    /// bucket-defining field: a run on one backend must never silently consume
+    /// a baseline banked on another, because "which solver answered" changes
+    /// which rows land in `over_budget` (ADR-0027 migration debt 2).
+    ///
+    /// Defaults to `mettle` for artifacts captured before mt-121, which is not
+    /// a guess: the gauge had no `--solver` flag then, so every one of them is
+    /// an own-solver capture by construction.
+    #[serde(default = "default_backend")]
+    pub backend: String,
+    /// The versioned identity of that backend
+    /// ([`als_core::Backend::version_signature`]) — `mettle-cdcl-0.1.1`,
+    /// `cadical-1.9.5`. **Provenance, not identity**: it is written on every
+    /// capture and never compared, because a crate-version bump on a rebuilt
+    /// own solver must not orphan every baseline banked before it.
+    ///
+    /// `None` in artifacts captured before mt-121. No real signature is empty,
+    /// so absence is its own answer rather than a blank string pretending to be
+    /// one.
+    #[serde(default)]
+    pub backend_signature: Option<String>,
     /// Whether the capture ran stage 2. When false, `count_bucket` is absent
     /// everywhere and count deltas are unavailable.
     pub count_enabled: bool,
@@ -523,6 +561,11 @@ fn config_mismatch(
             header.no_overflow.to_string(),
         ),
         ("solver", run.solver.clone(), header.solver.clone()),
+        // The mettle-side backend. `backend_signature` is deliberately absent
+        // from this list: it is provenance, and comparing it would orphan every
+        // baseline the moment the crate version moves under a rebuilt own
+        // solver (see `SweepConfig::backend_signature`).
+        ("backend", run.backend.clone(), header.backend.clone()),
     ];
     if let Some(hit) = stage1.into_iter().find(|(_, run, base)| run != base) {
         return Some(hit);
@@ -573,6 +616,8 @@ mod tests {
             primary_var_cap: 20_000,
             no_overflow: true,
             solver: "sat4j".to_owned(),
+            backend: "mettle".to_owned(),
+            backend_signature: Some("mettle-cdcl-test".to_owned()),
             count_enabled: true,
             count_symmetry: 0,
             count_cap: 10_000,
@@ -724,6 +769,79 @@ mod tests {
             other => panic!("expected encode_budget mismatch, got {other:?}"),
         }
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A baseline banked on one backend is refused by a run on another, through
+    /// the same loud path every other bucket-defining field uses (ADR-0027
+    /// migration debt 2). Silently consuming it would diff one solver's buckets
+    /// against the other's and call the difference a regression.
+    #[test]
+    fn a_baseline_from_another_backend_is_refused() {
+        let dir = tmp_dir("mm-backend");
+        let mut cfg = header();
+        cfg.backend = "cadical".to_owned();
+        cfg.backend_signature = Some("cadical-1.9.5".to_owned());
+        SweepBaselineFile {
+            config: cfg,
+            entries: BTreeMap::new(),
+        }
+        .write_atomic(&dir.join("y-sweep-sb20.json"))
+        .unwrap();
+
+        let err = load_sweep_baselines(&dir, &header(), true).unwrap_err();
+        match err {
+            ConformError::SweepBaselineConfigMismatch {
+                field,
+                expected,
+                found,
+                ..
+            } => {
+                assert_eq!(field, "backend");
+                assert_eq!((expected.as_str(), found.as_str()), ("mettle", "cadical"));
+            }
+            other => panic!("expected a backend mismatch, got {other:?}"),
+        }
+        // Without --delta it is the usual downgrade: ignored, with a warning.
+        let loaded = load_sweep_baselines(&dir, &header(), false).unwrap();
+        assert!(loaded.warnings[0].contains("backend"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The signature is provenance, not identity: a rebuilt own solver with a
+    /// bumped crate version must not orphan every baseline banked before it.
+    #[test]
+    fn a_differing_backend_signature_alone_is_not_a_mismatch() {
+        let mut older = header();
+        older.backend_signature = Some("mettle-cdcl-0.0.9".to_owned());
+        let mut newer = header();
+        newer.backend_signature = Some("mettle-cdcl-9.9.9".to_owned());
+        assert_eq!(config_mismatch(&older, &newer), None);
+        assert_eq!(config_mismatch(&newer, &older), None);
+    }
+
+    /// An artifact banked before mt-121 has no backend fields. It must still
+    /// load — `baselines/*-sweep-sb20.json` is one — and it must read as the own
+    /// solver, which is what produced it: the gauge had no `--solver` then.
+    #[test]
+    fn a_pre_mt121_header_reads_as_the_own_solver() {
+        let json = r#"{
+          "config": {
+            "symmetry": 20, "conflict_budget": 10000, "encode_budget": 4000000,
+            "primary_var_cap": 20000, "no_overflow": true, "solver": "sat4j",
+            "count_enabled": true, "count_symmetry": 0, "count_cap": 10000,
+            "enum_budget": 250000000, "enumerate_all": false,
+            "capture_commit": "deadbeef"
+          },
+          "entries": {}
+        }"#;
+        let file: SweepBaselineFile = serde_json::from_str(json).unwrap();
+        assert_eq!(file.config.backend, "mettle");
+        assert_eq!(
+            file.config.backend_signature, None,
+            "an unrecorded signature stays unrecorded rather than being invented"
+        );
+        // And it therefore still matches an own-solver run of the same config.
+        assert_eq!(config_mismatch(&file.config, &header()), None);
     }
 
     /// The other half of the strictness rule: when nothing the artifact says can

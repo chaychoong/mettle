@@ -309,6 +309,8 @@ fn fixtures_header() -> SweepConfig {
         primary_var_cap: 20_000,
         no_overflow: true,
         solver: "sat4j".to_owned(),
+        backend: "mettle".to_owned(),
+        backend_signature: Some("mettle-cdcl-test".to_owned()),
         count_enabled: false,
         count_symmetry: 0,
         count_cap: 10_000,
@@ -459,6 +461,13 @@ fn capture_then_delta_reports_no_change() {
     assert_eq!(file.entries.len(), captured.commands);
     assert_eq!(file.config.symmetry, 20);
     assert!(!file.config.count_enabled);
+    // mt-121: every capture names the backend that produced these buckets, and
+    // stamps its version, so a CaDiCaL artifact can never be read as this one.
+    assert_eq!(file.config.backend, als_core::Backend::default().name());
+    assert_eq!(
+        file.config.backend_signature,
+        Some(als_core::Backend::default().version_signature())
+    );
 
     // Re-run with --delta against what we just captured: nothing moved.
     let mut delta_cfg = fixtures_config(&dir, 1);
