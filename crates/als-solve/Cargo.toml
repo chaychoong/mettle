@@ -8,19 +8,14 @@ repository.workspace = true
 [lints]
 workspace = true
 
-[features]
-# `cadical` (OFF by default, ADR-0019 / mt-089): the optional second SAT
-# backend. Default builds -- the CLI, the gauge, packaging -- stay exactly the
-# zero-dependency, all-Rust build they were; nothing in the default path can
-# see this crate's contents, let alone its behavior.
-cadical = ["dep:cadical"]
-
 [dependencies]
-# cadical (OPTIONAL, feature `cadical`): Rust bindings for Armin Biere's
-# CaDiCaL, the state-of-the-art CDCL solver ADR-0019 selected as mettle's
-# second backend. Justification (STYLE: every dependency justified in writing):
+# cadical: Rust bindings for Armin Biere's CaDiCaL, the state-of-the-art CDCL
+# solver. ADR-0019 brought it in as an optional second backend; ADR-0027 made it
+# the solver mettle ships (mt-121), so the dependency is unconditional and there
+# is no longer a `cadical` feature to turn off.
+# Justification (STYLE: every dependency justified in writing):
 #   * License MIT, and the vendored CaDiCaL 1.9.5 sources are MIT too --
-#     compatible with distributing an MPL-2.0 binary.
+#     compatible with distributing an MPL-2.0 binary. Attribution: root NOTICE.
 #   * Build surface is one build-dependency (`cc`) compiling the vendored C++
 #     with no autotools/CMake step, no submodule fetch, no system library: the
 #     crate ships CaDiCaL's `src/` inside the .crate file.
@@ -31,10 +26,17 @@ cadical = ["dep:cadical"]
 #   * Chosen over `rustsat-cadical`, which reaches the same solver through the
 #     RustSAT framework (and does expose conflict counters) but drags the
 #     `rustsat` core, `anyhow`, `thiserror`, `cpu-time` and friends into a
-#     crate whose entire point is having no dependencies; and over vendoring
-#     the C++ ourselves, which would put an FFI layer plus `unsafe` into a
-#     workspace that currently forbids it, for no gain over an MIT crate that
-#     already vendors the same sources.
-# Pinned exactly (`=`) because a SAT backend's version IS the measurement:
-# an instrument row means nothing if the solver silently moves under it.
-cadical = { version = "=0.1.16", optional = true }
+#     crate whose entire point is having no dependencies; and over writing our
+#     own FFI against the C++, which would put an `unsafe` layer into a
+#     workspace that forbids it, for no gain over an MIT crate that already
+#     vendors the same sources.
+# Path, not registry: the published binding exposes neither CaDiCaL's effort
+# counters (which the enumeration budget is charged from) nor its proof tracer
+# (which certifies UNSAT), and neither is reachable from outside the crate. The
+# fork that adds them is `vendor/cadical` -- still crates.io `cadical` 0.1.16,
+# still the same search, plus ~120 lines of accessors. See vendor/README.md for
+# the delta and how to regenerate it, and ADR-0027 for why it is permanent.
+# Vendoring pins the version harder than the old `=0.1.16` did, which matters
+# because a SAT backend's version IS the measurement -- an instrument row means
+# nothing if the solver silently moves under it.
+cadical = { path = "../../vendor/cadical" }

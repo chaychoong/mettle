@@ -3,10 +3,11 @@ name: backend determinism
 # The cross-target determinism battery for the optional CaDiCaL backend
 # (ADR-0019 / mt-089 stage 2). It answers two questions no single machine can:
 #
-#   1. Can the vendored C++ actually be built on all four release targets? That
-#      is the precondition for ever shipping `--solver cadical` enabled by
-#      default, and it is the reason `[features]` in `crates/mettle/Cargo.toml`
-#      is off today — a claim we cannot demonstrate is not a claim we make.
+#   1. Can the vendored C++ actually be built on all four release targets? It
+#      used to be the precondition for shipping `--solver cadical` at all; since
+#      ADR-0027 / mt-121 compiled the backend into every build, it is the
+#      precondition for shipping, full stop — a target that cannot build the C++
+#      cannot be released.
 #   2. Does the alternative backend give the same bytes on every target? mettle's
 #      own CDCL must (STYLE D1, and the `mettle` rows here are that control);
 #      CaDiCaL was never promised to, and `-ffp-contract=off` (see
@@ -68,7 +69,9 @@ jobs:
           cc --version || true
           c++ --version || true
       - name: build with the cadical backend
-        run: cargo build --release -p mettle --features cadical
+        # No feature flag since ADR-0027 / mt-121: every build carries CaDiCaL,
+        # so this step failing IS question (1)'s answer for that target.
+        run: cargo build --release -p mettle
       - name: run the battery
         env:
           TARGET: ${{ matrix.target }}
@@ -133,7 +136,7 @@ jobs:
           count=$(ls -1 rows-hashes-*.txt | wc -l)
           echo "targets reporting: $count of 4"
           if [ "$count" -ne 4 ]; then
-            echo "NOT ALL TARGETS BUILT the cadical backend — the shipped default stays off"
+            echo "NOT ALL TARGETS BUILT the cadical backend — those targets cannot be released"
             status=1
           fi
           exit "$status"

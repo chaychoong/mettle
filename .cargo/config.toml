@@ -1,7 +1,8 @@
 # Workspace cargo configuration.
 #
-# The single entry here exists for the optional CaDiCaL backend (ADR-0019,
-# mt-089). CaDiCaL's search is not pure integer arithmetic the way mettle's own
+# The single entry here exists for the CaDiCaL backend (ADR-0019, mt-089;
+# unconditional since ADR-0027 / mt-121). CaDiCaL's search is not pure integer
+# arithmetic the way mettle's own
 # CDCL deliberately is: its restart policy compares floating-point EMAs of clause
 # glue (`cadical/src/ema.hpp`, `restart.cpp`), so *which* answer a run finds can
 # depend on double rounding. Nothing in the crate's `build.rs` pins FP semantics
@@ -25,9 +26,10 @@
 # has no floating point at all (STYLE D1).
 #
 # Not forced: an explicit `CXXFLAGS` in the environment wins, so a packager who
-# needs their own flags is not fought with. Nothing is compiled from C or C++ at
-# all unless the `cadical` feature is on, so on a default build this is inert
-# (which is also why the MSVC toolchain, which would reject the flag, never sees
-# it — there is no Windows target and no C++ in a default build).
+# needs their own flags is not fought with. Since mt-121 every build compiles the
+# vendored C++, so this flag is live on every build rather than only under a
+# feature — which makes it load-bearing rather than inert, and makes an
+# environment that overrides it a thing to notice. (The MSVC toolchain would
+# reject the flag; there is no Windows target.)
 [env]
 CXXFLAGS = { value = "-ffp-contract=off", force = false }

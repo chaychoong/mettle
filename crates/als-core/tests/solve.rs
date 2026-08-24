@@ -1076,17 +1076,15 @@ fn an_unmarked_subset_sig_stays_free() {
     assert_sat("sig B {}\nsig A in B {}\nrun { #A = 2 } for 3\n");
 }
 
-// ===================== the optional CaDiCaL backend ======================
-// ADR-0019 / mt-089 stage 2. These run only under `--features cadical`
-// (`cargo test --workspace --all-features`, and CI's `cadical` job), because a
-// default build has no second backend to compare against — which is the point:
-// the default path is unchanged by construction, not by discipline.
+// ========================= the CaDiCaL backend ===========================
+// ADR-0019 / mt-089 stage 2, compiled into every build since mt-121
+// (ADR-0027). These are the cross-backend truths: whatever the search does,
+// the verdict and the model *set* are properties of the encoding.
 
 /// Verdicts are backend-independent truths (ADR-0019 §4): every verdict golden
 /// above must come out the same under the alternative backend, on the same
 /// models, with no jar and no baseline involved. A difference here would be a
 /// bug in one of the two solvers or in the wiring between them.
-#[cfg(feature = "cadical")]
 #[test]
 fn cadical_agrees_with_the_own_cdcl_on_every_verdict_shape() {
     let models: &[(&str, bool)] = &[
@@ -1151,7 +1149,6 @@ fn cadical_agrees_with_the_own_cdcl_on_every_verdict_shape() {
 /// instances is a property of the encoding plus the blocking clauses, not of the
 /// solver, so the SB-0 count must match the own solver's (jar-pinned) count. The
 /// *order* is the backend's own and is deliberately not asserted (ADR-0019 §1).
-#[cfg(feature = "cadical")]
 #[test]
 fn cadical_enumerates_the_same_number_of_instances() {
     let count_with = |src: &str, backend| {
@@ -1181,25 +1178,39 @@ fn cadical_enumerates_the_same_number_of_instances() {
     }
 }
 
-/// Negative space: a cumulative enumeration-effort budget cannot be charged to a
-/// backend with no counters, so asking for that combination is refused loudly
-/// rather than becoming an unbounded enumeration (ADR-0019 addendum 3).
-#[cfg(feature = "cadical")]
+/// The positive half of the enumeration budget's backend contract: every backend
+/// mettle ships reports its effort, so a budgeted enumeration is accepted and
+/// bounded on all of them.
+///
+/// The negative half — a counter-less backend gets
+/// [`TranslateError::BackendCapability`] rather than a budget charged nothing
+/// (mt-121, replacing ADR-0019 addendum 3's assert) — has no test here because
+/// it is unreachable through `Backend`: there is no such backend to select. It
+/// is pinned by construction instead, in `enumerate`'s guard and
+/// `Backend::reports_effort`.
 #[test]
-#[should_panic(expected = "needs a backend with effort counters")]
-fn an_effort_budget_is_refused_on_a_backend_without_counters() {
+fn a_budgeted_enumeration_is_accepted_on_every_shipped_backend() {
     let src = "sig A {}\nrun { some A } for 3\n";
-    let loader = MapLoader::new().with("root.als", src);
-    let graph = ModuleGraph::load("root.als", &loader).expect("load");
-    let world = resolve(&graph).expect("resolve").world;
-    let scoped = compute_universe(&world, &graph, &world.commands[0]).expect("universe");
-    let mut ir = Ir::default();
-    let bounds = compute_bounds(&world, &scoped, &mut ir);
-    let goal = lower_command(&world, &graph, &scoped, &bounds, &mut ir, 0).expect("lower");
-    let opts = SolveOptions {
-        backend: als_core::Backend::Cadical,
-        enum_effort_budget: Some(1_000),
-        ..sb0()
-    };
-    let _ = enumerate(&ir, &scoped, &goal, &bounds, &opts);
+    for backend in [als_core::Backend::Cdcl, als_core::Backend::Cadical] {
+        assert!(
+            backend.reports_effort(),
+            "a shipped backend must count its effort: {}",
+            backend.name()
+        );
+        let loader = MapLoader::new().with("root.als", src);
+        let graph = ModuleGraph::load("root.als", &loader).expect("load");
+        let world = resolve(&graph).expect("resolve").world;
+        let scoped = compute_universe(&world, &graph, &world.commands[0]).expect("universe");
+        let mut ir = Ir::default();
+        let bounds = compute_bounds(&world, &scoped, &mut ir);
+        let goal = lower_command(&world, &graph, &scoped, &bounds, &mut ir, 0).expect("lower");
+        let opts = SolveOptions {
+            backend,
+            enum_effort_budget: Some(250_000_000),
+            ..sb0()
+        };
+        let it = enumerate(&ir, &scoped, &goal, &bounds, &opts)
+            .unwrap_or_else(|e| panic!("{} refused a budgeted enumeration: {e}", backend.name()));
+        assert_eq!(it.count(), 7, "backend {}", backend.name());
+    }
 }

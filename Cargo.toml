@@ -10,6 +10,13 @@ members = [
     "crates/als-conform",
     "crates/mettle",
 ]
+# The vendored CaDiCaL binding (ADR-0027 / mt-121, see vendor/README.md) lives
+# under the workspace root, so cargo would otherwise adopt it as a member. It
+# must NOT be one: it is upstream code we carry a small patch on top of, and
+# a member would inherit `unsafe_code = "forbid"` (an FFI binding is nothing but
+# unsafe) along with our fmt and clippy gates on prose and style that are the
+# binding author's business, not ours.
+exclude = ["vendor/cadical"]
 
 [workspace.package]
 edition = "2021"

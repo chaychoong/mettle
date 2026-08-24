@@ -48,6 +48,8 @@ fn defer_bucket(e: &TranslateError) -> &'static str {
         // The driver-phase temporal defer (mt-067) is raised before any
         // lowering, so it cannot reach here either.
         TranslateError::UnboundedSteps { .. } => "unbounded-steps",
+        // A stage-2 enumeration refusal (mt-121); the lowerer never raises it.
+        TranslateError::BackendCapability { .. } => "backend-capability",
         TranslateError::ScopeOnSubset { .. }
         | TranslateError::ScopeOnEnum { .. }
         | TranslateError::StringScopeNotExact { .. }

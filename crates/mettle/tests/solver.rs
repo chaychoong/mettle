@@ -1,19 +1,20 @@
 //! Integration tests for the `--solver` surface (mt-089 stage 2, ADR-0019),
 //! spawning the built binary against the `exec` fixtures — the `exec.rs` idiom.
 //!
-//! Three properties are pinned here, and only the third depends on how this
-//! binary was compiled:
+//! Three properties are pinned here:
 //!
 //! 1. **The default has not moved.** `mettle exec` and `mettle exec --solver
 //!    mettle` produce byte-identical stdout, so naming the default is a no-op
 //!    and every recorded command keeps its meaning (ADR-0019 §2).
 //! 2. **No silent fallback.** An unknown name is a usage error listing the
-//!    names this build has, and a *compiled-out* name says so in different
-//!    words — never a quiet substitution of the default (the mt-006 rule).
-//! 3. **The alternative backend, when compiled in, answers the same verdicts.**
-//!    Verdicts are backend-independent truths (ADR-0019 §4): SAT stays SAT,
-//!    UNSAT stays UNSAT, a temporal command still solves to a trace. The
-//!    *instance* shown may differ and is deliberately not asserted.
+//!    names this build has — never a quiet substitution of the default (the
+//!    mt-006 rule). A *compiled-out* name would say so in different words; no
+//!    backend is compiled out today (mt-121), so that arm has no test to run,
+//!    only [`als_solve::Backend::COMPILED_OUT`] to stay empty.
+//! 3. **The other backend answers the same verdicts.** Verdicts are
+//!    backend-independent truths (ADR-0019 §4): SAT stays SAT, UNSAT stays
+//!    UNSAT, a temporal command still solves to a trace. The *instance* shown
+//!    may differ and is deliberately not asserted.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -120,32 +121,8 @@ fn serve_rejects_an_unknown_solver_before_binding_a_port() {
     );
 }
 
-/// Without the `cadical` cargo feature, the name is refused with the *reason*
-/// (compiled out) and the fix (the feature), which is a different error from a
-/// typo — mettle knows the difference and says which one this is.
-#[cfg(not(feature = "cadical"))]
-#[test]
-fn a_compiled_out_backend_says_so_rather_than_calling_it_unknown() {
-    let out = run_exec(&fixture("commands.als"), &["--solver", "cadical"]);
-    assert_eq!(out.status.code(), Some(2));
-    let text = stderr(&out);
-    assert!(
-        text.contains("solver `cadical` is not in this build"),
-        "stderr: {text}"
-    );
-    assert!(
-        text.contains("--features cadical"),
-        "the error must name the fix, got: {text}"
-    );
-    assert!(
-        !text.contains("unknown solver"),
-        "a compiled-out backend is not an unknown name: {text}"
-    );
-}
-
-/// With the feature on, every verdict shape in the fixture is reached under
-/// `CaDiCaL` too, with the same verdict label as the default backend produced.
-#[cfg(feature = "cadical")]
+/// Every verdict shape in the fixture is reached under `CaDiCaL` too, with the
+/// same verdict label as the default backend produced.
 #[test]
 fn cadical_reaches_the_same_verdicts_as_the_default_backend() {
     let file = fixture("commands.als");
@@ -178,7 +155,6 @@ fn cadical_reaches_the_same_verdicts_as_the_default_backend() {
 /// A temporal command still solves to a lasso trace under `CaDiCaL`: the trace
 /// shown is configuration-relative to *its* first solution (LEDGER-014 /
 /// ADR-0019 §4), so the block structure is asserted and the contents are not.
-#[cfg(feature = "cadical")]
 #[test]
 fn cadical_solves_a_temporal_command_to_a_trace() {
     let out = run_exec(&fixture("trace.als"), &["--solver", "cadical"]);
@@ -190,8 +166,7 @@ fn cadical_solves_a_temporal_command_to_a_trace() {
 
 /// `--conflicts` still binds under `CaDiCaL`: a zero budget cannot answer a
 /// command that needs any search at all, and reports the same non-verdict the
-/// own solver reports (what it *cannot* report is how much it spent).
-#[cfg(feature = "cadical")]
+/// own solver reports.
 #[test]
 fn the_conflict_budget_binds_under_cadical() {
     let file = fixture("commands.als");

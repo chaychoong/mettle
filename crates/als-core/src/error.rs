@@ -181,6 +181,26 @@ pub enum TranslateError {
         /// Span of the goal node being encoded when the budget ran out.
         span: Span,
     },
+
+    /// The selected SAT backend cannot do something this solve requires — today
+    /// only "report search effort", which the cumulative enumeration budget is
+    /// charged from ([`crate::solve::enumerate`]). A **capability refusal**
+    /// ([ADR-0027](../../../docs/adr/0027-cadical-only-solver.md) decision 2):
+    /// what a backend cannot provide is refused in type, up front, never
+    /// degraded into a silently different behavior — here, an unbounded
+    /// enumeration wearing a budget's name.
+    ///
+    /// Unreachable with the two shipped backends (both count their effort); this
+    /// is the negative space a future plugin backend lands in.
+    #[error("backend `{backend}` cannot {capability}")]
+    BackendCapability {
+        /// The backend's user-facing name ([`als_solve::Backend::name`]).
+        backend: &'static str,
+        /// What it could not do, phrased to complete "cannot …".
+        capability: &'static str,
+        /// Span of the goal that could not be solved this way.
+        span: Span,
+    },
 }
 
 impl TranslateError {
@@ -201,7 +221,8 @@ impl TranslateError {
             | TranslateError::TemporalUnsupported { span, .. }
             | TranslateError::LoweringUnsupported { span, .. }
             | TranslateError::HigherOrder { span }
-            | TranslateError::CapacityExceeded { span, .. } => *span,
+            | TranslateError::CapacityExceeded { span, .. }
+            | TranslateError::BackendCapability { span, .. } => *span,
         }
     }
 }

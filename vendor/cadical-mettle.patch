@@ -1,0 +1,197 @@
+diff --git a/cadical/src/cadical.hpp b/cadical/src/cadical.hpp
+index 3dd70fc..eb08c57 100644
+--- a/cadical/src/cadical.hpp
++++ b/cadical/src/cadical.hpp
+@@ -650,6 +650,18 @@ public:
+   int64_t redundant () const;   // Number of active redundant clauses.
+   int64_t irredundant () const; // Number of active irredundant clauses.
+ 
++  // mettle fork (ADR-0027 / mt-121): read-only search-effort counters. CaDiCaL
++  // keeps these in the private 'Internal::stats'; the public Solver had no
++  // accessor, which is the "budgets bind, spend is unobservable" gap ADR-0019
++  // recorded and mettle's enumeration budget needs closed.
++  //
++  //   require (VALID)
++  //   ensure (VALID)
++  //
++  int64_t conflicts () const;    // Conflicts generated in 'propagate'.
++  int64_t decisions () const;    // Decisions taken in 'decide'.
++  int64_t propagations () const; // Literals propagated during SEARCH.
++
+   //------------------------------------------------------------------------
+   // This function executes the given number of preprocessing rounds. It is
+   // similar to 'solve' with 'limits ("preprocessing", rounds)' except that
+diff --git a/cadical/src/solver.cpp b/cadical/src/solver.cpp
+index a2505ee..1f44cc4 100644
+--- a/cadical/src/solver.cpp
++++ b/cadical/src/solver.cpp
+@@ -972,6 +972,26 @@ int64_t Solver::irredundant () const {
+   return res;
+ }
+ 
++// mettle fork (ADR-0027 / mt-121): the effort counters, straight off
++// 'Internal::stats'. 'propagations' reports the SEARCH term only: the
++// inprocessing sub-counters (probe/vivify/walk/...) measure simplification, not
++// the CDCL search a conflict budget prices.
++
++int64_t Solver::conflicts () const {
++  REQUIRE_VALID_STATE ();
++  return internal->stats.conflicts;
++}
++
++int64_t Solver::decisions () const {
++  REQUIRE_VALID_STATE ();
++  return internal->stats.decisions;
++}
++
++int64_t Solver::propagations () const {
++  REQUIRE_VALID_STATE ();
++  return internal->stats.propagations.search;
++}
++
+ /*------------------------------------------------------------------------*/
+ 
+ void Solver::freeze (int lit) {
+@@ -1026,7 +1046,13 @@ bool Solver::trace_proof (const char *path) {
+       path);
+   File *internal_file = File::write (internal, path);
+   bool res = (internal_file != 0);
+-  internal->trace (internal_file);
++  // mettle fork (ADR-0027 / mt-121): upstream connects the tracer even when the
++  // file could not be opened, so a DratTracer is built over a null 'File' and
++  // the first proof line segfaults -- the failure this function's own return
++  // value is there to report. Only connect a tracer that has a file; 'res' then
++  // means what it says, and an unopenable path is a refusal rather than a crash.
++  if (res)
++    internal->trace (internal_file);
+   LOG_API_CALL_RETURNS ("trace_proof", path, res);
+   return res;
+ }
+diff --git a/src/ccadical.cpp b/src/ccadical.cpp
+index d049292..c5b8cdc 100644
+--- a/src/ccadical.cpp
++++ b/src/ccadical.cpp
+@@ -43,4 +43,47 @@ extern "C"
+   {
+     ((Wrapper *)wrapper)->solver->reserve(min_max_var);
+   }
++
++  // mettle fork (ADR-0027 / mt-121): the search-effort counters, patched into
++  // the vendored CaDiCaL as 'Solver::conflicts/decisions/propagations'.
++  int64_t ccadical_conflicts(CCaDiCaL *wrapper)
++  {
++    return ((Wrapper *)wrapper)->solver->conflicts();
++  }
++
++  int64_t ccadical_decisions(CCaDiCaL *wrapper)
++  {
++    return ((Wrapper *)wrapper)->solver->decisions();
++  }
++
++  int64_t ccadical_propagations(CCaDiCaL *wrapper)
++  {
++    return ((Wrapper *)wrapper)->solver->propagations();
++  }
++
++  // mettle fork (ADR-0027 / mt-121): DRAT proof tracing. CaDiCaL's own C API
++  // reaches this through 'ccadical_trace_proof(wrapper, FILE *, name)', which
++  // makes the caller own the stream; the path-only C++ overload lets CaDiCaL
++  // open and close the file itself, which is the only form a Rust caller can
++  // use without an FFI stdio dependency. Hence the distinct name -- the
++  // upstream symbol is already defined in the file this one includes, so it
++  // cannot be reused for a different signature.
++  //
++  // Returns 1 when the trace file was opened, 0 when it was not. Must be called
++  // in the CONFIGURING state -- before the first clause AND before
++  // 'ccadical_reserve', both of which leave that state; CaDiCaL's contract check
++  // aborts the process otherwise.
++  int ccadical_trace_proof_path(CCaDiCaL *wrapper, const char *path)
++  {
++    return ((Wrapper *)wrapper)->solver->trace_proof(path) ? 1 : 0;
++  }
++
++  // Flushes buffered proof lines to the trace file. CaDiCaL requires an open
++  // trace here (it aborts on a solver that is not tracing, or whose trace is
++  // already closed); closing is 'ccadical_close_proof', which the included
++  // upstream C API already provides.
++  void ccadical_flush_proof(CCaDiCaL *wrapper)
++  {
++    ((Wrapper *)wrapper)->solver->flush_proof_trace();
++  }
+ }
+diff --git a/src/lib.rs b/src/lib.rs
+index e20df53..50d2978 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -60,6 +60,17 @@ extern "C" {
+     fn ccadical_configure(ptr: *mut c_void, name: *const c_char) -> c_int;
+     fn ccadical_limit2(ptr: *mut c_void, name: *const c_char, limit: c_int) -> c_int;
+     fn ccadical_reserve(ptr: *mut c_void, min_max_var: c_int);
++    // mettle fork (ADR-0027 / mt-121): search-effort counters, patched into the
++    // vendored CaDiCaL and this crate's C++ shim.
++    fn ccadical_conflicts(ptr: *mut c_void) -> i64;
++    fn ccadical_decisions(ptr: *mut c_void) -> i64;
++    fn ccadical_propagations(ptr: *mut c_void) -> i64;
++    // mettle fork (ADR-0027 / mt-121): DRAT proof tracing. `_path` is the shim's
++    // path-only entry point (CaDiCaL owns the stream); `ccadical_close_proof`
++    // is upstream's own C API, declared here because this crate never did.
++    fn ccadical_trace_proof_path(ptr: *mut c_void, path: *const c_char) -> c_int;
++    fn ccadical_flush_proof(ptr: *mut c_void);
++    fn ccadical_close_proof(ptr: *mut c_void);
+ }
+ 
+ /// The CaDiCaL incremental SAT solver. The literals are unwrapped positive
+@@ -372,6 +383,53 @@ impl<C: Callbacks> Solver<C> {
+     pub fn reserve(&mut self, min_max_var: i32) {
+         unsafe { ccadical_reserve(self.ptr, min_max_var) }
+     }
++
++    /// Conflicts generated over this solver's whole life (mettle fork).
++    pub fn conflicts(&self) -> i64 {
++        unsafe { ccadical_conflicts(self.ptr) }
++    }
++
++    /// Decisions taken over this solver's whole life (mettle fork).
++    pub fn decisions(&self) -> i64 {
++        unsafe { ccadical_decisions(self.ptr) }
++    }
++
++    /// Literals propagated during search over this solver's whole life
++    /// (mettle fork).
++    pub fn propagations(&self) -> i64 {
++        unsafe { ccadical_propagations(self.ptr) }
++    }
++
++    /// Starts writing a DRAT proof to `path`, returning whether the file could
++    /// be opened (mettle fork).
++    ///
++    /// CaDiCaL requires this in the CONFIGURING state — **before the first
++    /// clause and before [`Solver::reserve`]**, both of which leave it; calling
++    /// it later violates a solver contract and aborts the process. A path
++    /// containing an interior NUL cannot reach C at all and is reported as a
++    /// failure to open rather than a panic.
++    pub fn trace_proof(&mut self, path: &str) -> bool {
++        let Ok(path) = CString::new(path) else {
++            return false;
++        };
++        unsafe { ccadical_trace_proof_path(self.ptr, path.as_ptr()) != 0 }
++    }
++
++    /// Flushes buffered proof lines to the trace file (mettle fork).
++    ///
++    /// Only valid while a trace opened by [`Solver::trace_proof`] is open:
++    /// CaDiCaL aborts on a solver that is not tracing, or whose trace it has
++    /// already closed.
++    pub fn flush_proof_trace(&mut self) {
++        unsafe { ccadical_flush_proof(self.ptr) }
++    }
++
++    /// Closes the trace file opened by [`Solver::trace_proof`] (mettle fork),
++    /// flushing what is left. Same open-trace requirement as
++    /// [`Solver::flush_proof_trace`], and closing twice aborts.
++    pub fn close_proof_trace(&mut self) {
++        unsafe { ccadical_close_proof(self.ptr) }
++    }
+ }
+ 
+ fn dimacs_path(path: &Path) -> Result<CString, Error> {

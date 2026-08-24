@@ -36,18 +36,14 @@ path = "src/bin/resolve_gauge.rs"
 name = "solve-gauge"
 path = "src/bin/solve_gauge.rs"
 
-# mt-089 / ADR-0019 stage 1: the dev-side backend instrument. Behind the
-# `cadical-instrument` feature (off by default) via `required-features`, so a
-# default `cargo build --workspace --all-targets` never sees it.
+# mt-089 / ADR-0019 stage 1: the dev-side backend instrument -- one CNF handed
+# to both backends, for per-row verdict/spend tables. Built unconditionally as
+# of mt-121 (ADR-0027 retired the `cadical-instrument` feature along with the
+# optional backend), and `dist = false` above keeps it out of releases like
+# every other gauge bin.
 [[bin]]
 name = "backend-instrument"
 path = "src/bin/backend_instrument.rs"
-required-features = ["cadical-instrument"]
-
-[features]
-# Forwards to als-core's instrument seam, which forwards to als-solve's
-# CaDiCaL backend. Nothing shipped is conditional on it (ADR-0019 §2).
-cadical-instrument = ["als-core/cadical-instrument"]
 
 [dependencies]
 # als-core: the solve-gauge drives mettle's own solve pipeline

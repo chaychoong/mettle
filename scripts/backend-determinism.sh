@@ -45,8 +45,8 @@ sha256() {
 }
 
 # The solver names this binary actually has, read out of its own help text
-# rather than hardcoded — a build without the `cadical` feature must produce a
-# shorter (still comparable) report, not a failure.
+# rather than hardcoded — a build offering fewer backends must produce a shorter
+# (still comparable) report, not a failure.
 solvers() {
   # `head -1` because the usage text lists the flag once per subcommand that
   # takes it (exec and serve), with the same names both times.

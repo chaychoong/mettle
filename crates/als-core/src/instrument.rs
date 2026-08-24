@@ -1,13 +1,15 @@
 //! The **backend instrument** seam ([ADR-0019](../../../docs/adr/0019-optional-cadical-backend.md)
 //! stage 1, mt-089) — one lowered command, one CNF, two solvers.
 //!
-//! Gated behind the `cadical-instrument` cargo feature and **off by default**:
-//! nothing here is reachable from [`solve_goal`](crate::solve_goal) or any
-//! other shipped path, so the default build's behavior is unchanged by
-//! construction, not by discipline.
+//! A dev instrument, not a shipped path: nothing here is reachable from
+//! [`solve_goal`](crate::solve_goal) or from the CLI, and its only caller is
+//! `als-conform`'s `backend-instrument` bin. It was gated behind the
+//! `cadical-instrument` cargo feature until mt-121, which retired the feature
+//! along with the optional backend (ADR-0027); the isolation is now structural
+//! (nothing calls it) rather than conditional compilation.
 //!
 //! The point of the seam is that both backends are handed the **same
-//! [`Translated`](crate::solve::Translated) CNF** — same bounds, same primary
+//! `Translated` CNF** — same bounds, same primary
 //! numbering, same symmetry-breaking predicate, same encode budget — so a
 //! verdict difference between them can only be a solver bug or a wiring bug,
 //! never an encoding difference. ADR-0019 §4 makes that the free
@@ -50,8 +52,9 @@ impl InstrumentBackend {
     /// The two arms here drive the same solvers `--solver` selects (this module
     /// constructs them directly instead of through
     /// [`LiveSolver`](als_solve::LiveSolver) only because it needs two things the
-    /// shipped seam deliberately does not expose: the own solver's conflict
-    /// counter, and CaDiCaL's wall-clock termination hook).
+    /// shipped seam deliberately does not expose: a *conflict* count on its own,
+    /// rather than the three-term effort sum, and CaDiCaL's wall-clock
+    /// termination hook).
     #[must_use]
     pub fn name(self) -> &'static str {
         match self {
@@ -89,10 +92,9 @@ impl InstrumentVerdict {
 /// One instrumented solve: the verdict plus the measurements a per-row table
 /// needs.
 ///
-/// `conflicts_used` is `Some` only for the own CDCL: the `cadical` binding
-/// exposes `limit("conflicts", n)` but no conflict *counter*, so CaDiCaL's
-/// spend is genuinely unobservable through this seam (recorded as a gap, not
-/// guessed).
+/// `conflicts_used` is `Some` on **both** backends as of mt-121: the vendored
+/// binding exposes CaDiCaL's own conflict counter, so "where did the budget go"
+/// is a measurement on either arm rather than the blank ADR-0019 had to record.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct InstrumentOutcome {
     /// The backend's answer.
@@ -299,7 +301,8 @@ fn decide(t: &Translated, cx: Decide<'_>) -> InstrumentOutcome {
         InstrumentBackend::Cadical => {
             let mut solver = CadicalSolver::new(&t.cnf);
             solver.set_wall_limit(wall_secs);
-            (solver.solve_within(budget), None)
+            let answer = solver.solve_within(budget);
+            (answer, Some(solver.total_conflicts()))
         }
     };
     out.solve_ms = solve_started.elapsed().as_millis();

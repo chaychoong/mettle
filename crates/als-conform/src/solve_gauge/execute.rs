@@ -340,6 +340,7 @@ fn classify_command(
         conflict_budget: Some(cfg.conflict_budget),
         encode_budget: Some(cfg.encode_budget),
         symmetry: stage1_sym,
+        backend: cfg.backend,
         ..SolveOptions::default()
     };
 

@@ -1,0 +1,40 @@
+mettle
+Copyright (c) the mettle authors
+Licensed under the Mozilla Public License 2.0 (see LICENSE).
+
+This product includes third-party software, carried in-tree under vendor/ and
+statically linked into every mettle binary. Both components are MIT-licensed;
+the full license texts ship with the sources named below.
+
+------------------------------------------------------------------------------
+CaDiCaL — the SAT solver mettle solves with
+  vendor/cadical/cadical/ (version 1.9.5), license: vendor/cadical/cadical/LICENSE
+  https://github.com/arminbiere/cadical
+
+  MIT License
+
+  Copyright (c) 2016-2021 Armin Biere, Johannes Kepler University Linz, Austria
+  Copyright (c) 2020-2021 Mathias Fleury, Johannes Kepler University Linz, Austria
+  Copyright (c) 2020-2021 Nils Froleyks, Johannes Kepler University Linz, Austria
+  Copyright (c) 2022-2023 Katalin Fazekas, Vienna University of Technology, Austria
+  Copyright (c) 2021-2023 Armin Biere, University of Freiburg, Germany
+  Copyright (c) 2021-2023 Mathias Fleury, University of Freiburg, Germany
+  Copyright (c) 2023      Florian Pollitt, University of Freiburg, Germany
+
+------------------------------------------------------------------------------
+cadical (Rust binding) — the crate that bundles and binds the above
+  vendor/cadical/ (crates.io `cadical` 0.1.16, by Miklos Maroti),
+  license: vendor/cadical/LICENSE
+  https://github.com/mmaroti/cadical-rs
+
+  MIT License
+
+  Copyright (c) 2016-2019 Armin Biere, Johannes Kepler University Linz, Austria
+
+  (The crate's own LICENSE file carries CaDiCaL's copyright line verbatim; the
+  binding is authored by Miklos Maroti and published under the same MIT terms.)
+
+------------------------------------------------------------------------------
+Both are carried with a small mettle patch (vendor/cadical-mettle.patch) that
+adds search-effort counters and proof-tracer entry points; vendor/README.md
+records what it changes and why.

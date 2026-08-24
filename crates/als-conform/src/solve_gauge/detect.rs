@@ -89,6 +89,10 @@ pub fn lower_defer_class(err: &TranslateError) -> &'static str {
         TranslateError::LoweringUnsupported { .. } => "lowering",
         TranslateError::HigherOrder { .. } => "higher_order",
         TranslateError::CapacityExceeded { .. } => "capacity",
+        // Raised by `enumerate` at stage 2, never by `lower_command`, so the
+        // count classifier buckets it itself (`skip_backend_capability`); the arm
+        // here keeps the classifier total.
+        TranslateError::BackendCapability { .. } => "backend_capability",
         // The Rung-6 driver defer (mt-067). It is raised by
         // `solve_temporal_command` before any lowering, so the temporal arm
         // buckets it itself (`mettle_defer:temporal:unbounded_steps`); the arm

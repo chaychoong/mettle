@@ -21,22 +21,11 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
       - name: cargo build
         run: cargo build --workspace --all-targets
+      # Covers the CaDiCaL backend too: ADR-0027 / mt-121 made it part of every
+      # build, so the `--solver cadical` surface, the cross-backend instrument
+      # and the enumeration seam under CaDiCaL all run here. The separate
+      # `cadical` job this replaced existed only to execute what the feature flag
+      # kept out of this one. The runner's C++ toolchain now builds ~100 vendored
+      # sources on a cold cache, which is the cost of that.
       - name: cargo test
         run: cargo test --workspace
-
-  # The optional CaDiCaL backend (ADR-0019 / mt-089) is off by default, so the
-  # job above compiles its Rust under `clippy --all-features` but never RUNS a
-  # single feature-gated test. This job does: it is the only place the
-  # `--solver cadical` surface, the cross-backend instrument and the enumeration
-  # seam under CaDiCaL are actually executed. Separate from `ci` so the fast
-  # feedback loop stays fast — this one also compiles ~100 vendored C++ files.
-  cadical:
-    name: optional cadical backend
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.97.0
-      - name: cargo test --all-features
-        run: cargo test --workspace --all-features

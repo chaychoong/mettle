@@ -13,7 +13,6 @@ mod encode;
 pub mod error;
 pub mod eval;
 mod freevars;
-#[cfg(feature = "cadical-instrument")]
 pub mod instrument;
 pub mod ir;
 pub mod lower;
@@ -41,7 +40,6 @@ pub const DEBUG_ASSERTIONS_ARMED: bool = cfg!(debug_assertions);
 pub use bounds_builder::{compute_bounds, BoundsResult};
 pub use error::TranslateError;
 pub use eval::{self_check, self_check_temporal, Evaluator, SelfCheckDetail, SelfCheckFailure};
-#[cfg(feature = "cadical-instrument")]
 pub use instrument::{
     cross_check_goal, solve_goal_with_backend, CrossAgreement, CrossOutcome, InstrumentBackend,
     InstrumentOutcome, InstrumentVerdict,

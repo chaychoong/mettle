@@ -1,17 +1,16 @@
 # mettle container image.
 #
 # Two stages: build with the exact pinned rustc (rust-toolchain.toml), then
-# ship only the built binary on a minimal runtime base. This build is zero-C-dep
-# (dist-workspace.toml, ADR-0016) -- als-solve's default SAT solver is pure
-# Rust -- so the runtime image only needs to satisfy dynamic glibc/libgcc
-# linkage, not a solver's own native library.
+# ship only the built binary on a minimal runtime base.
 #
-# The optional `cadical` feature (ADR-0019 / mt-089) would change that: it
-# compiles a vendored C++ solver, which this builder stage has no g++ for and
-# whose libstdc++ the distroless/cc runtime base does not carry. Enabling it here
-# therefore means BOTH an `apt-get install -y g++` in the builder AND a runtime
-# base that ships libstdc++ (debian:bookworm-slim, per the note further down).
-# Neither is done, because the image ships the default build.
+# This build is no longer zero-C-dep: ADR-0027 / mt-121 made the CaDiCaL backend
+# part of every build, so `cargo build -p mettle` compiles ~100 vendored C++
+# sources (vendor/cadical). That costs exactly one thing here -- a C++ compiler
+# in the builder, installed below, since `rust:1.97.0-slim` ships gcc and libc
+# headers but no g++ and no C++ headers. The runtime side needs nothing: the
+# distroless/cc base already carries libstdc++.so.6 alongside libgcc and glibc
+# (verified against the image, not assumed -- the note this replaced guessed the
+# opposite).
 
 # --- builder -----------------------------------------------------------
 # Pinned to the exact compiler in rust-toolchain.toml: a different rustc is a
@@ -19,6 +18,13 @@
 # build (STYLE D1). `-slim` trims apt's default image without dropping the
 # toolchain itself.
 FROM rust:1.97.0-slim AS builder
+
+# The C++ compiler the vendored CaDiCaL build needs (see the header). Nothing
+# else is added, and the lists are dropped again so the builder layer does not
+# carry apt's index into the cache.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends g++ \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 
@@ -34,11 +40,12 @@ COPY . .
 RUN cargo build --release -p mettle
 
 # --- runtime -------------------------------------------------------------
-# distroless/cc: glibc + libgcc + ca-certificates and nothing else, which is
-# exactly what a zero-C-dep dynamically-linked Rust binary needs -- no shell,
-# no package manager, smallest attack surface. (If a future dependency needs
-# something distroless/cc doesn't carry, fall back to debian:bookworm-slim,
-# which has the same glibc ABI plus a full userland to debug from.)
+# distroless/cc: glibc, libgcc, libstdc++ and ca-certificates and nothing else,
+# which is exactly what this dynamically-linked binary needs (the C++ solver
+# links against libstdc++) -- no shell, no package manager, smallest attack
+# surface. (If a future dependency needs something distroless/cc doesn't carry,
+# fall back to debian:bookworm-slim, which has the same glibc ABI plus a full
+# userland to debug from.)
 FROM gcr.io/distroless/cc-debian12
 
 LABEL org.opencontainers.image.source="https://github.com/chaychoong/mettle" \

@@ -8,15 +8,13 @@
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
 mod backend;
-#[cfg(feature = "cadical")]
 mod cadical_backend;
 mod clause_arena;
 mod solver;
 mod var_order;
 
 pub use backend::{Backend, LiveSolver};
-#[cfg(feature = "cadical")]
-pub use cadical_backend::{Cadical, CadicalSolver};
+pub use cadical_backend::{Cadical, CadicalSolver, ProofTraceError};
 pub use solver::{block, Cdcl, CdclSolver};
 
 use std::fmt;

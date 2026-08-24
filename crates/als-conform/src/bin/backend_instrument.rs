@@ -4,9 +4,10 @@
 //! (resolve → universe → bounds → lower → translate) and decides each one with
 //! a chosen SAT backend, so "how much of the `over_budget` tail is genuinely
 //! hard vs. our own solver being weak" becomes a measurement instead of a
-//! guess. Not shipped product: it is compiled only under the
-//! `cadical-instrument` feature and is `dist = false` like every other bin in
-//! this crate.
+//! guess. Not shipped product: `dist = false` like every other bin in this
+//! crate. It was also feature-gated until mt-121 (ADR-0027 retired the
+//! `cadical-instrument` feature with the optional backend), so it now builds
+//! with the workspace.
 //!
 //! ```text
 //! backend-instrument --rows worklist.txt --backend cadical \

@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use als_core::ir::Ir;
 use als_core::{
     enumerate, BoundsResult, LoweredGoal, ScopedUniverse, SolveOptions, TemporalSolveConfig,
-    TraceAdvance, TraceEnumerator, TraceStep,
+    TraceAdvance, TraceEnumerator, TraceStep, TranslateError,
 };
 use als_types::{ModuleGraph, ResolvedWorld};
 
@@ -198,8 +198,17 @@ pub(super) fn classify_count(
         return CountOutcome::Skip(bucket);
     }
 
-    let Ok(mut it) = enumerate(ir, scoped, goal, bounds, opts) else {
-        return CountOutcome::Skip("skip_mettle_cap");
+    let mut it = match enumerate(ir, scoped, goal, bounds, opts) {
+        Ok(it) => it,
+        // The enumeration budget on a backend with no effort counters
+        // (ADR-0027 decision 2). Its own bucket, not folded into the
+        // encode-budget skip above it: a capability gap and capacity pressure
+        // are different findings with different fixes, and the mt-120 spike hit
+        // exactly this as an assert that took the row's *verdict* down with it.
+        Err(TranslateError::BackendCapability { .. }) => {
+            return CountOutcome::Skip("skip_backend_capability")
+        }
+        Err(_) => return CountOutcome::Skip("skip_mettle_cap"),
     };
     let mut n = 0u64;
     for _ in it.by_ref() {
@@ -382,10 +391,16 @@ pub(super) fn classify_temporal_count(
     if let Some(bucket) = presettled {
         return CountOutcome::Skip(bucket);
     }
-    let Ok(mut it) = TraceEnumerator::new(world, graph, scoped, bounds, ir, idx, cfg) else {
-        // The two typed steps-scope defers; the verdict arm already bucketed
-        // them, so there is nothing here to compare.
-        return CountOutcome::Skip("skip_mettle_cap");
+    let mut it = match TraceEnumerator::new(world, graph, scoped, bounds, ir, idx, cfg) {
+        Ok(it) => it,
+        // The budget-on-a-counter-less-backend refusal, bucketed apart exactly
+        // as the static arm buckets it (ADR-0027 decision 2).
+        Err(TranslateError::BackendCapability { .. }) => {
+            return CountOutcome::Skip("skip_backend_capability")
+        }
+        // The typed steps-scope defers; the verdict arm already bucketed them,
+        // so there is nothing here to compare.
+        Err(_) => return CountOutcome::Skip("skip_mettle_cap"),
     };
     let mut n = 0u64;
     loop {

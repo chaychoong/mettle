@@ -81,6 +81,7 @@ fn print_usage() {
          \x20\x20--from-buckets B1,B2   re-run only files with a command in these buckets (+ files absent from PATH)\n\
          \x20\x20--symmetry N           stage-1 (verdict net) symmetry cap (default 20; 0 = no SBP)\n\
          \x20\x20--count-symmetry N     stage-2 (count net) symmetry on BOTH sides (default 0 = SB-0 yardstick)\n\
+         \x20\x20--solver NAME          SAT backend (default mettle; the baselines were measured on it)\n\
          \x20\x20--conflicts N          per-command SAT conflict budget (default 250000)\n\
          \x20\x20--encode-budget N      per-command encode-effort budget (default 64000000)\n\
          \x20\x20--primary-var-cap N    skip a command past this many primary vars (default 20000)\n\
@@ -165,6 +166,7 @@ fn parse_args() -> Option<Cli> {
         delta: false,
         capture_sweep: None,
         capture_commit: None,
+        backend: als_core::Backend::default(),
     };
     let mut json_out: Option<PathBuf> = None;
     let mut status_file: Option<PathBuf> = None;
@@ -199,6 +201,25 @@ fn parse_args() -> Option<Cli> {
             "--symmetry" => cfg.symmetry = it.next()?.parse().ok()?,
             "--count-symmetry" => cfg.count_symmetry = it.next()?.parse().ok()?,
             "--allow-overflow" => cfg.allow_overflow = true,
+            "--solver" => {
+                let name = it.next()?;
+                let Some(backend) = als_core::Backend::parse(&name) else {
+                    eprintln!(
+                        "solve-gauge: unknown solver {name:?} (this build has: {}{})",
+                        als_core::Backend::AVAILABLE.join(", "),
+                        if als_core::Backend::COMPILED_OUT.is_empty() {
+                            String::new()
+                        } else {
+                            format!(
+                                "; compiled out: {}",
+                                als_core::Backend::COMPILED_OUT.join(", ")
+                            )
+                        }
+                    );
+                    return None;
+                };
+                cfg.backend = backend;
+            }
             "--conflicts" => cfg.conflict_budget = it.next()?.parse().ok()?,
             "--encode-budget" => cfg.encode_budget = it.next()?.parse().ok()?,
             "--primary-var-cap" => cfg.primary_var_cap = it.next()?.parse().ok()?,

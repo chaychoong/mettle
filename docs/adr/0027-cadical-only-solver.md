@@ -217,3 +217,28 @@ migration re-derives them cleanly. Migration beads: mt-121 (fork housing +
 default flip + debts 1–3), mt-122 (ADR-0017 re-pair + re-baseline + goldens
 re-pin), mt-123 (proof-certification instrument), mt-124 (packaging battery +
 `CdclSolver` deletion + docs sweep).
+
+## Addendum (2026-08-24, mt-121): fork housing decided — in-tree vendored crate
+
+Debt 5's fork-housing question is decided (tech lead, no owner fork — the
+licensing consequence is the mechanical one [ADR-0006](0006-licensing-posture.md)
+§5 anticipated, discharged by its own addendum): **the patched binding is
+vendored in-tree at `vendor/cadical/` as a plain path dependency** of
+`als-solve`, workspace-excluded, with the complete fork delta committed as
+`vendor/cadical-mettle.patch` and regeneration scripted
+(`scripts/vendor-cadical.sh`). The spike's `[patch.crates-io]`-into-scratchpad
+wiring is gone.
+
+Direct FFI (the alternative debt 5 named) was rejected on three grounds:
+
+1. **It preserves the verified path.** The spike's five byte-identical sweeps
+   (`706f8513…`) were measured through this binding *including its `build.rs`
+   compile flags* — under determinism-by-pinning, the build recipe is part of
+   what was verified. Rewriting the FFI and build script would replace the
+   measured configuration with an unmeasured one.
+2. **`unsafe_code = "forbid"` stays intact** for every mettle crate. Direct
+   FFI needs a scoped `unsafe` allowance in `als-solve`; the vendored crate
+   keeps all `unsafe` in third-party code with its own lint regime.
+3. **The maintained surface is a small patch**, not an FFI layer: three stats
+   accessors and three proof-tracer pass-throughs over a pristine MIT
+   upstream, mechanically re-derivable against any future binding version.

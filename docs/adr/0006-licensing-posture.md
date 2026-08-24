@@ -72,6 +72,27 @@ corpus aggregates GPL-3.0 and no-license sources.
   open when distributed; embedding the `als-*` crates in other tools
   (open or closed) remains allowed.
 
+## Addendum (2026-08-24, mt-121): first vendored third-party code — NOTICE added, §5 superseded
+
+The CaDiCaL migration ([ADR-0027](0027-cadical-only-solver.md)) vendors
+third-party text in-tree for the first time: `vendor/cadical/` carries a
+patched copy of the crates.io `cadical` 0.1.16 Rust binding (MIT, Miklos
+Maroti), which itself bundles the CaDiCaL 1.9.5 SAT solver sources (MIT,
+Armin Biere et al.). The fork exists because the published binding exposes
+neither the search-effort counters nor the proof tracer that ADR-0027's
+budget-observability and certification decisions require; the delta is a
+small committed patch (`vendor/cadical-mettle.patch`) with provenance and
+regeneration documented in `vendor/README.md`.
+
+Exactly as §5 anticipated, the attribution obligation is handled here: a
+root `NOTICE` file now carries both MIT attributions, and §5's "no NOTICE
+file is required" is superseded. Nothing else in this ADR moves: mettle's
+own code stays MPL-2.0, the vendored crate keeps its MIT license and is
+not relicensed, the stdlib clean-room rule and the corpora/oracle rules
+are untouched. (MIT text may be vendored and redistributed freely with
+the license preserved — no ambiguity of the kind that forced the §2
+clean-room posture for Alloy's own unsettled licensing.)
+
 ## Alternatives considered
 - **Apache-2.0 / MIT OR Apache-2.0** for mettle's code — maximally
   frictionless, but the owner values remixes staying open; MPL-2.0's

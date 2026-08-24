@@ -59,14 +59,13 @@ cargo build --release -p als-conform
 
 `solve-gauge` output is deterministic: capture reports as `> report.txt 2> progress.txt` (stdout is the report, stderr is the live heartbeat — never merge them). A useful iteration loop is `--only <file>` to re-run a single model.
 
-### The optional CaDiCaL backend
+### The CaDiCaL backend
 
-Everything above builds and tests the default, all-Rust solver. The optional second backend ([ADR-0019](docs/adr/0019-optional-cadical-backend.md)) is behind off-by-default cargo features, so it needs its own passes — and CI runs both (`ci.yml`'s `cadical` job, plus the cross-target battery on tags):
+The second backend ([ADR-0019](docs/adr/0019-optional-cadical-backend.md)) is part of every build since [ADR-0027](docs/adr/0027-cadical-only-solver.md) — no cargo features, no separate passes, and the ordinary `cargo test --workspace` runs its tests. What it does need is a **C++ toolchain**, since the build compiles ~100 vendored sources (`vendor/cadical`, see [vendor/README.md](vendor/README.md)); the cross-target battery still runs on tags.
 
 ```sh
-cargo test --workspace --all-features                        # the only pass that RUNS the backend's tests
-cargo build --release -p mettle --features cadical           # ships `--solver cadical` in the binary
-cargo build --release -p als-conform --features cadical-instrument
+cargo build --release -p mettle                              # `--solver cadical` is in the binary
+cargo build --release -p als-conform                         # builds `backend-instrument` too
 
 # the oracle-independent check: one encoding, both solvers, non-zero exit on any
 # verdict difference. --rows takes a newline-separated list of `path[idx]` keys,

@@ -57,6 +57,7 @@ fn test1_config() -> GaugeConfig {
         delta: false,
         capture_sweep: None,
         capture_commit: None,
+        backend: als_core::Backend::default(),
     }
 }
 
@@ -164,6 +165,7 @@ fn leader_als_counts_match_its_real_jar_baseline() {
         delta: false,
         capture_sweep: None,
         capture_commit: None,
+        backend: als_core::Backend::default(),
     };
 
     let report =
@@ -294,6 +296,7 @@ fn fixtures_config(baselines_dir: &Path, jobs: usize) -> GaugeConfig {
         delta: false,
         capture_sweep: None,
         capture_commit: None,
+        backend: als_core::Backend::default(),
     }
 }
 

@@ -621,16 +621,20 @@ pub fn solve_goal(
 /// of the whole enumeration (summed across every instance solve), not any one
 /// verdict. It never truncates the count silently: running out ends
 /// enumeration in loud exhaustion ([`InstanceEnumerator::exhausted`]) instead
-/// of a wrong number. That budget is **own-CDCL only**: it is charged from the
-/// solver's own counters, which no other backend exposes (see
-/// [`enumerate`]'s negative-space assert and [`Backend::reports_effort`]).
+/// of a wrong number. It is charged from the solver's own counters, so it needs
+/// a backend that has them ([`Backend::reports_effort`], and [`enumerate`]'s
+/// typed refusal). Both shipped backends do — but the budget is one quantity in
+/// two currencies, since the same number buys far more search on one backend
+/// than the other. Re-pricing it is the ADR-0017 re-pair's problem, not this
+/// type's.
 ///
 /// Under a non-default [`SolveOptions::backend`] the enumeration is still
 /// **exact** — every distinct projection appears exactly once and the sequence
 /// ends at a true `Unsat`, because that only needs a sound solver plus the same
 /// blocking clauses — but its **order** is the backend's own, and so is which
-/// instance comes first (ADR-0019 §1/§4). A count taken there is therefore
-/// never compared against a jar baseline (ADR-0019 §2).
+/// instance comes first (ADR-0019 §1/§4). The *count* is order-independent and
+/// so stays comparable against a jar baseline; mt-120 measured exactly that on
+/// both counting nets.
 #[derive(Debug)]
 pub struct InstanceEnumerator<'a> {
     solver: LiveSolver,
@@ -747,15 +751,19 @@ impl Iterator for InstanceEnumerator<'_> {
 ///
 /// # Errors
 /// As [`solve_goal`] — a [`TranslateError`] for a construct outside the encoder
-/// slice.
+/// slice — plus [`TranslateError::BackendCapability`] when
+/// [`SolveOptions::enum_effort_budget`] is set on a backend that reports no
+/// effort ([`Backend::reports_effort`]). That refusal is raised *before* any
+/// translation, so nothing is encoded for an enumeration that cannot be bounded:
+/// the budget would be charged nothing and a bounded enumeration would silently
+/// become an unbounded one.
 ///
-/// # Panics
-/// Panics if [`SolveOptions::enum_effort_budget`] is set on a backend that
-/// reports no effort ([`Backend::reports_effort`]) — an internal API misuse, not
-/// a user input: the budget would be silently charged nothing and a bounded
-/// enumeration would become an unbounded one. No CLI path can reach it (only the
-/// conformance gauge sets that budget, and the gauge is own-CDCL by construction,
-/// ADR-0019 §2).
+/// It is unreachable with the two shipped backends, which both count their
+/// effort, and exists as the typed negative space a future counter-less backend
+/// lands in — a capability refusal, never a silent change of behavior (ADR-0027
+/// decision 2). It replaced an `assert!` in mt-121: the mt-120 spike found that
+/// the panic also destroyed the row's *verdict* on the way out, which is exactly
+/// the collateral a typed error avoids.
 pub fn enumerate<'a>(
     ir: &'a Ir,
     scoped: &'a ScopedUniverse,
@@ -763,11 +771,13 @@ pub fn enumerate<'a>(
     bounds: &BoundsResult,
     opts: &SolveOptions,
 ) -> Result<InstanceEnumerator<'a>, TranslateError> {
-    assert!(
-        opts.enum_effort_budget.is_none() || opts.backend.reports_effort(),
-        "enum_effort_budget needs a backend with effort counters, but `{}` has none",
-        opts.backend.name()
-    );
+    if opts.enum_effort_budget.is_some() && !opts.backend.reports_effort() {
+        return Err(TranslateError::BackendCapability {
+            backend: opts.backend.name(),
+            capability: "report search effort, which the enumeration budget charges",
+            span: ir.formulas[goal.goal].span,
+        });
+    }
     let t = translate(ir, scoped, goal, bounds, None, *opts)?;
     // A trivially-UNSAT goal (the encoded `Bool` folded to constant-false) gets an
     // empty clause, so the solver reports UNSAT on the first `next()` and the

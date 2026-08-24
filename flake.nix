@@ -142,15 +142,13 @@
             version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package.version;
             src = ./.;
 
-            # Zero C dependencies in THIS build (per rust-toolchain.toml /
-            # ADR-0016) — no cargoLock.outputHashes, no nativeBuildInputs for
-            # a C toolchain, no linker fuss. The optional `cadical` feature
-            # (ADR-0019 / mt-089) is not enabled: it compiles vendored C++ via
-            # the `cc` crate, which would need a C++ compiler in
-            # nativeBuildInputs and would make the closure depend on libstdc++.
-            # The sources are vendored inside the .crate file, so no extra
-            # outputHashes would be needed — but the toolchain would be, and
-            # nothing here provides it today.
+            # The build compiles C++ since ADR-0027 / mt-121: CaDiCaL is part of
+            # every build, and the `cc` crate compiles ~100 vendored sources
+            # (vendor/cadical), so the closure now depends on libstdc++. No
+            # `nativeBuildInputs` entry is needed for the compiler itself —
+            # stdenv's cc wrapper is a C++ compiler — and no
+            # `cargoLock.outputHashes` either: the binding is a path dependency
+            # inside `src`, not a git source.
             cargoLock.lockFile = ./Cargo.lock;
 
             # The workspace also carries crates/als-conform's internal

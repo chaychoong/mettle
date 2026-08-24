@@ -235,13 +235,15 @@ impl<'a> TraceEnumerator<'a> {
     /// [`TranslateError::UnboundedSteps`] for a `1..` steps scope — the same
     /// typed defer the sweep raises, refused here rather than at the first
     /// advance so a caller cannot build an enumerator that could never answer.
+    /// [`TranslateError::BackendCapability`] when a set
+    /// [`enum_effort_budget`](crate::SolveOptions::enum_effort_budget) has no
+    /// backend counters to charge — the same capability refusal
+    /// [`enumerate`](crate::enumerate) raises, for the same reason and with the
+    /// same unreachability on the shipped backends (mt-121).
     ///
     /// # Panics
     /// Debug builds assert that `command_index` really is a temporal command;
-    /// dispatch is the caller's job. Asserts, in any build, that a set
-    /// [`enum_effort_budget`](crate::SolveOptions::enum_effort_budget) has a
-    /// backend that can be charged for it — the same negative-space guard
-    /// [`enumerate`](crate::enumerate) states, for the same reason.
+    /// dispatch is the caller's job.
     pub fn new(
         world: &'a ResolvedWorld,
         graph: &'a ModuleGraph,
@@ -256,11 +258,13 @@ impl<'a> TraceEnumerator<'a> {
             is_temporal_model(world, graph, command),
             "TraceEnumerator on a static command — dispatch is the caller's job"
         );
-        assert!(
-            cfg.opts.enum_effort_budget.is_none() || cfg.opts.backend.reports_effort(),
-            "enum_effort_budget needs a backend with effort counters, but `{}` has none",
-            cfg.opts.backend.name()
-        );
+        if cfg.opts.enum_effort_budget.is_some() && !cfg.opts.backend.reports_effort() {
+            return Err(TranslateError::BackendCapability {
+                backend: cfg.opts.backend.name(),
+                capability: "report search effort, which the enumeration budget charges",
+                span: command.span,
+            });
+        }
         let range = command.steps_range();
         let StepsMax::Bounded(max) = range.max else {
             return Err(TranslateError::UnboundedSteps {

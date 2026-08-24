@@ -170,6 +170,11 @@ pub struct GaugeConfig {
     /// mt-057 (3): the commit to stamp a captured artifact with, for triage.
     /// Advisory metadata only — never validated at load.
     pub capture_commit: Option<String>,
+    /// Which SAT backend decides every command (`--solver`, mt-121). The
+    /// standing backend selector after ADR-0027 — not a dev knob — but the sweep
+    /// and count **baselines are measured on the default**, so a run under any
+    /// other backend is comparing against numbers a different solver produced.
+    pub backend: als_core::Backend,
 }
 
 /// Recursively collects `.als` files under `root` (a dir) or `root` itself (a
@@ -807,6 +812,7 @@ mod tests {
             delta: false,
             capture_sweep: None,
             capture_commit: None,
+            backend: als_core::Backend::default(),
         }
     }
 }
