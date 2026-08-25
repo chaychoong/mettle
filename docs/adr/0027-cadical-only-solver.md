@@ -347,3 +347,27 @@ regime. STYLE D1 is amended to say so and is otherwise unweakened — its
 integer-only, clock-free, hash-order-free rules still govern every line mettle
 itself writes, since a pinned solver buys nothing if the code around it is
 non-deterministic.
+
+**The cross-target battery ran for real, twice, and the gate is now hard.**
+The `backend-determinism` workflow had never run on a tag (the dist-workspace
+note mt-124 owned closing). Two live runs on 2026-08-25 closed it:
+
+- **Pre-deletion** (run 32795531770): aarch64-darwin, aarch64-linux and
+  x86_64-linux all built the vendored C++ and hashed byte-identical on both
+  backends — the first *real* Intel/Linux confirmation of what the mt-120
+  Rosetta run approximated. The fourth leg never ran: GitHub retired the
+  `macos-13` Intel image in December 2025 and the job queued forever.
+- **Post-deletion** (run 32800052646, the workflow repointed at
+  `macos-15-intel` — the same label dist 0.32.0's release jobs already use,
+  verified against the v0.1.1 release run): **all four release targets built
+  and hashed byte-identical**, and the per-target `cadical` row set is
+  byte-identical to the pre-deletion measurement too (sorted-rows sha
+  `8f6a6735…` on every leg of both runs).
+
+With cross-arch identity measured on real hardware across two independent
+runs, the workflow's CaDiCaL comparison was promoted from "measurement, a
+difference is data" (the ADR-0019 posture) to the **standing cross-arch
+determinism gate** this ADR's Consequences named: a `cadical`-row difference
+across targets now fails the workflow. Caveat recorded in the workflow:
+`macos-15-intel` is GitHub's last Intel macOS image (retires fall 2027);
+the x86_64-apple-darwin target's future is an ADR-sized decision for then.
