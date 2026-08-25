@@ -1963,3 +1963,132 @@ fn mult_on_not_in_rhs_rejected_mt117() {
         );
     }
 }
+
+// ---- CAST2INT's relevant-type push (mt-126, ADR-0025 item 5) ----
+//
+// `ExprUnary.resolve`'s `CAST2INT` case (`int[e]`/`sum e`, one AST node,
+// `ExprUnary.java:419-426`) pushes `sub.type.intersect(SIGINT.type)` into its
+// operand — the operand's own bottom-up type intersected with `{Int}` — not a
+// flat push of the int sig, and independent of the cast's own syntactic
+// context. mettle's `UnOp::IntOf | UnOp::SumOf` arm (`resolve/expr.rs`) and
+// the `"int"|"sum"` builtin-call arm previously pushed `remove_bool_and_int`,
+// a no-op on an already-non-Int operand type — so a same-named field on a
+// disjoint, non-Int-domain sig sailed through instead of ever reaching the
+// ambiguous-name ladder. Sources and jar verdicts are `scratchpad/probe/mt126/
+// {NOTES,PREDICTIONS}.md`, cells `scratchpad/probe/mt126/cells/`.
+//
+// Group A pins the negative space the fix must not disturb: the
+// single-candidate `ExprChoice.make` shortcut (p03/p04/p11/p12/p14, which
+// never reach the push-dependent ladder at all), the sig-body scoped-lookup
+// cell (p08, whose bare `f` resolves against A's own fields only — a
+// different, already-correct code path this fix doesn't touch), and the
+// domain-matched-candidate-is-Int-valued cells (p06/p07, where the push
+// stays a genuine nonempty `{Int}` and resolution is unaffected). These all
+// ACCEPT on the pre-fix tree too — they are boundary cells, not flips.
+//
+// Group B is the flip set: shapes that mettle over-accepted before this fix
+// (ACCEPT + an `IntAtoms` warning) and now correctly REJECTs, matching the
+// jar's "ambiguous due to multiple matches" class exactly (position and
+// candidate list, in declaration order).
+
+// -- Group A: boundary cells (ACCEPT on both the pre- and post-fix tree) --
+
+#[test]
+fn int_cast_single_int_candidate_accepted_mt126_p03() {
+    // p03: exactly one field named `f` anywhere, Int-valued.
+    // `ExprChoice.make` shortcuts a single-candidate name straight to the
+    // field, before any push-dependent ladder runs. Jar: ACCEPT.
+    accept("sig A { f: one Int }\npred inv { some x: A | int x.f = 0 }\nrun inv\n");
+}
+
+#[test]
+fn int_cast_single_non_int_candidate_accepted_with_warning_mt126_p04() {
+    // p04: single-candidate `f`, but not Int-valued. Still the
+    // `ExprChoice.make` shortcut, so still ACCEPT — just with the A5
+    // `IntAtoms` warning attached, since the push (now `{C} ∩ {Int}` =
+    // EMPTY) has no tuple. Jar: ACCEPT (OK commands=1).
+    let src = "sig C {}\nsig A { f: one C }\npred inv { some x: A | int x.f = 0 }\nrun inv\n";
+    accept(src);
+    let loader = MapLoader::new().with("root.als", src);
+    let graph = ModuleGraph::load("root.als", &loader).expect("load");
+    let resolved = resolve(&graph).expect("expected ACCEPT");
+    assert!(
+        resolved
+            .warnings
+            .iter()
+            .any(|w| matches!(w, ResolveWarning::IntAtoms { .. })),
+        "expected an IntAtoms warning, got {:?}",
+        resolved.warnings
+    );
+}
+
+#[test]
+fn int_cast_domain_matched_int_candidate_accepted_mt126_p06() {
+    // p06: `f:C` on A, `f:Int` on B, disjoint domains, cast receiver is
+    // B (Int-valued). `x.f`'s bottom-up type (x:B) is {Int} alone (A.f's
+    // domain doesn't match B), so the push stays a nonempty {Int} and JOIN's
+    // tier-1 slice uniquely resolves to B.f. Jar: ACCEPT.
+    accept(
+        "sig C {}\nsig A { f: one C }\nsig B { f: one Int }\npred inv { some x: B | int x.f = 0 }\nrun inv\n",
+    );
+}
+
+#[test]
+fn int_cast_domain_unique_int_candidates_accepted_mt126_p07() {
+    // p07: both same-named fields Int-valued, disjoint domains, domain
+    // uniquely selects one (x:A picks A.f, B.f's domain doesn't match). The
+    // push stays nonempty {Int} either way — the common "two counters with
+    // the same name on sibling sigs" real-world shape a fix must not touch.
+    // Jar: ACCEPT.
+    accept("sig A { f: one Int }\nsig B { f: one Int }\npred inv { some x: A | int x.f = 0 }\nrun inv\n");
+}
+
+#[test]
+fn sig_body_scoped_ambiguous_name_shielded_accepted_mt126_p08() {
+    // p08 (fixed): inside sig A's own appended fact, the bare unqualified
+    // `f` auto-prepends to `this.f` and resolves via sig-scoped lookup (only
+    // fields declared on A or an ancestor are candidates) — not the general
+    // cross-model ambiguous-name `ExprChoice` ladder this bead's fix
+    // touches. A same-named, non-Int `B.f` coexists in the model without
+    // triggering the ambiguity this fix introduces elsewhere. Jar: ACCEPT,
+    // with the A5 IntAtoms warning (A.f is not Int-valued).
+    let src = "sig C {}\nsig A { f: one C } {\n  int f >= 0\n}\nsig B { f: one C }\n";
+    accept(src);
+    let loader = MapLoader::new().with("root.als", src);
+    let graph = ModuleGraph::load("root.als", &loader).expect("load");
+    let resolved = resolve(&graph).expect("expected ACCEPT");
+    assert!(
+        resolved
+            .warnings
+            .iter()
+            .any(|w| matches!(w, ResolveWarning::IntAtoms { .. })),
+        "expected an IntAtoms warning, got {:?}",
+        resolved.warnings
+    );
+}
+
+#[test]
+fn sig_body_scoped_single_int_candidate_accepted_mt126_p11() {
+    // p11 (fixed): single-candidate `this`-scoped sanity pair for p08 —
+    // isolates that p08's mechanism is sig-scoping, not `this` as a
+    // receiver. Jar: ACCEPT, no warning (f is Int-valued).
+    accept("sig A { f: one Int } {\n  int f >= 0\n}\n");
+}
+
+#[test]
+fn sum_cast_single_int_candidate_accepted_mt126_p12() {
+    // p12: `sum`'s single-candidate cliff, symmetric to p03's `int[.]` —
+    // both are CAST2INT (§4.5), so the shortcut applies identically. Jar:
+    // ACCEPT.
+    accept("sig A { f: one Int }\npred inv { some x: A | (sum x.f) = 0 }\nrun inv\n");
+}
+
+#[test]
+fn int_cast_two_hop_join_single_candidate_accepted_mt126_p14() {
+    // p14: single-candidate name reached via a 2-hop join (`a.link.f`) —
+    // the `ExprChoice.make` shortcut applies regardless of join depth. Jar:
+    // ACCEPT.
+    accept(
+        "sig X { f: one Int }\nsig A { link: one X }\npred inv { all a: A | int a.link.f >= 0 }\nrun inv\n",
+    );
+}
