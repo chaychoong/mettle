@@ -1079,6 +1079,21 @@ fn escape_into(out: &mut String, text: &str) {
 
 /// The `command=` attribute (§1): `"Run "`/`"Check "` plus the reference's
 /// `Command.toString()`, reproduced from that method's bytecode.
+///
+/// **A per-sig scope clause names the sig by its bare declared name** — `2 P`,
+/// never `2 this/P`, and `2 S` for a sig opened from another module, never
+/// `2 sub/S` or `2 dm/T`. §1.2 of `alloy6-instance-xml.md` reads the
+/// bytecode's `sig.label` as the qualified label; live jar probes say
+/// otherwise, on all three shapes (mt-132, `scratchpad/probe/mt132/`:
+/// `Cmd1`/`Cmd2`/`Cmd3` — writing the scope target as `this/P` or `sub/S` in
+/// the source does not change what the jar prints either). Everything else in
+/// this function still follows §1.2.
+///
+/// One clause shape stays unmatched: a range or increment scope
+/// (`for 3 but 1..3 P`) prints its **upper** endpoint in the jar (`3 P`) and
+/// its lower one here (`1 P`), because `CommandScope` keeps only the starting
+/// value. Both engines still solve at the low end, so the verdicts agree
+/// (mt-132, `Cmd4`/`Cmd5`/`CmdR`); see `LIMITATIONS.md`.
 fn command_text(world: &ResolvedWorld, graph: &ModuleGraph, index: usize) -> String {
     let cmd = &world.commands[index];
     let mut out = String::from(match cmd.kind {
@@ -1137,7 +1152,7 @@ fn command_text(world: &ResolvedWorld, graph: &ModuleGraph, index: usize) -> Str
         if scope.is_exact {
             out.push_str("exactly ");
         }
-        let _ = write!(out, "{} {}", scope.scope, sig_label(world, scope.sig));
+        let _ = write!(out, "{} {}", scope.scope, world.sigs[scope.sig].name);
         first = false;
     }
     match cmd.expect {

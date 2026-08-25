@@ -166,12 +166,19 @@ fn render_with_index(
     // whose `end` lands exactly at the next line's start is attributed to
     // the line it covers, not the empty one after it. An empty span has no
     // covered byte at all and stays put on its start line.
+    //
+    // `end - 1` is a byte offset, not a character one: over a multi-byte
+    // character it lands mid-codepoint. Only the *line* is wanted here, and
+    // [`LineIndex::line_of`] reads the line-start table without slicing the
+    // source, so it is safe at any offset (mt-132: before this, a stray
+    // non-ASCII character -- `\u{a0}` in three alloy4fun submissions --
+    // panicked the renderer instead of reporting the lex error).
     let last_included = if span.end > span.start {
         span.end - 1
     } else {
         span.start
     };
-    let last_line = index.line_col(source, last_included).0;
+    let last_line = index.line_of(last_included) + 1;
 
     let gutter_width = line1.max(last_line).to_string().len();
     let blank_gutter = " ".repeat(gutter_width);
@@ -453,6 +460,28 @@ mod tests {
         assert_eq!(lines[3], "1 | café bad");
         // 5 leading spaces (char columns 1-5 = "café "), then 3 carets.
         assert_eq!(lines[4], "  |      ^^^");
+    }
+
+    /// A span that *covers* a multi-byte character: `end - 1` lands inside
+    /// the codepoint, so the renderer must never slice the source there.
+    /// mt-132 -- the lexer's `StrayChar` span over `\u{a0}` is exactly this
+    /// shape, and it used to panic the CLI instead of printing the error.
+    #[test]
+    fn a_span_covering_a_multibyte_character_renders() {
+        let file = FileId::from_index(0);
+        // The NBSP occupies bytes 8..10; the stray-char span is 8..10.
+        let source = "fact { A\u{a0}= A }\n";
+        let start = source.find('\u{a0}').unwrap() as u32;
+        let end = start + '\u{a0}'.len_utf8() as u32;
+        let out = render(
+            source,
+            "m.als",
+            span(file, start, end),
+            "unrecognized character '\\u{a0}'",
+        );
+        assert!(out.contains("m.als:1:9"), "{out}");
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[4], "  |         ^");
     }
 
     #[test]

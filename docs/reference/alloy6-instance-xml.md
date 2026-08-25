@@ -191,9 +191,14 @@ Note the two *distinct* `" for "`/`" for"` constants (the third branch has
 no trailing space because no number follows it) and that the `" but"`
 branch does **not** clear `first`, which is why `X-03` reads
 `"… for 3 but 3..3 steps"` and not `"… for 3 but, 3..3 steps"`.
-`CommandScope.toString()` is `(isExact?"exactly ":"") + startingScope +
-(ending!=starting ? ".."+ending : "") + (increment>1 ? ":"+increment : "")
-+ " " + sig.label` — the **full** sig label (`this/A`), not the bare name.
+`CommandScope.toString()` prints the **bare** sig name (`A`, `P`, `S`),
+never the qualified label. The bytecode reads as `sig.label`, but the live
+jar prints the bare name on every probed shape (root `this/P`, opened
+`sub/S`, aliased `dm/T` — mt-132 cells Cmd1..Cmd3), so the label must be
+de-qualified before printing. mt-132 also measured the range clause: the
+jar writes the **upper** endpoint alone and drops `..` and `:incr`
+(`1..3` → `3`, `1..3:2` → `3`). Corrected 2026-08-25; the original
+bytecode-only reading said "full label" and was wrong.
 `maxstring` is a `Command` field but is **not** printed.
 
 **The `label`** is `CompModule.addCommand`'s (`CompModule.java:1919-1961`,

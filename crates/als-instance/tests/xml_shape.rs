@@ -40,8 +40,12 @@ const PATH: &str = "model.als";
 
 /// Solves one command of `source` and returns the whole `<alloy>` document.
 fn document(source: &str, command: usize) -> String {
-    let loader = MapLoader::new();
-    let graph = ModuleGraph::load_with_source(PATH, source.to_owned(), &loader)
+    document_with(&MapLoader::new(), source, command)
+}
+
+/// [`document`], with the opened modules the fixture needs already loaded.
+fn document_with(loader: &MapLoader, source: &str, command: usize) -> String {
+    let graph = ModuleGraph::load_with_source(PATH, source.to_owned(), loader)
         .unwrap_or_else(|e| panic!("fixture failed to load: {e}"));
     let world = resolve(&graph)
         .unwrap_or_else(|e| panic!("fixture failed to resolve: {e}"))
@@ -349,6 +353,31 @@ fn named_command_skolem_naming() {
     assert!(doc.contains("<skolem label=\"$allSame_x\""));
     assert!(doc.contains("<skolem label=\"$allSame_y\""));
     assert!(doc.contains("command=\"Check allSame for 3\""));
+}
+
+/// §1.2: a per-sig scope clause in `command=` names the sig by its **bare**
+/// declared name, whatever module it came from and however the scope target was
+/// written. Jar-measured on all three shapes (mt-132,
+/// `scratchpad/probe/mt132/Cmd1..Cmd3`): `2 P`, not `2 this/P`; `2 S`, not
+/// `2 sub/S`; `1 T`, not `1 dm/T`. The reference doc reads the bytecode's
+/// `sig.label` as the qualified label; the live jar disagrees.
+#[test]
+fn a_scope_clause_names_its_sig_bare() {
+    let loader = MapLoader::new().with("sub.als", "module sub\nsig S {}\n");
+    let doc = document_with(
+        &loader,
+        "\
+open sub
+
+sig P {}
+run {} for 3 but exactly 1 this/P, 2 sub/S
+",
+        0,
+    );
+    assert!(
+        doc.contains("command=\"Run run$1 for 3 but exactly 1 P, 2 S\""),
+        "scope clauses name sigs bare: {doc}"
+    );
 }
 
 #[test]

@@ -126,6 +126,21 @@ can change a verdict on a real model.
   `StackOverflowError`. See [docs/reference/fuzzing.md](docs/reference/fuzzing.md) §3.
 - **An unterminated block comment is an error.** The reference lexer silently
   ignores a `/*` that never closes. Well-formed input cannot reach this.
+- **Two parse-error positions differ from the jar's.** Both engines reject the
+  file either way; only the caret moves. Over the 14,560 alloy4fun codes both
+  reject at the syntax level, 99.79% land on the jar's exact line and column
+  ([docs/reference/alloy4fun-error-pass.md](docs/reference/alloy4fun-error-pass.md)
+  §5). Ten hand-written malformed models re-measured against the jar on
+  2026-08-25 put eight on the exact position and both misses in one family, a
+  brace-introduced declaration list. On `some x: A | x in {a, b }` the jar
+  consumes the whole comma-separated name list and reports at the `}`, column
+  31; mettle decides the brace opens a block once the first name is in and
+  reports at the comma, column 27, naming the construct it wanted. Matching
+  would mean adding lookahead to the block-versus-comprehension decision, which
+  is the one parser choice the alloy4fun accept-reject differential pins. The
+  second family is a different line: mettle lexes the whole file before parsing,
+  so a stray character on line 3 preempts a parse error on line 2 that the jar
+  reports first. A stray character on its own lands on the jar's exact position.
 - **Identifier characters follow Rust's Unicode classes.** Java's classes are
   slightly wider. Only
   exotic non-ASCII identifiers can differ. One alloy4fun submission used `€` as
@@ -203,35 +218,61 @@ test.
 - **Tuple order is mettle's solve order.** For a value spanning several atom
   classes, mettle prints sig atoms in declaration order, then integers ascending,
   then strings. The reference console prints strings first, then integers in its
-  XML reader's order, then sig atoms. The sets are the same. Matching the console
-  byte for byte would mean copying its serialize-and-reparse round trip purely
-  for the reordering side effect.
+  XML reader's order, then sig atoms. The sets are the same. Re-measured against
+  the jar on 2026-08-25: a relation holding `A + 1 + 3 + "zz" + "aa"` renders as
+  `{"aa", "zz", 1, 3, A$0, A$1}` in the reference console and
+  `{A$0, A$1, 1, 3, "aa", "zz"}` here. Matching the console byte for byte would
+  mean copying its serialize-and-reparse round trip purely for the reordering
+  side effect.
 - **Atom labels for a non-exact subsig differ.** mettle mints subsig atoms from
   the parent's pool, so `sig B extends A` yields `A$2` where the jar yields
-  `B$0`.
+  `B$0`. Re-measured on 2026-08-25 with `sig A {} sig B extends A {}` forced to
+  one atom each: that label is the only difference in the whole instance XML for
+  that model. The pool is built during bounds construction, before any writer
+  sees it, so the label is not a rendering choice.
 - **Trace rendering copies the reference's shape.** The
   `---Trace---` header, the per-state blocks and the loop marker are the jar's.
-  The lines inside a block are mettle's own instance rendering.
+  The lines inside a block are mettle's own instance rendering. The exact frame
+  is pinned line by line against the jar's own captured trace by
+  `a_forced_trace_renders_state_by_state_with_the_loop_marked` in
+  `crates/mettle/tests/exec.rs`.
 - **Error text is mettle's,** rendered as caret diagnostics. Two messages are the
   reference's, because each one states a rule about the evaluator: the
-  higher-order quantification refusal and the missing string literal.
+  higher-order quantification refusal and the missing string literal. Both are
+  still emitted verbatim, each pinned by its own test.
 
 ## Instance XML export
 
 `mettle exec <file.als> --xml <PATH>` writes the reference writer's structure
-exactly, and the jar's own reader accepted every file it was given (18 of 18).
-Three things are not byte-identical. None affects a reader. All three are being
-closed or pinned as mt-132. The schema is in
+exactly, and the jar's own reader accepted every file it was given (30 of 30:
+mt-071's 18, plus 12 more at mt-132). On a model whose instance is determinate,
+the whole document is byte-identical to the jar's, escaping and lazy ID
+numbering included. Four things still differ. None affects a reader. The schema
+is in
 [docs/reference/alloy6-instance-xml.md](docs/reference/alloy6-instance-xml.md).
 
-- **`m<i>` index assignment.** The set of macro skolems matches the jar's rule
-  exactly. The index each one gets follows mettle's declaration order across
-  modules where the jar follows its module-reachability order. The labels
-  disambiguate them either way.
-- **`<source filename=>` spellings.** mettle writes the model path as given on
-  the command line and names embedded stdlib modules `<stdlib>/util/integer.als`.
-  The jar writes an absolute path and `/$alloy4$/models/util/integer.als`. The
-  content is escaped identically.
+- **`m<i>` index assignment inside an embedded stdlib module.** The set of macro
+  skolems, and which module each one belongs to, match the jar exactly. Within a
+  module both engines number in declaration order, so a model whose funcs are
+  all its own agrees index for index. The one place they differ is
+  `util/ordering`, because mettle's embedded copy declares `first, next, prev,
+  last` and the jar's declares `first, last, prev, next`. Closing it means
+  reordering mettle's own stdlib text.
+- **`<source>` entries.** mettle writes the model path as given on the command
+  line; the jar always resolves it to an absolute path. Given an absolute path
+  mettle writes the same bytes. mettle also names its embedded modules
+  `<stdlib>/util/integer.als` where the jar writes
+  `/$alloy4$/models/util/integer.als`, and writes them after the user's files
+  where the jar writes `util/integer` immediately after the root. Both of those
+  stay. mettle's stdlib is a clean-room text
+  ([ADR-0006](docs/adr/0006-licensing-posture.md)), so an embedded module's
+  `content=` cannot match the jar's whatever the entry is called, and writing the
+  jar's path would name a file mettle does not ship.
+- **A range or increment scope records its lower endpoint.** `for 3 but 1..3 P`
+  writes `1 P` in the `command=` attribute where the jar writes `3 P`. Both
+  engines solve at the low end and agree on the verdict, so only the recorded
+  text differs. The resolved command keeps the starting value alone, so the
+  written upper endpoint never reaches the writer.
 - **Skolem `<types>` columns** come from the solver bound. The jar derives them
   from a declared type. See [LEDGER-013](SEMANTICS_LEDGER.md).
 
