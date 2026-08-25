@@ -10,11 +10,15 @@
 //! across module instances (identity = file + args, mt-017), and the same
 //! `ExprId` can resolve differently per instance.
 //!
-//! Only two surface node families carry a choice:
+//! Only three surface node families carry a choice:
 //! - a bare [`als_syntax::ast::ExprKind::Name`]/`AtName` → a [`NameChoice`];
 //! - an application spine ([`als_syntax::ast::ExprKind::Binary`] with
 //!   [`als_syntax::ast::BinOp::Join`], or a [`als_syntax::ast::ExprKind::BoxJoin`])
-//!   → a [`SpineChoice`].
+//!   → a [`SpineChoice`];
+//! - a [`als_syntax::ast::ExprKind::Quant`]/`Comprehension` **ground-expanded**
+//!   over the `$` metamodel → a [`MetaExpansion`] (mt-107 P2). This is the one
+//!   choice that does not *select* a reading: it replaces the node with a fold
+//!   of N re-resolved copies of its body.
 //!
 //! Every other `ExprKind` lowers structurally (the lowerer recurses), so it
 //! needs no recorded choice. `Num`/`Str`/`Const`/`This` are handled by the
@@ -34,6 +38,9 @@ pub enum ExprChoice {
     Name(NameChoice),
     /// An application spine resolved to a join / call / builtin / macro.
     Spine(SpineChoice),
+    /// A quantifier/comprehension the phase-8 `$` metamodel **ground expansion**
+    /// replaced with a fold over the meta atoms (mt-107 P2).
+    Meta(MetaExpansion),
 }
 
 /// What a bare `Name`/`AtName` resolved to (resolution-doc §4.4 `populate`).
@@ -172,6 +179,86 @@ pub struct CallableChoice {
     /// Whether the callable is a predicate (its `param[..]`/`param` use is a
     /// formula) rather than a function (a relational value).
     pub is_pred: bool,
+}
+
+/// The phase-8 quantifier **ground expansion** (`CompModule.visit(ExprQt)`
+/// `:588-633`, mt-107 P2, ADR-0024's P0 addendum).
+///
+/// `all f: Vertex$.subfields | …` is not a quantifier at all in the reference:
+/// it is rewritten, at *resolve* time, into a fold of the body re-resolved once
+/// per meta atom with `f` bound to that concrete singleton meta sig. That is why
+/// `f.value` is never higher-order — by the time the name `value` resolves, `f`
+/// denotes exactly one meta sig and its own `value` relation is the only
+/// candidate left.
+///
+/// mettle's resolver does not rewrite the AST, and [`ChoiceTable`] holds one
+/// entry per `(ModuleId, ExprId)`, so N re-resolutions of one body would
+/// collide. Each binding therefore gets its **own sibling sub-table** — the
+/// shape [`MacroChoice::body_choices`] already uses per call site, here N-wide
+/// for one node. The whole record is stamped on the quantifier/comprehension
+/// node itself, which carries no other choice.
+///
+/// **What the lowerer replays (P3).** For each [`MetaBinding`] in order: bind
+/// [`Self::var`] to that binding's `atom` (a `one` sig, so a singleton
+/// relation), swap the choice table to the binding's `choices`, lower
+/// [`Self::body`], and combine with the guard `atom in bound` — where
+/// [`Self::bound`] lowers against the **outer** table, once, since the decl
+/// bound is resolved exactly once. The three folds are the reference's:
+///
+/// | [`MetaFold`] | per-binding term | empty fold |
+/// |---|---|---|
+/// | `All` | `atom in bound implies body` | `true` |
+/// | `Some` | `atom in bound and body` | `false` |
+/// | `Comprehension` | `(atom in bound and body) implies atom else none` | `none` (arity 1) |
+///
+/// The reference accumulates each new term on the **left** of what it has so
+/// far (`answer = term.and(answer)`), so its tree for atoms `a₁…aₙ` is
+/// `tₙ ∘ (tₙ₋₁ ∘ (… ∘ t₁))`; [`Self::bindings`] is in synthesis order (`a₁…aₙ`),
+/// which is the order to fold *right-to-left* to reproduce that tree exactly.
+/// The operators are associative and commutative, so a left fold agrees on the
+/// value — only the emitted term order would differ.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct MetaExpansion {
+    /// Which of the three expandable binders this was.
+    pub fold: MetaFold,
+    /// The single bound name, rebound per binding.
+    pub var: String,
+    /// The decl bound (`Vertex$.subfields`), an [`ExprId`] in the node's own
+    /// module. Resolved **once**, into the enclosing table — never per binding.
+    pub bound: ExprId,
+    /// The body, re-resolved once per binding under that binding's sub-table.
+    pub body: ExprId,
+    /// One entry per meta atom the guard admitted, in the reference's
+    /// `metaSigAtoms()`-then-`metaFieldAtoms()` synthesis order. Empty is a
+    /// legal, reachable state — see the empty-fold column above.
+    pub bindings: Vec<MetaBinding>,
+}
+
+/// Which fold a [`MetaExpansion`] collapses to — the three binders the
+/// reference's guard admits (`:585`, `x.op == ALL || SOME || COMPREHENSION`).
+/// `no`/`one`/`lone`/`sum` are **not** here: they stay ordinary quantifiers over
+/// meta atoms (mt-107 P0 §M2 SURPRISE 2).
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum MetaFold {
+    /// `all x: … | …` — a conjunction of implications.
+    All,
+    /// `some x: … | …` — a disjunction of conjunctions.
+    Some,
+    /// `{ x: … | … }` — a union of guarded singletons.
+    Comprehension,
+}
+
+/// One binding of a [`MetaExpansion`]: a concrete meta atom and the body's
+/// choices *as resolved with the variable bound to it*.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct MetaBinding {
+    /// The meta sig the variable denotes for this copy of the body. Always a
+    /// `one` sig (`S$` or `S$f`), so it denotes exactly one atom.
+    pub atom: SigId,
+    /// The body's choices for *this* binding. Keyed by the same `(ModuleId,
+    /// ExprId)` pairs as its siblings — which is precisely why they cannot be
+    /// merged into one table.
+    pub choices: Box<ChoiceTable>,
 }
 
 /// The choice table: `(ModuleId, ExprId)` → the resolved [`ExprChoice`]. Keyed

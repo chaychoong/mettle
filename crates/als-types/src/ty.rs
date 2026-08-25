@@ -418,6 +418,22 @@ impl Type {
         false
     }
 
+    /// Whether every non-empty product of `self` is a subtype of some product of
+    /// `other` (`Type.isSubtypeOf`): equal arity, columns pairwise
+    /// same-or-descendant. `EMPTY` and an all-`none` type are subtypes of
+    /// everything, which is the reference's own vacuous reading.
+    ///
+    /// The one caller is the phase-8 ground-expansion guard
+    /// (`CompModule.java:580-583`, `exp.type().isSubtypeOf(metaSig + metaField)`)
+    /// — the test that decides whether a quantifier ranges over meta atoms.
+    #[must_use]
+    pub fn is_subtype_of(&self, w: &ResolvedWorld, other: &Type) -> bool {
+        self.entries
+            .iter()
+            .filter(|p| !p.is_empty(w))
+            .all(|p| other.entries.iter().any(|q| product_subtype(w, p, q)))
+    }
+
     /// `removesBoolAndInt`: drop the boolean flag and small-int marker, keeping
     /// the product entries. A pure `smallIntType` (no product but the marker,
     /// or `{Int}` marked small-int) becomes the `Int` sig relation.

@@ -191,8 +191,13 @@ impl<'a> Scan<'a> {
             }
             let ast = self.ast_of(module);
             // Children stay in the frame they were written in: only a macro
-            // expansion changes `(module, choices)`.
-            let mut push = |child: ExprId| stack.push((module, child, choices));
+            // expansion changes `(module, choices)`. Collected locally so the
+            // one arm that *does* change the table — a phase-8 ground expansion,
+            // whose body was resolved once per meta atom under its own sibling
+            // sub-table (mt-107 P2) — can push frames of its own alongside.
+            let mut kids: Vec<Frame<'a>> = Vec::new();
+            let mut expanded_bodies: Vec<Frame<'a>> = Vec::new();
+            let mut push = |child: ExprId| kids.push((module, child, choices));
             match &ast.exprs[id].kind {
                 // Leaves: nothing to descend into.
                 ExprKind::Num(_)
@@ -243,7 +248,17 @@ impl<'a> Scan<'a> {
                         .iter()
                         .map(|&d| ast.decls[d].bound)
                         .for_each(&mut push);
-                    push(*body);
+                    // Ground-expanded (mt-107 P2): the body's names resolved
+                    // once per meta atom, each under its own table, so it is
+                    // walked once per binding — a macro spliced into the body
+                    // is identified by that binding's table, not the outer one.
+                    if let Some(ExprChoice::Meta(m)) = choices.get(module, id) {
+                        for b in &m.bindings {
+                            expanded_bodies.push((module, *body, &b.choices));
+                        }
+                    } else {
+                        push(*body);
+                    }
                 }
                 ExprKind::Let { bindings, body } => {
                     bindings.iter().map(|b| b.value).for_each(&mut push);
@@ -251,6 +266,9 @@ impl<'a> Scan<'a> {
                 }
                 ExprKind::Block(parts) => parts.iter().copied().for_each(&mut push),
             }
+            // `push` borrows `kids`; the borrow ends here.
+            stack.append(&mut kids);
+            stack.append(&mut expanded_bodies);
         }
         // Negative space (STYLE I1/I3): the expansion set is a strict subset of
         // the world's macros, so no cycle — and no unbounded expansion — is
@@ -281,7 +299,10 @@ fn macro_use(choices: &ChoiceTable, module: ModuleId, expr: ExprId) -> Option<&M
         ExprChoice::Name(NameChoice::Macro(mc)) | ExprChoice::Spine(SpineChoice::Macro(mc)) => {
             Some(mc)
         }
-        ExprChoice::Name(_) | ExprChoice::Spine(_) => None,
+        // A phase-8 ground expansion replaces the node with a fold, not with a
+        // macro body; [`Scan::run`] descends into its per-binding sub-tables
+        // itself, which is where any macro use inside the expanded body lives.
+        ExprChoice::Name(_) | ExprChoice::Spine(_) | ExprChoice::Meta(_) => None,
     }
 }
 

@@ -31,7 +31,7 @@ pub mod world;
 
 pub use choice::{
     BuiltinCall, BuiltinValue, CallChoice, CallableChoice, ChoiceTable, ExprChoice, MacroChoice,
-    NameChoice, SpineChoice,
+    MetaBinding, MetaExpansion, MetaFold, NameChoice, SpineChoice,
 };
 pub use error::ResolveError;
 pub use file::{FileTable, LoadedFile};

@@ -31,8 +31,8 @@ use als_syntax::ast::{
 use als_syntax::{ArenaId, Span};
 
 use crate::choice::{
-    BuiltinCall, BuiltinValue, CallChoice, ChoiceTable, ExprChoice, MacroChoice, NameChoice,
-    SpineChoice,
+    BuiltinCall, BuiltinValue, CallChoice, ChoiceTable, ExprChoice, MacroChoice, MetaBinding,
+    MetaExpansion, MetaFold, NameChoice, SpineChoice,
 };
 use crate::error::ResolveError;
 use crate::graph::ModuleId;
@@ -189,7 +189,7 @@ enum Fin {
     /// against the pushed relevant type.
     Sub(ExprId),
     /// A name with no candidate reading at all (unknown in a join/box spine):
-    /// a reject unless the model is `$`-lenient.
+    /// a reject.
     Unknown { name: String, span: Span },
 }
 
@@ -329,6 +329,17 @@ impl<'a, 'g> Cx<'a, 'g> {
             .record(self.module, expr, ExprChoice::Spine(choice));
     }
 
+    /// Records a phase-8 ground expansion at `(module, expr)` — a
+    /// quantifier/comprehension node, which carries no other kind of choice. A
+    /// no-op mid-trial, like every other record in this impl.
+    fn record_meta(&mut self, expr: ExprId, expansion: MetaExpansion) {
+        if self.trial {
+            return;
+        }
+        self.choices
+            .record(self.module, expr, ExprChoice::Meta(expansion));
+    }
+
     /// Notes that `expr`'s raw candidate/reading count, as collected **before**
     /// `resolveHelper` ever narrows it, was `raw_count` — the reference's
     /// `ExprChoice.make` list size. `raw_count > 1` inserts `expr` into
@@ -465,21 +476,6 @@ impl<'a, 'g> Cx<'a, 'g> {
 
     fn err(&mut self, e: ResolveError) {
         self.errors.push(e);
-    }
-
-    /// Whether this model plausibly uses `$`-meta names (`sig$`/`field$`/
-    /// `X$.subfields`). mettle does not synthesize the meta-sig atoms the meta
-    /// phase would (resolution-doc §1 phase 8); it approximates them as `univ`,
-    /// so an expression-level reject in a meta model may be an artifact of that
-    /// approximation. The reference resolves these with real meta atoms, so
-    /// mettle stays accept-lean (never rejects) in a meta model — the drop-in
-    /// gate outranks the rare meta-model over-acceptance (LIMITATIONS).
-    ///
-    /// A stray `$` does **not** buy this leniency: the gate matches only names
-    /// the reference's synthesis would mint (`Resolver::compute_meta_gate`,
-    /// mt-108), so `$Professor` resolves and rejects normally.
-    fn lenient(&self) -> bool {
-        self.r.meta_gate
     }
 
     fn int_sig(&self) -> SigId {
@@ -832,8 +828,8 @@ impl<'a, 'g> Cx<'a, 'g> {
                 then_branch,
                 else_branch,
             } => self.if_then_else(*cond, *then_branch, *else_branch, p),
-            ExprKind::Quant { quant, decls, body } => self.quant(*quant, decls, *body, span),
-            ExprKind::Comprehension { decls, body } => self.comprehension(decls, *body),
+            ExprKind::Quant { quant, decls, body } => self.quant(e, *quant, decls, *body, span),
+            ExprKind::Comprehension { decls, body } => self.comprehension(e, decls, *body),
             ExprKind::Let { bindings, body } => self.let_expr(bindings, *body, p),
             ExprKind::Block(exprs) => {
                 if let [only] = exprs.as_slice() {
@@ -874,7 +870,7 @@ impl<'a, 'g> Cx<'a, 'g> {
     /// error-free, but the reference has no `this` to bind outside a sig's own
     /// scope and reports it as an unfindable name (mt-110).
     fn this_r(&mut self, span: Span) -> R {
-        if self.env_get("this").is_none() && self.rootsig.is_none() && !self.lenient() {
+        if self.env_get("this").is_none() && self.rootsig.is_none() {
             self.err(ResolveError::UnknownName {
                 name: "this".to_owned(),
                 span,
@@ -949,10 +945,9 @@ impl<'a, 'g> Cx<'a, 'g> {
     /// Alloy raises this as an `ErrorSyntax` from `make()`, bottom-up and
     /// **before** the `errors.isEmpty()` gate, so unlike the sort checks it is
     /// not suppressed by an already-errored subtree — hence no `r.err` guard
-    /// here. It stays behind `lenient()`, so the mt-108 meta gate keeps
-    /// suppressing it along with everything else.
+    /// here.
     fn reject_mult(&mut self, e: ExprId) -> bool {
-        if self.lenient() || self.mult_of(e) == 0 {
+        if self.mult_of(e) == 0 {
             return false;
         }
         let span = self.expr(e).span;
@@ -976,7 +971,7 @@ impl<'a, 'g> Cx<'a, 'g> {
     /// consume a multiplicity, and at the four `run_*` roots — nothing consumes
     /// a root *as an operand*, which is why `fun f: A { set A }` (m18) resolves.
     fn typecheck_sorted(&mut self, r: &mut R, p: &Type, span: Span) {
-        if r.err || self.lenient() {
+        if r.err {
             return;
         }
         if p.is_bool {
@@ -1008,7 +1003,7 @@ impl<'a, 'g> Cx<'a, 'g> {
     /// error; a `small_int`/`is_int` is cast (no error). EMPTY is already an
     /// error subtree.
     fn typecheck_as_set_sorted(&mut self, r: &mut R, span: Span) {
-        if r.err || self.lenient() {
+        if r.err {
             return;
         }
         if r.ty.is_bool {
@@ -1050,7 +1045,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                     UnOp::SetOf | UnOp::ExactlyOf => sub.ty.remove_bool_and_int(self.int_sig()),
                     _ => sub.ty.extract(&self.r.world, 1),
                 };
-                if !sub.err && ty.is_error() && !self.lenient() {
+                if !sub.err && ty.is_error() {
                     // "After some/lone/one, this must be a unary set" / set-of / exactly-of.
                     self.err(ResolveError::NotSet { span });
                     return R::bad();
@@ -1087,7 +1082,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                 let mut sub = self.resolve(e, &s);
                 self.typecheck_as_set(&mut sub, e);
                 let ty = sub.ty.transpose(&self.r.world);
-                if !sub.err && ty.is_error() && !self.lenient() {
+                if !sub.err && ty.is_error() {
                     self.err(ResolveError::UnaryNotBinary { op: "~", span });
                     return R::bad();
                 }
@@ -1111,7 +1106,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                 let mut sub = self.resolve(e, &s);
                 self.typecheck_as_set(&mut sub, e);
                 let closed = sub.ty.closure(&self.r.world);
-                if !sub.err && closed.is_error() && !self.lenient() {
+                if !sub.err && closed.is_error() {
                     self.err(ResolveError::UnaryNotBinary {
                         op: if matches!(op, UnOp::Closure) {
                             "^"
@@ -1253,7 +1248,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                 };
                 let l = self.resolve_checked(lhs, &ap);
                 let r = self.resolve_checked(rhs, &bp);
-                if !l.err && !r.err && !arity_ok && !self.lenient() {
+                if !l.err && !r.err && !arity_ok {
                     self.err(ResolveError::ArityMismatch {
                         op: bin_sym(op),
                         span,
@@ -1296,7 +1291,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                 let (ap, bp) = self.domain_slices(&lt, &rt, p);
                 let l = self.resolve_checked(lhs, &ap);
                 let r = self.resolve_checked(rhs, &bp);
-                if !l.err && !r.err && make_ty.is_error() && !self.lenient() {
+                if !l.err && !r.err && make_ty.is_error() {
                     self.err(ResolveError::NotUnarySet {
                         span: self.expr(lhs).span,
                     });
@@ -1319,7 +1314,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                 let (ap, bp) = self.range_slices(&lt, &rt, p);
                 let l = self.resolve_checked(lhs, &ap);
                 let r = self.resolve_checked(rhs, &bp);
-                if !l.err && !r.err && make_ty.is_error() && !self.lenient() {
+                if !l.err && !r.err && make_ty.is_error() {
                     self.err(ResolveError::NotUnarySet {
                         span: self.expr(rhs).span,
                     });
@@ -1553,7 +1548,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                 };
                 let both_int = lt.is_int(world) && rt.is_int(world);
                 let arity_ok = lt.has_common_arity(&rt) || (matches!(op, CmpOp::Eq) && both_int);
-                if !l.err && !r.err && !arity_ok && !self.lenient() {
+                if !l.err && !r.err && !arity_ok {
                     self.err(ResolveError::ArityMismatch {
                         op: if matches!(op, CmpOp::Eq) { "=" } else { "in" },
                         span,
@@ -1712,22 +1707,16 @@ impl<'a, 'g> Cx<'a, 'g> {
             // funcs are value candidates above, so reaching here means every
             // reading still needs an argument (mt-110).
             if !self.lookup_funcs(&segs).is_empty() {
-                if self.lenient() {
-                    return R::ok(Type::unary(self.r.world.builtins.univ));
-                }
                 self.err(ResolveError::BadCall {
                     name: segs.join("/"),
                     span: qn.span,
                 });
                 return R::bad();
             }
-            // The per-name `$` test the gate used to carry here is subsumed:
-            // any `$`-bearing name reference is in `dollar_names`, so a *meta*
-            // one already sets the gate and a stray one must not be excused
-            // (mt-108).
-            if self.lenient() {
-                return R::ok(Type::unary(self.r.world.builtins.univ));
-            }
+            // A `$`-bearing name gets no special treatment: phase 8 mints the
+            // meta sigs it could denote, so a name that still resolves to
+            // nothing here is unknown to the reference too (mt-107 P2 retired
+            // the model-wide leniency mt-108 had narrowed).
             self.err(ResolveError::UnknownName {
                 name: segs.join("/"),
                 span: qn.span,
@@ -1772,9 +1761,6 @@ impl<'a, 'g> Cx<'a, 'g> {
                 R::ok(self.none_of_arity(k))
             }
             Pick::Ambiguous(idxs) => {
-                if self.lenient() {
-                    return R::ok(cands[idxs[0]].ty.clone());
-                }
                 self.err(ResolveError::AmbiguousName {
                     name: name.to_owned(),
                     span,
@@ -1788,9 +1774,6 @@ impl<'a, 'g> Cx<'a, 'g> {
             // list to print (mt-105 phase d; before it this arm mislabeled
             // itself as an ambiguity).
             Pick::NoIntersect => {
-                if self.lenient() {
-                    return R::ok(cands[0].ty.clone());
-                }
                 self.err(ResolveError::NameNotRelevant {
                     name: name.to_owned(),
                     span,
@@ -2644,14 +2627,13 @@ impl<'a, 'g> Cx<'a, 'g> {
                         });
                         return out;
                     }
-                    // A macro-with-params named bare (a macro arg), or a name in
-                    // a meta model → lenient `univ` leaf; a genuinely unknown
-                    // name (a stray `$` included, mt-108) → a reject reading.
+                    // A macro-with-params named bare (a macro arg) → lenient
+                    // `univ` leaf; a genuinely unknown name (a stray `$` or a
+                    // `$` name phase 8 minted nothing for) → a reject reading.
                     // Funcs never reach here: a func with params always pushed a
                     // `BadCall` reading above and a 0-ary one is a value
                     // candidate, so `out` was non-empty (mt-110).
-                    let callable = self.lookup_macro(&segs).is_some();
-                    if callable || self.lenient() {
+                    if self.lookup_macro(&segs).is_some() {
                         out.push(Cand {
                             ty: Type::unary(self.r.world.builtins.univ),
                             weight: 0,
@@ -2793,34 +2775,31 @@ impl<'a, 'g> Cx<'a, 'g> {
         // fails (e.g. a nested ambiguous left operand under the block-3
         // arity-only join fallback) becomes EMPTY and drops out of the retry.
         // Unlike `pick_name`'s leaf candidates, a reading is compound, so this
-        // retry can genuinely narrow the field. The lenient (meta) regime keeps
-        // the pre-trial salvage semantics below instead.
-        if !self.lenient() {
-            let pool = self.first_pass_pool(&types, &weights, p);
-            if pool.len() > 1 {
-                let mut trial_types = Vec::with_capacity(pool.len());
-                for &i in &pool {
-                    trial_types.push(self.trial_reading(readings[i].clone(), p));
-                }
-                let trial_weights: Vec<i32> = pool.iter().map(|&i| weights[i]).collect();
-                return match self.resolve_helper(&trial_types, &trial_weights, p) {
-                    Pick::One(j) => {
-                        let cand = readings.swap_remove(pool[j]);
-                        self.finalize_recorded(e, cand, p, None)
-                    }
-                    Pick::NoneArity(k) => {
-                        self.record_spine(e, SpineChoice::Empty(k));
-                        R::ok(self.none_of_arity(k))
-                    }
-                    Pick::Ambiguous(idxs) => {
-                        let idxs: Vec<usize> = idxs.into_iter().map(|j| pool[j]).collect();
-                        self.reading_ambiguous(&readings, &idxs)
-                    }
-                    // The retry found no survivor: the jar lists the pool's
-                    // candidates (the recursion's `reasons`), not every reading.
-                    Pick::NoIntersect => self.reading_no_intersect(&readings, &pool),
-                };
+        // retry can genuinely narrow the field.
+        let pool = self.first_pass_pool(&types, &weights, p);
+        if pool.len() > 1 {
+            let mut trial_types = Vec::with_capacity(pool.len());
+            for &i in &pool {
+                trial_types.push(self.trial_reading(readings[i].clone(), p));
             }
+            let trial_weights: Vec<i32> = pool.iter().map(|&i| weights[i]).collect();
+            return match self.resolve_helper(&trial_types, &trial_weights, p) {
+                Pick::One(j) => {
+                    let cand = readings.swap_remove(pool[j]);
+                    self.finalize_recorded(e, cand, p, None)
+                }
+                Pick::NoneArity(k) => {
+                    self.record_spine(e, SpineChoice::Empty(k));
+                    R::ok(self.none_of_arity(k))
+                }
+                Pick::Ambiguous(idxs) => {
+                    let idxs: Vec<usize> = idxs.into_iter().map(|j| pool[j]).collect();
+                    self.reading_ambiguous(&readings, &idxs)
+                }
+                // The retry found no survivor: the jar lists the pool's
+                // candidates (the recursion's `reasons`), not every reading.
+                Pick::NoIntersect => self.reading_no_intersect(&readings, &pool),
+            };
         }
         match self.resolve_helper(&types, &weights, p) {
             Pick::One(i) => {
@@ -2831,18 +2810,8 @@ impl<'a, 'g> Cx<'a, 'g> {
                 self.record_spine(e, SpineChoice::Empty(k));
                 R::ok(self.none_of_arity(k))
             }
-            Pick::Ambiguous(idxs) => {
-                if self.lenient() {
-                    let reading = readings.swap_remove(idxs[0]);
-                    return self.finalize_lenient(reading, p);
-                }
-                self.reading_ambiguous(&readings, &idxs)
-            }
+            Pick::Ambiguous(idxs) => self.reading_ambiguous(&readings, &idxs),
             Pick::NoIntersect => {
-                if self.lenient() {
-                    let reading = readings.swap_remove(0);
-                    return self.finalize_lenient(reading, p);
-                }
                 // No reading matches the relevant type — `resolveHelper`'s
                 // empty-match arm, the same reject the leaf twin in `pick_name`
                 // raises, listing every reading. Until mt-105 phase (d) this arm
@@ -2885,7 +2854,7 @@ impl<'a, 'g> Cx<'a, 'g> {
         let nwarn = self.warnings.len();
         let prev = self.trial;
         self.trial = true;
-        let r = self.finalize_reading(cand, p, true);
+        let r = self.finalize_reading(cand, p);
         self.trial = prev;
         let failed = r.err || self.errors.len() > nerr;
         self.errors.truncate(nerr);
@@ -2995,34 +2964,16 @@ impl<'a, 'g> Cx<'a, 'g> {
             // resolving it records whatever its own subtree decides.
             Fin::Sub(_) | Fin::BadCall { .. } | Fin::Unknown { .. } => {}
         }
-        self.finalize_reading(cand, p, true)
-    }
-
-    /// Lenient finalize (a `$`-meta model): resolve the chosen reading but never
-    /// let it reject — a `BadCall` becomes a lenient `univ` value. Nothing is
-    /// recorded: the reading was salvaged from an ambiguity the verdict never
-    /// resolved, so it is not a choice the lowerer may replay (mt-031).
-    fn finalize_lenient(&mut self, cand: Cand, p: &Type) -> R {
-        if matches!(cand.fin, Fin::BadCall { .. } | Fin::Unknown { .. }) {
-            return R::ok(Type::unary(self.r.world.builtins.univ));
-        }
-        let mut r = self.finalize_reading(cand, p, false);
-        r.err = false;
-        r
+        self.finalize_reading(cand, p)
     }
 
     /// Finalizes a chosen candidate: resolves its operands against slices
     /// derived from `p`, and emits any make-error (illegal join / bad call).
-    /// `authoritative` is false on the lenient salvage path, which resolves but
-    /// records nothing (see [`Self::finalize_lenient`]).
-    fn finalize_reading(&mut self, cand: Cand, p: &Type, authoritative: bool) -> R {
+    fn finalize_reading(&mut self, cand: Cand, p: &Type) -> R {
         match cand.fin {
             Fin::Leaf => R::ok(cand.ty),
             Fin::Sub(e) => self.resolve(e, p),
             Fin::Unknown { name, span } => {
-                if self.lenient() {
-                    return R::ok(cand.ty);
-                }
                 self.err(ResolveError::UnknownName { name, span });
                 R::bad()
             }
@@ -3037,28 +2988,16 @@ impl<'a, 'g> Cx<'a, 'g> {
                 let mut l = self.resolve(left, &ap);
                 self.typecheck_as_set(&mut l, left);
                 // Whether the right operand itself failed against its slice.
-                // On the lenient salvage path it cannot: that pass discards the
-                // operand's errors (it collects a compound operand's warnings
-                // and nothing else, mt-023) and records no choice.
-                let mut r_err = false;
-                if authoritative {
-                    r_err = self.finalize_join_base(*base, &bp, left).err;
-                } else if let Fin::Sub(re) = base.fin {
-                    let nerr = self.errors.len();
-                    let _ = self.resolve(re, &bp);
-                    self.errors.truncate(nerr);
-                }
+                let r_err = self.finalize_join_base(*base, &bp, left).err;
                 let joined = lt.join(&self.r.world, &right_ty);
                 // The reference's illegal-join check is a make-time arity rule
                 // (result arity < 1) over the merged/bottom-up types; `univ` is
                 // a genuine unary type to it, not a placeholder, so an operand
                 // containing `univ` (the `univ` keyword, `iden`, `*`-closure)
                 // rejects exactly like any other unary operand (mt-112 probe
-                // record). Meta models are the one real exception: mettle
-                // approximates meta atoms as `univ`, so a lenient model's
-                // operand may be a placeholder rather than a genuine value —
-                // `!self.lenient()` is the only suppression left. Outside a
-                // lenient model, every other placeholder-`univ` site lives in
+                // record). Meta models are no exception since mt-107 P2: their
+                // atoms are real sigs by phase 8, so nothing here is a
+                // placeholder. Every remaining placeholder-`univ` site lives in
                 // the bottom-up `infer()` pass only (never in the operand's own
                 // authoritative `resolve()`), so it cannot leave `l.err`/
                 // `r_err` false while the operand is genuinely unresolvable —
@@ -3066,13 +3005,13 @@ impl<'a, 'g> Cx<'a, 'g> {
                 // already rejected is not re-reported as one either — the
                 // reference reports a join illegal only when both its resolved
                 // operands are error-free.
-                if !l.err && !r_err && joined.is_error() && !self.lenient() {
+                if !l.err && !r_err && joined.is_error() {
                     self.err(ResolveError::IllegalJoin { span });
                     return R::bad();
                 }
                 // A9: a legal-arity join whose type is statically empty (§5.2
                 // `this.type.hasNoTuple()`). EMPTY (illegal join) took the reject
-                // path above; a `univ` operand is a lenient placeholder, not a
+                // path above; a `univ` operand is an imprecise bound, not a
                 // genuine empty join.
                 if !l.err
                     && !r_err
@@ -3239,8 +3178,21 @@ impl<'a, 'g> Cx<'a, 'g> {
 
     // ---- binders ----
 
-    fn quant(&mut self, quant: Quant, decls: &[DeclId], body: ExprId, span: Span) -> R {
-        let pushed = self.bind_decls(decls);
+    fn quant(&mut self, e: ExprId, quant: Quant, decls: &[DeclId], body: ExprId, span: Span) -> R {
+        let nerr = self.errors.len();
+        let (pushed, types) = self.bind_decls_typed(decls, BinderKind::Quantifier);
+        // Phase-8 ground expansion (`CompModule.visit(ExprQt)` `:588`): `all`
+        // and `some` over one meta-typed `one`-of bound are not quantifiers at
+        // all — see [`Self::expand_meta`]. `no`/`one`/`lone`/`sum` fall through
+        // and stay ordinary quantifiers over the meta atoms.
+        if let Some(fold) = meta_fold_of(quant) {
+            if let Some(atoms) = self.meta_atoms(decls, &types, self.errors.len() > nerr) {
+                for _ in 0..pushed {
+                    self.env.pop();
+                }
+                return self.expand_meta(e, fold, decls[0], body, &atoms);
+            }
+        }
         let err = if matches!(quant, Quant::Sum) {
             let ip = self.small_int();
             self.resolve_checked(body, &ip).err
@@ -3258,12 +3210,21 @@ impl<'a, 'g> Cx<'a, 'g> {
         R { ty, err }
     }
 
-    fn comprehension(&mut self, decls: &[DeclId], body: ExprId) -> R {
+    fn comprehension(&mut self, e: ExprId, decls: &[DeclId], body: ExprId) -> R {
         // Bind the decls once, capturing each variable's element type (the
         // comprehension result type is their product, in order). Re-resolving
         // the bounds here would re-pick under the now-shadowed env — wrong when
         // a decl redeclares an earlier name (`{p:A, …, p:f[p]}`).
+        let nerr = self.errors.len();
         let (pushed, types) = self.bind_decls_typed(decls, BinderKind::Comprehension);
+        // A comprehension is the third binder the phase-8 guard admits, folding
+        // to a union of guarded singletons instead of a formula (`:604`).
+        if let Some(atoms) = self.meta_atoms(decls, &types, self.errors.len() > nerr) {
+            for _ in 0..pushed {
+                self.env.pop();
+            }
+            return self.expand_meta(e, MetaFold::Comprehension, decls[0], body, &atoms);
+        }
         let fp = self.formula();
         let err = self.resolve_checked(body, &fp).err;
         let mut ty: Option<Type> = None;
@@ -3281,6 +3242,155 @@ impl<'a, 'g> Cx<'a, 'g> {
         R {
             ty: ty.unwrap_or_else(Type::empty),
             err,
+        }
+    }
+
+    // ---- the phase-8 `$` ground expansion (mt-107 P2) ----
+
+    /// The reference's ground-expansion guard (`CompModule.visit(ExprQt)`
+    /// `:580-588`), applied to an already-resolved decl list: `Some(atoms)` when
+    /// this binder expands, `None` when it stays an ordinary binder.
+    ///
+    /// The conditions, all the reference's:
+    ///
+    /// 1. a metamodel exists at all (phase 8 ran);
+    /// 2. exactly one decl binding exactly one name (`x.decls.size() == 1 &&
+    ///    d.names.size() == 1`);
+    /// 3. the bound resolved clean (`exp.errors.isEmpty()`) — its type means
+    ///    nothing otherwise;
+    /// 4. the bound is **`one`-of** (`isOneOf`, `:562-568`): unary, and either
+    ///    carrying no multiplicity wrapper — which the reference wraps in an
+    ///    implicit `ONEOF` (`:577-578`) — or an explicit `one`. A `some`/`set`
+    ///    bound is therefore *not* an expansion and stays what it already is in
+    ///    mettle: an analysis-time higher-order error, never a resolve error
+    ///    (P0 §M2 SURPRISE 3, cells `m2_09`/`m2_10`);
+    /// 5. the bound's type is a subtype of `sig$ + field$` and intersects at
+    ///    least one of them — which also decides *which* atom families run.
+    ///    Both run for `all x: sig$ + field$ | …` (cell `m2_17`).
+    ///
+    /// Returns the atoms in the reference's order: `metaSigAtoms()` then
+    /// `metaFieldAtoms()`, each filtered to those whose type intersects the
+    /// bound's (`:597-598`, `:610-611`). An **empty** result is a real answer,
+    /// not a refusal — `all x: field$ | …` in a model with no fields expands to
+    /// the empty fold (cells `m2_33`/`m2_34`/`m2_35`).
+    fn meta_atoms(
+        &self,
+        decls: &[DeclId],
+        types: &[Type],
+        bound_errored: bool,
+    ) -> Option<Vec<SigId>> {
+        let meta = self.r.world.meta.as_ref()?;
+        if bound_errored {
+            return None;
+        }
+        let [decl_id] = decls else { return None };
+        let decl = &self.ast().decls[*decl_id];
+        // `types` carries one entry per bound *name*, so a single element is
+        // exactly the reference's `d.names.size() == 1`.
+        let [bound_ty] = types else { return None };
+        if bound_ty.arity() != Some(1) {
+            return None;
+        }
+        match &self.expr(decl.bound).kind {
+            ExprKind::Unary {
+                op: UnOp::OneOf, ..
+            } => {}
+            _ if self.mult_of(decl.bound) == 0 => {}
+            _ => return None,
+        }
+        let w = &self.r.world;
+        let sig_ty = Type::unary(meta.sig_meta);
+        let field_ty = Type::unary(meta.field_meta);
+        if !bound_ty.is_subtype_of(w, &sig_ty.merge(w, &field_ty)) {
+            return None;
+        }
+        let is_sig = bound_ty.intersects(w, &sig_ty);
+        let is_field = bound_ty.intersects(w, &field_ty);
+        if !is_sig && !is_field {
+            return None;
+        }
+        let matching = |family: &[SigId]| -> Vec<SigId> {
+            family
+                .iter()
+                .copied()
+                .filter(|&a| Type::unary(a).intersects(w, bound_ty))
+                .collect()
+        };
+        let mut atoms = Vec::new();
+        if is_sig {
+            atoms.extend(matching(&meta.sig_atoms));
+        }
+        if is_field {
+            atoms.extend(matching(&meta.field_atoms));
+        }
+        Some(atoms)
+    }
+
+    /// The expansion itself (`:591-632`): the body is re-resolved once per meta
+    /// atom with the bound name rebound to that concrete `one` sig, and each
+    /// pass's choices are kept in its **own** sibling sub-table (see
+    /// [`MetaExpansion`]). No AST is rewritten; the record on `e` is what the
+    /// lowerer replays.
+    ///
+    /// Warnings are suppressed for the duration (`warns = null`, `:590-591`),
+    /// and no unused-variable warning is emitted for the bound name at all —
+    /// the reference never builds an `ExprQt` here, and wraps the fold in a
+    /// dummy `ExprLet` precisely so outer code cannot warn about it either
+    /// (`:626-632`). Errors are *not* suppressed: a body that rejects under some
+    /// binding rejects the model, since that error is in the tree `errors.pick()`
+    /// scans.
+    fn expand_meta(
+        &mut self,
+        e: ExprId,
+        fold: MetaFold,
+        decl_id: DeclId,
+        body: ExprId,
+        atoms: &[SigId],
+    ) -> R {
+        let decl = &self.ast().decls[decl_id];
+        let var = decl.names[0].text.clone();
+        let bound = decl.bound;
+
+        let wlen = self.warnings.len();
+        // Park the enclosing table: each binding's body must record into a
+        // table of its own, because all N of them key the same `ExprId`s.
+        let outer = std::mem::take(&mut self.choices);
+        let fp = self.formula();
+        let mut err = false;
+        let mut ty = Type::empty();
+        let mut bindings = Vec::with_capacity(atoms.len());
+        for &atom in atoms {
+            self.env.push((var.clone(), Type::unary(atom)));
+            err |= self.resolve_checked(body, &fp).err;
+            self.env.pop();
+            bindings.push(MetaBinding {
+                atom,
+                choices: Box::new(std::mem::take(&mut self.choices)),
+            });
+            ty = ty.union(&self.r.world, &Type::unary(atom));
+        }
+        self.choices = outer;
+        self.warnings.truncate(wlen);
+        self.record_meta(
+            e,
+            MetaExpansion {
+                fold,
+                var,
+                bound,
+                body,
+                bindings,
+            },
+        );
+        match fold {
+            MetaFold::All | MetaFold::Some => R {
+                ty: self.formula(),
+                err,
+            },
+            // The comprehension folds `… ite(child, Sig.NONE)` with `+`, so its
+            // type is the union of the bound atoms — and `none` of arity 1 when
+            // nothing was bound (`:622`, cell `m2_35`).
+            MetaFold::Comprehension if atoms.is_empty() => R::ok(self.none_of_arity(1)),
+            MetaFold::Comprehension => R { ty, err },
         }
     }
 
@@ -3317,10 +3427,6 @@ impl<'a, 'g> Cx<'a, 'g> {
             }
         }
         out
-    }
-
-    fn bind_decls(&mut self, decls: &[DeclId]) -> usize {
-        self.bind_decls_typed(decls, BinderKind::Quantifier).0
     }
 
     /// Binds a decl list into the env, returning how many env frames to pop and
@@ -3377,7 +3483,7 @@ impl<'a, 'g> Cx<'a, 'g> {
     /// message rather than a multiplicity one — an arrow is not a `-of` wrapper,
     /// so it falls through the first check whatever its arrow mult.
     fn check_binder_bound(&mut self, bound: ExprId, r: &R, kind: BinderKind) {
-        if r.err || self.lenient() {
+        if r.err {
             return;
         }
         let span = self.expr(bound).span;
@@ -3850,6 +3956,19 @@ enum Pick {
     Ambiguous(Vec<usize>),
     /// No survivor matches the relevant type at all.
     NoIntersect,
+}
+
+/// Which phase-8 fold a quantifier expands to, or `None` for the ones the
+/// reference's guard excludes (`:585` admits `ALL`, `SOME` and `COMPREHENSION`
+/// only). `no`/`one`/`lone`/`sum` over meta atoms stay ordinary quantifiers —
+/// usable exactly when the body's own meta-relation names disambiguate without
+/// a concrete binding (mt-107 P0 §M2 SURPRISE 2).
+fn meta_fold_of(q: Quant) -> Option<MetaFold> {
+    match q {
+        Quant::All => Some(MetaFold::All),
+        Quant::Some => Some(MetaFold::Some),
+        Quant::No | Quant::One | Quant::Lone | Quant::Sum => None,
+    }
 }
 
 /// The display symbol of a binary operator for arity-mismatch messages.

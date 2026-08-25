@@ -583,12 +583,16 @@ fn stray_dollar_name_rejected_mt108() {
 }
 
 /// The gate is a property of the **model**, not of each name — as the
-/// reference's own `seenDollar` is. One real meta name therefore excuses the
-/// stray one alongside it; that is the accept-lean posture working as designed,
-/// not a hole in the narrowing.
+/// reference's own `seenDollar` is: one real meta name turns phase-8 synthesis
+/// on for the whole world. What it no longer buys is *leniency* — mt-107 P2
+/// retired that, so the stray name standing next to a real one rejects on its
+/// own merits, exactly as the jar does (P0 §M6 cell `m6_04`: `ErrorSyntax: The
+/// name "$stray" cannot be found`).
 #[test]
-fn one_meta_name_leniences_the_whole_model_mt108() {
-    accept("sig A {}\nfact { some A$ and $stray in A }\nrun {}\n");
+fn the_gate_is_model_wide_but_buys_no_leniency_mt108() {
+    accept("sig A {}\nfact { some A$ }\nrun {}\n");
+    let e = reject("sig A {}\nfact { some A$ and $stray in A }\nrun {}\n");
+    assert!(matches!(e, ResolveError::UnknownName { .. }), "{e:?}");
 }
 
 /// A parameter *alias* is not a meta name: the reference names meta sigs after
@@ -645,11 +649,13 @@ fn real_calls_and_zero_ary_funcs_still_accept_mt110() {
     accept("sig A {}\nlet m[c] { some c[A] }\nfun add2[x: A]: A { x }\nfact { m[add2] }\n");
 }
 
-/// A meta-gate model stays accept-lean throughout: the bad-call reject is
-/// suppressed exactly as the name/ambiguity rejects are.
+/// The meta gate does not excuse a bad call any more (mt-107 P2 retired the
+/// leniency): a meta model type-checks through the ordinary machinery, so an
+/// uncompleted call spine rejects there exactly as it does everywhere else.
 #[test]
-fn meta_gate_keeps_bare_callable_lenient_mt110() {
-    accept("sig A {}\nfun add2[x: A]: A { x }\nrun { some add2 and some A$ } for 3\n");
+fn meta_gate_does_not_excuse_a_bare_callable_mt110() {
+    let e = reject("sig A {}\nfun add2[x: A]: A { x }\nrun { some add2 and some A$ } for 3\n");
+    assert!(matches!(e, ResolveError::BadCall { .. }), "{e:?}");
 }
 
 /// `->` sort-checks its operands even though a formula operand empties the
@@ -1387,11 +1393,14 @@ fn closure_over_comprehension_arity_one_accepted_mt112() {
 }
 
 #[test]
-fn meta_model_join_stays_lenient_mt112() {
-    // `A$r.univ`: a genuine meta name (`A$r`) joined with `univ`. mettle's
-    // `lenient()` guard keeps a meta model accepting regardless of arity,
-    // matching the meta-model leniency already pinned by mt-108.
-    accept("sig A { r: A }\nrun { some A$r.univ }\n");
+fn meta_model_join_rejects_on_arity_mt112() {
+    // `A$r.univ`: a genuine meta name (`A$r`) joined with `univ`. `A$r` is a
+    // `one` sig by phase 8, so both operands are unary and the join collapses
+    // to arity 0 — an ordinary illegal join. Until mt-107 P2 the meta leniency
+    // swallowed this; the jar has always rejected it, and rejects the same
+    // shape in the wild (alloy4fun 060669, `one (Course$projects).Course`).
+    let e = reject("sig A { r: A }\nrun { some A$r.univ }\n");
+    assert!(matches!(e, ResolveError::IllegalJoin { .. }), "{e:?}");
 }
 
 #[test]

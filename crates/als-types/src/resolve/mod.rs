@@ -234,10 +234,16 @@ struct Resolver<'g> {
     /// command's `additional_exact`.
     root_exact_sigs: Vec<SigId>,
     /// Whether this model plausibly uses the `$` metamodel (resolution-doc §1
-    /// phase 8) — the accept-lean gate `Cx::lenient` reads. Computed once, from
-    /// [`ModuleGraph::dollar_names`], as soon as sigs and their field labels are
-    /// known; `false` until then, which is correct because nothing resolves
-    /// expressions before that point. See [`Resolver::compute_meta_gate`].
+    /// phase 8) — the switch [`Resolver::synthesize_meta`] runs on. Computed
+    /// once, from [`ModuleGraph::dollar_names`], as soon as sigs and their field
+    /// labels are known; `false` until then, which is correct because nothing
+    /// resolves expressions before that point (and phase 8 runs later still).
+    /// See [`Resolver::compute_meta_gate`].
+    ///
+    /// It gates **synthesis only**. Until mt-107 P2 it also bought the whole
+    /// model a blanket accept-lean regime in `resolve/expr.rs`; that stopgap is
+    /// retired — meta names now resolve against the sigs phase 8 really mints,
+    /// and reject through the ordinary machinery when they cannot.
     meta_gate: bool,
     errors: Vec<ResolveError>,
     warnings: Vec<ResolveWarning>,
@@ -345,17 +351,16 @@ impl<'g> Resolver<'g> {
         self.resolve_ordering();
     }
 
-    /// Decides the metamodel gate the accept-lean path reads ([`Cx::lenient`]) —
-    /// whether any `$`-bearing name in this model could denote something the
-    /// reference's phase-8 synthesis would actually mint (mt-108, ADR-0024).
+    /// Decides the metamodel gate phase 8 runs on — whether any `$`-bearing
+    /// name in this model could denote something the reference's synthesis would
+    /// actually mint (mt-108, ADR-0024).
     ///
     /// The reference's own `seenDollar` is merely "a `$` appeared somewhere",
-    /// which is enough for the jar because it goes on to *build* the meta sigs
-    /// and then resolves against them for real (`resolveMeta`). mettle does not
-    /// build them, and leans accept across the whole model instead — so an
-    /// unnarrowed gate hands blanket leniency to a model whose only `$` is a
-    /// typo, and mettle accepts what the jar rejects. The gate therefore fires
-    /// only on names inside the namespace `resolveMeta` populates:
+    /// which costs it nothing: it mints a metamodel for a model whose only `$`
+    /// is a typo, and the typo then fails to resolve against it anyway. mettle
+    /// narrows the gate instead, so a stray `$` mints nothing at all — the same
+    /// verdict by a cheaper route. The gate fires only on names inside the
+    /// namespace `resolveMeta` populates:
     ///
     /// - the reserved `sig$` / `field$`, and the synthesized `static$` / `var$`;
     /// - `S$` for a declared sig `S` (the reference's `s.label + "$"`);

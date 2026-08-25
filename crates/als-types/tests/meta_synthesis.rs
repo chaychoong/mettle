@@ -16,7 +16,8 @@
 use als_syntax::ast::{ExprKind, SigMult};
 use als_syntax::ArenaId;
 use als_types::{
-    resolve, ExprChoice, MapLoader, MetaDef, ModuleGraph, NameChoice, ResolvedWorld, SigId, SigKind,
+    resolve, ExprChoice, MapLoader, MetaDef, MetaFold, ModuleGraph, NameChoice, ResolvedWorld,
+    SigId, SigKind,
 };
 
 /// Loads + resolves `src` as `root.als`, panicking on a reject (every model
@@ -487,4 +488,465 @@ fn field_is_var(w: &ResolvedWorld, s: SigId, field: &str) -> bool {
 #[allow(dead_code)]
 fn _touch(id: SigId) -> usize {
     id.index()
+}
+
+// =====================================================================
+// M2 — the ground expansion and its negative space (mt-107 P2)
+// =====================================================================
+//
+// Every cell below is one of the 48 jar-verified `m2_*` cells in
+// `scratchpad/probe/mt107/` (verdicts in `out/VERDICTS.txt`). Two groups:
+//
+// - **Group A — agreeing before P2 as well.** The ACCEPT cells. mettle accepted
+//   them before the expansion existed too, but only because the meta leniency
+//   suppressed every expression-level reject; what is new is that they now
+//   accept for the *reason* the jar does, with a recorded expansion the lowerer
+//   can replay.
+// - **Group B — flipped by P2's retirement of the leniency.** Every REJECT cell
+//   here (`no`/`one`/`lone` with an ambiguous `.value`, two names, the
+//   `Z$.subfields` shapes, meta names in declarations). All of these were
+//   accepted by mettle before P2 and rejected by the jar; the leniency is what
+//   stood between them, and each is marked GROUP B at its test.
+
+/// The M2 base model: `abstract sig V { f, g }`, `sig W extends V { h }`,
+/// `sig Z {}` — three meta sigs and three meta fields, so the four relation
+/// names are genuinely N-way ambiguous (P0 SURPRISE 1).
+const M2_BASE: &str = "abstract sig V { f: lone V, g: lone V }\n\
+                       sig W extends V { h: lone W }\n\
+                       sig Z {}\n";
+
+/// One recorded ground expansion, flattened for assertions.
+#[derive(Debug)]
+struct Expansion {
+    fold: MetaFold,
+    var: String,
+    /// The bare labels of the bound meta atoms, in binding order.
+    atoms: Vec<String>,
+    /// How many choices each binding's sibling sub-table holds.
+    per_binding_choices: Vec<usize>,
+}
+
+/// Resolves `src` (expecting ACCEPT) and returns every ground expansion recorded
+/// in the root module, in `ExprId` order.
+fn expansions(src: &str) -> Vec<Expansion> {
+    let loader = MapLoader::new().with("root.als", src);
+    let graph = ModuleGraph::load("root.als", &loader)
+        .unwrap_or_else(|e| panic!("load failed: {e:?}\n--- src ---\n{src}"));
+    let w = match resolve(&graph) {
+        Ok(r) => r.world,
+        Err(e) => panic!("expected ACCEPT, got REJECT: {e:?}\n--- src ---\n{src}"),
+    };
+    let root = graph.root;
+    let ast = graph.files.file(graph.modules[root].file).ast_ref();
+    let mut out = Vec::new();
+    for (id, _) in ast.exprs.iter() {
+        if let Some(ExprChoice::Meta(m)) = w.choices.get(root, id) {
+            out.push(Expansion {
+                fold: m.fold,
+                var: m.var.clone(),
+                atoms: m
+                    .bindings
+                    .iter()
+                    .map(|b| w.sigs[b.atom].name.clone())
+                    .collect(),
+                per_binding_choices: m.bindings.iter().map(|b| b.choices.len()).collect(),
+            });
+        }
+    }
+    out
+}
+
+/// The one expansion `src` records — panics unless there is exactly one.
+fn expansion(src: &str) -> Expansion {
+    let mut all = expansions(src);
+    assert_eq!(all.len(), 1, "expected exactly one expansion in:\n{src}");
+    all.remove(0)
+}
+
+/// Resolves `src` expecting a REJECT, returning the error.
+fn reject(src: &str) -> als_types::ResolveError {
+    let loader = MapLoader::new().with("root.als", src);
+    let graph = match ModuleGraph::load("root.als", &loader) {
+        Ok(g) => g,
+        Err(e) => return e,
+    };
+    match resolve(&graph) {
+        Ok(_) => panic!("expected REJECT, got ACCEPT\n--- src ---\n{src}"),
+        Err(e) => e,
+    }
+}
+
+/// An M2 cell: the base model plus a `run` body.
+fn m2(body: &str) -> String {
+    format!("{M2_BASE}run {{ {body} }} for 3\n")
+}
+
+// ---- group A: the shapes that expand ----
+
+/// `all` / `some` / comprehension over one meta-typed `one`-of bound all expand,
+/// binding the three meta-field atoms of `V$.subfields` in synthesis order
+/// (cells `m2_01`, `m2_02`, `m2_03` — all SAT).
+#[test]
+fn the_three_binders_expand_m2_01_02_03() {
+    for (body, fold) in [
+        ("all fx: V$.subfields | some fx.value", MetaFold::All),
+        ("some fx: V$.subfields | some fx.value", MetaFold::Some),
+        (
+            "#{ fx: V$.subfields | some fx.value } = 3",
+            MetaFold::Comprehension,
+        ),
+    ] {
+        let x = expansion(&m2(body));
+        assert_eq!(x.fold, fold, "{body}");
+        assert_eq!(x.var, "fx", "{body}");
+        assert_eq!(x.atoms, ["V$f", "V$g", "W$h"], "{body}");
+        // Each binding really resolved the body: a sibling table per atom, none
+        // of them empty (this is the collision the design exists to avoid).
+        assert_eq!(x.per_binding_choices.len(), 3, "{body}");
+        assert!(x.per_binding_choices.iter().all(|&n| n > 0), "{x:?}");
+    }
+}
+
+/// An explicit `one` bound still satisfies `isOneOf` (cell `m2_11`), and the
+/// body may use the binding outside `.value` (cell `m2_15`).
+#[test]
+fn explicit_one_bound_and_non_value_body_m2_11_15() {
+    let x = expansion(&m2("all fx: one V$.subfields | some fx.value"));
+    assert_eq!(x.atoms, ["V$f", "V$g", "W$h"]);
+    let x = expansion(&m2("all fx: V$.subfields | fx in field$"));
+    assert_eq!(x.atoms, ["V$f", "V$g", "W$h"]);
+}
+
+/// The bound may name the abstract families directly: `sig$` loops the sig
+/// atoms, `field$` the field atoms, and `sig$ + field$` runs **both** loops in
+/// that order (cells `m2_16`, `m2_37`, `m2_17`).
+#[test]
+fn abstract_family_bounds_m2_16_17_37() {
+    assert_eq!(
+        expansion(&m2("all sx: sig$ | sx.value in univ")).atoms,
+        ["V$", "W$", "Z$"]
+    );
+    assert_eq!(
+        expansion(&m2("all fx: field$ | some fx.value")).atoms,
+        ["V$f", "V$g", "W$h"]
+    );
+    assert_eq!(
+        expansion(&m2("all x: sig$ + field$ | x in univ")).atoms,
+        ["V$", "W$", "Z$", "V$f", "V$g", "W$h"],
+        "metaSigAtoms first, then metaFieldAtoms"
+    );
+}
+
+/// A single `one` meta sig is still a meta subtype and expands to one binding
+/// (cell `m2_18`), and `fields` (own only) binds fewer atoms than `subfields`
+/// (cell `m2_38`).
+#[test]
+fn single_atom_and_fields_bounds_m2_18_38() {
+    assert_eq!(expansion(&m2("all sx: V$ | sx.value = V")).atoms, ["V$"]);
+    assert_eq!(
+        expansion(&m2("all fx: V$.fields | some fx.value")).atoms,
+        ["V$f", "V$g"]
+    );
+}
+
+/// Set algebra in the bound keeps the meta type, so it still expands — the
+/// static filter is by *type*, and the `atom in bound` guard the lowerer emits
+/// is what actually subtracts (cells `m2_42`, `m2_43`).
+#[test]
+fn set_algebra_bounds_m2_42_43() {
+    assert_eq!(
+        expansion(&m2("all fx: V$.subfields - W$.subfields | some fx.value")).atoms,
+        ["V$f", "V$g", "W$h"]
+    );
+    assert_eq!(
+        expansion(&m2("all fx: field$ & V$.subfields | some fx.value")).atoms,
+        ["V$f", "V$g", "W$h"]
+    );
+}
+
+/// Expansion nests: the inner quantifier is expanded once per *outer* binding,
+/// so a 3-atom body inside a 3-atom body records 3 inner expansions, each in its
+/// own sibling table (cell `m2_19`).
+#[test]
+fn nested_expansion_m2_19() {
+    let src = m2("all fx: V$.subfields | all gx: V$.subfields | fx = gx or fx != gx");
+    assert_eq!(
+        expansions(&src).len(),
+        1,
+        "only the outer node is in the top table"
+    );
+
+    let loader = MapLoader::new().with("root.als", &src);
+    let graph = ModuleGraph::load("root.als", &loader).expect("load");
+    let w = resolve(&graph).expect("accept").world;
+    let root = graph.root;
+    let ast = graph.files.file(graph.modules[root].file).ast_ref();
+    let outer = ast
+        .exprs
+        .iter()
+        .find_map(|(id, _)| match w.choices.get(root, id) {
+            Some(ExprChoice::Meta(m)) => Some(m),
+            _ => None,
+        })
+        .expect("outer expansion");
+    assert_eq!(outer.var, "fx");
+    assert_eq!(outer.bindings.len(), 3);
+    for b in &outer.bindings {
+        let inner: Vec<_> = ast
+            .exprs
+            .iter()
+            .filter_map(|(id, _)| match b.choices.get(root, id) {
+                Some(ExprChoice::Meta(m)) => Some(m),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(inner.len(), 1, "one inner expansion per outer binding");
+        assert_eq!(inner[0].var, "gx");
+        assert_eq!(inner[0].bindings.len(), 3);
+    }
+}
+
+/// Expansion runs at resolve time, so it composes with `always` in either
+/// nesting order (cell `m2_27`), and works from a `fact`, a `pred` body, and a
+/// `pred` with ordinary parameters — the last being the hc7/einstein corpus
+/// shape (cells `m2_46`, `m2_47`, `m2_48`).
+#[test]
+fn expansion_in_every_body_position_m2_27_46_47_48() {
+    assert_eq!(
+        expansion(&m2("always all fx: V$.subfields | some fx.value")).atoms,
+        ["V$f", "V$g", "W$h"]
+    );
+    for src in [
+        format!("{M2_BASE}fact {{ all fx: V$.subfields | some fx.value }}\nrun {{}} for 3\n"),
+        format!(
+            "{M2_BASE}pred allNonEmpty {{ all fx: V$.subfields | some fx.value }}\n\
+             run {{ allNonEmpty }} for 3\n"
+        ),
+        format!(
+            "{M2_BASE}pred sameAll[v1, v2: V] \
+             {{ all fx: V$.subfields | v1.(fx.value) = v2.(fx.value) }}\n\
+             run {{ all disj a, b: V | not sameAll[a, b] }} for 3\n"
+        ),
+    ] {
+        let x = expansion(&src);
+        assert_eq!(x.atoms, ["V$f", "V$g", "W$h"], "{src}");
+    }
+}
+
+/// The empty fold, and the only way to reach it: a model with sigs but no
+/// fields, quantified over `field$` itself. `all` folds to `true` (SAT), `some`
+/// to `false` (UNSAT), a comprehension to the empty set (`#… = 0` SAT) — cells
+/// `m2_33`, `m2_34`, `m2_35`.
+///
+/// The memo's guess (`all f: Z$.subfields | …` on a fieldless sig) does **not**
+/// reach it: `Z$.subfields` types `{Z$ -> univ}`, so the join is `univ`, which is
+/// not a meta subtype and never enters the guard (P0 SURPRISE 4, and see
+/// [`empty_subfields_is_not_an_empty_fold_m2_12`]).
+#[test]
+fn empty_fold_m2_33_34_35() {
+    for (body, fold) in [
+        ("all fx: field$ | some fx", MetaFold::All),
+        ("some fx: field$ | some fx", MetaFold::Some),
+        ("#{ fx: field$ | some fx } = 0", MetaFold::Comprehension),
+    ] {
+        let x = expansion(&format!("sig A {{}}\nrun {{ {body} }} for 3\n"));
+        assert_eq!(x.fold, fold, "{body}");
+        assert!(x.atoms.is_empty(), "{body}: {x:?}");
+    }
+}
+
+/// The payoff: with the variable bound to a concrete singleton, the N-way
+/// ambiguous `value` resolves — differently in each sibling table, to that
+/// atom's own relation. This is what makes `f.value` non-higher-order, and it is
+/// exactly what P3 replays.
+#[test]
+fn value_resolves_per_binding_through_the_bound_variable() {
+    let src = m2("all fx: V$.subfields | some fx.value");
+    let loader = MapLoader::new().with("root.als", &src);
+    let graph = ModuleGraph::load("root.als", &loader).expect("load");
+    let w = resolve(&graph).expect("accept").world;
+    let root = graph.root;
+    let ast = graph.files.file(graph.modules[root].file).ast_ref();
+
+    // Six same-named `value` relations exist; nothing narrows the bare name.
+    assert_eq!(
+        w.fields.iter().filter(|(_, f)| f.name == "value").count(),
+        6
+    );
+
+    let value_node = ast
+        .exprs
+        .iter()
+        .find(|(_, e)| {
+            matches!(&e.kind, ExprKind::Name(qn)
+                if qn.segments.last().map(|s| s.text.as_str()) == Some("value"))
+        })
+        .map(|(id, _)| id)
+        .expect("the body names `value`");
+
+    let m = ast
+        .exprs
+        .iter()
+        .find_map(|(id, _)| match w.choices.get(root, id) {
+            Some(ExprChoice::Meta(m)) => Some(m),
+            _ => None,
+        })
+        .expect("no expansion recorded");
+    assert_eq!(m.bindings.len(), 3);
+    for b in &m.bindings {
+        match b.choices.get(root, value_node) {
+            Some(ExprChoice::Name(NameChoice::Field { field, .. })) => assert_eq!(
+                w.fields[*field].owner, b.atom,
+                "`value` resolved to {}'s own relation",
+                w.sigs[b.atom].name
+            ),
+            other => panic!("binding {:?}: {other:?}", w.sigs[b.atom].name),
+        }
+        // The outer table records nothing for the body's names — that is the
+        // collision the sibling tables exist to prevent.
+        assert!(w.choices.get(root, value_node).is_none());
+    }
+}
+
+// ---- the shapes that do NOT expand ----
+
+/// `no` / `one` / `lone` are not in the guard's op set, so they stay ordinary
+/// quantifiers. With several same-named `value` relations and no concrete
+/// binding the body is genuinely ambiguous and the jar rejects — cells `m2_04`,
+/// `m2_05`, `m2_06`, `m2_39` (`ErrorType: This name is ambiguous due to multiple
+/// matches: field this/V$f <: value …`). **GROUP B** — mettle accepted all four
+/// under the leniency.
+#[test]
+fn no_one_lone_do_not_expand_m2_04_05_06_39() {
+    for body in [
+        "no fx: V$.subfields | some fx.value",
+        "one fx: V$.subfields | some fx.value",
+        "lone fx: V$.subfields | some fx.value",
+        "no fx: one V$.subfields | some fx.value",
+    ] {
+        let e = reject(&m2(body));
+        assert!(
+            matches!(e, als_types::ResolveError::AmbiguousName { .. }),
+            "{body}: {e:?}"
+        );
+        assert!(expansions_of_accepting_shape(body).is_none(), "{body}");
+    }
+}
+
+/// …but they are perfectly usable when the body's meta names disambiguate on
+/// their own: a **single-field** model has one `value` candidate after
+/// narrowing, and `no`/`one` over the meta atoms then accept and solve (cells
+/// `m2_28`, `m2_29`, both SAT). This is the half of SURPRISE 2 that shows the
+/// rejects above are ambiguity, not the guard.
+#[test]
+fn no_and_one_accept_when_the_body_disambiguates_m2_28_29() {
+    for body in [
+        "no fx: A$.subfields | some fx.value",
+        "one fx: A$.subfields | some fx.value",
+    ] {
+        let src = format!("sig A {{ r: lone A }}\nrun {{ {body} }} for 3\n");
+        assert!(
+            expansions(&src).is_empty(),
+            "{body} is an ordinary quantifier"
+        );
+    }
+}
+
+/// Two names in one decl and two decls both fail `d.names.size() == 1` /
+/// `x.decls.size() == 1`, so they stay ordinary quantifiers — and accept, since
+/// their bodies never touch a meta relation name (cells `m2_07`, `m2_08`, both
+/// UNSAT). The one-decl/two-decl boundary, from the accepting side.
+#[test]
+fn two_names_and_two_decls_do_not_expand_m2_07_08() {
+    for body in [
+        "all fx, gx: V$.subfields | fx = gx",
+        "all fx: V$.subfields, gx: V$.subfields | fx = gx",
+    ] {
+        assert!(expansions(&m2(body)).is_empty(), "{body}");
+    }
+}
+
+/// The same boundary from the rejecting side: two names *and* a meta relation
+/// name in the body is the ambiguity again (cell `m2_25`). **GROUP B.**
+#[test]
+fn two_names_with_a_meta_relation_body_rejects_m2_25() {
+    let e = reject(&m2("all fx, gx: V$.subfields | fx.value = gx.value"));
+    assert!(
+        matches!(e, als_types::ResolveError::AmbiguousName { .. }),
+        "{e:?}"
+    );
+}
+
+/// A `some`/`set` multiplicity bound fails `isOneOf`, so it does not expand —
+/// and it is **not** a resolve error either. The reference accepts it and fails
+/// at translation with "requires higher-order quantification that could not be
+/// skolemized", which mettle already produces downstream (cells `m2_09`,
+/// `m2_10`, P0 SURPRISE 3).
+#[test]
+fn some_and_set_bounds_stay_analysis_time_errors_m2_09_10() {
+    for body in [
+        "all fx: some V$.subfields | some fx",
+        "all fx: set V$.subfields | some fx",
+    ] {
+        assert!(expansions(&m2(body)).is_empty(), "{body}");
+    }
+}
+
+/// A bound whose type is not a meta subtype does not expand, even when part of
+/// it is (cell `m2_20`, SAT).
+#[test]
+fn non_meta_bound_does_not_expand_m2_20() {
+    assert!(expansions(&m2("all fx: V$.subfields + V | some fx")).is_empty());
+}
+
+/// `Z$.subfields` is an empty definition typed `{Z$ -> univ}`, so the join is
+/// `univ` — not a meta subtype, so the guard never fires and the body's `value`
+/// is ambiguous over all **six** relations (cells `m2_12`, `m2_13`, `m2_14`).
+/// **GROUP B**, and the correction to the memo's assumed empty-fold route.
+#[test]
+fn empty_subfields_is_not_an_empty_fold_m2_12() {
+    for body in [
+        "all fx: Z$.subfields | some fx.value",
+        "some fx: Z$.subfields | some fx.value",
+        "#{ fx: Z$.subfields | some fx.value } = 0",
+    ] {
+        let e = reject(&m2(body));
+        match &e {
+            als_types::ResolveError::AmbiguousName { candidates, .. } => {
+                assert_eq!(candidates.len(), 6, "{body}: {candidates:?}");
+            }
+            other => panic!("{body}: {other:?}"),
+        }
+    }
+}
+
+/// Meta names are **body-only**: phase 8 runs after every declaration phase, so
+/// a meta name in a field bound, a func return type or a pred parameter resolves
+/// against a world that does not contain it yet (cells `m2_44`, `m2_45`,
+/// `m2_36` — the reference's own `ErrorSyntax: The name "field$" cannot be
+/// found`). **GROUP B**, and the reason expansion never crosses a `pred`
+/// boundary.
+#[test]
+fn meta_names_are_body_only_m2_36_44_45() {
+    for src in [
+        "sig A { m: lone field$ }\nrun { some A$ } for 3\n",
+        "sig A {}\nfun q: sig$ { A$ }\nrun { some q } for 3\n",
+        "sig A {}\npred p[x: field$] { some x }\nrun { some A$ } for 3\n",
+    ] {
+        let e = reject(src);
+        assert!(
+            matches!(e, als_types::ResolveError::UnknownName { .. }),
+            "{src}: {e:?}"
+        );
+    }
+}
+
+/// Helper for the non-expanding rejects: `None` when `src` does not even
+/// resolve, which is the point being asserted.
+fn expansions_of_accepting_shape(body: &str) -> Option<Vec<Expansion>> {
+    let src = m2(body);
+    let loader = MapLoader::new().with("root.als", &src);
+    let graph = ModuleGraph::load("root.als", &loader).ok()?;
+    resolve(&graph).ok()?;
+    Some(expansions(&src))
 }

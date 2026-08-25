@@ -26,21 +26,20 @@
 //!    `Z$ <: fields`).
 //!
 //! ## What this pass deliberately does *not* do
-//! P1 is synthesis only. The quantifier ground expansion (`all f:
-//! V$.subfields | …` rewritten into a fold of the body re-resolved once per
-//! meta atom) and the retirement of the `Cx::lenient` sites are P2; lowering
-//! the defined meta relations is P3; atom placement and `meta="yes"` in the XML
-//! are P4. Until P2 lands, a body that joins through an *unbound* meta variable
-//! (`f.value` with `f` still ranging over `field$`) is genuinely N-way
-//! ambiguous here, the leniency swallows it, and the lowerer keeps declining
-//! the model with its typed defer — which is the same answer mettle gave
-//! before this pass existed.
+//! This pass is synthesis only. The quantifier ground expansion (`all f:
+//! V$.subfields | …` folded over the meta atoms) lives in `resolve/expr.rs`
+//! (mt-107 P2, [`crate::choice::MetaExpansion`]); lowering the defined meta
+//! relations is P3; atom placement and `meta="yes"` in the XML are P4. Until P3
+//! lands, a model that really uses the metamodel resolves fully and then
+//! declines at lowering with a typed defer — never a wrong answer.
 //!
 //! ## Faithfulness notes worth not re-deriving
 //! - **The gate is mettle's narrowed one** (`Resolver::compute_meta_gate`,
 //!   mt-108), not the reference's bare `seenDollar`. ADR-0024's addendum pins
-//!   that as a decision: a stray `$` must not mint a metamodel, and one genuine
-//!   meta name still leniences the whole model exactly as `seenDollar` does.
+//!   that as a decision: a stray `$` must not mint a metamodel. It is still
+//!   model-wide, exactly as `seenDollar` is — one genuine meta name anywhere in
+//!   the world mints the whole metamodel. What it no longer does is excuse
+//!   anything: mt-107 P2 retired the accept-lean regime it used to switch on.
 //! - **Builtins get no meta sigs.** `resolveMeta` iterates each module's *user*
 //!   sig map, so `Int$` / `String$` / `univ$` / `none$` name nothing and the
 //!   reference rejects them (mt-107 P0 §M5, cells `m5_09a`–`m5_09d`). Nothing here mints
