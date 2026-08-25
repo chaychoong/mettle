@@ -1,5 +1,6 @@
 //! The **backend instrument** seam ([ADR-0019](../../../docs/adr/0019-optional-cadical-backend.md)
-//! stage 1, mt-089) — one lowered command, one CNF, two solvers.
+//! stage 1, mt-089) — one lowered command, one CNF, measured on the way to a
+//! verdict.
 //!
 //! A dev instrument, not a shipped path: nothing here is reachable from
 //! [`solve_goal`](crate::solve_goal) or from the CLI, and its only caller is
@@ -8,20 +9,22 @@
 //! along with the optional backend (ADR-0027); the isolation is now structural
 //! (nothing calls it) rather than conditional compilation.
 //!
-//! The point of the seam is that both backends are handed the **same
-//! `Translated` CNF** — same bounds, same primary
-//! numbering, same symmetry-breaking predicate, same encode budget — so a
-//! verdict difference between them can only be a solver bug or a wiring bug,
-//! never an encoding difference. ADR-0019 §4 makes that the free
-//! oracle-independent check; here it is the stop-the-line rule for the
-//! measurement.
+//! Two entry points, both encoding the goal exactly as the shipped path would:
 //!
-//! [`certify_goal`] is the same seam pointed at a stronger question, and the
-//! one that outlives the cross-backend arm ([ADR-0027](../../../docs/adr/0027-cadical-only-solver.md)
-//! decision 4, mt-123): rather than asking a second solver to agree, it has
-//! CaDiCaL log a **DRAT proof** of its UNSAT verdict, which an external checker
-//! can verify against the DIMACS form of the very CNF that was solved. Two
-//! solvers agreeing is evidence; a checked proof is a proof.
+//! - [`solve_goal_instrumented`] decides one command and reports what it cost —
+//!   CNF size, conflicts, encode and solve milliseconds — which is what turns
+//!   "how much of the defer tail is genuinely hard" into a measurement. It is
+//!   also the only route to a **wall deadline** on a solve, which the shipped
+//!   seam deliberately withholds (a clock must never reach a verdict, STYLE D1:
+//!   exceeding it reports [`InstrumentVerdict::Unknown`], the same non-answer a
+//!   spent conflict budget gives).
+//! - [`certify_goal`] points the same seam at a stronger question
+//!   ([ADR-0027](../../../docs/adr/0027-cadical-only-solver.md) decision 4,
+//!   mt-123): CaDiCaL logs a **DRAT proof** of its UNSAT verdict, which an
+//!   external checker verifies against the DIMACS form of the very CNF that was
+//!   solved. It replaced the cross-backend arm this module opened with — two
+//!   solvers agreeing was evidence, a checked proof is a proof — and it outlived
+//!   it, since mt-124 deleted the second solver (ADR-0027 decision 3).
 
 #![allow(
     clippy::doc_markdown,
@@ -33,7 +36,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use als_solve::{write_dimacs_file, CadicalSolver, CdclSolver, Outcome, ProofTraceError};
+use als_solve::{write_dimacs_file, CadicalSolver, Outcome, ProofTraceError};
 use thiserror::Error;
 
 use crate::bounds_builder::BoundsResult;
@@ -43,39 +46,6 @@ use crate::lower::LoweredGoal;
 use crate::scope::ScopedUniverse;
 use crate::solve::{translate, SolveOptions, Translated};
 
-/// Which SAT backend decides the CNF.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum InstrumentBackend {
-    /// mettle's own CDCL — the conformance yardstick (the default until
-    /// ADR-0027 / mt-121 moved that to the other arm).
-    Cdcl,
-    /// CaDiCaL, via the vendored `cadical` binding (ADR-0019) — the default
-    /// production solver since mt-121.
-    Cadical,
-}
-
-impl InstrumentBackend {
-    /// The artifact spelling, which stays `cdcl` even though the user-facing
-    /// name of the same backend is `mettle`
-    /// ([`Backend::name`](als_solve::Backend::name)): every stage-1 measurement
-    /// artifact and row table already says `cdcl`, and a measurement's
-    /// vocabulary must not drift under the numbers it labels.
-    ///
-    /// The two arms here drive the same solvers `--solver` selects (this module
-    /// constructs them directly instead of through
-    /// [`LiveSolver`](als_solve::LiveSolver) only because it needs two things the
-    /// shipped seam deliberately does not expose: a *conflict* count on its own,
-    /// rather than the three-term effort sum, and CaDiCaL's wall-clock
-    /// termination hook).
-    #[must_use]
-    pub fn name(self) -> &'static str {
-        match self {
-            InstrumentBackend::Cdcl => "cdcl",
-            InstrumentBackend::Cadical => "cadical",
-        }
-    }
-}
-
 /// A backend's answer, with budget-exhaustion kept distinct from a verdict —
 /// the same three-way shape [`SolveVerdict`](crate::SolveVerdict) has.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -84,8 +54,8 @@ pub enum InstrumentVerdict {
     Sat,
     /// No instance within scope.
     Unsat,
-    /// The conflict budget (or, CaDiCaL-only, the wall deadline) ran out —
-    /// not a verdict.
+    /// The conflict budget, or the instrument's wall deadline, ran out — not a
+    /// verdict.
     Unknown,
 }
 
@@ -104,17 +74,20 @@ impl InstrumentVerdict {
 /// One instrumented solve: the verdict plus the measurements a per-row table
 /// needs.
 ///
-/// `conflicts_used` is `Some` on **both** backends as of mt-121: the vendored
-/// binding exposes CaDiCaL's own conflict counter, so "where did the budget go"
-/// is a measurement on either arm rather than the blank ADR-0019 had to record.
+/// `conflicts_used` is `Some` since mt-121: the vendored binding exposes
+/// CaDiCaL's own conflict counter, so "where did the budget go" is a
+/// measurement rather than the blank ADR-0019 had to record. It stays an
+/// `Option` because a future backend without counters would land there
+/// ([`Backend::reports_effort`](als_solve::Backend::reports_effort)), reported
+/// as absent rather than as a fake zero.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct InstrumentOutcome {
-    /// The backend's answer.
+    /// The solver's answer.
     pub verdict: InstrumentVerdict,
-    /// CNF size — identical across backends for the same row, and the check
-    /// that they really did see the same encoding.
+    /// CNF size — a property of the encoding, so it is also the check that a
+    /// re-run of this row really did see the same problem.
     pub num_vars: u32,
-    /// Clause count of the shared CNF.
+    /// Clause count of the same CNF.
     pub num_clauses: usize,
     /// Conflicts analyzed, when the backend exposes the counter.
     pub conflicts_used: Option<u64>,
@@ -122,33 +95,31 @@ pub struct InstrumentOutcome {
     pub encode_ms: u128,
     /// Wall milliseconds spent inside the solver.
     pub solve_ms: u128,
-    /// The [`self_check`](crate::self_check) failure for a SAT answer, if any
-    /// — a nonempty value is a mettle bug regardless of which backend found
-    /// the instance.
+    /// The [`self_check`](crate::self_check) failure for a SAT answer, if any —
+    /// a nonempty value is a mettle bug, always.
     pub self_check_fail: Option<String>,
 }
 
 /// Encodes one lowered command exactly as [`solve_goal`](crate::solve_goal)
-/// would, then decides it with `backend`.
+/// would, then decides it and reports what that cost.
 ///
-/// `wall_secs` is a per-solve deadline honored by the **CaDiCaL** backend only
-/// (via its termination callback); the own CDCL has no wall hook, so a `Cdcl`
-/// run must be bounded by its conflict budget and, if a hard cap is needed, by
-/// the caller's own process timeout. Wall time never enters a verdict —
-/// exceeding it reports [`InstrumentVerdict::Unknown`], the same
-/// non-answer a spent conflict budget gives (STYLE D1).
+/// `wall_secs` is a per-solve deadline, delivered through CaDiCaL's termination
+/// callback. It exists here and nowhere on the shipped path on purpose: wall
+/// time never enters a verdict (STYLE D1/D4), so exceeding it reports
+/// [`InstrumentVerdict::Unknown`] — the same non-answer a spent conflict budget
+/// gives — and a run that needs a hard ceiling still wants the conflict budget
+/// as well.
 ///
 /// # Errors
 /// The same typed errors as [`solve_goal`](crate::solve_goal): a construct
 /// outside the encoder slice, or [`TranslateError::CapacityExceeded`] when the
 /// encode budget is outgrown.
-pub fn solve_goal_with_backend(
+pub fn solve_goal_instrumented(
     ir: &Ir,
     scoped: &ScopedUniverse,
     goal: &LoweredGoal,
     bounds: &BoundsResult,
     opts: &SolveOptions,
-    backend: InstrumentBackend,
     wall_secs: Option<f32>,
 ) -> Result<InstrumentOutcome, TranslateError> {
     let encode_started = Instant::now();
@@ -161,111 +132,16 @@ pub fn solve_goal_with_backend(
             scoped,
             goal,
             opts,
-            backend,
             wall_secs,
             encode_ms,
         },
     ))
 }
 
-/// How the two backends' answers on **one** encoding relate — the
-/// oracle-independent check ADR-0019 §4 buys.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum CrossAgreement {
-    /// Both backends reached the same verdict. (Nothing is proven about the
-    /// *instance* each found — only verdicts are backend-independent truths.)
-    Agree,
-    /// The two backends disagree on SAT vs UNSAT. **A bug, always**: they were
-    /// handed the identical CNF, so no legitimate cause exists. Stop the line.
-    Disagree,
-    /// At least one backend ran out of budget, so there is nothing to compare.
-    Incomparable,
-}
-
-impl CrossAgreement {
-    /// The artifact spelling (upper-case for the one that must never appear, so
-    /// it cannot be skimmed past in a table).
-    #[must_use]
-    pub fn name(self) -> &'static str {
-        match self {
-            CrossAgreement::Agree => "agree",
-            CrossAgreement::Disagree => "DISAGREE",
-            CrossAgreement::Incomparable => "incomparable",
-        }
-    }
-}
-
-/// Both backends' answers to one encoding, plus their verdict relation.
-///
-/// The two arms carry the **same** `num_vars`/`num_clauses`/`encode_ms`: there
-/// was one translate, so the encoding numbers are one measurement reported
-/// twice. `solve_ms` and `conflicts_used` are per-arm.
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct CrossOutcome {
-    /// The own CDCL's answer.
-    pub cdcl: InstrumentOutcome,
-    /// CaDiCaL's answer.
-    pub cadical: InstrumentOutcome,
-    /// How the two verdicts relate.
-    pub agreement: CrossAgreement,
-}
-
-/// Encodes one lowered command **once** and decides that single CNF with *both*
-/// backends, reporting whether their verdicts agree.
-///
-/// This is ADR-0019 §4's free oracle-independent check, and the reason it is
-/// worth having is on the record: it is what caught the mt-090 latent wrong
-/// verdict, with no jar and no baseline involved. Translating once (rather than
-/// once per backend) is the point — "same bounds, same numbering, same SBP, same
-/// budget" is then true by construction instead of by re-derivation, so a
-/// difference can only be a solver or wiring bug.
-///
-/// `wall_secs` binds the CaDiCaL arm only (it is the only backend with a
-/// termination hook); the own arm is bounded by
-/// [`SolveOptions::conflict_budget`] and the caller's process timeout.
-///
-/// # Errors
-/// As [`solve_goal_with_backend`].
-pub fn cross_check_goal(
-    ir: &Ir,
-    scoped: &ScopedUniverse,
-    goal: &LoweredGoal,
-    bounds: &BoundsResult,
-    opts: &SolveOptions,
-    wall_secs: Option<f32>,
-) -> Result<CrossOutcome, TranslateError> {
-    let encode_started = Instant::now();
-    let t = translate(ir, scoped, goal, bounds, None, *opts)?;
-    let encode_ms = encode_started.elapsed().as_millis();
-    let arm = |backend| Decide {
-        ir,
-        scoped,
-        goal,
-        opts,
-        backend,
-        wall_secs,
-        encode_ms,
-    };
-    let cdcl = decide(&t, arm(InstrumentBackend::Cdcl));
-    let cadical = decide(&t, arm(InstrumentBackend::Cadical));
-    let agreement = match (cdcl.verdict, cadical.verdict) {
-        (InstrumentVerdict::Unknown, _) | (_, InstrumentVerdict::Unknown) => {
-            CrossAgreement::Incomparable
-        }
-        (a, b) if a == b => CrossAgreement::Agree,
-        _ => CrossAgreement::Disagree,
-    };
-    Ok(CrossOutcome {
-        cdcl,
-        cadical,
-        agreement,
-    })
-}
-
 /// What one certified solve measured, whatever verdict it reached.
 ///
-/// The same numbers [`InstrumentOutcome`] carries, minus the fields that have
-/// no meaning here: certification has one backend (only CaDiCaL logs proofs),
+/// The same numbers [`InstrumentOutcome`] carries, minus the ones with no
+/// meaning here: a certified solve is never budget-blind about its conflicts,
 /// and it never self-checks a model because the answer it is about is UNSAT.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct CertifyMeasurements {
@@ -367,14 +243,12 @@ pub enum CertifyError {
 ///
 /// The pair of files is the whole product: a DRAT proof is meaningless without
 /// the formula it refutes, and it refutes *this* CNF in *this* numbering, which
-/// is why the same `Translated` feeds both the file and the solver (the same
-/// "one translate" discipline [`cross_check_goal`] rests on).
+/// is why the same `Translated` feeds both the file and the solver.
 ///
 /// **Static goals only.** `unrolled` is `None`, so a temporal command — whose
 /// pipeline is a per-length sweep rather than one translate — must be screened
-/// out by the caller *before* it gets here, exactly as the cross-backend arm
-/// screens it. Certifying "some length" would certify a formula no verdict was
-/// ever read from.
+/// out by the caller *before* it gets here. Certifying "some length" would
+/// certify a formula no verdict was ever read from.
 ///
 /// What a verified proof does and does not claim is worth stating plainly: it
 /// establishes that **this CNF is unsatisfiable**, nothing more. That the CNF is
@@ -441,29 +315,27 @@ pub fn certify_goal(
     })
 }
 
-/// Everything [`decide`] needs besides the encoded CNF — bundled so the two
-/// entry points above build it once and the arms cannot drift apart.
+/// Everything [`decide`] needs besides the encoded CNF — bundled so a caller
+/// builds it once and cannot pass the pieces in inconsistently.
 #[derive(Copy, Clone)]
 struct Decide<'a> {
     ir: &'a Ir,
     scoped: &'a ScopedUniverse,
     goal: &'a LoweredGoal,
     opts: &'a SolveOptions,
-    backend: InstrumentBackend,
     wall_secs: Option<f32>,
     encode_ms: u128,
 }
 
-/// Decides one already-encoded CNF with one backend, self-checking any SAT
-/// answer. The CNF is borrowed, never re-derived: that is what lets
-/// [`cross_check_goal`] hand both backends provably the same problem.
+/// Decides one already-encoded CNF, self-checking any SAT answer. The CNF is
+/// borrowed rather than re-derived, so the measurement is about the encoding the
+/// caller built and not a second one that merely ought to match it.
 fn decide(t: &Translated, cx: Decide<'_>) -> InstrumentOutcome {
     let Decide {
         ir,
         scoped,
         goal,
         opts,
-        backend,
         wall_secs,
         encode_ms,
     } = cx;
@@ -482,31 +354,25 @@ fn decide(t: &Translated, cx: Decide<'_>) -> InstrumentOutcome {
         return out;
     }
 
+    // Constructed here rather than through `LiveSolver` because this module
+    // needs two things the shipped seam deliberately does not expose: a
+    // *conflict* count on its own, rather than the three-term effort sum, and
+    // CaDiCaL's wall-clock termination hook.
     let solve_started = Instant::now();
-    let (answer, conflicts_used) = match backend {
-        InstrumentBackend::Cdcl => {
-            let mut solver = CdclSolver::new(&t.cnf);
-            let answer = solver.solve_within(budget);
-            (answer, Some(solver.total_conflicts()))
-        }
-        InstrumentBackend::Cadical => {
-            let mut solver = CadicalSolver::new(&t.cnf);
-            solver.set_wall_limit(wall_secs);
-            let answer = solver.solve_within(budget);
-            (answer, Some(solver.total_conflicts()))
-        }
-    };
+    let mut solver = CadicalSolver::new(&t.cnf);
+    solver.set_wall_limit(wall_secs);
+    let answer = solver.solve_within(budget);
     out.solve_ms = solve_started.elapsed().as_millis();
-    out.conflicts_used = conflicts_used;
+    out.conflicts_used = Some(solver.total_conflicts());
 
     out.verdict = match answer {
         None => InstrumentVerdict::Unknown,
         Some(Outcome::Unsat) => InstrumentVerdict::Unsat,
         Some(Outcome::Sat(model)) => {
             // Every SAT answer is re-evaluated against the whole goal, in any
-            // build: a cross-backend instrument is only as trustworthy as its
-            // weakest model decode, and this is the one check that catches a
-            // mis-decoded CaDiCaL model before it becomes a "verdict".
+            // build: an instrument is only as trustworthy as its model decode,
+            // and this is the one check that catches a mis-decoded model before
+            // it becomes a "verdict".
             let inst = crate::solve::decode(&t.layout, &t.universe, &model);
             out.self_check_fail = crate::eval::self_check(ir, scoped, goal, &inst, opts, &t.bounds)
                 .err()

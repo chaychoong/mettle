@@ -1,44 +1,42 @@
 //! `backend-instrument` — the ADR-0019 stage-1 instrument (mt-089).
 //!
 //! Runs a **named worklist of commands** through mettle's ordinary pipeline
-//! (resolve → universe → bounds → lower → translate) and decides each one with
-//! a chosen SAT backend, so "how much of the `over_budget` tail is genuinely
-//! hard vs. our own solver being weak" becomes a measurement instead of a
-//! guess. Not shipped product: `dist = false` like every other bin in this
-//! crate. It was also feature-gated until mt-121 (ADR-0027 retired the
-//! `cadical-instrument` feature with the optional backend), so it now builds
-//! with the workspace.
+//! (resolve → universe → bounds → lower → translate) and measures what deciding
+//! each one costs, so "how much of the `over_budget` tail is genuinely hard"
+//! becomes a measurement instead of a guess. Not shipped product: `dist = false`
+//! like every other bin in this crate. It was also feature-gated until mt-121
+//! (ADR-0027 retired the `cadical-instrument` feature with the optional
+//! backend), so it now builds with the workspace.
 //!
 //! ```text
-//! backend-instrument --rows worklist.txt --backend cadical \
+//! backend-instrument --rows worklist.txt \
 //!     --conflicts 100000 --encode 64000000 --wall 600 --jobs 8 --out rows.json
-//! backend-instrument --rows worklist.txt --cross --conflicts 100000 --jobs 8
 //! backend-instrument --rows - --certify --jobs 8 --out certified.json
 //! ```
 //!
+//! Two arms. The **measurement arm** (the default) solves each row under a
+//! conflict budget and an optional `--wall` deadline — the one place a
+//! wall-clock limit exists at all, and it can only produce a non-verdict, never
+//! a verdict (STYLE D1/D4) — and reports CNF size, conflicts spent, and the time
+//! each phase took, bucketed exactly as the solve gauge buckets it.
+//!
 //! `--certify` is the **proof-certification arm**
 //! ([ADR-0027](../../../docs/adr/0027-cadical-only-solver.md) decision 4,
-//! mt-123) and the one that outlives this bin's other arms: each row is encoded,
-//! written out as DIMACS, and solved by CaDiCaL logging a **DRAT proof**, which
-//! an external checker then verifies against that exact CNF. A proof that does
-//! not check is stop-the-line — the run exits nonzero and keeps the artifacts.
-//! What it certifies is precise: *this CNF is unsatisfiable*. Whether the CNF is
-//! the right encoding of the Alloy command is still the self-check's and the
-//! jar's job, and no proof can speak to it.
+//! mt-123): each row is encoded, written out as DIMACS, and solved by CaDiCaL
+//! logging a **DRAT proof**, which an external checker then verifies against
+//! that exact CNF. A proof that does not check is stop-the-line — the run exits
+//! nonzero and keeps the artifacts. What it certifies is precise: *this CNF is
+//! unsatisfiable*. Whether the CNF is the right encoding of the Alloy command is
+//! still the self-check's and the jar's job, and no proof can speak to it. It
+//! replaced a cross-backend arm that ran every row on two solvers and failed on
+//! any verdict difference — the check that caught the mt-090 latent wrong
+//! verdict — which mt-124 deleted with the second solver.
 //!
-//! `--cross` is the **cross-backend arm** (ADR-0019 §4, mt-089 stage 2): every
-//! row is encoded once and decided by *both* backends, and any verdict
-//! difference fails the run. That check needs no jar, no baseline and no
-//! reference of any kind — the two solvers are each other's oracle — and it is
-//! what caught the mt-090 latent wrong verdict on its first outing. It is now
-//! the **retired** arm: ADR-0027 replaces "a second solver agrees" with "a
-//! checker verified the proof", and mt-124 deletes both it and the own CDCL it
-//! needs. Until then it still runs.
-//!
-//! Neither arm certifies a **temporal** command: the temporal pipeline is a
+//! Neither arm handles a **temporal** command: the temporal pipeline is a
 //! per-length sweep rather than one translate, so there is no single CNF a
-//! single proof could refute. Those rows are screened out and reported as
-//! `temporal_out_of_scope` — typed, never silently mismeasured.
+//! single proof could refute, and no single solve to measure. Those rows are
+//! screened out and reported as `temporal_out_of_scope` — typed, never silently
+//! mismeasured.
 //!
 //! Three certify outcomes are visible in the report but are *not* failures, and
 //! the distinction is deliberate. A `sat` row means the worklist named something
@@ -75,8 +73,8 @@ use std::time::Duration;
 use als_conform::drat_check::{self, CheckerStatus};
 use als_conform::solve_gauge::baseline::{load_baselines, Baseline, JarVerdict};
 use als_core::instrument::{
-    certify_goal, cross_check_goal, solve_goal_with_backend, CertifyError, CertifyOutcome,
-    CrossAgreement, InstrumentBackend, InstrumentOutcome, InstrumentVerdict,
+    certify_goal, solve_goal_instrumented, CertifyError, CertifyOutcome, InstrumentOutcome,
+    InstrumentVerdict,
 };
 use als_core::ir::Ir;
 use als_core::{compute_bounds, compute_universe, lower_command, SolveOptions, TranslateError};
@@ -85,22 +83,15 @@ use als_types::{is_temporal_model, FilesystemLoader, ModuleGraph};
 /// Everything one run needs, parsed from `argv`.
 #[allow(
     clippy::struct_excessive_bools,
-    reason = "these are CLI flags parsed one-for-one, not a state machine: `cross` and \
-              `certify` select the arm (mutual exclusion is enforced in parse_args, and \
-              mt-124 removes `cross` outright), while `allow_overflow` and \
-              `keep_artifacts` are independent knobs. Folding them into an enum would \
-              rename the flags in the code without making any state unrepresentable"
+    reason = "these are CLI flags parsed one-for-one, not a state machine: `certify` \
+              selects the arm, while `allow_overflow` and `keep_artifacts` are \
+              independent knobs. Folding them into an enum would rename the flags in \
+              the code without making any state unrepresentable"
 )]
 struct Config {
     rows: Vec<(String, usize)>,
-    backend: InstrumentBackend,
-    /// `--cross`: decide each row with BOTH backends and fail on any verdict
-    /// difference. Supersedes `--backend` for what runs (both do), and reports
-    /// the own CDCL as the row's headline verdict — it is the yardstick.
-    cross: bool,
     /// `--certify`: log a DRAT proof for each UNSAT verdict and have an external
-    /// checker verify it. Mutually exclusive with the other two arms — it always
-    /// runs CaDiCaL, the only backend that logs proofs.
+    /// checker verify it, instead of only measuring the solve.
     certify: bool,
     /// The external DRAT checker (`--checker`), default
     /// `tools/drat-trim/drat-trim` under `--root`.
@@ -148,17 +139,8 @@ struct Row {
     agreement: &'static str,
     outcome: Option<InstrumentOutcome>,
     secs: f64,
-    /// `--cross` only: the *other* backend's answer and how the two relate.
-    cross: Option<CrossArm>,
     /// `--certify` only: what became of this row's certificate.
     certify: Option<CertifyArm>,
-}
-
-/// The second arm of a `--cross` row.
-struct CrossArm {
-    verdict: InstrumentVerdict,
-    outcome: InstrumentOutcome,
-    agreement: CrossAgreement,
 }
 
 /// The certification arm of a `--certify` row. The row's `bucket` carries the
@@ -227,29 +209,20 @@ fn main() {
         // when a row did not.
         let _ = std::fs::remove_dir(&cfg.work_dir);
     }
-    // Three findings are bugs rather than measurements, and the exit code says
-    // so (a CI job or a shell `&&` must be able to tell): a cross-backend
-    // verdict difference on one identical CNF, a SAT answer that fails its own
-    // self-check, and a DRAT proof the checker would not verify. Everything
-    // else — defers, over-budget rows, jar disagreements, checker deadlines —
-    // is data this tool exists to collect, so it exits 0.
-    let disagree = rows
-        .iter()
-        .filter(|r| {
-            r.cross
-                .as_ref()
-                .is_some_and(|c| c.agreement == CrossAgreement::Disagree)
-        })
-        .count();
+    // Two findings are bugs rather than measurements, and the exit code says so
+    // (a CI job or a shell `&&` must be able to tell): a SAT answer that fails
+    // its own self-check, and a DRAT proof the checker would not verify.
+    // Everything else — defers, over-budget rows, jar disagreements, checker
+    // deadlines — is data this tool exists to collect, so it exits 0.
     let self_check = rows.iter().filter(|r| row_self_check_failed(r)).count();
     let uncertified = rows
         .iter()
         .filter(|r| r.certify.as_ref().is_some_and(|c| c.fatal))
         .count();
-    if disagree + self_check + uncertified > 0 {
+    if self_check + uncertified > 0 {
         eprintln!(
-            "backend-instrument: FAILED — {disagree} cross-backend verdict difference(s), \
-             {self_check} self-check failure(s), {uncertified} uncertified proof(s)"
+            "backend-instrument: FAILED — {self_check} self-check failure(s), \
+             {uncertified} uncertified proof(s)"
         );
         if uncertified > 0 && !cfg.keep_artifacts {
             eprintln!(
@@ -261,11 +234,12 @@ fn main() {
     }
 }
 
-/// Whether either arm of a row reported a self-check failure — a mettle bug
-/// whichever backend found the instance.
+/// Whether a row's SAT answer failed to re-evaluate against its own goal — a
+/// mettle bug, always.
 fn row_self_check_failed(row: &Row) -> bool {
-    let failed = |o: Option<&InstrumentOutcome>| o.is_some_and(|o| o.self_check_fail.is_some());
-    failed(row.outcome.as_ref()) || failed(row.cross.as_ref().map(|c| &c.outcome))
+    row.outcome
+        .as_ref()
+        .is_some_and(|o| o.self_check_fail.is_some())
 }
 
 /// Parses `argv`; every flag is required to be well-formed (a typo in a budget
@@ -273,8 +247,6 @@ fn row_self_check_failed(row: &Row) -> bool {
 #[allow(clippy::too_many_lines, reason = "flat flag parsing, one arm per flag")]
 fn parse_args() -> Result<Config, String> {
     let mut rows_path: Option<PathBuf> = None;
-    let mut backend: Option<InstrumentBackend> = None;
-    let mut cross = false;
     let mut certify = false;
     // `None` until a flag says otherwise: the budget defaults differ per arm
     // (the certify arm reproduces the *gauge's* run, not this bin's older
@@ -301,13 +273,6 @@ fn parse_args() -> Result<Config, String> {
         let mut value = || args.next().ok_or_else(|| format!("{arg} needs a value"));
         match arg.as_str() {
             "--rows" => rows_path = Some(PathBuf::from(value()?)),
-            "--backend" => {
-                backend = Some(match value()?.as_str() {
-                    "cdcl" => InstrumentBackend::Cdcl,
-                    "cadical" => InstrumentBackend::Cadical,
-                    other => return Err(format!("unknown backend {other:?}")),
-                });
-            }
             "--conflicts" => {
                 conflicts = Some(value()?.parse().map_err(|_| "--conflicts: not a number")?);
             }
@@ -320,7 +285,6 @@ fn parse_args() -> Result<Config, String> {
             "--symmetry" => {
                 symmetry = Some(value()?.parse().map_err(|_| "--symmetry: not a number")?);
             }
-            "--cross" => cross = true,
             "--certify" => certify = true,
             "--checker" => checker = Some(PathBuf::from(value()?)),
             "--checker-timeout" => {
@@ -343,18 +307,9 @@ fn parse_args() -> Result<Config, String> {
             other => return Err(format!("unknown flag {other:?}")),
         }
     }
-    // The three arms answer different questions and a run has to be one of
-    // them: refusing the combination beats silently letting one win, which is
-    // how a report ends up labelled as something it did not measure.
-    if certify && cross {
-        return Err("--certify and --cross are different instruments — pick one".to_owned());
-    }
-    if certify && backend.is_some() {
-        return Err(
-            "--certify always runs CaDiCaL, the only backend that logs proofs — drop --backend"
-                .to_owned(),
-        );
-    }
+    // The two arms answer different questions: refusing a flag that belongs to
+    // the other one beats silently ignoring it, which is how a report ends up
+    // labelled as something it did not measure.
     if certify && wall_given {
         return Err(
             "--certify has no solver wall limit — the conflict budget bounds the solve and \
@@ -394,8 +349,6 @@ fn parse_args() -> Result<Config, String> {
     });
     Ok(Config {
         rows,
-        backend: backend.unwrap_or(InstrumentBackend::Cadical),
-        cross,
         certify,
         checker,
         checker_timeout: Duration::from_secs(checker_timeout),
@@ -494,7 +447,6 @@ fn measure_row(
         agreement: agreement(verdict, jar),
         outcome,
         secs: started.elapsed().as_secs_f64(),
-        cross: None,
         certify: None,
     };
 
@@ -544,36 +496,7 @@ fn measure_row(
         row.certify = Some(certified.arm);
         return row;
     }
-    if cfg.cross {
-        return match cross_check_goal(&ir, &scoped, &goal, &bounds, &opts, cfg.wall_secs) {
-            Ok(cross) => {
-                let mut row = finish(
-                    &bucket_of(cross.cdcl.verdict),
-                    Some(cross.cdcl.verdict),
-                    Some(cross.cdcl),
-                );
-                row.cross = Some(CrossArm {
-                    verdict: cross.cadical.verdict,
-                    outcome: cross.cadical,
-                    agreement: cross.agreement,
-                });
-                row
-            }
-            Err(TranslateError::CapacityExceeded { .. }) => {
-                finish("mettle_defer:capacity", None, None)
-            }
-            Err(_) => finish("mettle_defer:encode", None, None),
-        };
-    }
-    match solve_goal_with_backend(
-        &ir,
-        &scoped,
-        &goal,
-        &bounds,
-        &opts,
-        cfg.backend,
-        cfg.wall_secs,
-    ) {
+    match solve_goal_instrumented(&ir, &scoped, &goal, &bounds, &opts, cfg.wall_secs) {
         Ok(outcome) => finish(
             &bucket_of(outcome.verdict),
             Some(outcome.verdict),
@@ -822,20 +745,15 @@ fn print_table(cfg: &Config, rows: &[Row]) {
     } else {
         println!(
             "backend={} conflicts={} encode={} wall={:?} rows={}",
-            if cfg.cross {
-                "cross(cdcl+cadical)"
-            } else {
-                cfg.backend.name()
-            },
+            als_core::Backend::default().name(),
             cfg.conflicts,
             cfg.encode,
             cfg.wall_secs,
             rows.len()
         );
     }
-    // Each arm adds the two columns that are the point of running it: the
-    // second backend's verdict and their agreement for `--cross`, the size of
-    // the certificate and the time to check it for `--certify`.
+    // The certify arm adds the two columns that are the point of running it: the
+    // size of the certificate and the time the checker took over it.
     println!(
         "{:<72} {:<26} {:<10} {:>9} {:>12} {:>12} {:>10}{}",
         "row",
@@ -845,9 +763,7 @@ fn print_table(cfg: &Config, rows: &[Row]) {
         "vars",
         "clauses",
         "conflicts",
-        if cfg.cross {
-            format!(" {:<10} {:<13}", "cadical", "cross")
-        } else if cfg.certify {
+        if cfg.certify {
             format!(" {:>10} {:>9}", "proof_kb", "check_ms")
         } else {
             String::new()
@@ -856,7 +772,7 @@ fn print_table(cfg: &Config, rows: &[Row]) {
     for row in rows {
         let outcome = row.outcome.as_ref();
         println!(
-            "{:<72} {:<26} {:<10} {:>9.1} {:>12} {:>12} {:>10}{}{}",
+            "{:<72} {:<26} {:<10} {:>9.1} {:>12} {:>12} {:>10}{}",
             row.key,
             row.bucket,
             match row.jar {
@@ -871,11 +787,6 @@ fn print_table(cfg: &Config, rows: &[Row]) {
             outcome
                 .and_then(|o| o.conflicts_used)
                 .map_or_else(|| "-".to_owned(), |c| c.to_string()),
-            row.cross.as_ref().map_or_else(String::new, |c| format!(
-                " {:<10} {:<13}",
-                c.verdict.name(),
-                c.agreement.name()
-            )),
             row.certify.as_ref().map_or_else(String::new, |c| format!(
                 " {:>10} {:>9}",
                 c.proof_bytes / 1024,
@@ -887,8 +798,8 @@ fn print_table(cfg: &Config, rows: &[Row]) {
 }
 
 /// The run's bottom line: what got answered, and the findings that are bugs
-/// rather than data (jar disagreement, self-check failure, cross-backend split,
-/// and — in the certify arm — a proof that would not check).
+/// rather than data (jar disagreement, self-check failure, and — in the certify
+/// arm — a proof that would not check).
 fn print_summary(cfg: &Config, rows: &[Row]) {
     let answered = rows.iter().filter(|r| r.verdict.is_some()).count();
     let stuck = rows
@@ -905,15 +816,6 @@ fn print_summary(cfg: &Config, rows: &[Row]) {
         .filter(|r| row_self_check_failed(r))
         .map(|r| r.key.as_str())
         .collect();
-    let cross_disagree: Vec<&str> = rows
-        .iter()
-        .filter(|r| {
-            r.cross
-                .as_ref()
-                .is_some_and(|c| c.agreement == CrossAgreement::Disagree)
-        })
-        .map(|r| r.key.as_str())
-        .collect();
     println!(
         "\nanswered {} / {} (still stuck {stuck}) · DISAGREE {} · self-check failures {}",
         answered - stuck,
@@ -926,25 +828,6 @@ fn print_summary(cfg: &Config, rows: &[Row]) {
     }
     for key in self_check {
         println!("  SELF-CHECK FAIL: {key}");
-    }
-    if cfg.cross {
-        let comparable = rows
-            .iter()
-            .filter(|r| {
-                r.cross
-                    .as_ref()
-                    .is_some_and(|c| c.agreement != CrossAgreement::Incomparable)
-            })
-            .count();
-        println!(
-            "cross-backend: {} of {} rows comparable · {} CROSS-DISAGREE",
-            comparable,
-            rows.len(),
-            cross_disagree.len()
-        );
-        for key in cross_disagree {
-            println!("  CROSS-DISAGREE: {key}");
-        }
     }
     if cfg.certify {
         print_certify_summary(rows);
@@ -1007,10 +890,10 @@ fn write_json(path: &Path, cfg: &Config, rows: &[Row]) -> std::io::Result<()> {
     let _ = writeln!(
         s,
         "  \"backend\": \"{}\",",
-        match (cfg.cross, cfg.certify) {
-            (true, _) => "cross",
-            (_, true) => "certify",
-            _ => cfg.backend.name(),
+        if cfg.certify {
+            "certify"
+        } else {
+            als_core::Backend::default().name()
         }
     );
     let _ = writeln!(s, "  \"conflicts\": {},", cfg.conflicts);
@@ -1065,12 +948,7 @@ fn write_json(path: &Path, cfg: &Config, rows: &[Row]) -> std::io::Result<()> {
                     || "null".to_owned(),
                     |f| format!("\"{}\"", f.escape_debug())
                 ),
-            row.cross.as_ref().map_or_else(String::new, |c| format!(
-                ", \"cadical_verdict\": \"{}\", \"cadical_solve_ms\": {}, \"cross\": \"{}\"",
-                c.verdict.name(),
-                c.outcome.solve_ms,
-                c.agreement.name()
-            )) + &row.certify.as_ref().map_or_else(String::new, |c| format!(
+            row.certify.as_ref().map_or_else(String::new, |c| format!(
                 ", \"proof_bytes\": {}, \"checker_ms\": {}, \"checker_said\": \"{}\"",
                 c.proof_bytes,
                 c.checker_ms,

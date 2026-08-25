@@ -2,10 +2,11 @@
 //! translation-ref §4).
 //!
 //! This is the phase-4 seam ADR-0011 names: it mints the primary variables in
-//! the pinned order (decision 3), hands the goal to the [`crate::encode`]r, drives
-//! the [`als_solve::CdclSolver`], and decodes an [`Assignment`](als_solve::Assignment)
-//! back into an [`Instance`] over the command's [`Universe`]. It is the point
-//! where mettle produces its first real **SAT/UNSAT verdicts** and instances.
+//! the pinned order (decision 3), hands the goal to the [`crate::encode`]r,
+//! drives an [`als_solve::LiveSolver`], and decodes an
+//! [`Assignment`](als_solve::Assignment) back into an [`Instance`] over the
+//! command's [`Universe`]. It is the point where mettle produces its real
+//! **SAT/UNSAT verdicts** and instances.
 //!
 //! - [`solve_goal`] returns the first verdict ([`SolveVerdict`]).
 //! - [`enumerate`] returns an [`InstanceEnumerator`] yielding **distinct
@@ -101,26 +102,23 @@ pub struct SolveOptions {
     /// enumerates the raw (SB-0) count. Callers that compare against the jar apply
     /// that override before handing the options here.
     pub symmetry: u32,
-    /// Which SAT backend decides the CNF (ADR-0019 mt-089; ADR-0027 mt-121 made
-    /// [`Backend::Cadical`] the default). Whichever is selected, verdicts are
-    /// backend-independent truths — a difference is a bug, which is what the
-    /// cross-backend instrument exists to catch — while the *instance chosen*,
-    /// the *enumeration order*, and the effort a budget buys are all the
-    /// backend's own.
+    /// Which SAT backend decides the CNF — the `--solver` selector (ADR-0019
+    /// mt-089), which ADR-0027 keeps as a maintained plugin seam with
+    /// [`Backend::Cadical`] the one name in it.
     ///
-    /// `--solver mettle` selects the own CDCL, which stays the conformance
-    /// yardstick and the only backend the byte-identical determinism contract
-    /// binds *across builds and platforms* (STYLE D1). The default's determinism
-    /// is by pinning instead: the exact vendored source, built with pinned
-    /// flags, reproduces itself — which is what ADR-0027's gate measured before
-    /// this field's default moved.
+    /// Whichever backend answers, verdicts are backend-independent truths — a
+    /// difference would be a bug — while the *instance chosen*, the *enumeration
+    /// order*, and the effort a budget buys are all the backend's own. The
+    /// shipped backend's determinism is by pinning: the exact vendored source,
+    /// built with pinned flags, reproduces itself, which is what ADR-0027's gate
+    /// measured before this field's default moved to it.
     pub backend: Backend,
 }
 
 impl Default for SolveOptions {
-    /// The jar-matching defaults: forbid overflow (LEDGER-001), no effort budgets,
-    /// the own CDCL backend, and **symmetry 20** (translation-ref §16.4) — the one
-    /// field that is not its type's own default.
+    /// The jar-matching defaults: forbid overflow (LEDGER-001), no effort
+    /// budgets, the default backend, and **symmetry 20** (translation-ref
+    /// §16.4) — the one field that is not its type's own default.
     fn default() -> Self {
         Self {
             allow_overflow: false,

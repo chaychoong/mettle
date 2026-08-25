@@ -44,26 +44,26 @@
 //! [`Backend::COMPILED_OUT`] carries the other half of that contract: a name
 //! mettle *has* but this build left out is a different thing from a name that
 //! does not exist, and telling them apart is what stops a user hunting for a
-//! typo that is not there. It is empty today (both shipped backends are always
-//! compiled in) and stays because ADR-0027 makes future backends feature-gated
+//! typo that is not there. It is empty today (the one shipped backend is in
+//! every build) and stays because ADR-0027 makes future backends feature-gated
 //! plugins, which is exactly what fills it.
 //!
 //! # Effort, and why it is `Option`
 //!
 //! A backend counts the work it does — conflicts + decisions + propagation
 //! visits — which is what makes the cumulative enumeration budget
-//! (`SolveOptions::enum_effort_budget`) both bounding *and* deterministic. Both
-//! shipped backends report it: the own solver from its own counters, CaDiCaL
-//! from `Internal::stats` through the accessors `vendor/cadical` adds (the
-//! published binding exposes limits but no counters, which is the gap ADR-0019
-//! recorded and mt-120 closed). The same three terms are summed on both arms, so
-//! a budget is *one quantity* — but in two currencies: the same number buys far
-//! more search on CaDiCaL, which the ADR-0017 re-pair prices, not this type.
+//! (`SolveOptions::enum_effort_budget`) both bounding *and* deterministic.
+//! CaDiCaL reports it from `Internal::stats` through the accessors
+//! `vendor/cadical` adds (the published binding exposes limits but no counters,
+//! which is the gap ADR-0019 recorded and mt-120 closed).
 //!
 //! The `Option` stays because the capability is genuinely optional (d): it is
 //! the negative space a counter-less backend would land in, and
 //! [`Backend::reports_effort`] is how a caller finds out before it charges
-//! anything.
+//! anything. A budget is one quantity, but its *price* is a backend's own — the
+//! same number buys a different amount of search on each — which is why the
+//! gauge defaults are re-paired against whichever backend answers (ADR-0017)
+//! rather than fixed by this type.
 
 #![allow(
     clippy::doc_markdown,
@@ -77,41 +77,31 @@ use crate::{Cnf, Lit, Outcome};
 /// Which SAT backend decides a CNF.
 #[derive(Copy, Clone, PartialEq, Eq, Default, Debug)]
 pub enum Backend {
-    /// CaDiCaL via the vendored `cadical` binding — **the default production
-    /// solver** as of [ADR-0027](../../../docs/adr/0027-cadical-only-solver.md)
-    /// decision 1: verdicts, instance and trace enumeration, and both counting
-    /// nets, across `exec`, `serve`, the REPL and the conformance gauge.
+    /// CaDiCaL via the vendored `cadical` binding — **the solver mettle ships**
+    /// ([ADR-0027](../../../docs/adr/0027-cadical-only-solver.md) decisions 1
+    /// and 3): verdicts, instance and trace enumeration, and both counting nets,
+    /// across `exec`, `serve`, the REPL and the conformance gauge.
     ///
-    /// Its determinism is **by pinning**, not by construction: an exact
-    /// vendored source built with pinned flags reproduces itself run for run
-    /// (mt-120's gate measured that across repeated runs, job counts and
-    /// instruction sets), but the guarantee is tied to the build rather than
-    /// derived from integer-only arithmetic the way [`Backend::Cdcl`]'s is.
+    /// Its determinism is **by pinning**: an exact vendored source built with
+    /// pinned flags reproduces itself run for run (mt-120's gate measured that
+    /// across repeated runs, job counts and instruction sets), and the guarantee
+    /// is tied to that build rather than derived from the arithmetic. STYLE D1's
+    /// integer-only rule still governs every line mettle itself writes around it.
     #[default]
     Cadical,
-    /// mettle's own deterministic CDCL ([`CdclSolver`](crate::CdclSolver)) — the
-    /// conformance yardstick, and still the only backend under the
-    /// byte-identical determinism contract **across builds and platforms**
-    /// (it has no floating point at all, STYLE D1).
-    ///
-    /// No longer the default (ADR-0027 decision 1). It stays selectable as
-    /// `--solver mettle` until its scheduled deletion in mt-124, which is what
-    /// keeps a second opinion one flag away for as long as the migration is
-    /// still being audited.
-    Cdcl,
 }
 
 impl Backend {
     /// Every backend name **this build** can select, in a stable order with the
     /// default first. The CLI lists these when a name does not resolve.
-    pub const AVAILABLE: &'static [&'static str] = &["cadical", "mettle"];
+    pub const AVAILABLE: &'static [&'static str] = &["cadical"];
 
     /// Backend names mettle *has* but this build left out, so a CLI can tell
     /// "there is no such solver" apart from "that solver was not compiled in" —
     /// two different fixes, and conflating them would send a user hunting for a
     /// typo that is not there.
     ///
-    /// Empty since mt-121: both shipped backends are compiled into every build.
+    /// Empty since mt-121: the shipped backend is compiled into every build.
     /// The mechanism is the contract, not the current contents — ADR-0027
     /// decision 2 makes future backends feature-gated plugins, and this is where
     /// one that was left out announces itself.
@@ -122,7 +112,6 @@ impl Backend {
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
-            Backend::Cdcl => "mettle",
             Backend::Cadical => "cadical",
         }
     }
@@ -130,10 +119,14 @@ impl Backend {
     /// Resolves a `--solver` name, or `None` when this build has no such
     /// backend. Exact match only: no prefixes, no case folding, no aliases —
     /// one spelling per backend, so a recorded command means one thing forever.
+    ///
+    /// `mettle`, the own CDCL's name until mt-124 deleted it (ADR-0027 decision
+    /// 3), is deliberately *not* an alias for the survivor: a recorded command
+    /// that asked for the other solver must fail loudly rather than quietly get
+    /// this one.
     #[must_use]
     pub fn parse(name: &str) -> Option<Self> {
         match name {
-            "mettle" => Some(Backend::Cdcl),
             "cadical" => Some(Backend::Cadical),
             _ => None,
         }
@@ -144,7 +137,7 @@ impl Backend {
     /// contract, and the precondition for charging the cumulative enumeration
     /// budget.
     ///
-    /// Both shipped backends can. A future one that cannot is refused where the
+    /// The shipped backend can. A future one that cannot is refused where the
     /// budget is set, with a typed error, rather than being charged zero.
     #[must_use]
     pub const fn reports_effort(self) -> bool {
@@ -152,7 +145,7 @@ impl Backend {
             // CaDiCaL's counters come from the vendored binding's stats
             // accessors (mt-120 measured them: deterministic, and cumulative
             // across the incremental seam, which is what enumeration needs).
-            Backend::Cdcl | Backend::Cadical => true,
+            Backend::Cadical => true,
         }
     }
 
@@ -160,20 +153,17 @@ impl Backend {
     /// a measurement names the solver that produced it (ADR-0027 migration debt
     /// 2; [`Self::name`] is the selector, this is the provenance).
     ///
-    /// `mettle-cdcl-<crate version>` for the own solver, whose behavior is
-    /// pinned by this workspace's source, and CaDiCaL's own signature
-    /// (`cadical-1.9.5`) for the other, read from the linked library rather than
-    /// written down — a hardcoded version here could disagree with the code that
-    /// actually answered, which is the whole failure this string exists to
-    /// prevent.
+    /// CaDiCaL's own signature (`cadical-1.9.5`), read from the linked library
+    /// rather than written down — a hardcoded version here could disagree with
+    /// the code that actually answered, which is the whole failure this string
+    /// exists to prevent. A future backend supplies its own the same way.
     ///
     /// Deliberately *not* what a stale-artifact check compares (that is
-    /// [`Self::name`]): a rebuilt own solver with a bumped crate version must
-    /// not orphan every baseline banked before it.
+    /// [`Self::name`]): a rebuild whose version string moved must not orphan
+    /// every baseline banked before it.
     #[must_use]
     pub fn version_signature(self) -> String {
         match self {
-            Backend::Cdcl => concat!("mettle-cdcl-", env!("CARGO_PKG_VERSION")).to_owned(),
             // Constructing an empty solver just to ask its version is cheap
             // (CaDiCaL allocates nothing until clauses arrive) and is the only
             // route the binding offers — `ccadical_signature` is behind
@@ -188,15 +178,13 @@ impl Backend {
     /// capability (e) of the module's contract, and what ADR-0027 decision 4
     /// certifies UNSAT with.
     ///
-    /// Only CaDiCaL can: the own CDCL never grew a proof logger, and asking it
-    /// for one is a typed refusal at the call site
+    /// CaDiCaL can. A backend that cannot is refused at the call site
     /// ([`CadicalSolver::with_proof_trace`](crate::CadicalSolver::with_proof_trace)
-    /// is the only constructor that traces), never a solve that quietly runs
-    /// without producing the certificate its caller asked for.
+    /// is the only constructor that traces), never given a solve that quietly
+    /// runs without producing the certificate its caller asked for.
     #[must_use]
     pub const fn supports_proof_trace(self) -> bool {
         match self {
-            Backend::Cdcl => false,
             Backend::Cadical => true,
         }
     }
@@ -205,20 +193,11 @@ impl Backend {
 /// A live solver of the selected [`Backend`], holding one CNF and supporting the
 /// incremental seam (`add_clause` between solves) enumeration is built on.
 ///
-/// Construct with [`LiveSolver::new`]; the two arms have deliberately identical
-/// surfaces, so the pipeline never branches on the backend outside this file.
+/// Construct with [`LiveSolver::new`]. One variant per backend, with a surface
+/// every arm must present identically, so the pipeline never branches on the
+/// backend outside this file.
 #[derive(Debug)]
-#[allow(
-    clippy::large_enum_variant,
-    reason = "the own solver's struct header is ~320 bytes against CaDiCaL's opaque \
-              32-byte handle, but exactly ONE LiveSolver exists per solve (never a \
-              collection of them) and both variants own multi-megabyte heap arenas \
-              behind that header — boxing would add an indirection to every \
-              propagation on every solve to save 288 stack bytes once"
-)]
 pub enum LiveSolver {
-    /// The own CDCL.
-    Cdcl(crate::CdclSolver),
     /// CaDiCaL.
     Cadical(crate::CadicalSolver),
 }
@@ -228,7 +207,6 @@ impl LiveSolver {
     #[must_use]
     pub fn new(backend: Backend, cnf: &Cnf) -> Self {
         match backend {
-            Backend::Cdcl => LiveSolver::Cdcl(crate::CdclSolver::new(cnf)),
             Backend::Cadical => LiveSolver::Cadical(crate::CadicalSolver::new(cnf)),
         }
     }
@@ -237,7 +215,6 @@ impl LiveSolver {
     #[must_use]
     pub const fn backend(&self) -> Backend {
         match self {
-            LiveSolver::Cdcl(_) => Backend::Cdcl,
             LiveSolver::Cadical(_) => Backend::Cadical,
         }
     }
@@ -245,7 +222,6 @@ impl LiveSolver {
     /// Decides the current formula with no budget.
     pub fn solve(&mut self) -> Outcome {
         match self {
-            LiveSolver::Cdcl(s) => s.solve(),
             LiveSolver::Cadical(s) => {
                 let Some(outcome) = s.solve_now() else {
                     // No budget and no termination callback: CaDiCaL cannot
@@ -262,11 +238,9 @@ impl LiveSolver {
     ///
     /// The budget means the same thing on every backend — **at most that many
     /// conflicts in this call** — and on every one it leaves the solver usable
-    /// afterwards (contract (b)). What it *cost* is [`Self::effort`], which both
-    /// shipped backends report.
+    /// afterwards (contract (b)). What it *cost* is [`Self::effort`].
     pub fn solve_within(&mut self, conflict_limit: u64) -> Option<Outcome> {
         match self {
-            LiveSolver::Cdcl(s) => s.solve_within(conflict_limit),
             LiveSolver::Cadical(s) => s.solve_within(conflict_limit),
         }
     }
@@ -275,7 +249,6 @@ impl LiveSolver {
     /// ([`block`](crate::block) produces exactly these).
     pub fn add_clause(&mut self, lits: Vec<Lit>) {
         match self {
-            LiveSolver::Cdcl(s) => s.add_clause(lits),
             LiveSolver::Cadical(s) => s.add_clause(lits),
         }
     }
@@ -284,15 +257,12 @@ impl LiveSolver {
     /// branching decisions + propagation clause-visits — or `None` on a backend
     /// with no counters (module docs).
     ///
-    /// The same three terms on both arms, so the budget is one quantity however
-    /// it was spent. The magnitudes are not comparable across backends and are
-    /// not meant to be (module docs, "two currencies").
+    /// The same three terms whichever arm answers, so a budget is one quantity
+    /// however it was spent. The magnitudes are a backend's own and are not
+    /// comparable across backends (module docs).
     #[must_use]
     pub fn effort(&self) -> Option<u64> {
         match self {
-            LiveSolver::Cdcl(s) => {
-                Some(s.total_conflicts() + s.total_decisions() + s.total_props())
-            }
             LiveSolver::Cadical(s) => {
                 Some(s.total_conflicts() + s.total_decisions() + s.total_props())
             }
@@ -322,8 +292,6 @@ mod tests {
         assert_eq!(Backend::default(), Backend::Cadical);
         assert_eq!(Backend::default().name(), "cadical");
         assert_eq!(Backend::AVAILABLE[0], Backend::default().name());
-        // The own solver did not go anywhere; it is one flag away until mt-124.
-        assert_eq!(Backend::parse("mettle"), Some(Backend::Cdcl));
     }
 
     #[test]
@@ -336,8 +304,8 @@ mod tests {
     #[test]
     fn unknown_and_compiled_out_names_do_not_parse() {
         assert!(Backend::parse("minisat").is_none());
-        assert!(Backend::parse("Mettle").is_none(), "no case folding");
-        assert!(Backend::parse("met").is_none(), "no prefix matching");
+        assert!(Backend::parse("Cadical").is_none(), "no case folding");
+        assert!(Backend::parse("cad").is_none(), "no prefix matching");
         for name in Backend::COMPILED_OUT {
             assert!(
                 Backend::parse(name).is_none(),
@@ -346,13 +314,22 @@ mod tests {
         }
     }
 
+    /// The own CDCL's name does not quietly become an alias for the survivor
+    /// (ADR-0027 decision 3): a script or a recorded command that asks for
+    /// `mettle` must be told the name is gone, not handed a different solver.
+    #[test]
+    fn the_deleted_backends_name_does_not_resolve() {
+        assert!(Backend::parse("mettle").is_none());
+        assert!(!Backend::AVAILABLE.contains(&"mettle"));
+    }
+
     #[test]
     fn available_and_compiled_out_are_disjoint_and_total() {
         for name in Backend::COMPILED_OUT {
             assert!(!Backend::AVAILABLE.contains(name));
         }
         // Every backend mettle knows about is in exactly one of the two lists.
-        assert_eq!(Backend::AVAILABLE.len() + Backend::COMPILED_OUT.len(), 2);
+        assert_eq!(Backend::AVAILABLE.len() + Backend::COMPILED_OUT.len(), 1);
     }
 
     /// What a backend *claims* about capability (d) and what its live solver
@@ -374,10 +351,6 @@ mod tests {
     /// artifact header can never be read as having come from the other one.
     #[test]
     fn every_backend_signs_itself_with_a_version() {
-        assert_eq!(
-            Backend::Cdcl.version_signature(),
-            format!("mettle-cdcl-{}", env!("CARGO_PKG_VERSION"))
-        );
         assert!(
             Backend::Cadical.version_signature().starts_with("cadical-"),
             "expected CaDiCaL's own signature, got {:?}",
@@ -409,7 +382,6 @@ mod tests {
     #[test]
     fn only_the_backend_with_a_proof_logger_claims_one() {
         assert!(Backend::Cadical.supports_proof_trace());
-        assert!(!Backend::Cdcl.supports_proof_trace());
         assert!(
             Backend::default().supports_proof_trace(),
             "the default backend is the one with a proof logger, so UNSAT \

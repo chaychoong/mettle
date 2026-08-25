@@ -8,19 +8,21 @@
 #
 #   ./scripts/backend-determinism.sh [path-to-mettle-binary]
 #
-# What a difference means depends on the column:
+# A `cadical` row differing across targets is a MEASUREMENT, not a bug —
+# ADR-0019 §1 never promised cross-platform byte-identity for it, since its
+# determinism is by pinning rather than by construction. Whether the answers
+# survive the trip is exactly what we do not yet know, which is why this script
+# exists and why `.cargo/config.toml` pins `-ffp-contract=off` first.
 #
-#   * `mettle` rows differing across targets is a CONTRACT VIOLATION (STYLE D1:
-#     a fixed build answers byte-identically everywhere). That is the control.
-#   * `cadical` rows differing across targets is a MEASUREMENT, not a bug —
-#     ADR-0019 §1 never promised cross-platform byte-identity for it. Whether
-#     the answers survive the trip is exactly what we do not yet know, which is
-#     why this script exists and why `.cargo/config.toml` pins
-#     `-ffp-contract=off` first.
+# Until mt-124 the report also carried `mettle` rows, the own CDCL, whose
+# byte-identity across targets WAS a contract (STYLE D1) and served as the
+# control. ADR-0027 decision 3 deleted that solver; the loop below reads the
+# names out of the binary, so the report simply lost a column.
 #
-# Verdicts are a separate matter: a *verdict* difference between backends is
-# always a bug, and `backend-instrument --cross` is the tool for that (this
-# script hashes whole instances, which are legitimately backend-specific).
+# Verdicts are a separate matter: a verdict is a property of the encoding, so a
+# verdict difference is always a bug — but this script hashes whole instances,
+# which are legitimately the backend's own. `backend-instrument --certify` is
+# the tool that audits verdicts.
 set -euo pipefail
 
 BIN="${1:-./target/release/mettle}"

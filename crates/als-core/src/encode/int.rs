@@ -578,7 +578,7 @@ pub struct DivRem {
 )]
 mod tests {
     use super::*;
-    use als_solve::{CdclSolver, Cnf, Lit, Outcome, Var};
+    use als_solve::{Backend, Cnf, Lit, LiveSolver, Outcome, Var};
 
     // ==================== exhaustive constant-fold tables (mt-044) ============
     //
@@ -889,7 +889,10 @@ mod tests {
             Bool::Const(b) => b,
             Bool::Lit(l) => {
                 cnf.add_clause(vec![l]);
-                matches!(CdclSolver::new(&cnf).solve(), Outcome::Sat(_))
+                matches!(
+                    LiveSolver::new(Backend::default(), &cnf).solve(),
+                    Outcome::Sat(_)
+                )
             }
         }
     }

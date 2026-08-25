@@ -24,9 +24,9 @@
 //! pipeline and prints the verdict (and any SAT instance / counterexample).
 //! `serve` (mt-072, [`serve`]) solves **one** command and then answers the
 //! Sterling provider protocol about it on a local port until Ctrl-C. Both
-//! solving subcommands take `--solver <name>` (mt-089, ADR-0019): `cadical` is
-//! the default (ADR-0027), and `mettle` selects the own CDCL — the deterministic
-//! yardstick — for anyone who wants it ([`parse_solver`], [`solver_help`]).
+//! solving subcommands take `--solver <name>` (mt-089, ADR-0019) — the plugin
+//! seam's user surface, which today offers the one backend mettle ships
+//! ([`parse_solver`], [`solver_help`]).
 //! Parse/lex/resolve errors render to stderr as a rustc-style caret-and-label
 //! block (mt-013, [`diagnostics`]) with exit code 1; usage or I/O problems
 //! exit with code 2.
@@ -200,22 +200,20 @@ fn solver_help() -> String {
             als_solve::Backend::COMPILED_OUT.join(", ")
         );
     }
-    // What each backend is for, stated here as well as in LIMITATIONS: both
-    // reach the same verdicts, and the difference is what their determinism is
-    // anchored to.
+    // What the flag is for, stated here as well as in LIMITATIONS: it selects
+    // among whatever backends this build carries, and what a backend may and may
+    // not vary is the same contract however many there are.
     help.push_str(
         "\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\
-         `cadical` is the production solver: a far stronger search, and\n\
+         `cadical` is the solver mettle ships: deterministic for a fixed\n\
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\
-         deterministic for a fixed build. `mettle` is the own CDCL, the\n\
+         build. The flag exists for backends plugged in beside it later.\n\
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\
-         conformance yardstick, which answers byte-identically on every\n\
+         Verdicts never depend on which one answered; which instance or\n\
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\
-         platform. Verdicts agree; which instance/trace you see and the\n\
+         trace you see and the enumeration order are its own, and\n\
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\
-         enumeration order are each backend's own. --conflicts caps each\n\
-         \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\
-         solve on both.",
+         --conflicts caps a solve on every one of them.",
     );
     help
 }

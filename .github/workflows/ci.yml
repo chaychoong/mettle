@@ -22,10 +22,10 @@ jobs:
       - name: cargo build
         run: cargo build --workspace --all-targets
       # Covers the CaDiCaL backend too: ADR-0027 / mt-121 made it part of every
-      # build, so the `--solver cadical` surface, the cross-backend instrument
-      # and the enumeration seam under CaDiCaL all run here. The separate
-      # `cadical` job this replaced existed only to execute what the feature flag
-      # kept out of this one. The runner's C++ toolchain now builds ~100 vendored
-      # sources on a cold cache, which is the cost of that.
+      # build, so the `--solver` surface, the instrument and the enumeration seam
+      # under CaDiCaL all run here. The separate `cadical` job this replaced
+      # existed only to execute what the feature flag kept out of this one. The
+      # runner's C++ toolchain now builds ~100 vendored sources on a cold cache,
+      # which is the cost of that.
       - name: cargo test
         run: cargo test --workspace

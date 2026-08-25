@@ -125,10 +125,11 @@ pub struct SweepConfig {
     #[serde(default = "default_backend")]
     pub backend: String,
     /// The versioned identity of that backend
-    /// ([`als_core::Backend::version_signature`]) — `mettle-cdcl-0.1.1`,
-    /// `cadical-1.9.5`. **Provenance, not identity**: it is written on every
-    /// capture and never compared, because a crate-version bump on a rebuilt
-    /// own solver must not orphan every baseline banked before it.
+    /// ([`als_core::Backend::version_signature`]) — `cadical-1.9.5`, and
+    /// `mettle-cdcl-0.1.1` on artifacts banked before mt-124. **Provenance, not
+    /// identity**: it is written on every capture and never compared, because a
+    /// version bump under a rebuilt solver must not orphan every baseline banked
+    /// before it.
     ///
     /// `None` in artifacts captured before mt-121. No real signature is empty,
     /// so absence is its own answer rather than a blank string pretending to be
@@ -616,8 +617,8 @@ mod tests {
             primary_var_cap: 20_000,
             no_overflow: true,
             solver: "sat4j".to_owned(),
-            backend: "mettle".to_owned(),
-            backend_signature: Some("mettle-cdcl-test".to_owned()),
+            backend: "cadical".to_owned(),
+            backend_signature: Some("cadical-test".to_owned()),
             count_enabled: true,
             count_symmetry: 0,
             count_cap: 10_000,
@@ -775,12 +776,16 @@ mod tests {
     /// the same loud path every other bucket-defining field uses (ADR-0027
     /// migration debt 2). Silently consuming it would diff one solver's buckets
     /// against the other's and call the difference a regression.
+    ///
+    /// The live case is an own-solver baseline meeting a `cadical` run: the own
+    /// CDCL is gone (mt-124) but artifacts banked under it are not, and being
+    /// *refused* is a different, better outcome than failing to parse.
     #[test]
     fn a_baseline_from_another_backend_is_refused() {
         let dir = tmp_dir("mm-backend");
         let mut cfg = header();
-        cfg.backend = "cadical".to_owned();
-        cfg.backend_signature = Some("cadical-1.9.5".to_owned());
+        cfg.backend = "mettle".to_owned();
+        cfg.backend_signature = Some("mettle-cdcl-0.1.1".to_owned());
         SweepBaselineFile {
             config: cfg,
             entries: BTreeMap::new(),
@@ -797,7 +802,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(field, "backend");
-                assert_eq!((expected.as_str(), found.as_str()), ("mettle", "cadical"));
+                assert_eq!((expected.as_str(), found.as_str()), ("cadical", "mettle"));
             }
             other => panic!("expected a backend mismatch, got {other:?}"),
         }
@@ -807,21 +812,23 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// The signature is provenance, not identity: a rebuilt own solver with a
-    /// bumped crate version must not orphan every baseline banked before it.
+    /// The signature is provenance, not identity: a version bump under a
+    /// rebuilt solver must not orphan every baseline banked before it.
     #[test]
     fn a_differing_backend_signature_alone_is_not_a_mismatch() {
         let mut older = header();
-        older.backend_signature = Some("mettle-cdcl-0.0.9".to_owned());
+        older.backend_signature = Some("cadical-0.0.9".to_owned());
         let mut newer = header();
-        newer.backend_signature = Some("mettle-cdcl-9.9.9".to_owned());
+        newer.backend_signature = Some("cadical-9.9.9".to_owned());
         assert_eq!(config_mismatch(&older, &newer), None);
         assert_eq!(config_mismatch(&newer, &older), None);
     }
 
     /// An artifact banked before mt-121 has no backend fields. It must still
-    /// load — `baselines/*-sweep-sb20.json` is one — and it must read as the own
-    /// solver, which is what produced it: the gauge had no `--solver` then.
+    /// load, and it must read as the own solver, which is what produced it: the
+    /// gauge had no `--solver` then. That is what lets a run on today's default
+    /// *refuse* it as a backend mismatch — the loud, actionable outcome — rather
+    /// than fail to parse it at all (mt-124).
     #[test]
     fn a_pre_mt121_header_reads_as_the_own_solver() {
         let json = r#"{
@@ -840,8 +847,12 @@ mod tests {
             file.config.backend_signature, None,
             "an unrecorded signature stays unrecorded rather than being invented"
         );
-        // And it therefore still matches an own-solver run of the same config.
-        assert_eq!(config_mismatch(&file.config, &header()), None);
+        // And it therefore reaches the mismatch path rather than the parser: a
+        // run on today's backend refuses it, naming the field that differs.
+        assert_eq!(
+            config_mismatch(&file.config, &header()),
+            Some(("backend", "cadical".to_owned(), "mettle".to_owned()))
+        );
     }
 
     /// The other half of the strictness rule: when nothing the artifact says can

@@ -10,7 +10,7 @@ Correctness over everything. Do not take on unnecessary tech debt. Write idiomat
 
 ## 1. Determinism (non-negotiable)
 
-- D1. Same input + same scopes -> byte-identical output and identical instance-enumeration order, on every machine and every run, **for a fixed solver build**. Determinism means self-consistency, NOT matching the reference jar's CNF or ordering.
+- D1. Same input + same scopes -> byte-identical output and identical instance-enumeration order, on every machine and every run, **for a fixed solver build**. Determinism means self-consistency, NOT matching the reference jar's CNF or ordering. _(Since [ADR-0027](docs/adr/0027-cadical-only-solver.md)/mt-124 the shipped backend is vendored C++ pinned by its build, so "for a fixed solver build" is the operative clause, not a footnote. The rules below still govern every line mettle writes — a pinned solver buys nothing if the code around it reads a clock or a hash order.)_
 - D2. No `HashMap`/`HashSet` iteration anywhere that can influence variable numbering, CNF emission, or any user-visible output. Use `IndexMap`/`IndexSet` (insertion order) or `BTreeMap`/`BTreeSet` (key order), or collect and `sort`/`sort_by_key` before iterating.
 - D3. `HashMap`/`HashSet` are allowed ONLY as internal lookup caches whose iteration order never escapes (membership/get only). If in doubt, use `IndexMap`.
 - D4. No wall-clock, no thread scheduling, no address/pointer values, and no unseeded randomness in the pipeline. Any randomness is explicitly seeded and the seed is part of the recorded input.
@@ -64,7 +64,7 @@ Correctness over everything. Do not take on unnecessary tech debt. Write idiomat
 
 - P1. Every dependency is justified in writing (one line in the PR and in `Cargo.toml` comment): what it does, why not std, why this crate.
 - P2. Small tree, single static binary. Prefer std; prefer one well-known crate over several overlapping ones.
-- P3. FFI solvers live behind the backend seam only — no FFI leaks into core crates, and all `unsafe` stays inside the vendored binding (`vendor/cadical`), never in mettle's own crates. _(Amended by [ADR-0027](docs/adr/0027-cadical-only-solver.md)/mt-121: the original "pure-Rust SAT first, zero FFI in v1" rule did its job — the own CDCL built and verified the whole pipeline — and the vendored CaDiCaL is now the default backend behind exactly the `Solver`/`Backend` seam this rule reserved for it.)_
+- P3. FFI solvers live behind the backend seam only — no FFI leaks into core crates, and all `unsafe` stays inside the vendored binding (`vendor/cadical`), never in mettle's own crates. _(Amended by [ADR-0027](docs/adr/0027-cadical-only-solver.md)/mt-121: the original "pure-Rust SAT first, zero FFI in v1" rule did its job — the own CDCL built and verified the whole pipeline — and the vendored CaDiCaL now sits behind exactly the `Solver`/`Backend` seam this rule reserved for it. mt-124 deleted the own CDCL, so the seam is the *only* thing holding the FFI in: the containment clause is now load-bearing rather than precautionary.)_
 - P4. No dep pulls in async runtimes, C toolchains, or proc-macro-heavy trees without explicit lead sign-off. _(The one signed-off C++ toolchain dependency is the vendored CaDiCaL build — ADR-0027.)_
 
 ## 9. Spans & diagnostics

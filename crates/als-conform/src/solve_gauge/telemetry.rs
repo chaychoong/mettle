@@ -86,9 +86,10 @@ pub struct RunStartEvent {
     #[serde(default = "default_backend")]
     pub backend: String,
     /// The versioned identity of that backend
-    /// ([`als_core::Backend::version_signature`]) — `cadical-1.9.5`,
-    /// `mettle-cdcl-0.1.1`. Provenance, never an identity check: it moves with
-    /// a version bump, and [`Self::backend`] is what a comparison uses.
+    /// ([`als_core::Backend::version_signature`]) — `cadical-1.9.5`, and
+    /// `mettle-cdcl-0.1.1` in JSONL banked before mt-124. Provenance, never an
+    /// identity check: it moves with a version bump, and [`Self::backend`] is
+    /// what a comparison uses.
     ///
     /// `None` in JSONL written before mt-121; no real signature is empty, so
     /// absence is its own answer rather than a blank string pretending to be one.

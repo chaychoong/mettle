@@ -1076,17 +1076,19 @@ fn an_unmarked_subset_sig_stays_free() {
     assert_sat("sig B {}\nsig A in B {}\nrun { #A = 2 } for 3\n");
 }
 
-// ========================= the CaDiCaL backend ===========================
-// ADR-0019 / mt-089 stage 2, compiled into every build since mt-121
-// (ADR-0027). These are the cross-backend truths: whatever the search does,
-// the verdict and the model *set* are properties of the encoding.
+// ========================= the backend seam ==============================
+// ADR-0019 / mt-089 stage 2, the maintained plugin boundary ADR-0027 decision 2
+// keeps. These are the backend-independent truths: whatever a search does, the
+// verdict and the model *set* are properties of the encoding, so every one of
+// these iterates `Backend::AVAILABLE` and a backend plugged in later is held to
+// them the moment its name lands in that list.
 
 /// Verdicts are backend-independent truths (ADR-0019 §4): every verdict golden
-/// above must come out the same under the alternative backend, on the same
-/// models, with no jar and no baseline involved. A difference here would be a
-/// bug in one of the two solvers or in the wiring between them.
+/// above must come out the same under every backend this build offers, on the
+/// same models, with no jar and no baseline involved. A difference here would be
+/// a bug in a solver or in the wiring to it.
 #[test]
-fn cadical_agrees_with_the_own_cdcl_on_every_verdict_shape() {
+fn every_available_backend_reaches_the_jar_pinned_verdicts() {
     let models: &[(&str, bool)] = &[
         // (model, expected SAT) — a spread of encoder features, each already
         // jar-pinned by a golden above.
@@ -1135,22 +1137,23 @@ fn cadical_agrees_with_the_own_cdcl_on_every_verdict_shape() {
                 SolveVerdict::Unknown => unreachable!("unbudgeted solve returned Unknown"),
             }
         };
-        let own = with(als_core::Backend::Cdcl);
-        let cadical = with(als_core::Backend::Cadical);
-        assert_eq!(own, *expect_sat, "the own solver moved on:\n{src}");
-        assert_eq!(
-            own, cadical,
-            "CROSS-BACKEND VERDICT DIFFERENCE — a bug, always:\n{src}"
-        );
+        for name in als_core::Backend::AVAILABLE {
+            let backend = als_core::Backend::parse(name).expect("an available name resolves");
+            assert_eq!(
+                with(backend),
+                *expect_sat,
+                "backend {name} reached the wrong verdict:\n{src}"
+            );
+        }
     }
 }
 
-/// Enumeration under the alternative backend is **exact**: the set of distinct
-/// instances is a property of the encoding plus the blocking clauses, not of the
-/// solver, so the SB-0 count must match the own solver's (jar-pinned) count. The
-/// *order* is the backend's own and is deliberately not asserted (ADR-0019 §1).
+/// Enumeration is **exact** under any backend: the set of distinct instances is
+/// a property of the encoding plus the blocking clauses, not of the solver, so
+/// every backend must reach the same SB-0 count. The *order* is the backend's
+/// own and is deliberately not asserted (ADR-0019 §1).
 #[test]
-fn cadical_enumerates_the_same_number_of_instances() {
+fn every_available_backend_enumerates_the_same_instance_count() {
     let count_with = |src: &str, backend| {
         let loader = MapLoader::new().with("root.als", src);
         let graph = ModuleGraph::load("root.als", &loader).expect("load");
@@ -1164,17 +1167,19 @@ fn cadical_enumerates_the_same_number_of_instances() {
             .expect("enumerate")
             .count()
     };
-    for src in [
-        "sig A {}\nrun { some A } for 3\n",
-        "sig A {}\nrun { #A = 2 } for 3\n",
-        "sig A { r: set A }\nrun { #r = 1 } for 2\n",
+    for (src, expected) in [
+        ("sig A {}\nrun { some A } for 3\n", 7),
+        ("sig A {}\nrun { #A = 2 } for 3\n", 3),
+        ("sig A { r: set A }\nrun { #r = 1 } for 2\n", 6),
     ] {
-        let own = count_with(src, als_core::Backend::Cdcl);
-        let cadical = count_with(src, als_core::Backend::Cadical);
-        assert_eq!(
-            own, cadical,
-            "enumeration under CaDiCaL was not exact ({own} vs {cadical}):\n{src}"
-        );
+        for name in als_core::Backend::AVAILABLE {
+            let backend = als_core::Backend::parse(name).expect("an available name resolves");
+            assert_eq!(
+                count_with(src, backend),
+                expected,
+                "enumeration under {name} was not exact:\n{src}"
+            );
+        }
     }
 }
 
@@ -1191,7 +1196,8 @@ fn cadical_enumerates_the_same_number_of_instances() {
 #[test]
 fn a_budgeted_enumeration_is_accepted_on_every_shipped_backend() {
     let src = "sig A {}\nrun { some A } for 3\n";
-    for backend in [als_core::Backend::Cdcl, als_core::Backend::Cadical] {
+    for name in als_core::Backend::AVAILABLE {
+        let backend = als_core::Backend::parse(name).expect("an available name resolves");
         assert!(
             backend.reports_effort(),
             "a shipped backend must count its effort: {}",

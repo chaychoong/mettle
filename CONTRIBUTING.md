@@ -61,25 +61,23 @@ cargo build --release -p als-conform
 
 ### The CaDiCaL backend
 
-The second backend ([ADR-0019](docs/adr/0019-optional-cadical-backend.md)) is part of every build since [ADR-0027](docs/adr/0027-cadical-only-solver.md) — no cargo features, no separate passes, and the ordinary `cargo test --workspace` runs its tests. What it does need is a **C++ toolchain**, since the build compiles ~100 vendored sources (`vendor/cadical`, see [vendor/README.md](vendor/README.md)); the cross-target battery still runs on tags.
+CaDiCaL ([ADR-0019](docs/adr/0019-optional-cadical-backend.md)) is the solver mettle ships. It is part of every build since [ADR-0027](docs/adr/0027-cadical-only-solver.md) — no cargo features, no separate passes, and the ordinary `cargo test --workspace` runs its tests — and since mt-124 it is the only backend in the tree; the project's own CDCL was deleted, recoverable from git history. What the build does need is a **C++ toolchain**, since it compiles ~100 vendored sources (`vendor/cadical`, see [vendor/README.md](vendor/README.md)); the cross-target battery still runs on tags.
 
 ```sh
-cargo build --release -p mettle                              # `--solver cadical` is in the binary
+cargo build --release -p mettle                              # the solver is in the binary
 cargo build --release -p als-conform                         # builds `backend-instrument` too
 
-# the oracle-independent check: one encoding, both solvers, non-zero exit on any
-# verdict difference. Superseded by --certify below (ADR-0027 decision 4) and
-# removed with the own CDCL, but still runnable today. --rows takes a
-# newline-separated list of `path[idx]` keys, or `-` to read them from stdin —
-# so a slice comes straight out of a sweep report:
+# measure a worklist: per-row CNF size, conflicts spent, encode/solve time.
+# --rows takes a newline-separated list of `path[idx]` keys, or `-` to read them
+# from stdin — so a slice comes straight out of a sweep report:
 python3 -c "import json,sys; d=json.load(open(sys.argv[1])); [print(r['key']) for r in d['per_command'] if r['verdict_bucket'].startswith('agree_')]" report.json \
-  | ./target/release/backend-instrument --rows - --cross --conflicts 100000 --jobs 8
+  | ./target/release/backend-instrument --rows - --conflicts 100000 --wall 600 --jobs 8
 
 # the cross-target determinism battery, locally (compare its output across machines)
 ./scripts/backend-determinism.sh ./target/release/mettle
 ```
 
-The gauge takes `--solver <name>` (`cadical` is the default since [ADR-0027](docs/adr/0027-cadical-only-solver.md)/mt-121; `mettle` selects the own CDCL). A baseline records which backend produced it, so never compare reports captured under different solvers — re-capture instead.
+`exec`, `serve` and the gauge all take `--solver <name>`, which is the plugin seam's user surface ([ADR-0027](docs/adr/0027-cadical-only-solver.md) decision 2) rather than a leftover of the migration: `cadical` is the only name it resolves today, and a backend added later is a variant plus a name. A baseline records which backend produced it, so never compare reports captured under different solvers — re-capture instead.
 
 ### Certifying UNSAT verdicts
 
@@ -109,4 +107,4 @@ The binding rubrics are **[STYLE.md](STYLE.md)** and **[PORTING_RULES.md](PORTIN
 
 ## Finding your way around
 
-[docs/README.md](docs/README.md) is the index. `crates/` is a workspace of 8 crates: `als-syntax` (lex/parse/print) → `als-types` (modules, resolve, typecheck) → `als-core` (relational IR, bounds, encoding, temporal, evaluator) → `als-solve` (the zero-dep CDCL solver) → `als-instance` (rendering, XML) / `als-sterling` (serve protocol + frontend assets) → `mettle` (the CLI) — plus `als-conform` (the jar-differential test instruments; never shipped). [LIMITATIONS.md](LIMITATIONS.md) is the honest list of what's missing; if you want to help close something, the issues and `docs/TASKS.md` show what's planned.
+[docs/README.md](docs/README.md) is the index. `crates/` is a workspace of 8 crates: `als-syntax` (lex/parse/print) → `als-types` (modules, resolve, typecheck) → `als-core` (relational IR, bounds, encoding, temporal, evaluator) → `als-solve` (the CNF types and the SAT backend seam) → `als-instance` (rendering, XML) / `als-sterling` (serve protocol + frontend assets) → `mettle` (the CLI) — plus `als-conform` (the jar-differential test instruments; never shipped). [LIMITATIONS.md](LIMITATIONS.md) is the honest list of what's missing; if you want to help close something, the issues and `docs/TASKS.md` show what's planned.

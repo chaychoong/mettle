@@ -2,26 +2,22 @@
 //!
 //! This crate depends on nothing of mettle's (not even `als-syntax`): it is the
 //! pure boolean-satisfiability boundary. `Solver` is a trait because the backend
-//! set is genuinely open (`PORTING_RULES` R2b) — pure-Rust SAT first, an FFI
-//! solver behind the same boundary later, which is what STYLE P3 anticipated and
-//! [ADR-0027](../../../docs/adr/0027-cadical-only-solver.md) has now made the
-//! default. Its one outside dependency is the vendored `cadical` binding, and it
-//! reaches no further than [`CadicalSolver`]: the trait, the CNF types and the
-//! own CDCL are untouched by it.
+//! set is genuinely open (`PORTING_RULES` R2b) — the boundary STYLE P3 reserved
+//! for an FFI solver, which
+//! [ADR-0027](../../../docs/adr/0027-cadical-only-solver.md) has since filled
+//! and made the only one mettle ships. Its one outside dependency is the
+//! vendored `cadical` binding, and it reaches no further than
+//! [`CadicalSolver`]: the trait and the CNF types are untouched by it.
 
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
 mod backend;
 mod cadical_backend;
-mod clause_arena;
 mod dimacs;
-mod solver;
-mod var_order;
 
 pub use backend::{Backend, LiveSolver};
 pub use cadical_backend::{Cadical, CadicalSolver, ProofTraceError};
 pub use dimacs::{write_dimacs, write_dimacs_file};
-pub use solver::{block, Cdcl, CdclSolver};
 
 use std::fmt;
 use std::ops::Not;
@@ -42,9 +38,9 @@ impl Var {
 
     /// Reconstructs a variable from its dense index.
     ///
-    /// Internal to the solver: it iterates the dense `0..num_vars` pool and
-    /// needs to turn an index back into a `Var` (STYLE I1 keeps the pool dense,
-    /// so this is total for `index < num_vars`).
+    /// Internal to the crate: reading a model back out of a backend walks the
+    /// dense `0..num_vars` pool and needs to turn an index into a `Var` (STYLE
+    /// I1 keeps the pool dense, so this is total for `index < num_vars`).
     #[allow(
         clippy::cast_possible_truncation,
         reason = "the pool is capped at u32::MAX/2 vars by Cnf::fresh_var, so a dense \
@@ -90,8 +86,8 @@ impl Lit {
 
     /// The dense literal code (`var << 1 | negated`).
     ///
-    /// Solver-side arrays (watch lists) are indexed by literal, so the code is
-    /// the natural dense key; `code < 2 * num_vars` by construction.
+    /// The natural dense key for anything indexed by literal — a gate cache, a
+    /// solver-side array; `code < 2 * num_vars` by construction.
     #[must_use]
     pub fn code(self) -> usize {
         self.0 as usize
@@ -199,6 +195,30 @@ impl Assignment {
     }
 }
 
+/// Builds a **blocking clause** that rules out `assignment`'s projection onto
+/// `vars`: the disjunction of each variable's *currently-false* literal, so any
+/// satisfying extension must flip at least one of them.
+///
+/// The enumeration primitive (mt-033): a driver solves, blocks the model it got
+/// with [`LiveSolver::add_clause`], and solves the same live instance again
+/// until it answers UNSAT. Passing every variable blocks the exact model
+/// (raw-count / SB-0 enumeration); passing a subset blocks the projection
+/// (distinct-projection enumeration). An empty `vars` yields an empty clause —
+/// the caller should treat that as "no further models to distinguish" and stop,
+/// never hand it to a solver.
+#[must_use]
+pub fn block(assignment: &Assignment, vars: &[Var]) -> Vec<Lit> {
+    vars.iter()
+        .map(|&v| {
+            if assignment.value(v) {
+                Lit::negative(v)
+            } else {
+                Lit::positive(v)
+            }
+        })
+        .collect()
+}
+
 /// The result of one solver call.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Outcome {
@@ -208,12 +228,13 @@ pub enum Outcome {
     Unsat,
 }
 
-/// A SAT backend.
+/// A SAT backend, in its one-shot form: hand it a formula, get a verdict.
 ///
-/// The open extension boundary of the pipeline (`PORTING_RULES` R2b). Will
-/// grow an incremental/assumption interface when instance enumeration lands
-/// (enumeration blocks each found model with a fresh clause); kept minimal
-/// until that rung.
+/// The open extension boundary of the pipeline (`PORTING_RULES` R2b), and
+/// deliberately the *smaller* of the two seams. Enumeration needs a live
+/// instance that survives between solves, which is [`LiveSolver`]; this trait is
+/// for a caller that only wants one answer and does not care which backend
+/// gives it.
 pub trait Solver {
     /// Decides `cnf`.
     fn solve(&mut self, cnf: &Cnf) -> Outcome;
@@ -245,6 +266,37 @@ mod tests {
         assert_eq!(indices, vec![0, 1, 2, 3]);
         cnf.add_clause(vec![Lit::positive(vars[0]), Lit::negative(vars[3])]);
         assert_eq!(cnf.clauses().len(), 1);
+    }
+
+    /// A blocking clause is the negation of the model's projection: every
+    /// variable contributes the literal that is *false* under it, so the clause
+    /// is falsified by exactly that projection and by no other.
+    #[test]
+    fn blocking_a_model_negates_its_projection() {
+        let mut cnf = Cnf::new();
+        let vars: Vec<Var> = (0..3).map(|_| cnf.fresh_var()).collect();
+        let model = Assignment::new(vec![true, false, true]);
+        assert_eq!(
+            block(&model, &vars),
+            vec![
+                Lit::negative(vars[0]),
+                Lit::positive(vars[1]),
+                Lit::negative(vars[2]),
+            ]
+        );
+        // A subset blocks the projection onto it, in the order given.
+        assert_eq!(
+            block(&model, &[vars[2], vars[1]]),
+            vec![Lit::negative(vars[2]), Lit::positive(vars[1])]
+        );
+    }
+
+    /// Blocking over no variables yields the empty clause — "nothing left to
+    /// distinguish", which a driver must read as a stop rather than feed to a
+    /// solver as an instant UNSAT.
+    #[test]
+    fn blocking_no_variables_yields_the_empty_clause() {
+        assert!(block(&Assignment::new(vec![true]), &[]).is_empty());
     }
 
     #[test]

@@ -8,15 +8,18 @@ name: backend determinism
 #      ADR-0027 / mt-121 compiled the backend into every build, it is the
 #      precondition for shipping, full stop — a target that cannot build the C++
 #      cannot be released.
-#   2. Does the alternative backend give the same bytes on every target? mettle's
-#      own CDCL must (STYLE D1, and the `mettle` rows here are that control);
-#      CaDiCaL was never promised to, and `-ffp-contract=off` (see
-#      `.cargo/config.toml`) is the one known divergence we have already closed.
-#      Whatever remains is measured here, not guessed at.
+#   2. Does the backend give the same bytes on every target? CaDiCaL was never
+#      promised to, and `-ffp-contract=off` (see `.cargo/config.toml`) is the one
+#      known divergence we have already closed. Whatever remains is measured
+#      here, not guessed at.
 #
 # A `cadical`-row difference across targets therefore does NOT fail this
-# workflow: it is the measurement. A `mettle`-row difference DOES fail it, and so
-# does a target that cannot build.
+# workflow: it is the measurement. A target that cannot build DOES fail it.
+#
+# NOTE (mt-124): the own-CDCL control step below is now vacuous — ADR-0027
+# decision 3 deleted that backend, so the battery emits no `mettle` rows and the
+# step passes over an empty set. Left in place deliberately: the workflow's
+# semantics are revisited once the live cross-target battery has run for real.
 
 on:
   # Tags are the point: a release should exercise the same four targets

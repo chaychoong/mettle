@@ -105,7 +105,7 @@ cargo build --release
 
 `cargo install` from crates.io is deliberately not a channel.
 
-mettle solves with **CaDiCaL** by default ([ADR-0027](docs/adr/0027-cadical-only-solver.md)), built from sources vendored in `vendor/cadical` — so every build needs a C++ toolchain. `mettle exec --solver mettle` selects the project's own all-Rust CDCL instead: slower, and the conformance yardstick. What each gives up: [LIMITATIONS.md](LIMITATIONS.md).
+mettle solves with **CaDiCaL** ([ADR-0027](docs/adr/0027-cadical-only-solver.md)), built from sources vendored in `vendor/cadical` — so every build needs a C++ toolchain. `--solver <name>` stays on `exec` and `serve` as the seam a future backend plugs into; `cadical` is the one name it takes today. What that costs: [LIMITATIONS.md](LIMITATIONS.md).
 
 ## Found a difference from Alloy?
 

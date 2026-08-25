@@ -172,7 +172,8 @@ pub struct GaugeConfig {
     pub capture_commit: Option<String>,
     /// Which SAT backend decides every command (`--solver`, mt-121) — the
     /// standing backend selector after ADR-0027, not a dev knob. `cadical` is
-    /// the default; `mettle` re-runs the net on the own CDCL.
+    /// the default and, since mt-124 deleted the own CDCL, the only name the
+    /// seam currently offers.
     ///
     /// An artifact records the backend that produced it
     /// ([`sweep_baseline::SweepConfig::backend`]), and a run refuses a baseline

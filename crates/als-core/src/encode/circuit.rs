@@ -240,7 +240,7 @@ mod tests {
     #![allow(clippy::redundant_closure_for_method_calls)]
 
     use super::*;
-    use als_solve::{CdclSolver, Outcome};
+    use als_solve::{Backend, LiveSolver, Outcome};
 
     /// Forces `g` true (or false) and returns the two variables' solved values,
     /// or `None` if unsatisfiable — a tiny oracle for the gate constructors.
@@ -266,7 +266,7 @@ mod tests {
             Bool::Lit(l) => cnf.add_clause(vec![if want { l } else { !l }]),
         }
         // Enumerate all satisfying (x, y) pairs.
-        let mut solver = CdclSolver::new(&cnf);
+        let mut solver = LiveSolver::new(Backend::default(), &cnf);
         let mut out = Vec::new();
         while let Outcome::Sat(m) = solver.solve() {
             let (bx, by) = (m.value(x), m.value(y));

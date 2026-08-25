@@ -20,7 +20,7 @@ exclude = ["vendor/cadical"]
 
 [workspace.package]
 edition = "2021"
-version = "0.1.1"
+version = "0.1.2"
 license = "MPL-2.0"
 repository = "https://github.com/chaychoong/mettle"
 

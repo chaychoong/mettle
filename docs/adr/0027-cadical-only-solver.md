@@ -294,3 +294,56 @@ encode, 20k primary-variable cap, jar-default symmetry with `expect 1`
 forcing), so a certify run re-derives the sweep's verdicts rather than a
 differently-budgeted rerun of them. `--cross` survives until mt-124 deletes it
 with `CdclSolver`; it is superseded here, not by it.
+
+## Addendum (2026-08-25, mt-124): decision 3 executed — the own CDCL is deleted
+
+**Deleted.** `crates/als-solve/src/{solver,clause_arena,var_order}.rs` — the
+hand-rolled CDCL and its exports (`CdclSolver`, `Cdcl`) — together with the
+`Backend::Cdcl` variant and the `LiveSolver::Cdcl` arm; `als_core::instrument`'s
+dual-backend plumbing (`cross_check_goal`, `CrossOutcome`, `CrossAgreement`,
+`InstrumentBackend`); and `backend-instrument`'s `--cross` and `--backend`
+flags. The workspace version moves to 0.1.2. Git history keeps every line
+recoverable, which is what made deletion the cheaper option than carrying a
+second solver nobody runs.
+
+**Kept, and why.** `--solver <name>` stays on `exec`, `serve` and the solve
+gauge, as do `Backend` (with `AVAILABLE = ["cadical"]`, an empty `COMPILED_OUT`,
+`reports_effort`, `version_signature`, `supports_proof_trace`) and `LiveSolver`.
+That is decision 2's maintained plugin boundary, not scaffolding: a backend
+added later is a variant plus a name, and the drivers already never mention a
+concrete solver. `block()` survives as the enumeration seam's blocking-clause
+constructor and moved to `als_solve`'s crate root, since its home module went.
+`certify_goal` and the whole mt-123 surface are untouched.
+
+**`mettle` is refused, not aliased.** The deleted backend's name does not
+resolve to the survivor. A script or a recorded command that still asks for
+`--solver mettle` gets the unknown-name error listing what this build has —
+loud, rather than silently answered by a different solver.
+
+**Artifact vocabulary survives the code.** Sweep and telemetry headers record a
+backend by name, and an artifact banked before mt-121 has no such field, so it
+reads as the literal `"mettle"` by construction. That read-side default stays,
+along with its tests: an old own-solver baseline must still *parse* in order to
+be refused cleanly as a backend mismatch, which is a different outcome from
+failing to load at all.
+
+**Tests re-pinned rather than dropped.** The mt-032 brute-force adversarial net
+(`crates/als-solve/tests/conformance.rs`) now runs against the shipped backend
+through `LiveSolver`: every property it asserts — verdict parity with exhaustive
+truth, every model independently checked, all-variable enumeration count equal
+to the brute-force model count, subset enumeration equal to the distinct-
+projection count — is a property of the encoding plus the blocking clauses, so
+it holds of any sound backend and is exactly what a future plugin should have to
+pass. Only the arm that drove own-CDCL internals (`set_reduce_schedule`, the
+forced-reduction fuzz) went with the solver. In the same spirit, the
+cross-backend goldens in `als-core` and the CLI's `--solver` tests were rewritten
+to iterate `Backend::AVAILABLE`, so they cover one backend today and every
+backend added later without being touched again.
+
+**The retired caveat pair.** "The own CDCL is the only backend byte-identical
+across platforms by construction" is gone from `backend.rs`, CONTRIBUTING,
+README and LIMITATIONS: with one backend, determinism-by-pinning is the whole
+regime. STYLE D1 is amended to say so and is otherwise unweakened — its
+integer-only, clock-free, hash-order-free rules still govern every line mettle
+itself writes, since a pinned solver buys nothing if the code around it is
+non-deterministic.

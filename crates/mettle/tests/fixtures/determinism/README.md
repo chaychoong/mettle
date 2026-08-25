@@ -21,8 +21,15 @@ restart EMAs would perturb.
 They are also deliberately **fast** — the whole battery runs in ~0.1s on a
 release build — because a battery that takes minutes per target will not be run.
 
-Measured on `aarch64-apple-darwin` (2026-07-30), the suite discriminates: under
-`--solver cadical`, `pigeonhole` and `queens` hash **identically** to the own
-CDCL while `coloring` and `handshake` hash **differently** (a different
-satisfying instance, same verdict). So two of the four rows are live signal for a
-cross-target diff, and the `mettle` rows are the control that must never move.
+That the suite discriminates at all was measured on `aarch64-apple-darwin`
+(2026-07-30), while a second backend still existed to compare against: two of the
+four models (`coloring`, `handshake`) reported a *different satisfying instance*
+under CaDiCaL than under the own CDCL, at the same verdict. So these rows do
+respond to a change of search — which is what makes them worth hashing across
+targets, and what a battery over easy models would not have.
+
+Since mt-124 deleted the own CDCL (ADR-0027 decision 3) the report has one
+`cadical` row per model and no control column. What a difference across targets
+means is unchanged: CaDiCaL was never promised cross-platform byte-identity, so
+a difference is the measurement this battery exists to take, not a contract
+violation.

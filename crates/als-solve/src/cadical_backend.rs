@@ -1,12 +1,13 @@
 //! The **CaDiCaL** backend ([ADR-0019](../../../docs/adr/0019-optional-cadical-backend.md),
-//! mt-089) — a second implementation of this crate's SAT boundary, compiled into
-//! every build as of [ADR-0027](../../../docs/adr/0027-cadical-only-solver.md)
-//! (mt-121).
+//! mt-089) — the implementation of this crate's SAT boundary that mettle ships,
+//! compiled into every build as of
+//! [ADR-0027](../../../docs/adr/0027-cadical-only-solver.md) (mt-121) and the
+//! only one left since mt-124.
 //!
-//! It is deliberately **not** held to the byte-identical determinism contract
-//! the own [`CdclSolver`](crate::CdclSolver) is (ADR-0019 §1): CaDiCaL's
-//! inprocessing and its own heuristics own the search. What ADR-0027's spike
-//! measured instead is that a *pinned build* reproduces itself exactly, across
+//! Its determinism is **by pinning** rather than by construction (ADR-0019 §1):
+//! CaDiCaL's inprocessing and its own heuristics own the search, so nothing
+//! about the *arithmetic* guarantees byte-identity. What ADR-0027's spike
+//! measured instead is that a pinned build reproduces itself exactly, across
 //! repeated runs, job counts and instruction sets.
 //!
 //! The mapping onto the trait boundary is one-to-one:
@@ -48,9 +49,9 @@ use crate::{Assignment, Cnf, Lit, Outcome, Solver, Var};
 /// treats any negative value as unlimited (`limit.cpp`).
 const UNLIMITED_CONFLICTS: i32 = -1;
 
-/// An incremental CaDiCaL instance holding one [`Cnf`], mirroring
-/// [`CdclSolver`](crate::CdclSolver)'s surface so the two are interchangeable
-/// at a call site.
+/// An incremental CaDiCaL instance holding one [`Cnf`], presenting exactly the
+/// surface [`LiveSolver`](crate::LiveSolver) dispatches to — so a second
+/// backend plugged in beside it is interchangeable at every call site.
 pub struct CadicalSolver {
     inner: cadical::Solver<cadical::Timeout>,
     num_vars: u32,
@@ -149,8 +150,8 @@ impl CadicalSolver {
         self.inner.signature()
     }
 
-    /// Conflicts generated over this solver's whole life — CaDiCaL's twin of
-    /// [`CdclSolver::total_conflicts`](crate::CdclSolver::total_conflicts).
+    /// Conflicts generated over this solver's whole life — one of the three
+    /// terms [`LiveSolver::effort`](crate::LiveSolver::effort) sums.
     ///
     /// Reads `Internal::stats.conflicts` through the accessors `vendor/cadical`
     /// adds; the published crate exposes none, which is the contract gap this
@@ -244,11 +245,11 @@ impl CadicalSolver {
     }
 
     /// Solves, giving up after `conflict_limit` conflicts (or the configured
-    /// wall limit, whichever binds first) and returning `None` — the same
-    /// three-way answer [`CdclSolver::solve_within`](crate::CdclSolver::solve_within)
-    /// gives.
+    /// wall limit, whichever binds first) and returning `None` — the three-way
+    /// answer the backend contract requires (sat / unsat / budget spent, with
+    /// the solver still usable).
     ///
-    /// The limit is **per call**, exactly like the own solver's: CaDiCaL
+    /// The limit is **per call**, as that contract specifies: CaDiCaL
     /// re-derives its internal ceiling as `stats.conflicts + inc.conflicts` at
     /// the start of every `solve` (`limit.cpp`/`internal.cpp`), so N here means
     /// "N more conflicts in this solve", not "N over the solver's life".
@@ -335,8 +336,8 @@ impl fmt::Display for ProofTraceError {
 
 impl std::error::Error for ProofTraceError {}
 
-/// The [`Solver`] implementation for CaDiCaL: a stateless factory, mirroring
-/// [`Cdcl`](crate::Cdcl).
+/// The [`Solver`] implementation for CaDiCaL: a stateless factory for a caller
+/// that wants one verdict and nothing incremental.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Cadical;
 

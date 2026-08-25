@@ -41,9 +41,8 @@ pub use bounds_builder::{compute_bounds, BoundsResult};
 pub use error::TranslateError;
 pub use eval::{self_check, self_check_temporal, Evaluator, SelfCheckDetail, SelfCheckFailure};
 pub use instrument::{
-    certify_goal, cross_check_goal, solve_goal_with_backend, CertifyError, CertifyMeasurements,
-    CertifyOutcome, CrossAgreement, CrossOutcome, InstrumentBackend, InstrumentOutcome,
-    InstrumentVerdict,
+    certify_goal, solve_goal_instrumented, CertifyError, CertifyMeasurements, CertifyOutcome,
+    InstrumentOutcome, InstrumentVerdict,
 };
 pub use lower::{
     lower_command, lower_command_keeping_temporal, lower_fragment, lower_fragment_keeping_temporal,

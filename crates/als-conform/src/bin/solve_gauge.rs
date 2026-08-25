@@ -81,7 +81,7 @@ fn print_usage() {
          \x20\x20--from-buckets B1,B2   re-run only files with a command in these buckets (+ files absent from PATH)\n\
          \x20\x20--symmetry N           stage-1 (verdict net) symmetry cap (default 20; 0 = no SBP)\n\
          \x20\x20--count-symmetry N     stage-2 (count net) symmetry on BOTH sides (default 0 = SB-0 yardstick)\n\
-         \x20\x20--solver NAME          SAT backend: cadical (default) or mettle, the own CDCL\n\
+         \x20\x20--solver NAME          SAT backend (default: cadical; the plugin seam's one name today)\n\
          \x20\x20--conflicts N          per-command SAT conflict budget (default 1000000)\n\
          \x20\x20--encode-budget N      per-command encode-effort budget (default 256000000)\n\
          \x20\x20--primary-var-cap N    skip a command past this many primary vars (default 20000)\n\

@@ -1,5 +1,6 @@
-//! Integration tests for the `--solver` surface (mt-089 stage 2, ADR-0019),
-//! spawning the built binary against the `exec` fixtures — the `exec.rs` idiom.
+//! Integration tests for the `--solver` surface (mt-089 stage 2, ADR-0019;
+//! ADR-0027 decision 2 keeps it as the plugin seam's user surface), spawning the
+//! built binary against the `exec` fixtures — the `exec.rs` idiom.
 //!
 //! Three properties are pinned here:
 //!
@@ -9,13 +10,15 @@
 //!    read from the type, not spelled here — mt-121 moved it to `cadical`.
 //! 2. **No silent fallback.** An unknown name is a usage error listing the
 //!    names this build has — never a quiet substitution of the default (the
-//!    mt-006 rule). A *compiled-out* name would say so in different words; no
-//!    backend is compiled out today (mt-121), so that arm has no test to run,
-//!    only [`als_solve::Backend::COMPILED_OUT`] to stay empty.
-//! 3. **The other backend answers the same verdicts.** Verdicts are
+//!    mt-006 rule). `mettle`, the own CDCL's name until mt-124 deleted it, is a
+//!    live case of that: a script that still asks for it must be told the name
+//!    is gone. A *compiled-out* name would say so in different words; nothing is
+//!    compiled out today, so that arm has no test to run, only
+//!    [`als_solve::Backend::COMPILED_OUT`] to stay empty.
+//! 3. **Every backend answers the same verdicts.** Verdicts are
 //!    backend-independent truths (ADR-0019 §4): SAT stays SAT, UNSAT stays
-//!    UNSAT, a temporal command still solves to a trace. The *instance* shown
-//!    may differ and is deliberately not asserted.
+//!    UNSAT, a temporal command still solves to a trace. The *instance* shown is
+//!    the backend's own and is deliberately not asserted.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -104,10 +107,36 @@ fn solver_without_a_value_is_a_usage_error() {
 /// user should see, not a guess mettle should make.
 #[test]
 fn solver_names_are_matched_exactly() {
-    for name in ["Mettle", "METTLE", "met"] {
+    for name in ["Cadical", "CADICAL", "cad"] {
         let out = run_exec(&fixture("commands.als"), &["--solver", name]);
         assert_eq!(out.status.code(), Some(2), "`{name}` must not resolve");
     }
+}
+
+/// `--solver mettle` selected the own CDCL until mt-124 deleted it (ADR-0027
+/// decision 3). It must now be refused like any other unknown name, listing what
+/// this build does have — never quietly answered by the surviving backend, which
+/// would make an old recorded command silently mean something else.
+#[test]
+fn the_deleted_solver_name_is_refused_like_any_other_unknown() {
+    let out = run_exec(&fixture("commands.als"), &["--solver", "mettle"]);
+    assert_eq!(out.status.code(), Some(2), "stdout: {}", stdout(&out));
+    let text = stderr(&out);
+    assert!(
+        text.contains("unknown solver `mettle`"),
+        "expected the name back verbatim, got: {text}"
+    );
+    assert!(
+        text.contains(&format!(
+            "available: {}",
+            als_solve::Backend::AVAILABLE.join(", ")
+        )),
+        "expected the available list, got: {text}"
+    );
+    assert!(
+        stdout(&out).is_empty(),
+        "a rejected solver must not solve anything"
+    );
 }
 
 /// `serve` takes the same flag with the same refusal (it solves, so it must be
@@ -128,68 +157,75 @@ fn serve_rejects_an_unknown_solver_before_binding_a_port() {
     );
 }
 
-/// Every verdict shape in the fixture is reached under `CaDiCaL` too, with the
-/// same verdict label as the default backend produced.
+/// Every verdict shape in the fixture comes out the same under every backend
+/// this build offers — the jar-pinned label, and the same exit status.
+///
+/// The verdict line is the contract; the instance below it is the backend's own
+/// choice and deliberately not compared (ADR-0019 §1).
 #[test]
-fn cadical_reaches_the_same_verdicts_as_the_default_backend() {
+fn every_available_solver_reaches_the_same_verdicts() {
     let file = fixture("commands.als");
     // Command 0 is a SAT `run`, 1 a VALID `check`, 2 a COUNTEREXAMPLE.
     for (command, verdict) in [("0", "SAT"), ("1", "VALID"), ("2", "COUNTEREXAMPLE")] {
-        let own = run_exec(&file, &["--command", command, "--solver", "mettle"]);
-        let cadical = run_exec(&file, &["--command", command, "--solver", "cadical"]);
-        assert!(cadical.status.success(), "stderr: {}", stderr(&cadical));
-        assert!(
-            stdout(&cadical).contains(verdict),
-            "cadical missed the {verdict} verdict on command {command}: {}",
-            stdout(&cadical)
-        );
-        assert_eq!(
-            own.status.code(),
-            cadical.status.code(),
-            "backends disagreed on command {command}'s exit status"
-        );
-        // The verdict line is the contract; the instance below it is the
-        // backend's own choice and deliberately not compared (ADR-0019 §1).
+        let bare = run_exec(&file, &["--command", command]);
         let first_line = |out: &Output| stdout(out).lines().nth(1).unwrap_or("").to_owned();
-        assert_eq!(
-            first_line(&own),
-            first_line(&cadical),
-            "backends disagreed on command {command}'s verdict"
-        );
+        for name in als_solve::Backend::AVAILABLE {
+            let named = run_exec(&file, &["--command", command, "--solver", name]);
+            assert!(named.status.success(), "stderr: {}", stderr(&named));
+            assert!(
+                stdout(&named).contains(verdict),
+                "{name} missed the {verdict} verdict on command {command}: {}",
+                stdout(&named)
+            );
+            assert_eq!(
+                bare.status.code(),
+                named.status.code(),
+                "{name} changed command {command}'s exit status"
+            );
+            assert_eq!(
+                first_line(&bare),
+                first_line(&named),
+                "{name} changed command {command}'s verdict"
+            );
+        }
     }
 }
 
-/// A temporal command still solves to a lasso trace under `CaDiCaL`: the trace
-/// shown is configuration-relative to *its* first solution (LEDGER-014 /
+/// A temporal command solves to a lasso trace on every backend: the trace shown
+/// is configuration-relative to *that* backend's first solution (LEDGER-014 /
 /// ADR-0019 §4), so the block structure is asserted and the contents are not.
 #[test]
-fn cadical_solves_a_temporal_command_to_a_trace() {
-    let out = run_exec(&fixture("trace.als"), &["--solver", "cadical"]);
-    assert!(out.status.success(), "stderr: {}", stderr(&out));
-    let text = stdout(&out);
-    assert!(text.contains("---Trace---"), "no trace rendered: {text}");
-    assert!(text.contains("(loop)"), "no loop marker: {text}");
+fn every_available_solver_reaches_a_temporal_trace() {
+    for name in als_solve::Backend::AVAILABLE {
+        let out = run_exec(&fixture("trace.als"), &["--solver", name]);
+        assert!(out.status.success(), "stderr: {}", stderr(&out));
+        let text = stdout(&out);
+        assert!(text.contains("---Trace---"), "{name}: no trace: {text}");
+        assert!(text.contains("(loop)"), "{name}: no loop marker: {text}");
+    }
 }
 
-/// `--conflicts` still binds under `CaDiCaL`: a zero budget cannot answer a
-/// command that needs any search at all, and reports the same non-verdict the
-/// own solver reports.
+/// `--conflicts` binds on every backend: a zero budget cannot answer a command
+/// that needs any search at all, and the non-answer it reports is never a wrong
+/// verdict.
 #[test]
-fn the_conflict_budget_binds_under_cadical() {
+fn the_conflict_budget_binds_on_every_available_solver() {
     let file = fixture("commands.als");
-    let out = run_exec(
-        &file,
-        &["--command", "1", "--solver", "cadical", "--conflicts", "0"],
-    );
-    let text = stdout(&out);
-    assert!(
-        text.contains("UNKNOWN") || text.contains("VALID"),
-        "expected a verdict or an honest non-verdict, got: {text}"
-    );
-    // Whatever it answers, it is never *wrong*: a `check` that reaches a
-    // verdict at all must reach the same one the yardstick does.
-    assert!(
-        !text.contains("COUNTEREXAMPLE"),
-        "cadical found a counterexample the yardstick says does not exist: {text}"
-    );
+    for name in als_solve::Backend::AVAILABLE {
+        let out = run_exec(
+            &file,
+            &["--command", "1", "--solver", name, "--conflicts", "0"],
+        );
+        let text = stdout(&out);
+        assert!(
+            text.contains("UNKNOWN") || text.contains("VALID"),
+            "{name}: expected a verdict or an honest non-verdict, got: {text}"
+        );
+        // Whatever it answers, it is never *wrong*: command 1 is a `check` the
+        // jar proves has no counterexample.
+        assert!(
+            !text.contains("COUNTEREXAMPLE"),
+            "{name} found a counterexample that does not exist: {text}"
+        );
+    }
 }
