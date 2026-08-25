@@ -52,17 +52,15 @@ neither appears in any corpus.
 ## Overflow guard corners
 
 These are the places where mettle's overflow guard differs from the jar's under
-the default `noOverflow` mode. All of them have zero incidence in both corpora
-and were found with hand-written probe models. They are the one group in this
-file that can give a different verdict, on a synthetic model, and the
-difference goes in both directions: on most cells mettle answers UNSAT where
-the jar answers SAT, and on six known cells mettle answers SAT where the jar
-answers UNSAT (the simplest is `run { plus[7,7] in Int } for 3 but 4 int`).
-The mt-129 probe wave (2026-08-25) pinned the jar's mechanism from the Kodkod
-source and reproduced all 137 probe cells, so the fix is specified. It ships
-as mt-130. Earlier measurements are in
+the default `noOverflow` mode. All have zero incidence in both corpora and were
+found with hand-written probe models. They are the one group in this file that
+can give a different verdict, on a synthetic model. The union and short-circuit
+shedding family closed at mt-130 (2026-08-25): the mt-129 wave pinned the jar's
+mechanism from the Kodkod source, and mettle now folds constant emptiness the
+same way, verified on all 137 probe cells with a byte-identical corpus sweep.
+Measurements are in
 [docs/reference/alloy6-translation.md](docs/reference/alloy6-translation.md)
-§10.7e through §10.7k; the pinned mechanism is in `scratchpad/probe/mt129/NOTES.md`.
+§10.7e through §10.7k and `scratchpad/probe/mt129/NOTES.md`.
 
 - **`toInt` throws away a cardinality (mt-127).** When the operand of `#` is
   itself an `Int[·]` cast and an integer reader consumes the result, the jar
@@ -72,20 +70,6 @@ as mt-130. Earlier measurements are in
   needs the integer-comparison gate re-keyed on the jar's literal-cast test
   first; the direct patch was measured and it moved the divergences instead of
   closing them.
-- **`#` and `sum` read a hidden cast differently (mt-130).** In the jar,
-  cardinality merges the value's guard flag and the internal sum helper does
-  not, so `#` keeps a guard that a `sum` reading of the same set drops. This is
-  part of the same folding mechanism as the union corner below and ships with
-  its fix.
-- **Union and short-circuit shedding (mt-130).** The jar keeps the overflow
-  guard through an intersection, a difference, an if-then-else, a join and a
-  product. A union drops the guard of an operand whose value is constant and
-  empty (it tests the left operand first, and an override tests only the
-  right). The formulas `lone` and `one` return early on an empty value and drop
-  the guard too; `no`, `in` and `=` keep it. mettle does none of this folding
-  yet, and it also applies a blanket constant escape at the comparison site
-  that the jar does not have. Both errors come from the same missing piece and
-  mt-130 fixes them together, in the encoder and the evaluator at once.
 - **An `int[·]` in an if-then-else branch (mt-128).** Alloy's resolver re-wraps a
   surface `int[e]` as `Int[int[e]]`, which makes the branch a set, and it does
   not re-wrap `#e` in the same position. Both carry Alloy type `{Int}`, so the

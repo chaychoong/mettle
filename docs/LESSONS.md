@@ -98,3 +98,15 @@ The compute-tail sizing (mt-119) answered every per-row question — which of 49
 
 ## A pinned CI runner label is a dependency with a retirement date — verify it against the release pipeline's *actual* labels before waiting on it (mt-124, 2026-08-25)
 The cross-target battery's Intel-mac leg queued for over an hour against `macos-13` — an image GitHub retired in December 2025, eight months before the run. The hand-written workflow had pinned the label when it was written and nothing ever exercised it (the battery had never run on a tag — its own recorded debt). The unblock came from asking what the *release pipeline* actually uses: `gh api` on the last successful release run showed dist 0.32.0 already building `x86_64-apple-darwin` on `macos-15-intel`, so the fix was both known-good and alignment-improving (the battery now runs the exact runner that builds the release artifact). Three things generalize: (1) an infinite queue with an empty `runner_name` means "no such pool", not "busy" — check the label's existence before waiting on it; (2) when two workflows must agree on an environment, derive the pinned label from the authoritative one (query its last real run) instead of writing the same constant twice; (3) hosted-runner labels are dependencies with retirement dates — when one appears in a workflow, record its horizon (`macos-15-intel` retires fall 2027, and the x86_64-apple-darwin release target retires with it unless an ADR decides otherwise).
+
+## 2026-08-25 — bytecode-only readings misled twice in one day
+Two pinned claims fell this session, and both came from reading bytecode
+instead of source. mt-096 concluded from `javap` that the overflow-guard
+union corner was uninspectable sparse-matrix folding; the mt-129 source
+reading found a four-line declarative rule and six cells where the
+"conservative direction" claim was simply false. The instance-XML
+reference's §1.2 read `CommandScope.toString()` bytecode as printing the
+qualified sig label; the live jar prints the bare name on every shape.
+Rule going forward: a bytecode-derived behavioral claim is a hypothesis,
+not a pin. Pin from fetched source when it exists, and live-probe the
+claim before recording it as fact.

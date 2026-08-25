@@ -2796,6 +2796,19 @@ and those agree too.
 
 ### 10.7h mt-096: the layer-(2) set-former guard corner — measured and PINNED (jar-verified 2026-08-20)
 
+> **Superseded 2026-08-25 (mt-129/mt-130).** This section's "context-dependent
+> sparse-matrix folding, not IR-local" conclusion and its conservative-direction
+> rationale are both retracted. The mechanism is declarative and pinned from the
+> Kodkod source: constant-empty casts keep a live circuit, union sheds a
+> constant-empty operand's circuit testing the left operand first, override
+> tests only its right, `lone`/`one`/`some` short-circuit, cardinality merges
+> the circuit and the sum reading never does. 137 of 137 cells, including six
+> jar-UNSAT/mettle-SAT cells this section's rationale said could not exist.
+> Full record: `scratchpad/probe/mt129/NOTES.md`, the LEDGER-010 mt-129/130
+> amendment, and `crates/als-core/tests/overflow_shedding_conformance.rs`.
+> The cell tables below remain valid measurements; only the interpretation
+> changed.
+
 **Mission.** Implement §10.7g's / LEDGER-010's amended layer (2): "a cast reached
 through any set former contributes its layer-(1) emptiness value but **no**
 comparison-level guard." Harness: 75 cells across
