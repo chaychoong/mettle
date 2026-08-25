@@ -38,16 +38,9 @@ Current measured agreement with the jar is in [docs/STATE.md](docs/STATE.md).
 ## Models mettle accepts that Alloy rejects
 
 mettle leans toward accepting. Over the 150,891 alloy4fun submissions, mettle
-rejects nothing the jar accepts, and accepts 4 models the jar rejects. Per-code
+rejects nothing the jar accepts, and accepts 1 model the jar rejects. Per-code
 detail is in [docs/reference/alloy4fun-resolve-pass.md](docs/reference/alloy4fun-resolve-pass.md) §12.
 
-- **Integer casts push the wrong relevant type (3 codes).** In `int c.position <
-  int p.position`, where `position` is a field on two different sigs, the jar
-  pushes `{Int}` into the cast, finds no match, falls back to the broadest slice,
-  and reports the ambiguity. mettle pushes the operand's own type, which resolves
-  to one field and accepts. The fix routes every `int x.f` through the broadest
-  slice, so it can make other models start rejecting. Being closed as mt-126,
-  gated on the full 150,891-code diff staying at zero wrong rejects.
 - **Meta names make the whole model lenient (1 code).** In a model that uses a
   real meta name, `$`-bearing and unknown names resolve to `univ` and
   expression-level rejects are suppressed for the whole file. `Course$projects`

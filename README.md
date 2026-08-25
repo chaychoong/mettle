@@ -105,7 +105,7 @@ Of the 12 remaining commands, 2 are commands mettle answers but the jar times ou
 
 An UNSAT verdict can also be machine-certified: CaDiCaL logs a DRAT proof, and an external checker verifies it against the CNF mettle solved. [CONTRIBUTING.md](CONTRIBUTING.md) has the recipe.
 
-Beyond the corpus, a differential pass over 150,891 snippets from the [Alloy4Fun](https://github.com/haslab/Alloy4Fun) dataset (measured 2026-08) found **0 cases where the jar accepts a model and mettle rejects it**, 4 cases where mettle accepts one the jar rejects, and **99.9973% agreement** overall; error positions match exactly on 99.79% of parse errors. Warning emission matches the jar on 101,969 of the 101,970 files, with the jar's and mettle's warning counts equal. A mutation fuzzer runs 4,248 mutants per CI run, verified to 88,500 offline, and holds three properties: no panic, sane spans, round-trip stable.
+Beyond the corpus, a differential pass over 150,891 snippets from the [Alloy4Fun](https://github.com/haslab/Alloy4Fun) dataset (measured 2026-08-25) found **0 cases where the jar accepts a model and mettle rejects it**, 1 case where mettle accepts one the jar rejects, and **99.9993% agreement** overall; error positions match exactly on 99.79% of parse errors. Warning emission matches the jar on 101,969 of the 101,970 files, with the jar's and mettle's warning counts equal. A mutation fuzzer runs 4,248 mutants per CI run, verified to 88,500 offline, and holds three properties: no panic, sane spans, round-trip stable.
 
 Every behavioral rule mettle matches is written down in the [Semantics Ledger](SEMANTICS_LEDGER.md). Every disagreement ever found was root-caused and has a regression test in the tree.
 
