@@ -28,9 +28,11 @@
 //! The scope-and-universe half of the feature (atom order, XML `meta="yes"`)
 //! is mt-107 P4's and is deliberately not asserted here.
 //!
-//! One gap stated rather than asserted: the lowerer also emits `sig$fact` and
-//! `static$fact` when the synthesis records them (a model with no sigs at all),
-//! but P0 probed no such cell, so no test here pins their verdicts.
+//! The sig-less emptiness facts, stated as a gap at P3, were jar-probed at P5
+//! (cells `p5/p5_01`–`p5_04`, 2026-08-25, both overflow modes): all three
+//! facts mint on a model with no sigs (`sig$fact`, `static$fact`, `var$fact`
+//! in the root-fact dump) and the verdicts are pinned in the `p5_*` tests
+//! below.
 
 use als_core::ir::Ir;
 use als_core::{
@@ -254,6 +256,30 @@ fn m5_variability_partitions_the_meta_sigs() {
     // The negative space: neither sig is in the other's bucket.
     assert!(!m5_01("A$ in static$"), "m5_01 xml A$$0 only in var$");
     assert!(!m5_01("B$ in var$"), "m5_01 xml B$$0 only in static$");
+}
+
+#[test]
+fn p5_a_sigless_model_mints_all_three_emptiness_facts() {
+    // The P5 closing probe (cells p5/p5_01..p5_03): a model with NO sigs still
+    // trips the meta gate on the command's own `$` name, and `resolveMeta`
+    // mints `sig$fact` + `static$fact` + `var$fact` (all three in the jar's
+    // root-fact dump), so every meta bucket is forced empty.
+    assert!(solve("run { no sig$ }\n"), "p5_01: jar SAT both modes");
+    assert!(!solve("run { some sig$ }\n"), "p5_02: jar UNSAT both modes");
+    assert!(
+        solve("run { no field$ and no static$ and no var$ }\n"),
+        "p5_03: jar SAT both modes"
+    );
+}
+
+#[test]
+fn p5_a_fieldless_sig_empties_only_the_field_bucket() {
+    // Cell p5/p5_04: one fieldless static sig — `sig$`/`static$` are non-empty
+    // (no fact minted for them), `field$` and `var$` still get theirs.
+    assert!(
+        solve("sig A {}\nrun { some sig$ and no field$ and some static$ }\n"),
+        "p5_04: jar SAT both modes"
+    );
 }
 
 #[test]

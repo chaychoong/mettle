@@ -17,18 +17,6 @@ Current measured agreement with the jar is in [docs/STATE.md](docs/STATE.md).
 
 ## Commands mettle cannot run
 
-- **The `Sig$` metamodel solves, and its instance output is jar-shaped.**
-  Since mt-107 P3 (2026-08-25) a model that names a meta sig or meta field
-  (`Vertex$.subfields`) resolves, solves, and evaluates: both affected corpus
-  commands, `hc7.als[0]` and `einstein-wikipedia.als[0]`, agree with the jar.
-  mt-107 P4 closed presentation parity: the universe puts the meta atoms
-  between the root module's and the opened modules', and the instance XML
-  carries `meta="yes"` on every synthesized sig and field with the
-  `static$`/`var$` subsets written the jar's way. Element order, attribute
-  inventory, and the lazy IDs are byte-identical to the jar on all four probe
-  cells and on both corpus commands. The one thing still unpinned for a meta
-  model is the same thing unpinned for every model: which satisfying instance
-  comes back ([LEDGER-012](SEMANTICS_LEDGER.md)).
 - **Two commands run past the sweep budgets.** `fullsub2.als[0]` answers UNSAT,
   agreeing with the jar, at about 5.19M conflicts and 27 minutes of wall time;
   run it with `backend-instrument --rows - --conflicts 8000000 --wall 3000`. The

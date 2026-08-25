@@ -70,3 +70,25 @@ both.
 
 - LIMITATIONS' `Sig$` entry gains the sizing pointer; the `seen_dollar` leniency description changes when mt-108 lands.
 - The owner decision packet is now complete across both named threads: ExprChoice (ADR-0023: recommend build, 5–7 days, 118 over-accepts + the last convertible row) vs Sig$ (this ADR: recommend defer, 9–13 days, 2 rows) — opposite recommendations, both from measured payoff.
+
+## Addendum — ALL FIVE PHASES SHIPPED, 2026-08-25: the metamodel is closed
+
+P1 through P5 landed in the ADR-0028 campaign, all on 2026-08-25: P1 synthesis
+(`e8c134d`), P2 ground expansion + leniency retirement (`0295e5b` — alloy4fun
+agreement 100.0000%, over-accepts 0), P3 lowering (`4283ad2` — the sweep's
+lowering bucket empties, gauge 554 agreements, plus the emptiness facts and a
+wrong-verdict `some var$` gap closed the same chunk), P4 presentation parity
+(`6c08d6b` — the jar's reachable-sig order, `meta="yes"`, jar-reader
+round-trip 6/6, sweep byte-identical), and P5 closing gates (the sig-less
+emptiness-fact cells p5_01–p5_04 jar-probed and pinned; the M4 symmetry
+regression rides the standing end-of-run counting nets).
+
+Actual cost against the sizing's ~9–13 agent-days: two opus delegate
+sessions and a tech-lead probe, roughly one working day wall clock — the
+sizing's P2 fear (ambiguity machinery) had already been paid for by ADR-0023,
+exactly as the P0 addendum predicted. The recommendation this ADR carried
+(defer) was reversed by the owner under ADR-0028; the reversal is recorded
+there. One find spun out: mt-133 (anonymous-open alias numbering, found at
+the P4 einstein gate, pre-existing and metamodel-unrelated).
+
+**Status: the feature question is CLOSED — built.**
