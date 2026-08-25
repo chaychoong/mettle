@@ -29,6 +29,17 @@ Current measured agreement with the jar is in [docs/STATE.md](docs/STATE.md).
   (4 corpus commands). Unbounded model checking (`for 1.. steps`) returns the
   jar's own refusal text (2 corpus commands). These match the reference exactly.
 
+## Counting differences
+
+- **One model double-counts under symmetry breaking (mt-134).** Enumerating
+  `hc7.als[0]` with symmetry breaking at the jar's default strength gives 128
+  instances where the jar gives 64: one symmetry the jar's breaking predicate
+  cuts and mettle's does not, on a model that combines the `Sig$` metamodel
+  with two private ordering modules. Verdicts are unaffected (symmetry
+  breaking never changes SAT or UNSAT), and the same command's count matches
+  the jar exactly with symmetry off. Found 2026-08-25, the first day this
+  comparison could run at all. One corpus row.
+
 ## Models mettle accepts that Alloy rejects
 
 Over the 150,891 alloy4fun submissions, mettle and the jar now agree on every

@@ -110,3 +110,17 @@ qualified sig label; the live jar prints the bare name on every shape.
 Rule going forward: a bytecode-derived behavioral claim is a hypothesis,
 not a pin. Pin from fetched source when it exists, and live-probe the
 claim before recording it as fact.
+
+## 2026-08-25 — a bead's fix-prescription is a hypothesis too
+mt-127's bead prescribed "re-key the int-compare gate, then the toInt
+double-unwrap", sequenced by mt-096's measured experiment. The probe wave
+refuted the prescription's diagnosis before a line was written: the jar's
+EQUALS wraps int operands in exactly the cast the gate tests (toSet →
+IntToExprCast), so the gate already agreed and the whole fix was placing
+the peephole at the cint call sites. The measured cells (n1/n2 breaking)
+were right; the mechanism inferred from them was wrong, and implementing
+the prescription as written would have re-keyed a gate that needed no
+change. Rule: a bead may pin its CELLS as fact, never its mechanism —
+probe-first applies to the bead's own theory of the fix, and a delegate
+brief should say what must be TRUE afterward (which cells flip, which
+hold), not which internal change to make.
