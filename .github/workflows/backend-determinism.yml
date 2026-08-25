@@ -1,25 +1,27 @@
 name: backend determinism
 
-# The cross-target determinism battery for the optional CaDiCaL backend
-# (ADR-0019 / mt-089 stage 2). It answers two questions no single machine can:
+# The cross-target determinism battery for the shipped CaDiCaL backend
+# (ADR-0019 / mt-089 origin; semantics set by ADR-0027 / mt-124). It answers
+# two questions no single machine can:
 #
-#   1. Can the vendored C++ actually be built on all four release targets? It
-#      used to be the precondition for shipping `--solver cadical` at all; since
-#      ADR-0027 / mt-121 compiled the backend into every build, it is the
-#      precondition for shipping, full stop — a target that cannot build the C++
-#      cannot be released.
-#   2. Does the backend give the same bytes on every target? CaDiCaL was never
-#      promised to, and `-ffp-contract=off` (see `.cargo/config.toml`) is the one
-#      known divergence we have already closed. Whatever remains is measured
-#      here, not guessed at.
+#   1. Can the vendored C++ actually be built on all four release targets?
+#      Since ADR-0027 / mt-121 compiled the backend into every build, this is
+#      the precondition for shipping, full stop — a target that cannot build
+#      the C++ cannot be released.
+#   2. Does the backend give the same bytes on every target? Under ADR-0027
+#      this is the STANDING CROSS-ARCH DETERMINISM GATE ("byte-compare
+#      double-run at wraps; cross-arch at release tags"): determinism-by-pinning
+#      must hold across real hardware, and a `cadical`-row difference across
+#      targets FAILS this workflow. The gate was first passed for real on
+#      2026-08-25 (mt-124): aarch64-darwin, aarch64-linux, x86_64-linux and
+#      x86_64-darwin all hashed identically, confirming what the mt-120 Rosetta
+#      run could only approximate. `-ffp-contract=off` (see
+#      `.cargo/config.toml`) is the one known divergence source, closed there.
 #
-# A `cadical`-row difference across targets therefore does NOT fail this
-# workflow: it is the measurement. A target that cannot build DOES fail it.
-#
-# NOTE (mt-124): the own-CDCL control step below is now vacuous — ADR-0027
-# decision 3 deleted that backend, so the battery emits no `mettle` rows and the
-# step passes over an empty set. Left in place deliberately: the workflow's
-# semantics are revisited once the live cross-target battery has run for real.
+# History: until mt-124 this workflow carried the own CDCL as a byte-identity
+# control and treated CaDiCaL differences as a measurement (ADR-0019 §1).
+# ADR-0027 decision 3 deleted that backend; the measured cross-target identity
+# above is what justified promoting the measurement to a gate.
 
 on:
   # Tags are the point: a release should exercise the same four targets
@@ -48,12 +50,19 @@ jobs:
       matrix:
         include:
           # The four cargo-dist targets (dist-workspace.toml), each on the native
-          # GA runner cargo-dist itself uses — no cross-compilation, so the C++
-          # is built by the same toolchain that will build it at release time.
+          # runner cargo-dist itself uses — no cross-compilation, so the C++ is
+          # built by the same toolchain that will build it at release time.
+          # x86_64 macOS runs on `macos-15-intel`: GitHub retired `macos-13`
+          # (the old Intel image) in December 2025, and `macos-15-intel` is the
+          # label dist 0.32.0's release jobs already use (verified against the
+          # v0.1.1 release run). It is also GitHub's LAST Intel macOS image,
+          # scheduled to retire in fall 2027 — when it goes, the
+          # x86_64-apple-darwin release target goes with it (an ADR at that
+          # time owns the call).
           - target: aarch64-apple-darwin
             runner: macos-14
           - target: x86_64-apple-darwin
-            runner: macos-13
+            runner: macos-15-intel
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-22.04
           - target: aarch64-unknown-linux-gnu
@@ -111,28 +120,16 @@ jobs:
           first=$(ls -1 rows-hashes-*.txt | head -1)
 
           status=0
-          echo "== own-CDCL control (must be identical everywhere) =="
-          grep '^mettle ' "$first" > /tmp/own-first.txt
+          echo "== cross-arch determinism gate (ADR-0027: must be identical everywhere) =="
           for f in rows-hashes-*.txt; do
-            grep '^mettle ' "$f" > /tmp/own-this.txt
-            if ! diff -u /tmp/own-first.txt /tmp/own-this.txt; then
-              echo "DETERMINISM CONTRACT VIOLATION: $f differs on the own CDCL"
+            if diff -u "$first" "$f"; then
+              echo "  $f: identical to $first"
+            else
+              echo "DETERMINISM GATE VIOLATION: $f differs from $first"
               status=1
             fi
           done
-          [ "$status" -eq 0 ] && echo "own CDCL: byte-identical across every target that built"
-
-          echo "== cadical measurement (a difference is data, not a failure) =="
-          grep '^cadical ' "$first" > /tmp/cad-first.txt || true
-          for f in rows-hashes-*.txt; do
-            grep '^cadical ' "$f" > /tmp/cad-this.txt || true
-            if diff -q /tmp/cad-first.txt /tmp/cad-this.txt >/dev/null 2>&1; then
-              echo "  $f: identical to $first"
-            else
-              echo "  $f: DIFFERS from $first (expected-possible; see ADR-0019 §1)"
-              diff -u /tmp/cad-first.txt /tmp/cad-this.txt || true
-            fi
-          done
+          [ "$status" -eq 0 ] && echo "cadical: byte-identical across every target that built"
 
           # Every target must have produced a report; a missing one means the
           # build failed, which is the answer to question (1) above.
