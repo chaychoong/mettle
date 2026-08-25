@@ -108,6 +108,14 @@ pub struct ResolvedSig {
     pub is_private: bool,
     /// A seeded builtin (`univ`/`Int`/`seq/Int`/`String`/`none`).
     pub is_builtin: bool,
+    /// Synthesized by the phase-8 `$` metamodel pass (`resolveMeta`,
+    /// resolution-doc §1 phase 8, ADR-0024 / mt-107): `sig$`, `field$`, a one-sig
+    /// `S$` per user sig, a one-sig `S$f` per field, and the `static$`/`var$`
+    /// subset sigs. The reference's `Attr.META`, which the instance-XML writer
+    /// renders as `meta="yes"` on the `<sig>` element
+    /// (`alloy6-instance-xml.md` §X-03). Never true unless
+    /// [`ResolvedWorld::meta`] is `Some`.
+    pub is_meta: bool,
     /// `lone`/`one`/`some` sig multiplicity.
     pub mult: Option<SigMult>,
     /// Fields declared in this sig, in source order.
@@ -162,7 +170,49 @@ pub struct ResolvedField {
     /// (`f = e`) field it is `= e` (an [`als_syntax::ast::UnOp::ExactlyOf`]
     /// wrapping the value `e`), which mt-031 lowers as `all this: S | this.f =
     /// e`.
+    ///
+    /// **Meaningless when [`Self::meta_def`] is `Some`** — a synthesized meta
+    /// relation has no source AST to point at, so this holds the placeholder
+    /// `ExprId(0)` and every consumer must branch on `meta_def` *first*. That is
+    /// the mt-107 P1 widening the design memo called "`bound` redirection":
+    /// rather than growing a scratch AST arena nobody could type-check, the
+    /// synthesis records what the reference's `addDefinedField` was *given*, in
+    /// already-resolved terms.
     pub bound: als_syntax::ast::ExprId,
+    /// Synthesized by the phase-8 `$` metamodel pass — the reference's
+    /// `Attr.META` on a field, rendered `meta="yes"` on the `<field>` element
+    /// (`alloy6-instance-xml.md` §X-03). Equivalent to `meta_def.is_some()`;
+    /// carried separately because the XML writer asks a presentational question
+    /// and the lowerer a structural one.
+    pub is_meta: bool,
+    /// What this meta relation is **defined as**, for a synthesized field only
+    /// (`None` for every user field). Read this instead of [`Self::bound`]
+    /// whenever it is `Some`.
+    pub meta_def: Option<MetaDef>,
+}
+
+/// The value a synthesized meta relation is defined as — the expression the
+/// reference hands `addDefinedField` in `resolveMeta`, recorded in resolved
+/// terms rather than as an AST bound (see [`ResolvedField::bound`]).
+///
+/// Every meta relation is a **defined (`=`) field**, so the lowerer's job (P3)
+/// is the same `all this: S$ | this.rel = <def>` it already emits for a user
+/// `f = e` field — only the right-hand side comes from here.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum MetaDef {
+    /// `S$ <: value` — the concrete sig `S` the meta atom stands for
+    /// (`resolveMeta` `:2170`).
+    Sig(SigId),
+    /// `S$f <: value` — the concrete field relation `f` the meta atom stands
+    /// for (`resolveMeta` `:2185`). Its arity is `1 + f`'s.
+    Field(FieldId),
+    /// `S$ <: fields` / `parent` / `subfields` — the union of these meta sigs,
+    /// in the reference's own insertion order (`:2191`, `:2199-2207`,
+    /// `:2208-2228`). **Empty** is the reference's `ExprConstant.EMPTYNESS`,
+    /// which is why such a field's declared type carries a `univ` right column
+    /// rather than a `none` one (jar-verified: `Z$.fields : {Z$->univ}`,
+    /// mt-107 P0 `out/m1_base_dump.txt`).
+    MetaSigs(Vec<SigId>),
 }
 
 /// One parameter of a func/pred (resolution-doc §3.5).
@@ -479,8 +529,71 @@ pub struct ResolvedWorld {
     /// fields exist; identified by the stdlib module's resolved identity, never
     /// by a user alias.
     pub ordering: Vec<OrderingInstance>,
+    /// The synthesized `$` metamodel (resolution-doc §1 phase 8, ADR-0024 /
+    /// mt-107 P1), or `None` when the mt-108 meta gate did not fire — which is
+    /// every model without a genuine meta name, i.e. all but a handful.
+    pub meta: Option<MetaModel>,
     /// Builtin sig handles (resolution-doc §4.1).
     pub builtins: Builtins,
+}
+
+/// The phase-8 `$` metamodel, as `resolveMeta` builds it (mt-107 P1).
+///
+/// The synthesized sigs and fields live in the ordinary [`ResolvedWorld::sigs`]
+/// / [`ResolvedWorld::fields`] arenas — they are ordinary sigs and ordinary
+/// fields, which is exactly what makes the four relation names go through the
+/// same-named-field ambiguity machinery with no special casing (ADR-0023 /
+/// mt-115, and mt-107 P0's SURPRISE 1). This record is the *index* over them:
+/// the handles, and the two insertion-ordered atom lists later phases need.
+///
+/// **Arena order is not the reference's `getAllReachableSigs()` order.** mettle
+/// appends the whole metamodel after every user sig; the reference interleaves
+/// it into each module's own sig map. Nothing behavioral depends on the arena
+/// order, but the **atom** order does, so the scope phase (P4) must build the
+/// universe from the lists here rather than from an arena scan:
+///
+/// ```text
+/// <root-module user atoms>  <sig_atoms>  <field_atoms>  <opened-module user atoms>
+/// ```
+///
+/// with meta atom labels following the ordinary `Label$Index` rule over a label
+/// that already ends in `$` (`A$$0`, `A$r$0`, `ao/Ord$$0`) — jar-verified,
+/// mt-107 P0 §M3.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct MetaModel {
+    /// `this/sig$` — the abstract top-level parent of every `S$`.
+    pub sig_meta: SigId,
+    /// `this/field$` — the abstract top-level parent of every `S$f`.
+    pub field_meta: SigId,
+    /// `this/static$` — the exact subset over the static meta sigs.
+    pub static_meta: SigId,
+    /// `this/var$` — the exact subset over the variable meta sigs.
+    pub var_meta: SigId,
+    /// Every `S$`, in the reference's synthesis order (module instances in load
+    /// order, each module's sigs in declaration order) — the jar's
+    /// `metaSigAtoms`. One atom each, since every meta sig is a `one` sig.
+    pub sig_atoms: Vec<SigId>,
+    /// Every `S$f`, in the same order — the jar's `metaFieldAtoms`.
+    pub field_atoms: Vec<SigId>,
+    /// Every meta sig, `S$` and `S$f` **interleaved** in synthesis order
+    /// (`V$, V$f, V$g, W$, W$h, Z$`). This, not the two lists above, is the
+    /// order `static$`/`var$` list their members in (jar-verified,
+    /// `out/m1_base_dump.txt`).
+    pub atoms: Vec<SigId>,
+    /// The emptiness facts the reference adds when a synthesized sig has no
+    /// members (`resolveMeta` `:2230-2237`): `sig$fact`, `static$fact`,
+    /// `var$fact`, each meaning `no <sig>`. Recorded in that order.
+    pub empty_facts: Vec<MetaEmptyFact>,
+}
+
+/// One `no <sig>` emptiness fact the metamodel synthesis adds
+/// (`resolveMeta` `:2230-2237`).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct MetaEmptyFact {
+    /// The reference's fact name (`sig$fact` / `static$fact` / `var$fact`).
+    pub name: String,
+    /// The sig constrained empty.
+    pub sig: SigId,
 }
 
 /// One resolved `open util/ordering[S]` instance (mt-035, LEDGER-004 /

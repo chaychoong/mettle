@@ -42,7 +42,8 @@ pub use temporal::is_temporal_model;
 pub use ty::{Product, Type};
 pub use warning::{jar_stem_class, ResolveWarning};
 pub use world::{
-    Builtins, CmdTargetResolved, CommandScope, FieldId, FuncId, MacroId, OrderingInstance, Param,
-    ResolvedCommand, ResolvedFact, ResolvedField, ResolvedFunc, ResolvedMacro, ResolvedSig,
-    ResolvedWorld, SigId, SigKind, StepsMax, StepsRange, StepsScope, DEFAULT_STEPS,
+    Builtins, CmdTargetResolved, CommandScope, FieldId, FuncId, MacroId, MetaDef, MetaEmptyFact,
+    MetaModel, OrderingInstance, Param, ResolvedCommand, ResolvedFact, ResolvedField, ResolvedFunc,
+    ResolvedMacro, ResolvedSig, ResolvedWorld, SigId, SigKind, StepsMax, StepsRange, StepsScope,
+    DEFAULT_STEPS,
 };

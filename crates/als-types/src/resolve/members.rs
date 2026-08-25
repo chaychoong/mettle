@@ -234,6 +234,8 @@ impl Resolver<'_> {
                 is_defined: defined,
                 is_bound_disj: decl.is_bound_disj,
                 bound: decl.bound,
+                is_meta: false,
+                meta_def: None,
             });
             self.world.sigs[sig].fields.push(fid);
             group.push(fid);

@@ -216,6 +216,7 @@ impl Resolver<'_> {
             is_var,
             is_private,
             is_builtin: false,
+            is_meta: false,
             mult,
             fields: Vec::new(),
             field_disj_groups: Vec::new(),

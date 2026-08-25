@@ -24,6 +24,7 @@
 
 mod expr;
 mod members;
+mod meta;
 mod sigs;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -254,6 +255,7 @@ impl<'g> Resolver<'g> {
             facts: Vec::new(),
             choices: crate::choice::ChoiceTable::new(),
             ordering: Vec::new(),
+            meta: None,
             // Placeholder builtins; seeded first thing in `run`.
             builtins: Builtins {
                 univ: SigId::from_index(0),
@@ -318,6 +320,10 @@ impl<'g> Resolver<'g> {
         if self.has_errors() {
             return;
         }
+        // Phase 8: `$` metamodel synthesis — only when the mt-108 gate fired
+        // (mt-107 P1, ADR-0024). Runs here, between the last declaration phase
+        // and `rejectNameClash`, which is what makes meta names body-only.
+        self.synthesize_meta();
         // Phase 9: field-name clash across overlapping sigs.
         self.reject_name_clash();
         if self.has_errors() {
@@ -662,6 +668,7 @@ impl<'g> Resolver<'g> {
             is_var: false,
             is_private: false,
             is_builtin: true,
+            is_meta: false,
             mult: None,
             fields: Vec::new(),
             field_disj_groups: Vec::new(),
