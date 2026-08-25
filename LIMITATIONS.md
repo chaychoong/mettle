@@ -37,15 +37,12 @@ Current measured agreement with the jar is in [docs/STATE.md](docs/STATE.md).
 
 ## Models mettle accepts that Alloy rejects
 
-mettle leans toward accepting. Over the 150,891 alloy4fun submissions, mettle
-rejects nothing the jar accepts, and accepts 1 model the jar rejects. Per-code
-detail is in [docs/reference/alloy4fun-resolve-pass.md](docs/reference/alloy4fun-resolve-pass.md) §12.
+Over the 150,891 alloy4fun submissions, mettle and the jar now agree on every
+verdict: mettle rejects nothing the jar accepts and accepts nothing the jar
+rejects (100.0000% agreement, measured 2026-08-25 after mt-107 phase P2).
+Two known shapes remain where mettle is more accepting than the jar, and
+neither appears in any corpus.
 
-- **Meta names make the whole model lenient (1 code).** In a model that uses a
-  real meta name, `$`-bearing and unknown names resolve to `univ` and
-  expression-level rejects are suppressed for the whole file. `Course$projects`
-  in code 060669 is the one alloy4fun code this still costs. The leniency goes
-  away when the metamodel is built (mt-107, phase P2).
 - **Two shapes with no measured incidence.** A post-colon `disj` on a quantifier
   or run-pred declaration (`x: disj e`) is a resolve error in the jar; mettle
   accepts it and then reports that it cannot run the command. A receiver-style
