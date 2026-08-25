@@ -48,8 +48,6 @@ use crate::lower::{LoweredGoal, Provenance};
 use crate::scope::ScopedUniverse;
 use crate::solve::{Instance, SolveOptions};
 
-use crate::overflow_guard::shift_mask_width;
-
 /// A concrete three-sorted evaluator over one solved [`Instance`].
 ///
 /// The mutable state is exactly the encoder's: the grounding environment (`env`:
@@ -63,9 +61,10 @@ use crate::overflow_guard::shift_mask_width;
 pub struct Evaluator<'a> {
     ir: &'a Ir,
     instance: &'a Instance,
-    /// Relation bounds — read only by [`crate::overflow_guard::translation_constant`]
-    /// for the (C) constant-escape check, so the evaluator and encoder decide the
-    /// escape from the SAME predicate (translation-ref §10.7c ext, mt-051).
+    /// Relation bounds — read only by [`crate::overflow_guard::Fold`], the shared
+    /// translation-time constant folder that decides which overflow guards the
+    /// jar's matrix folding sheds, so the evaluator and the encoder shed from the
+    /// SAME predicate (translation-ref §10.7e, mt-051/mt-130).
     bounds: &'a Bounds,
     /// Int atoms span `-2^(bw-1) … 2^(bw-1)-1`; `int_start` is the universe index
     /// of the first Int atom (sig atoms precede them).
@@ -232,7 +231,7 @@ impl<'a> Evaluator<'a> {
                 // (B) comparison-level overflow guard over the compared sides' set
                 // structure (translation-ref §10.7c ext, mt-051) — the matched
                 // pair of the encoder's, so the two accept-sets coincide.
-                self.guard_sides(atom, &[lhs, rhs])
+                self.guard_rel_compare(atom, lhs, rhs)
             }
             FormulaKind::IntCompare { op, lhs, rhs } => {
                 let (op, lhs, rhs) = (*op, *lhs, *rhs);
@@ -248,7 +247,7 @@ impl<'a> Evaluator<'a> {
                 Ok(self.int_compare_guard(atom, oa, ob, lhs, rhs))
             }
             FormulaKind::MultTest { test, expr } => {
-                let expr = *expr;
+                let (test, expr) = (*test, *expr);
                 let m = self.eval_rel(expr)?;
                 let atom = match test {
                     MultTest::No => m.is_empty(),
@@ -256,8 +255,9 @@ impl<'a> Evaluator<'a> {
                     MultTest::Lone => m.len() <= 1,
                     MultTest::One => m.len() == 1,
                 };
-                // (B) guard also threads through a multiplicity test (probe T7).
-                self.guard_sides(atom, &[expr])
+                // (B) guard also threads through a multiplicity test (probe T7),
+                // subject to the reader's own short-circuit (R-c, mt-130).
+                self.guard_mult_test(atom, test, expr)
             }
             FormulaKind::Quant {
                 kind,
@@ -550,7 +550,8 @@ impl<'a> Evaluator<'a> {
                 let m = self.eval_rel(rel)?;
                 let c = i64::try_from(m.len()).unwrap_or(i64::MAX);
                 let of = c > self.signed_max();
-                Ok((self.wrap_signed(c), of))
+                let merged = self.merge_card_overflow(of, rel)?;
+                Ok((self.wrap_signed(c), merged))
             }
             IntExprKind::AtomToInt(rel) => {
                 let m = self.eval_rel(rel)?;
@@ -586,103 +587,11 @@ impl<'a> Evaluator<'a> {
 
     /// One binary integer op over concrete operands, returning `(value, overflow)`
     /// with exactly the encoder circuits' two's-complement semantics
-    /// (translation-ref §11.2, jar-verified §10.7b).
+    /// (translation-ref §11.2, jar-verified §10.7b). The arithmetic itself lives
+    /// in [`crate::overflow_guard`], shared with the translation-time constant
+    /// folder so the two can never disagree about what overflows.
     fn int_binop_value(&self, op: crate::ir::IntBinOp, a: i64, b: i64) -> (i64, bool) {
-        use crate::ir::IntBinOp;
-        let (min, max) = (self.signed_min(), self.signed_max());
-        let out_of_range = |x: i64| x < min || x > max;
-        match op {
-            IntBinOp::Add => (self.wrap_signed(a + b), out_of_range(a + b)),
-            IntBinOp::Sub => (self.wrap_signed(a - b), out_of_range(a - b)),
-            IntBinOp::Mul => (self.wrap_signed(a * b), out_of_range(a * b)),
-            IntBinOp::Div => {
-                if b == 0 {
-                    let v = match a.cmp(&0) {
-                        std::cmp::Ordering::Less => 1,
-                        std::cmp::Ordering::Equal => 0,
-                        std::cmp::Ordering::Greater => -1,
-                    };
-                    (v, true)
-                } else {
-                    (self.wrap_signed(a / b), a == min && b == -1)
-                }
-            }
-            IntBinOp::Rem => {
-                if b == 0 {
-                    (a, true)
-                } else {
-                    (self.wrap_signed(a % b), false)
-                }
-            }
-            IntBinOp::Shl => self.shl_value(a, b),
-            IntBinOp::Sha => (self.shift_right_value(a, b, true), false),
-            IntBinOp::Shr => (self.shift_right_value(a, b, false), false),
-        }
-    }
-
-    /// Logical left shift with its **own** overflow flag, matching the encoder's
-    /// `shl` bit-for-bit (translation-ref §10.7d): only the low `⌈log2 w⌉` amount
-    /// bits shift the value, but the overflow loop runs over all `w` amount bits,
-    /// so a masked-away junk bit can spuriously flag overflow when the (frozen)
-    /// shifted value has a bit transition in the inspected region.
-    #[allow(
-        clippy::many_single_char_names,
-        clippy::cast_sign_loss,
-        clippy::cast_possible_wrap,
-        reason = "concrete replica of the shl bit circuit; every cast is a bounded w-bit \
-                  pattern (`rem_euclid` is non-negative and < 2^w)"
-    )]
-    fn shl_value(&self, a: i64, b: i64) -> (i64, bool) {
-        let w = self.bitwidth as usize;
-        let mask = shift_mask_width(w);
-        let modw = 1i64 << self.bitwidth;
-        let bpat = b.rem_euclid(modw) as u64; // amount's w-bit pattern
-        let mut s = (a.rem_euclid(modw) as u64) & (modw as u64 - 1); // running value bits
-        let bit = |v: u64, i: usize| (v >> i) & 1 == 1;
-        let mut overflow = false;
-        for i in 0..w {
-            let k = if i < 63 { 1usize << i } else { w };
-            let lo = (w - 1).saturating_sub(k);
-            // Any adjacent bit transition in [lo, w-1] of the current state.
-            let mut region_changes = false;
-            for j in lo..(w - 1) {
-                region_changes |= bit(s, j) != bit(s, j + 1);
-            }
-            overflow |= bit(bpat, i) && region_changes;
-            if i < mask && bit(bpat, i) {
-                s = (s << k) & (modw as u64 - 1);
-            }
-        }
-        (self.wrap_signed(s as i64), overflow)
-    }
-
-    /// Right shift by the low `⌈log2 w⌉` amount bits (translation-ref §10.7d): a
-    /// masked amount ≥ w fills fully with `fill` (sign for `>>`, zero for `>>>`).
-    /// Own overflow is always false (operand overflow propagates separately).
-    #[allow(
-        clippy::cast_sign_loss,
-        clippy::cast_possible_wrap,
-        clippy::cast_possible_truncation,
-        reason = "bounded w-bit pattern arithmetic; `rem_euclid` is non-negative and < 2^w, \
-                  and the mask width fits usize"
-    )]
-    fn shift_right_value(&self, a: i64, b: i64, arith: bool) -> i64 {
-        let w = self.bitwidth as usize;
-        let mask = shift_mask_width(w);
-        let modw = 1i64 << self.bitwidth;
-        let bpat = b.rem_euclid(modw) as u64;
-        // Effective shift = the low `mask` bits of the amount.
-        let amt = (bpat & ((1u64 << mask) - 1)) as usize;
-        if amt >= w {
-            return if arith && a < 0 { -1 } else { 0 };
-        }
-        if arith {
-            // Arithmetic shift on the signed value is sign-extending.
-            a >> amt
-        } else {
-            // Logical shift on the non-negative w-bit pattern.
-            self.wrap_signed(((a.rem_euclid(modw) as u64) >> amt) as i64)
-        }
+        crate::overflow_guard::int_binop_value(op, a, b, self.bitwidth)
     }
 
     /// `sum x: B | ie` (translation-ref §11.1): the plus-tree over the bound's
@@ -760,35 +669,88 @@ impl<'a> Evaluator<'a> {
         self.apply_int_guard(g, ob, rhs)
     }
 
-    /// Collects the overflow-capable casts of the given comparison sides
-    /// (lhs-then-rhs order) and applies the (B) guard; allow mode passes the atom
-    /// through unchanged (translation-ref §10.7c ext, mt-051).
-    fn guard_sides(&mut self, atom: bool, sides: &[RelExprId]) -> Result<bool, TranslateError> {
+    /// The translation-time constant folder over the CURRENT grounding bindings
+    /// — built from the same inputs as the encoder's, so the two back ends shed
+    /// the same guards by construction (translation-ref §10.7e, mt-130).
+    fn fold(&self) -> crate::overflow_guard::Fold<'_> {
+        crate::overflow_guard::Fold::new(
+            self.ir,
+            self.bounds,
+            self.bitwidth,
+            self.int_start,
+            self.int_end,
+            &self.env,
+        )
+    }
+
+    /// Collects the surviving overflow-capable casts of a relational comparison's
+    /// sides (lhs-then-rhs order) and applies the (B) guard; allow mode passes the
+    /// atom through unchanged (translation-ref §10.7c ext, mt-051/mt-130).
+    fn guard_rel_compare(
+        &mut self,
+        atom: bool,
+        lhs: RelExprId,
+        rhs: RelExprId,
+    ) -> Result<bool, TranslateError> {
         if self.allow_overflow {
             return Ok(atom);
         }
         let mut casts = Vec::new();
-        for &s in sides {
-            crate::overflow_guard::collect_capable_casts(self.ir, self.bitwidth, s, &mut casts);
+        {
+            let fold = self.fold();
+            crate::overflow_guard::collect_capable_casts(&fold, lhs, &mut casts);
+            crate::overflow_guard::collect_capable_casts(&fold, rhs, &mut casts);
         }
         self.guard_rel_casts(atom, &casts)
     }
 
-    /// Applies the (B) comparison-level guard for each collected overflow-capable
+    /// The same for a multiplicity test, applying the reader short-circuit (R-c).
+    fn guard_mult_test(
+        &mut self,
+        atom: bool,
+        test: crate::ir::MultTest,
+        expr: RelExprId,
+    ) -> Result<bool, TranslateError> {
+        if self.allow_overflow {
+            return Ok(atom);
+        }
+        let mut casts = Vec::new();
+        {
+            let fold = self.fold();
+            crate::overflow_guard::collect_mult_test_casts(&fold, test, expr, &mut casts);
+        }
+        self.guard_rel_casts(atom, &casts)
+    }
+
+    /// Applies the (B) comparison-level guard for each surviving overflow-capable
     /// cast operand (translation-ref §10.7c ext, mt-051), in the given order,
-    /// matching the encoder's `guard_rel_casts`. A
-    /// [`translation_constant`](crate::overflow_guard::translation_constant) cast
-    /// contributes no guard (the (C) constant escape). Forbid mode only.
+    /// matching the encoder's `guard_rel_casts`. Forbid mode only.
     fn guard_rel_casts(&mut self, atom: bool, casts: &[IntExprId]) -> Result<bool, TranslateError> {
         let mut guarded = atom;
         for &ie in casts {
-            if crate::overflow_guard::translation_constant(self.ir, self.bounds, ie) {
-                continue;
-            }
             let (_v, of) = self.eval_int(ie)?;
             guarded = self.apply_int_guard(guarded, of, ie);
         }
         Ok(guarded)
+    }
+
+    /// `#e` merges the operand matrix's overflow circuit (§10.7g/M4), the twin of
+    /// the encoder's `merge_card_overflow`. Forbid mode only.
+    fn merge_card_overflow(&mut self, of: bool, rel: RelExprId) -> Result<bool, TranslateError> {
+        if self.allow_overflow {
+            return Ok(of);
+        }
+        let mut casts = Vec::new();
+        {
+            let fold = self.fold();
+            crate::overflow_guard::collect_capable_casts(&fold, rel, &mut casts);
+        }
+        let mut merged = of;
+        for ie in casts {
+            let (_v, cast_of) = self.eval_int(ie)?;
+            merged = merged || cast_of;
+        }
+        Ok(merged)
     }
 
     /// One operand's concrete overflow guard, decided by the shared classifier
@@ -931,13 +893,7 @@ impl<'a> Evaluator<'a> {
     /// The integer value of an atom, if it is an `Int` atom (translation-ref
     /// §1.3: Int atoms are `-2^(bw-1) … 2^(bw-1)-1`, ascending, after sig atoms).
     fn atom_int_value(&self, atom: AtomId) -> Option<i64> {
-        let idx = atom.index();
-        if idx < self.int_start || idx >= self.int_end || self.bitwidth == 0 {
-            return None;
-        }
-        let low = self.signed_min();
-        let offset = i64::try_from(idx - self.int_start).unwrap_or(i64::MAX);
-        Some(low + offset)
+        crate::overflow_guard::atom_int_value(atom, self.int_start, self.int_end, self.bitwidth)
     }
 
     fn signed_min(&self) -> i64 {
@@ -952,17 +908,7 @@ impl<'a> Evaluator<'a> {
     /// the encoder's silent wrap when overflow is allowed (and the in-range
     /// identity otherwise).
     fn wrap_signed(&self, value: i64) -> i64 {
-        let w = self.bitwidth;
-        if w == 0 {
-            return 0;
-        }
-        let modulus = 1i64 << w;
-        let masked = value.rem_euclid(modulus);
-        if masked >= (1i64 << (w - 1)) {
-            masked - modulus
-        } else {
-            masked
-        }
+        crate::overflow_guard::wrap_signed(value, self.bitwidth)
     }
 }
 

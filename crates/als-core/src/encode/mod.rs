@@ -1076,9 +1076,9 @@ impl<'a> Encoder<'a> {
                 // (B) Comparison-level overflow guard (translation-ref §10.7c ext,
                 // mt-051): each overflow-capable `Int[·]` cast reachable through
                 // the compared sides' set structure threads the rules 0–3 polarity
-                // guard, lhs-then-rhs; the constant-escape (C) skips it. Allow mode
-                // never guards.
-                self.guard_sides(atom, &[lhs, rhs])
+                // guard, lhs-then-rhs — minus the ones the jar's union/override
+                // fast paths shed (§10.7e, mt-130). Allow mode never guards.
+                self.guard_rel_compare(atom, lhs, rhs)
             }
             FormulaKind::IntCompare { op, lhs, rhs } => {
                 let (op, lhs, rhs) = (*op, *lhs, *rhs);
@@ -1087,12 +1087,13 @@ impl<'a> Encoder<'a> {
                 Ok(self.int_compare(op, &a, &b, oa, ob, lhs, rhs))
             }
             FormulaKind::MultTest { test, expr } => {
-                let expr = *expr;
+                let (test, expr) = (*test, *expr);
                 let m = self.rel(expr)?;
-                let atom = self.mult_test(*test, &m);
+                let atom = self.mult_test(test, &m);
                 // (B) guard also threads through a multiplicity test's set
-                // structure (probe T7, mt-051).
-                self.guard_sides(atom, &[expr])
+                // structure (probe T7, mt-051) — subject to the reader's own
+                // short-circuit (R-c, mt-130).
+                self.guard_mult_test(atom, test, expr)
             }
             FormulaKind::Quant {
                 kind,
@@ -1334,7 +1335,9 @@ impl<'a> Encoder<'a> {
             }
             IntExprKind::Card(rel) => {
                 let m = self.rel(rel)?;
-                Ok(self.int_card(&m))
+                let (v, of) = self.int_card(&m);
+                let merged = self.merge_card_overflow(of, rel)?;
+                Ok((v, merged))
             }
             IntExprKind::AtomToInt(rel) => {
                 let m = self.rel(rel)?;
@@ -1530,17 +1533,7 @@ impl<'a> Encoder<'a> {
     /// The integer value of an atom, if it is an Int atom (translation-ref §1.3:
     /// int atoms are `-2^(bw-1) … 2^(bw-1)-1`, ascending, after the sig atoms).
     fn atom_int_value(&self, atom: AtomId) -> Option<i64> {
-        let idx = atom.index();
-        if idx < self.int_start || idx >= self.int_end {
-            return None;
-        }
-        let bw = self.bitwidth;
-        if bw == 0 {
-            return None;
-        }
-        let low = -(1i64 << (bw - 1));
-        let offset = i64::try_from(idx - self.int_start).unwrap_or(i64::MAX);
-        Some(low + offset)
+        crate::overflow_guard::atom_int_value(atom, self.int_start, self.int_end, self.bitwidth)
     }
 
     /// An integer comparison, applying the forbid-mode overflow polarity guard
@@ -1583,37 +1576,102 @@ impl<'a> Encoder<'a> {
         self.apply_overflow_guard(guarded, ob, rhs)
     }
 
-    /// Collects the overflow-capable casts of the given comparison sides
-    /// (lhs-then-rhs order) and applies the (B) guard; allow mode passes the atom
-    /// through unchanged (translation-ref §10.7c ext, mt-051).
-    fn guard_sides(&mut self, atom: Bool, sides: &[RelExprId]) -> Result<Bool, TranslateError> {
+    /// The translation-time constant folder over the CURRENT grounding bindings
+    /// ([`crate::overflow_guard::Fold`]) — the shared decision procedure behind
+    /// (R-a)/(R-b)/(R-c). The evaluator builds the identical folder from the
+    /// identical inputs, so the two back ends shed identically by construction.
+    fn fold(&self) -> crate::overflow_guard::Fold<'_> {
+        crate::overflow_guard::Fold::new(
+            self.ir,
+            self.bounds,
+            self.bitwidth,
+            self.int_start,
+            self.int_end,
+            &self.env,
+        )
+    }
+
+    /// Collects the surviving overflow-capable casts of a relational comparison's
+    /// sides (lhs-then-rhs order) and applies the (B) guard; allow mode passes the
+    /// atom through unchanged (translation-ref §10.7c ext, mt-051/mt-130).
+    fn guard_rel_compare(
+        &mut self,
+        atom: Bool,
+        lhs: RelExprId,
+        rhs: RelExprId,
+    ) -> Result<Bool, TranslateError> {
         if self.allow_overflow {
             return Ok(atom);
         }
         let mut casts = Vec::new();
-        for &s in sides {
-            crate::overflow_guard::collect_capable_casts(self.ir, self.bitwidth, s, &mut casts);
+        {
+            let fold = self.fold();
+            crate::overflow_guard::collect_capable_casts(&fold, lhs, &mut casts);
+            crate::overflow_guard::collect_capable_casts(&fold, rhs, &mut casts);
         }
         self.guard_rel_casts(atom, &casts)
     }
 
-    /// Applies the (B) comparison-level guard for each collected overflow-capable
-    /// cast operand (translation-ref §10.7c ext, mt-051), in the given order. A
-    /// [`translation_constant`](crate::overflow_guard::translation_constant) cast
-    /// contributes no guard (the (C) constant escape); its value semantics are
-    /// already baked into the operand matrix. Forbid mode only (callers gate).
+    /// The same for a multiplicity test, which additionally applies (R-c): a
+    /// `lone`/`one` over a cells-empty matrix, or a `some` over one holding a
+    /// constant-`TRUE` cell, answers before `ensureDef` and sheds every guard.
+    fn guard_mult_test(
+        &mut self,
+        atom: Bool,
+        test: crate::ir::MultTest,
+        expr: RelExprId,
+    ) -> Result<Bool, TranslateError> {
+        if self.allow_overflow {
+            return Ok(atom);
+        }
+        let mut casts = Vec::new();
+        {
+            let fold = self.fold();
+            crate::overflow_guard::collect_mult_test_casts(&fold, test, expr, &mut casts);
+        }
+        self.guard_rel_casts(atom, &casts)
+    }
+
+    /// Applies the (B) comparison-level guard for each surviving overflow-capable
+    /// cast operand (translation-ref §10.7c ext, mt-051), in the given order.
+    /// There is no unconditional constant escape here any more: mt-129 measured
+    /// that the jar sheds a constant-empty matrix's `DefCond` only at the
+    /// union/override fast paths and the `lone`/`one`/`some` short-circuits, which
+    /// the collector now models — a ground cast the collector delivers really is
+    /// guarded (`run { plus[7,7] in Int }` for `3 but 4 int` is jar UNSAT).
+    /// Forbid mode only (callers gate).
     fn guard_rel_casts(&mut self, atom: Bool, casts: &[IntExprId]) -> Result<Bool, TranslateError> {
         let mut guarded = atom;
         for &ie in casts {
-            if crate::overflow_guard::translation_constant(self.ir, self.bounds, ie) {
-                continue;
-            }
             // `int(ie)` is memoised (already visited when the cast matrix was
             // built), so this returns the same `(value, overflow)` cell.
             let (_v, of) = self.int(ie)?;
             guarded = self.apply_overflow_guard(guarded, of, ie);
         }
         Ok(guarded)
+    }
+
+    /// `#e` merges the operand matrix's overflow circuit (Kodkod's
+    /// `BooleanMatrix.cardinality`, translation-ref §10.7g/M4) — unlike the `sum`
+    /// reader, which never consults it. The merged circuit is the `or` of the
+    /// casts that survive the same (R-b) folding the comparison-level guard uses.
+    /// Forbid mode only: in allow mode no guard ever reads the flag, and adding
+    /// the `or` would only perturb the circuit.
+    fn merge_card_overflow(&mut self, of: Bool, rel: RelExprId) -> Result<Bool, TranslateError> {
+        if self.allow_overflow {
+            return Ok(of);
+        }
+        let mut casts = Vec::new();
+        {
+            let fold = self.fold();
+            crate::overflow_guard::collect_capable_casts(&fold, rel, &mut casts);
+        }
+        let mut merged = of;
+        for ie in casts {
+            let (_v, cast_of) = self.int(ie)?;
+            merged = self.circ().or(merged, cast_of);
+        }
+        Ok(merged)
     }
 
     /// Empties a cast matrix when its operand overflowed (`∧ ¬of` on every cell)

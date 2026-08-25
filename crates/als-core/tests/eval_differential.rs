@@ -395,13 +395,18 @@ fn int_next_prev_builtins() {
     assert_differential("one sig X { v: one Int }\nrun { some X.v.prev } for 1 but 3 int\n");
 }
 
-// ---- mt-096: the union guard-shedding rule, encoder vs evaluator ------------
+// ---- mt-096/mt-130: the guard-shedding rule, encoder vs evaluator ----------
 
-/// The layer-(2) union rule (translation-ref §10.7h) lives in the SHARED
-/// `overflow_guard::collect_capable_casts`, so the encoder and the evaluator
-/// cannot drift by construction. These models make that a measured fact rather
-/// than an argument: each puts an overflow-capable `Int[·]` cast in a union and
+/// The layer-(2) shedding rule (translation-ref §10.7e–§10.7h) lives in the
+/// SHARED `overflow_guard` collector, so the encoder and the evaluator cannot
+/// drift by construction. These models make that a measured fact rather than an
+/// argument: each puts an overflow-capable `Int[·]` cast in a union and
 /// brute-forces every instance in BOTH overflow modes.
+///
+/// Every cast here is RELATION-derived (`F.v` is bounded, not exactly bound), so
+/// mt-130's constant folder answers `Unknown` and nothing sheds — this test
+/// pins the walk itself. `mt130_constant_shedding_matches_between_back_ends`
+/// is its twin over the casts the folder actually decides.
 ///
 /// Bitwidth 2 (`Int` = −2..1) keeps the brute force tiny while still making the
 /// overflow reachable — `plus[F.v,1]` overflows exactly at `F.v = 1`.
@@ -411,12 +416,12 @@ fn mt096_union_guard_shedding_matches_between_back_ends() {
         format!("open util/integer\none sig F {{ v: one Int }}\nrun {{ {body} }} for 1 but 2 int\n")
     };
     for body in [
-        // Sheds: the union's sibling carries no capable cast.
+        // The union's sibling carries no capable cast.
         "(plus[F.v,1] + 0) in Int",
         "(plus[F.v,1] + none) in Int",
         "no (plus[F.v,1] + 0)",
         "some (plus[F.v,1] + 0)",
-        // Guards: BOTH operands carry one.
+        // BOTH operands carry one.
         "(plus[F.v,1] + plus[F.v,1]) in Int",
         // Guards: every other former still descends.
         "(plus[F.v,1] & Int) in Int",
@@ -432,5 +437,46 @@ fn mt096_union_guard_shedding_matches_between_back_ends() {
         "((plus[F.v,1] & Int) + 0) in Int",
     ] {
         assert_differential_both_modes(&model(body));
+    }
+}
+
+/// The mt-130 twin: casts the translation-time folder actually DECIDES, so the
+/// union/override fast paths and the `lone`/`one`/`some` short-circuits really
+/// fire. Encoder and evaluator must still agree instance-for-instance — the
+/// invariant that forced the folder to read the IR, the bounds and the active
+/// bindings only, never a runtime value (mt-129 cell k9, the last row here:
+/// `Node` is translation-time non-empty even where `no Node` empties it).
+///
+/// Bitwidth 2 (`Int` = −2..1) again: `plus[1,1] = 2` overflows as a constant,
+/// and under the `0..1` binder only `n = 1` does.
+#[test]
+fn mt130_constant_shedding_matches_between_back_ends() {
+    let model = |body: &str| {
+        format!(
+            "open util/integer\nsig Node {{}}\none sig F {{ v: one Int }}\n\
+             run {{ {body} }} for 1 but 2 int\n"
+        )
+    };
+    let quant = |body: &str| model(&format!("all n: {{x: Int | x>=0 and x<=1}} | {body}"));
+    for src in [
+        // Ground casts: the union/override fast paths and the readers.
+        model("(plus[1,1] + 0) in Int"),
+        model("(none + plus[1,1]) in Int"),
+        model("plus[1,1] in Int"),
+        model("lone (plus[1,1] & Int)"),
+        model("not one (plus[1,1] & Int)"),
+        model("((F.v -> 0) ++ (plus[1,1] -> 0)) in (Int -> Int)"),
+        // Per-binding folds: only `n = 1` overflows.
+        quant("(plus[n,1] + 0) in Int"),
+        quant("(0 + plus[n,1]) in Int"),
+        quant("#(none + plus[n,1]) >= 0"),
+        quant("#(plus[n,1] + none) >= 0"),
+        quant("some (0 - plus[n,1])"),
+        quant("(n>=0 => plus[n,1] else 0) in Int"),
+        // A symbolic sibling, and the instance that empties it.
+        model("(plus[1,1] + Node) in univ"),
+        model("((plus[1,1] + Node) in univ) and no Node"),
+    ] {
+        assert_differential_both_modes(&src);
     }
 }

@@ -5,11 +5,15 @@
 //! verdicts are the jar's (Alloy 6.2.0), recorded as constants so CI runs with no
 //! oracle (translation-ref §10.7c ext).
 //!
-//! The pinned rule has three parts (see `overflow_guard.rs`): (A) an overflowed
+//! The pinned rule has two parts (see `overflow_guard.rs`): (A) an overflowed
 //! overflow-capable cast denotes the EMPTY set in forbid mode, in every context;
-//! (B) each capable cast reachable through the compared sides' set structure
-//! threads the §10.7c rules 0–3 polarity guard; (C) a translation-constant cast
-//! contributes no (B) guard (its (A) value already governs).
+//! (B) each capable cast that SURVIVES the jar's matrix folding on the way to the
+//! reader threads the §10.7c rules 0–3 polarity guard. The old part (C) — an
+//! unconditional escape for a translation-constant cast — was RETRACTED at
+//! mt-130: mt-129 measured the jar keeping the guard on a fully ground
+//! overflowing cast, and the sheds it does perform are the union/override and
+//! `lone`/`one`/`some` fast paths that (B)'s collector now models
+//! (`tests/overflow_shedding_conformance.rs`).
 //!
 //! Rule 4 — the claimed int-ITE / `implies`-antecedent rescue — was RETRACTED in
 //! full at mt-090 (translation-ref §10.7f); part C below is its replacement.
@@ -217,13 +221,18 @@ fn closed_arith_existential_direct_cast_excludes() {
     assert_eq!(solve(src, false), Ok(false));
 }
 
-// ---------------------------- (C) the constant escape -----------------------
+// ------------------- the union fast path over constant casts ----------------
 
 #[test]
 fn constant_escape_trio() {
-    // A translation-constant cast contributes NO (B) guard, while its (A) value
-    // still applies (probe R-cardun/T5/T6). All three use `#pid`/`#priority` over
-    // exactly-bound sigs — fully constant translations.
+    // Probe R-cardun/T5/T6. All three use `#pid`/`#priority` over exactly-bound
+    // sigs — fully constant translations, so the overflowing `Int[#pid]` folds to
+    // a cells-EMPTY matrix. It sits on the LEFT of a union, which is exactly
+    // where `BooleanMatrix.or`'s fast path drops its `DefCond` (R-b), so no (B)
+    // guard reaches the comparison while the (A) value still governs. mt-051 read
+    // this as a blanket "translation-constant casts never guard"; mt-129 refuted
+    // that (`run { plus[7,7] in Int }` is jar UNSAT) and mt-130 replaced it with
+    // the union rule, which reproduces these three unchanged.
 
     // R-cardun (=): #pid=9 wraps to 1 (of set) → (A) empties `Int[#pid]`, union
     // with `{1}` gives `{1}` = `{#priority}={1}` → SAT (no (B) exclusion).
@@ -510,10 +519,11 @@ fn part_d_the_escape_is_structural_not_dynamic() {
     //
     // j2/j3: the operand is a relation pinned only by a FACT, so it is not a
     // translation constant on any reading (j3 has no quantifier at all).
-    // j5: a ground variable mixed with such a relation. j6/j7: an exactly-bound
-    // vs a merely-constrained cardinality — mettle's own `translation_constant`
-    // predicate separates exactly these two, and the jar does not.
-    // j9: only some bindings overflow, so the escape is per-binding.
+    // j5: a ground variable mixed with such a relation.
+    // j9: only some bindings overflow, so the escape is per-binding. (j6/j7 —
+    // an exactly-bound vs a merely-constrained cardinality — were mt-051's
+    // evidence for a constant escape mettle no longer has; the `.sum()`
+    // fall-through below is what actually sheds here.)
     let escapes = [
         ("j0", "(n>0 => plus[n,7] else 0) >= 0"),
         ("j2", "(n>0 => plus[F.v,7] else 0) >= 0"),
@@ -617,8 +627,9 @@ fn part_d_change_is_inert_where_nothing_overflows() {
 // sheds the comparison-level guard. The mt-096 wave measured that against the
 // jar across a former × reader matrix and it is **too broad**: the jar keeps the
 // guard through an intersection, a difference, an if-then-else, a join, an
-// override and a product. Only the UNION sheds, and only sometimes — see the
-// `#[ignore]`d pin at the end for why no implementable rule was found.
+// override and a product. Only the UNION sheds, and only when the operand it
+// drops is cells-empty — the rule mt-129 pinned and mt-130 implemented, with the
+// full 62-cell matrix in `tests/overflow_shedding_conformance.rs`.
 //
 // Each cell's reader is chosen to be TRUE on the (empty, or `{3}`) value the
 // layer-(1) emptiness leaves behind, so guard ⇒ UNSAT and no-guard ⇒ SAT, and
@@ -705,11 +716,12 @@ fn part_e_union_guard_survives_without_a_quantifier() {
     assert_eq!(solve(no_quant, false), Ok(false), "t4c forbid");
     assert_eq!(solve(no_quant, true), Ok(true), "t4c allow");
 
-    // t4e — the same expression under the part-C forall is jar forbid **SAT**.
-    // mettle answers UNSAT (it keeps guarding); that divergence is the pinned
-    // union corner, see `part_e_union_sheds_under_a_quantifier_in_the_jar`.
+    // t4e — the same expression under the part-C forall is jar forbid **SAT**,
+    // and mettle now matches: the ground `plus[n,7]` folds to a cells-empty
+    // matrix, which is the LEFT operand the union's fast path drops (mt-130).
     let quant = part_e_cell("(plus[n,7] + 1) in Int");
     assert_eq!(solve(&quant, true), Ok(true), "t4e allow");
+    assert_eq!(solve(&quant, false), Ok(true), "t4e forbid");
 }
 
 #[test]
@@ -764,21 +776,18 @@ fn part_e_non_capable_and_non_overflowing_controls() {
 }
 
 #[test]
-#[ignore = "mt-096 PINNED: a union-nested cast under a quantifier sheds the \
-            jar's comparison guard, but no IR-level predicate separates the \
-            shedding cells (u1/u10/v6/v7/v8/v9) from the guarding ones \
-            (t4c/t4b with no quantifier, u11/v3 with two capable operands, v1 \
-            with a sibling that cannot overflow) — translation-ref §10.7h"]
 fn part_e_union_sheds_under_a_quantifier_in_the_jar() {
-    // Jar verdicts pinned at mt-096. All forbid **SAT**: under the part-C
-    // forall, a union whose sibling carries no capable cast sheds the guard.
-    // mettle keeps descending through the union and answers UNSAT — the
-    // CONSERVATIVE direction (it never turns a jar UNSAT into a mettle SAT).
+    // Jar verdicts pinned at mt-096, LIVE since mt-130 (this test carried an
+    // `#[ignore]` for the whole pinned interval). All forbid **SAT**: under the
+    // part-C forall, `n` is ground per binding, so `plus[n,7]`'s overflow circuit
+    // folds to the constant TRUE and its matrix to zero cells — the operand
+    // `BooleanMatrix.or` drops the `DefCond` of.
     //
-    // Closing this needs a rule that also explains `part_e_union_guard_survives
-    // _without_a_quantifier` (same union shape, jar UNSAT) and
-    // `part_e_a_union_of_two_capable_casts_guards`. mt-096 tried three and each
-    // was refuted by a cell; the corner is recorded, not guessed at.
+    // The rule that closes it also explains `part_e_union_guard_survives_without
+    // _a_quantifier` (t4c: `F.v` is relation-derived, so the circuit is a gate,
+    // the matrix has cells, and nothing sheds) and
+    // `part_e_a_union_of_two_capable_casts_guards` (both operands cells-empty ⇒
+    // the LEFT test wins and the result carries the RIGHT's live circuit).
     for (cell, body) in [
         ("u1", "(plus[n,7] + 3) in Int"),
         ("u10", "(3 + plus[n,7]) in Int"),
