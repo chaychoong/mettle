@@ -1,0 +1,173 @@
+<alloy builddate="mettle <version>">
+
+<instance bitwidth="4" maxseq="3" mintrace="-1" maxtrace="-1" command="Run run$1 for 3" filename="model.als" tracelength="1" looplength="1">
+
+<sig label="seq/Int" ID="0" parentID="1" builtin="yes">
+</sig>
+
+<sig label="Int" ID="1" parentID="2" builtin="yes">
+</sig>
+
+<sig label="String" ID="3" parentID="2" builtin="yes">
+</sig>
+
+<sig label="this/A" ID="4" parentID="2">
+   <atom label="A$0"/>
+   <atom label="A$1"/>
+   <atom label="A$2"/>
+</sig>
+
+<field label="r" ID="5" parentID="4">
+   <tuple> <atom label="A$0"/> <atom label="A$0"/> </tuple>
+   <tuple> <atom label="A$1"/> <atom label="A$0"/> </tuple>
+   <tuple> <atom label="A$2"/> <atom label="A$0"/> </tuple>
+   <types> <type ID="4"/> <type ID="4"/> </types>
+</field>
+
+<sig label="this/A$" ID="6" parentID="7" one="yes" meta="yes">
+   <atom label="A$$0"/>
+</sig>
+
+<field label="value" ID="8" parentID="6" meta="yes">
+   <tuple> <atom label="A$$0"/> <atom label="A$0"/> </tuple>
+   <tuple> <atom label="A$$0"/> <atom label="A$1"/> </tuple>
+   <tuple> <atom label="A$$0"/> <atom label="A$2"/> </tuple>
+   <types> <type ID="6"/> <type ID="4"/> </types>
+</field>
+
+<field label="fields" ID="9" parentID="6" meta="yes">
+   <tuple> <atom label="A$$0"/> <atom label="A$r$0"/> </tuple>
+   <types> <type ID="6"/> <type ID="10"/> </types>
+</field>
+
+<field label="parent" ID="11" parentID="6" meta="yes">
+   <types> <type ID="6"/> <type ID="2"/> </types>
+</field>
+
+<field label="subfields" ID="12" parentID="6" meta="yes">
+   <tuple> <atom label="A$$0"/> <atom label="A$r$0"/> </tuple>
+   <types> <type ID="6"/> <type ID="10"/> </types>
+</field>
+
+<sig label="ao/Ord$" ID="13" parentID="7" one="yes" private="yes" meta="yes">
+   <atom label="ao/Ord$$0"/>
+</sig>
+
+<field label="value" ID="14" parentID="13" private="yes" meta="yes">
+   <tuple> <atom label="ao/Ord$$0"/> <atom label="ao/Ord$0"/> </tuple>
+   <types> <type ID="13"/> <type ID="15"/> </types>
+</field>
+
+<field label="fields" ID="16" parentID="13" private="yes" meta="yes">
+   <tuple> <atom label="ao/Ord$$0"/> <atom label="ao/Ord$First$0"/> </tuple>
+   <tuple> <atom label="ao/Ord$$0"/> <atom label="ao/Ord$Next$0"/> </tuple>
+   <types> <type ID="13"/> <type ID="17"/> </types>
+   <types> <type ID="13"/> <type ID="18"/> </types>
+</field>
+
+<field label="parent" ID="19" parentID="13" private="yes" meta="yes">
+   <types> <type ID="13"/> <type ID="2"/> </types>
+</field>
+
+<field label="subfields" ID="20" parentID="13" private="yes" meta="yes">
+   <tuple> <atom label="ao/Ord$$0"/> <atom label="ao/Ord$First$0"/> </tuple>
+   <tuple> <atom label="ao/Ord$$0"/> <atom label="ao/Ord$Next$0"/> </tuple>
+   <types> <type ID="13"/> <type ID="17"/> </types>
+   <types> <type ID="13"/> <type ID="18"/> </types>
+</field>
+
+<sig label="this/sig$" ID="7" parentID="2" abstract="yes" meta="yes">
+</sig>
+
+<sig label="this/A$r" ID="10" parentID="21" one="yes" meta="yes">
+   <atom label="A$r$0"/>
+</sig>
+
+<field label="value" ID="22" parentID="10" meta="yes">
+   <tuple> <atom label="A$r$0"/> <atom label="A$0"/> <atom label="A$0"/> </tuple>
+   <tuple> <atom label="A$r$0"/> <atom label="A$1"/> <atom label="A$0"/> </tuple>
+   <tuple> <atom label="A$r$0"/> <atom label="A$2"/> <atom label="A$0"/> </tuple>
+   <types> <type ID="10"/> <type ID="4"/> <type ID="4"/> </types>
+</field>
+
+<sig label="ao/Ord$First" ID="17" parentID="21" one="yes" private="yes" meta="yes">
+   <atom label="ao/Ord$First$0"/>
+</sig>
+
+<field label="value" ID="23" parentID="17" private="yes" meta="yes">
+   <tuple> <atom label="ao/Ord$First$0"/> <atom label="ao/Ord$0"/> <atom label="A$0"/> </tuple>
+   <types> <type ID="17"/> <type ID="15"/> <type ID="4"/> </types>
+</field>
+
+<sig label="ao/Ord$Next" ID="18" parentID="21" one="yes" private="yes" meta="yes">
+   <atom label="ao/Ord$Next$0"/>
+</sig>
+
+<field label="value" ID="24" parentID="18" private="yes" meta="yes">
+   <tuple> <atom label="ao/Ord$Next$0"/> <atom label="ao/Ord$0"/> <atom label="A$0"/> <atom label="A$1"/> </tuple>
+   <tuple> <atom label="ao/Ord$Next$0"/> <atom label="ao/Ord$0"/> <atom label="A$1"/> <atom label="A$2"/> </tuple>
+   <types> <type ID="18"/> <type ID="15"/> <type ID="4"/> <type ID="4"/> </types>
+</field>
+
+<sig label="this/field$" ID="21" parentID="2" abstract="yes" meta="yes">
+</sig>
+
+<sig label="ao/Ord" ID="15" parentID="2" one="yes" private="yes">
+   <atom label="ao/Ord$0"/>
+</sig>
+
+<field label="First" ID="25" parentID="15" private="yes">
+   <tuple> <atom label="ao/Ord$0"/> <atom label="A$0"/> </tuple>
+   <types> <type ID="15"/> <type ID="4"/> </types>
+</field>
+
+<field label="Next" ID="26" parentID="15" private="yes">
+   <tuple> <atom label="ao/Ord$0"/> <atom label="A$0"/> <atom label="A$1"/> </tuple>
+   <tuple> <atom label="ao/Ord$0"/> <atom label="A$1"/> <atom label="A$2"/> </tuple>
+   <types> <type ID="15"/> <type ID="4"/> <type ID="4"/> </types>
+</field>
+
+<sig label="univ" ID="2" builtin="yes">
+</sig>
+
+<sig label="this/static$" ID="27" meta="yes" exact="yes">
+   <atom label="A$$0"/>
+   <atom label="ao/Ord$$0"/>
+   <atom label="A$r$0"/>
+   <atom label="ao/Ord$First$0"/>
+   <atom label="ao/Ord$Next$0"/>
+   <type ID="6"/>
+   <type ID="10"/>
+   <type ID="13"/>
+   <type ID="17"/>
+   <type ID="18"/>
+</sig>
+
+<sig label="this/var$" ID="28" meta="yes">
+   <type ID="2"/>
+</sig>
+
+<skolem label="$ao/first" ID="m0">
+   <tuple> <atom label="A$0"/> </tuple>
+   <types> <type ID="4"/> </types>
+</skolem>
+
+<skolem label="$ao/next" ID="m1">
+   <tuple> <atom label="A$0"/> <atom label="A$1"/> </tuple>
+   <tuple> <atom label="A$1"/> <atom label="A$2"/> </tuple>
+   <types> <type ID="4"/> <type ID="4"/> </types>
+</skolem>
+
+<skolem label="$ao/prev" ID="m2">
+   <tuple> <atom label="A$1"/> <atom label="A$0"/> </tuple>
+   <tuple> <atom label="A$2"/> <atom label="A$1"/> </tuple>
+   <types> <type ID="4"/> <type ID="4"/> </types>
+</skolem>
+
+<skolem label="$ao/last" ID="m3">
+   <tuple> <atom label="A$2"/> </tuple>
+   <types> <type ID="4"/> </types>
+</skolem>
+
+</instance>
+

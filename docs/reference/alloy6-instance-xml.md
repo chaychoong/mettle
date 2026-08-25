@@ -276,7 +276,7 @@ list for `writeSig`:
 | `lone="yes"` | | `X-02` |
 | `some="yes"` | (not directly exercised this wave — bytecode-symmetric with `one`/`lone`, low risk; see "Unpinned") | source only |
 | `private="yes"` | | `X-02` |
-| `meta="yes"` | present for internal `resolveMeta`-synthesized sigs (§0.6 of NOTES.md); checked and found **not reachable** from an ordinary command | `X-03` (absence confirmed) |
+| `meta="yes"` | present for internal `resolveMeta`-synthesized sigs (§0.6 of NOTES.md). `X-03` read it as **not reachable** from an ordinary command; **mt-107 re-opened that** — a command naming any `$` metamodel sig makes the whole block reachable and every synthesized sig carries the attribute | `X-03` (absence, on a model with no `$`), then mt-107 P0 cells `m3_01`/`m3_09`/`m5_01`/`m5_02` (presence) |
 | `exact="yes"` | `SubsetSig.exact` only; the connective-keyword syntax that sets it wasn't identified this wave (`sig X in A+B` gives `exact=false`) | source only, unpinned trigger |
 | `enum="yes"` | co-occurs with `abstract="yes"` on the enum's parent sig | `X-02b` |
 | `var="yes"` | `var sig` | `alloy6-temporal.md` T-13, reconfirmed `X-03` |
@@ -698,12 +698,15 @@ wave" section:
   marks `exact="yes"` is exactly the question above, still open — so if
   this cell ever gets probed, mettle's emission condition must be
   re-checked against it, not assumed to match.
-- **`this/static$`/`this/var$` meta-sig reachability** was checked on only
-  one `var`-using fixture and found absent; not checked across a wider
-  variety of temporal models, and the actual explicit `$`-syntax that
-  *would* make them reachable (the dedicated "show metamodel"-adjacent
-  feature, if any exists outside `writeMetamodel` itself) was not
-  identified.
+- ~~**`this/static$`/`this/var$` meta-sig reachability**~~ — **closed by
+  mt-107.** The syntax that makes them reachable is simply naming a `$`
+  metamodel sig anywhere in a command's reachable bodies; both subsets
+  are then written last, after `univ`, `exact="yes"` when non-empty and
+  as a non-exact subset of `univ` with no atoms when empty (cells
+  `m3_01`, `m5_01`, `m5_02`). Element order for the whole block is the
+  reference's `getAllReachableSigs()` order: the metamodel sits between
+  the root module's sigs and every opened module's (cell `m3_09`; mettle
+  reproduces it via `ResolvedWorld::reachable_sig_order`, mt-107 P4).
 - **`writeMetamodel`/`metamodel="yes"`** (§10) — source-cited only, not
   independently probed; deliberately out of scope for this document's
   "instance XML from a solved run/check" remit.

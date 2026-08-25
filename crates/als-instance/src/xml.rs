@@ -209,7 +209,12 @@ impl Plan {
         let mut toplevels = Vec::new();
         let mut children: BTreeMap<SigId, Vec<SigId>> = BTreeMap::new();
         let mut subsets = Vec::new();
-        for (id, sig) in world.sigs.iter() {
+        // Element order and the lazy IDs derived from it follow the reference's
+        // `getAllReachableSigs()` order, not the arena's — the `$` metamodel
+        // block is written between the root module's sigs and the opened
+        // modules' (mt-107 P4, `ResolvedWorld::reachable_sig_order`).
+        for id in world.reachable_sig_order() {
+            let sig = &world.sigs[id];
             match &sig.kind {
                 SigKind::Prim { parent } => match parent {
                     _ if id == none => {}
@@ -714,6 +719,9 @@ impl BlockWriter<'_> {
         if s.is_private {
             self.out.push_str(" private=\"yes\"");
         }
+        if s.is_meta {
+            self.out.push_str(" meta=\"yes\"");
+        }
         if let SigKind::Subset { exact: true, .. } = s.kind {
             self.out.push_str(" exact=\"yes\"");
         }
@@ -780,6 +788,9 @@ impl BlockWriter<'_> {
         let f = &world.fields[field];
         if f.is_private {
             self.out.push_str(" private=\"yes\"");
+        }
+        if f.is_meta {
+            self.out.push_str(" meta=\"yes\"");
         }
         if f.is_var {
             self.out.push_str(" var=\"yes\"");

@@ -254,6 +254,33 @@ fun PastWitness: set A { {x: A | once x in A} }
 run { some A } for 3 but exactly 3 steps
 ";
 
+/// mt-107 P4, jar cell `m3_01` (`scratchpad/probe/mt107/out/m3_01_xml.txt`): the
+/// `$` metamodel as an ordinary command reaches it — `meta="yes"` on every
+/// synthesized sig and field, `static$` exact with its members listed, and the
+/// empty `var$` falling back to a non-exact subset of `univ`.
+const META: &str = "\
+sig A { r: lone A }
+run { some sig$ } for 2
+";
+
+/// mt-107 P4, jar cell `m3_09`: the same with an opened module. The whole meta
+/// block is written between the root module's sigs and `ao/Ord`, which is the
+/// `getAllReachableSigs()` order mettle's sig arena does *not* have.
+const META_OPEN: &str = "\
+open util/ordering[A] as ao
+sig A { r: lone A }
+run { some sig$ } for 3
+";
+
+/// mt-107 P4, jar cell `m5_01`: the `static$`/`var$` partition with both buckets
+/// non-empty, and P0's SURPRISE 6 — `A$.value` is `var` because the sig it
+/// reflects is, even though `value` is a synthesized static relation.
+const META_VARIABILITY: &str = "\
+var sig A {}
+sig B { s: lone B }
+run { some sig$ } for 2
+";
+
 #[test]
 fn basic_sig_field_and_lazy_id_order() {
     let doc = assert_golden("basic", BASIC, 0);
@@ -378,6 +405,78 @@ run {} for 3 but exactly 1 this/P, 2 sub/S
         doc.contains("command=\"Run run$1 for 3 but exactly 1 P, 2 S\""),
         "scope clauses name sigs bare: {doc}"
     );
+}
+
+#[test]
+fn meta_sigs_and_fields_carry_the_meta_attribute() {
+    let doc = assert_golden("meta", META, 0);
+    // Attribute position is the jar's: after `abstract`/`one`/`private`, before
+    // `exact` (jar cell m3_01, verbatim).
+    assert!(
+        doc.contains("<sig label=\"this/A$\" ID=\"6\" parentID=\"7\" one=\"yes\" meta=\"yes\">")
+    );
+    assert!(doc.contains(
+        "<sig label=\"this/sig$\" ID=\"7\" parentID=\"2\" abstract=\"yes\" meta=\"yes\">"
+    ));
+    assert!(doc.contains("<field label=\"value\" ID=\"8\" parentID=\"6\" meta=\"yes\">"));
+    // The user sig and its user field stay unmarked — the negative space.
+    assert!(doc.contains("<sig label=\"this/A\" ID=\"4\" parentID=\"2\">"));
+    assert!(doc.contains("<field label=\"r\" ID=\"5\" parentID=\"4\">"));
+    // `static$` non-empty ⇒ an exact subset listing its members; `var$` empty ⇒
+    // the reference's fallback, a non-exact subset of `univ` with no atoms.
+    assert!(doc.contains("<sig label=\"this/static$\" ID=\"15\" meta=\"yes\" exact=\"yes\">"));
+    let var = doc
+        .find("<sig label=\"this/var$\" ID=\"16\" meta=\"yes\">")
+        .expect("empty var$ is not exact");
+    let tail = &doc[var..];
+    let end = tail.find("</sig>").expect("var$ closes");
+    assert!(!tail[..end].contains("<atom "), "empty var$ has no atoms");
+    assert_eq!(
+        tail[..end].matches("<type ID=\"2\"/>").count(),
+        1,
+        "empty var$ falls back to a single univ type"
+    );
+}
+
+#[test]
+fn the_meta_block_is_written_before_the_opened_modules_sigs() {
+    let doc = assert_golden("meta_open", META_OPEN, 0);
+    // The mt-107 P4 headline, asserted independently of the golden bytes: the
+    // whole metamodel — `sig$`'s subtree then `field$`'s — sits between the root
+    // module's sigs and `ao/Ord`, and the lazy IDs follow that touch order (jar
+    // cell m3_09).
+    let a = doc.find("<sig label=\"this/A\" ").expect("this/A");
+    let sig_meta = doc.find("<sig label=\"this/sig$\" ").expect("sig$");
+    let field_meta = doc.find("<sig label=\"this/field$\" ").expect("field$");
+    let ord = doc.find("<sig label=\"ao/Ord\" ").expect("ao/Ord");
+    let univ = doc.find("<sig label=\"univ\" ").expect("univ");
+    assert!(
+        a < sig_meta && sig_meta < field_meta && field_meta < ord && ord < univ,
+        "meta block must sit between the root module's sigs and the opened module's"
+    );
+    assert!(doc.contains(
+        "<sig label=\"ao/Ord$\" ID=\"13\" parentID=\"7\" one=\"yes\" private=\"yes\" meta=\"yes\">"
+    ));
+    assert!(
+        doc.contains("<sig label=\"ao/Ord\" ID=\"15\" parentID=\"2\" one=\"yes\" private=\"yes\">")
+    );
+}
+
+#[test]
+fn meta_variability_comes_from_the_reflected_declaration() {
+    let doc = assert_golden("meta_variability", META_VARIABILITY, 0);
+    // Jar cell m5_01: both buckets non-empty, so both subsets are exact.
+    assert!(doc.contains("<sig label=\"this/static$\" ID=\"21\" meta=\"yes\" exact=\"yes\">"));
+    assert!(doc.contains("<sig label=\"this/var$\" ID=\"22\" meta=\"yes\" exact=\"yes\">"));
+    // SURPRISE 6: `A$.value` is `var` because `A` is, while `A$` itself — a
+    // synthesized `one` sig — is not.
+    assert!(
+        doc.contains("<sig label=\"this/A$\" ID=\"7\" parentID=\"8\" one=\"yes\" meta=\"yes\">")
+    );
+    assert!(
+        doc.contains("<field label=\"value\" ID=\"9\" parentID=\"7\" meta=\"yes\" var=\"yes\">")
+    );
+    assert!(doc.contains("<field label=\"fields\" ID=\"10\" parentID=\"7\" meta=\"yes\">"));
 }
 
 #[test]

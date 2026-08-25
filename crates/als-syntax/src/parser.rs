@@ -73,7 +73,9 @@ pub enum ParseError {
         /// Span of the `disj` marker.
         span: Span,
     },
-    /// A declared name containing `$` (reserved for skolem names).
+    /// A declared name — or a scope target, which the reference checks in the
+    /// same grammar action — containing `$` (reserved for skolem and `$`
+    /// metamodel names).
     #[error("the name cannot contain the '$' symbol")]
     DollarInName {
         /// Span of the offending name.
@@ -1306,6 +1308,12 @@ impl<'src> Parser<'src> {
             TokenKind::Steps => Ok(self.ranged_scope(raw, ScopeTarget::Steps, span)),
             TokenKind::Ident | TokenKind::This | TokenKind::Seq => {
                 let name = self.parse_qual_name()?;
+                // A scope target may not name a `$` sig — `for 2 but 1 A$` is a
+                // syntax error in the reference, not a lookup failure, so the
+                // reject belongs here and not in resolve (mt-107 P4, jar cells
+                // m3_06/07/08). No meta sig is scopable anyway: every one of
+                // them is a `one` sig the synthesis pins.
+                Self::check_no_dollar(&name)?;
                 let span = raw.span.merge(name.span);
                 Ok(Self::sig_scope(raw, ScopeTarget::Sig(name), span))
             }

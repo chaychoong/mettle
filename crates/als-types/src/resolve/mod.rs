@@ -262,6 +262,7 @@ impl<'g> Resolver<'g> {
             choices: crate::choice::ChoiceTable::new(),
             ordering: Vec::new(),
             meta: None,
+            root: graph.root,
             // Placeholder builtins; seeded first thing in `run`.
             builtins: Builtins {
                 univ: SigId::from_index(0),

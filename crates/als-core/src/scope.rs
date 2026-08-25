@@ -490,7 +490,12 @@ impl<'a> ScopeSolver<'a> {
             minted: BTreeMap::new(),
             used_labels: BTreeSet::new(),
         };
-        for (id, _) in self.world.sigs.iter() {
+        // The one loop whose order *is* the universe's atom order, so it walks
+        // the reference's `getAllReachableSigs()` order rather than the arena's:
+        // the two differ only in where the `$` metamodel block sits, and the jar
+        // mints its meta atoms between the root module's and the opened modules'
+        // (mt-107 P4, `ResolvedWorld::reachable_sig_order`).
+        for id in self.world.reachable_sig_order() {
             if self.is_scopable(id) && self.is_top_level(id) {
                 self.walk(id, &mut build);
             }

@@ -316,7 +316,11 @@ name,+ = expr                     -- "defined" decl (fields); AST: bound wrapped
   - Parse-time checks (reference does these in grammar actions — mettle
     reproduces at parse): growing scope on `int`/`Int`/`seq` is an error;
     `exactly` on `int`/`Int`/`seq` is the "exactly keyword is redundant"
-    error. `N..N` marks the scope exact even without `exactly`.
+    error; a sig target whose name contains `$` is "The name cannot
+    contain the '$' symbol." — the same check the reference applies to a
+    *declared* name, so `for 2 but 1 A$` is a syntax error and never a
+    name lookup (jar-verified, mt-107 P0 cells m3_06/07/08).
+    `N..N` marks the scope exact even without `exactly`.
 - `expect N` — the jar accepts ANY int; only 0 and 1 ever trigger an
   expectation check (other values are carried and ignored). AST:
   `Expect::{Sat,Unsat,Other(i32)}`.

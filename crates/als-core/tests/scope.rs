@@ -382,6 +382,61 @@ fn nested_module_sig_atoms_accumulate_alias_path() {
     );
 }
 
+#[test]
+fn meta_atoms_land_between_the_root_and_opened_modules() {
+    // mt-107 P4, jar cell m3_03 (`scratchpad/probe/mt107/NOTES.md` §M3): the
+    // `$` metamodel's atoms come after the root module's user atoms, `sig$`'s
+    // whole subtree before `field$`'s, each in synthesis order.
+    assert_eq!(
+        atoms(
+            "sig A { r: lone A }\nsig B {}\nrun { some A$ } for 2 but exactly 2 A, exactly 1 B\n"
+        ),
+        with_ints(&["A$0", "A$1", "B$0", "A$$0", "B$$0", "A$r$0"])
+    );
+}
+
+#[test]
+fn opened_module_atoms_follow_the_whole_meta_block() {
+    // mt-107 P4, jar cell m3_09: `ao/Ord$0` — the *real* `Ord` one-sig atom —
+    // lands AFTER every meta atom, because the reference's
+    // `getAllReachableSigs()` puts the metamodel in the root module's own sig
+    // map and only then walks the opened modules. mettle's sig arena has the
+    // opposite order, which is what `ResolvedWorld::reachable_sig_order` fixes.
+    assert_eq!(
+        atoms("open util/ordering[A] as ao\nsig A { r: lone A }\nrun { some sig$ } for 3\n"),
+        with_ints(&[
+            "A$0",
+            "A$1",
+            "A$2",
+            "A$$0",
+            "ao/Ord$$0",
+            "A$r$0",
+            "ao/Ord$First$0",
+            "ao/Ord$Next$0",
+            "ao/Ord$0",
+        ])
+    );
+}
+
+#[test]
+fn scope_target_cannot_name_a_meta_sig() {
+    // mt-107 P4, jar cells m3_06/07/08: all three spellings are the reference's
+    // `ErrorSyntax: The name cannot contain the '$' symbol.` — a parse reject in
+    // the scope-target production, so the scope phase never sees them.
+    for src in [
+        "sig A {}\nrun { some A$ } for 2 but 1 A$\n",
+        "sig A {}\nrun { some A$ } for 2 but exactly 1 A$\n",
+        "sig A {}\nrun { some sig$ } for 2 but 1 sig$\n",
+    ] {
+        let mut loader = als_types::MapLoader::new();
+        loader = loader.with("root.als", src);
+        assert!(
+            ModuleGraph::load("root.als", &loader).is_err(),
+            "expected a parse reject for `{src}`"
+        );
+    }
+}
+
 // ==================== determinism (STYLE D1/U4) ====================
 
 #[test]

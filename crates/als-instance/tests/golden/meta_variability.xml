@@ -1,0 +1,108 @@
+<alloy builddate="mettle <version>">
+
+<instance bitwidth="4" maxseq="2" mintrace="1" maxtrace="10" command="Run run$1 for 2" filename="model.als" tracelength="1" looplength="1">
+
+<sig label="seq/Int" ID="0" parentID="1" builtin="yes">
+</sig>
+
+<sig label="Int" ID="1" parentID="2" builtin="yes">
+</sig>
+
+<sig label="String" ID="3" parentID="2" builtin="yes">
+</sig>
+
+<sig label="this/A" ID="4" parentID="2" var="yes">
+   <atom label="A$0"/>
+   <atom label="A$1"/>
+</sig>
+
+<sig label="this/B" ID="5" parentID="2">
+   <atom label="B$0"/>
+   <atom label="B$1"/>
+</sig>
+
+<field label="s" ID="6" parentID="5">
+   <tuple> <atom label="B$0"/> <atom label="B$0"/> </tuple>
+   <tuple> <atom label="B$1"/> <atom label="B$1"/> </tuple>
+   <types> <type ID="5"/> <type ID="5"/> </types>
+</field>
+
+<sig label="this/A$" ID="7" parentID="8" one="yes" meta="yes">
+   <atom label="A$$0"/>
+</sig>
+
+<field label="value" ID="9" parentID="7" meta="yes" var="yes">
+   <tuple> <atom label="A$$0"/> <atom label="A$0"/> </tuple>
+   <tuple> <atom label="A$$0"/> <atom label="A$1"/> </tuple>
+   <types> <type ID="7"/> <type ID="4"/> </types>
+</field>
+
+<field label="fields" ID="10" parentID="7" meta="yes">
+   <types> <type ID="7"/> <type ID="2"/> </types>
+</field>
+
+<field label="parent" ID="11" parentID="7" meta="yes">
+   <types> <type ID="7"/> <type ID="2"/> </types>
+</field>
+
+<field label="subfields" ID="12" parentID="7" meta="yes">
+   <types> <type ID="7"/> <type ID="2"/> </types>
+</field>
+
+<sig label="this/B$" ID="13" parentID="8" one="yes" meta="yes">
+   <atom label="B$$0"/>
+</sig>
+
+<field label="value" ID="14" parentID="13" meta="yes">
+   <tuple> <atom label="B$$0"/> <atom label="B$0"/> </tuple>
+   <tuple> <atom label="B$$0"/> <atom label="B$1"/> </tuple>
+   <types> <type ID="13"/> <type ID="5"/> </types>
+</field>
+
+<field label="fields" ID="15" parentID="13" meta="yes">
+   <tuple> <atom label="B$$0"/> <atom label="B$s$0"/> </tuple>
+   <types> <type ID="13"/> <type ID="16"/> </types>
+</field>
+
+<field label="parent" ID="17" parentID="13" meta="yes">
+   <types> <type ID="13"/> <type ID="2"/> </types>
+</field>
+
+<field label="subfields" ID="18" parentID="13" meta="yes">
+   <tuple> <atom label="B$$0"/> <atom label="B$s$0"/> </tuple>
+   <types> <type ID="13"/> <type ID="16"/> </types>
+</field>
+
+<sig label="this/sig$" ID="8" parentID="2" abstract="yes" meta="yes">
+</sig>
+
+<sig label="this/B$s" ID="19" parentID="16" one="yes" meta="yes">
+   <atom label="B$s$0"/>
+</sig>
+
+<field label="value" ID="20" parentID="19" meta="yes">
+   <tuple> <atom label="B$s$0"/> <atom label="B$0"/> <atom label="B$0"/> </tuple>
+   <tuple> <atom label="B$s$0"/> <atom label="B$1"/> <atom label="B$1"/> </tuple>
+   <types> <type ID="16"/> <type ID="5"/> <type ID="5"/> </types>
+</field>
+
+<sig label="this/field$" ID="16" parentID="2" abstract="yes" meta="yes">
+</sig>
+
+<sig label="univ" ID="2" builtin="yes">
+</sig>
+
+<sig label="this/static$" ID="21" meta="yes" exact="yes">
+   <atom label="B$$0"/>
+   <atom label="B$s$0"/>
+   <type ID="13"/>
+   <type ID="19"/>
+</sig>
+
+<sig label="this/var$" ID="22" meta="yes" exact="yes">
+   <atom label="A$$0"/>
+   <type ID="7"/>
+</sig>
+
+</instance>
+

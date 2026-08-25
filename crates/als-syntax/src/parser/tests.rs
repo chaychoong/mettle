@@ -1463,6 +1463,23 @@ fn growing_and_exactly_int_scope_errors() {
     ));
 }
 
+#[test]
+fn dollar_in_scope_target_is_error() {
+    // mt-107 P4, jar cells m3_06/07/08: the reference rejects a `$` scope
+    // target in the grammar action, not at name lookup — `ErrorSyntax: The name
+    // cannot contain the '$' symbol.` for all three spellings.
+    for src in [
+        "run p for 2 but 1 A$",
+        "run p for 2 but exactly 1 A$",
+        "run p for 2 but 1 sig$",
+    ] {
+        assert!(
+            matches!(err_of(src), ParseError::DollarInName { .. }),
+            "expected DollarInName for `{src}`"
+        );
+    }
+}
+
 // -- Declared-name hygiene ------------------------------------------------
 
 #[test]

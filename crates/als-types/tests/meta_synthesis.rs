@@ -941,6 +941,54 @@ fn meta_names_are_body_only_m2_36_44_45() {
     }
 }
 
+// ---- P4: the reference's `getAllReachableSigs()` order ----
+
+/// The metamodel block is relocated out of arena order to sit where the
+/// reference puts it — after the root module's own sigs, before every opened
+/// module's (cell `m3_09`, `out/m3_09_xml.txt`). The `S$` for an opened-module
+/// sig travels with the block even though it carries that module's id.
+#[test]
+fn reachable_order_relocates_the_whole_meta_block_m3_09() {
+    let loader = MapLoader::new().with("root.als", "open lib\nsig A {}\nrun { some A$ } for 2\n");
+    let loader = loader.with("lib.als", "module lib\nsig L {}\n");
+    let graph = ModuleGraph::load("root.als", &loader).expect("load");
+    let w = resolve(&graph).expect("accept").world;
+
+    let arena: Vec<String> = w.sigs.iter().map(|(_, s)| s.name.clone()).collect();
+    assert_eq!(
+        arena,
+        [
+            "univ", "Int", "seq/Int", "String", "none", "A", "L", "sig$", "field$", "A$", "L$",
+            "static$", "var$",
+        ],
+        "the arena appends the whole block last"
+    );
+    assert_eq!(
+        labels(&w, &w.reachable_sig_order()),
+        [
+            "univ", "Int", "seq/Int", "String", "none", "A", "sig$", "field$", "A$", "L$",
+            "static$", "var$", "L",
+        ],
+        "the reachable order moves it ahead of the opened module's `L`"
+    );
+}
+
+/// Without a metamodel the order is exactly arena order — the property that
+/// makes the P4 switch a no-op on every non-meta model. (`reachable_sig_order`
+/// asserts this itself; the test is here so the assert is exercised on a shape
+/// with an opened module, where the three passes could most easily reorder.)
+#[test]
+fn reachable_order_is_arena_order_without_a_metamodel() {
+    let loader = MapLoader::new()
+        .with("root.als", "open lib\nsig A {}\nrun {} for 2\n")
+        .with("lib.als", "module lib\nsig L {}\n");
+    let graph = ModuleGraph::load("root.als", &loader).expect("load");
+    let w = resolve(&graph).expect("accept").world;
+    assert!(w.meta.is_none());
+    let arena: Vec<SigId> = w.sigs.iter().map(|(id, _)| id).collect();
+    assert_eq!(w.reachable_sig_order(), arena);
+}
+
 /// Helper for the non-expanding rejects: `None` when `src` does not even
 /// resolve, which is the point being asserted.
 fn expansions_of_accepting_shape(body: &str) -> Option<Vec<Expansion>> {

@@ -9,7 +9,7 @@
 //! stops at "resolved + type-checked + accept verdict".
 
 use als_syntax::ast::{CmdKind, Expect, SigMult};
-use als_syntax::{define_id, Arena, Span};
+use als_syntax::{define_id, Arena, ArenaId, Span};
 
 use crate::graph::ModuleId;
 use crate::ty::Type;
@@ -533,6 +533,11 @@ pub struct ResolvedWorld {
     /// mt-107 P1), or `None` when the mt-108 meta gate did not fire — which is
     /// every model without a genuine meta name, i.e. all but a handful.
     pub meta: Option<MetaModel>,
+    /// The root module — the entry-point file's instance. Carried here so
+    /// [`Self::reachable_sig_order`] can tell a root-module sig from an
+    /// opened-module one without the caller also holding the
+    /// [`crate::ModuleGraph`].
+    pub root: ModuleId,
     /// Builtin sig handles (resolution-doc §4.1).
     pub builtins: Builtins,
 }
@@ -612,6 +617,76 @@ pub struct OrderingInstance {
 }
 
 impl ResolvedWorld {
+    /// The order the reference walks its sigs in — its `getAllReachableSigs()`
+    /// — which is the one canonical iteration order for everything the jar's
+    /// *presentation* is pinned to: the universe's atom minting
+    /// (`als_core::scope`, translation-ref §1.3) and the instance-XML element
+    /// order and lazy ID assignment (`alloy6-instance-xml.md` §2).
+    ///
+    /// It is arena order with the `$` metamodel block **relocated**. The
+    /// reference's `resolveMeta` puts the synthesized sigs into the *root*
+    /// module's own sig map at phase 8, so they land after the root module's
+    /// user sigs and before every opened module's sigs; mettle's arena appends
+    /// the whole block last, because synthesis runs once every module has
+    /// resolved (see [`MetaModel`]). Three arena-order-preserving passes put it
+    /// back: root-module non-meta sigs, then every meta sig — whatever module it
+    /// was minted *for*, since `S$` carries `S`'s module — then every other
+    /// module's non-meta sigs.
+    ///
+    /// The relative order of any two **non-meta** sigs is preserved, so a
+    /// consumer that only cares which of two user sigs comes first (the
+    /// unscopable-sig diagnostic, say) is unaffected by the relocation.
+    ///
+    /// Without a metamodel this is exactly arena order, which is what makes the
+    /// switch a no-op for every model but the handful the meta gate fires on.
+    /// That is asserted rather than argued: the assert is the proof, and it is
+    /// cheap enough (one extra pass over a few dozen sigs, once per command per
+    /// phase) to stay armed in release builds too.
+    ///
+    /// # Panics
+    /// If a world with no metamodel would get an order other than plain arena
+    /// order — an internal-invariant violation (STYLE I1), unreachable from any
+    /// input, and the one thing that would make this switch observable on a
+    /// non-meta model.
+    #[must_use]
+    pub fn reachable_sig_order(&self) -> Vec<SigId> {
+        let mut order = Vec::with_capacity(self.sigs.len());
+        order.extend(
+            self.sigs
+                .iter()
+                .filter(|(_, s)| !s.is_meta && s.module == self.root)
+                .map(|(id, _)| id),
+        );
+        order.extend(
+            self.sigs
+                .iter()
+                .filter(|(_, s)| s.is_meta)
+                .map(|(id, _)| id),
+        );
+        order.extend(
+            self.sigs
+                .iter()
+                .filter(|(_, s)| !s.is_meta && s.module != self.root)
+                .map(|(id, _)| id),
+        );
+        debug_assert_eq!(
+            order.len(),
+            self.sigs.len(),
+            "reachable order dropped a sig: {} of {}",
+            order.len(),
+            self.sigs.len()
+        );
+        assert!(
+            self.meta.is_some()
+                || order
+                    .iter()
+                    .copied()
+                    .eq((0..self.sigs.len()).map(SigId::from_index)),
+            "reachable order differs from arena order in a world with no metamodel"
+        );
+        order
+    }
+
     /// Whether prim sig `sub` is the same as, or a descendant of, prim sig
     /// `sup` (resolution-doc §4.1 `isSameOrDescendentOf`). `none` descends from
     /// everything; `univ` is an ancestor of everything. Walks the prim parent
