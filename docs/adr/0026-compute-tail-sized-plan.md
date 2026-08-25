@@ -1,6 +1,6 @@
 # ADR-0026 — The compute tail sized: a measured deep-retry tier converts half of it with zero lottery risk; every solver-internals bet stays owner-gated
 
-**Status:** Proposed (ranking packet; all four options owner-gated — the ADR-0021 campaign close made every further compute-tail route an owner-level decision)
+**Status:** Closed (2026-08-25 addendum — every option resolved: the mt-122 re-pair collapsed the tail to two rows, the deep-retry tier was declined on a one-row measurement, and ADR-0027 retired the rest)
 **Date:** 2026-08-24 (sizing bead mt-119; nothing implemented)
 **Builds on:** [ADR-0017](0017-gauge-default-budgets-paired-frontier.md) (the paired-frontier defaults this plan deliberately does not move), [ADR-0021](0021-cdcl-volume-lever.md) (the 0-for-3 volume-lever close whose record binds this ranking), [ADR-0019](0019-optional-cadical-backend.md) (the cross-check instrument that pins which rows are answerable at all).
 
@@ -156,3 +156,32 @@ solver-independent — but is re-priced after the re-pair. The fact base
 (Context above, `scratchpad/mt119/`) is unaffected and is part of ADR-0027's
 evidentiary record. Status stays Proposed as a record of the ranking; the
 live decision now lives in ADR-0027.
+
+## Addendum (2026-08-25, mt-125): the re-derivation ran — every option is now resolved; this ADR is closed
+
+The mt-122 re-pair did what the 2026-08-24 addendum predicted, and more: the
+49-row deferred tail collapsed to **two rows** at the re-paired defaults
+(agree 552/564; the `capacity` bucket empty). Against that tail:
+
+- **Option 2 (Simplifier bound-tightening): retired outright.** Its subject —
+  the encode-bound `capacity` rows — no longer exists: the bucket is empty at
+  256M, with probe evidence that all twenty former members were purely
+  encode-bound (mt-122). Machinery to shrink encodings that already fit has no
+  customer.
+- **Option 1 (deep-retry tier): declined, with the conversion measured and
+  documented instead.** The only jar-agreeable defer left is `fullsub2.als[0]`,
+  and a one-row probe (2026-08-25) converts it: **UNSAT at 5,192,777
+  conflicts, ~27 min wall, agreeing with the jar** (412k vars / 1.43M
+  clauses). A standing second-pass tier — or a default raised to ~8M — buys
+  that single agreement at roughly 2.5× the full-sweep wall, which is exactly
+  the trade the ADR-0017 pairing discipline exists to refuse (the re-pair
+  bought +23 for 1.2×; this would buy +1 for ~2.5×). The row stays a typed
+  `over_budget` defer with its price recorded in LIMITATIONS, convertible on
+  demand by one instrument command. The other row, `correctChord.als[13]`, is
+  a jar-nonverdict at any budget — no agreement exists to buy.
+- **Option 3 (own-solver strength stage)** was retired by ADR-0027 and the
+  solver it would have strengthened was deleted at mt-124.
+
+**Status moves Proposed → Closed.** Every option is resolved (1 declined on
+measurement, 2 retired for lack of subject, 3 retired by ADR-0027); the fact
+base stays as the evidentiary record it already served for ADR-0027.
