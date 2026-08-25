@@ -134,6 +134,14 @@ pub enum Provenance {
     BoundsConstraint,
     /// A reachable module fact.
     Fact,
+    /// A phase-8 `$`-metamodel **emptiness fact** — `no sig$` / `no static$` /
+    /// `no var$`, one per synthesized sig the metamodel left with no members
+    /// (mt-107 P3 tail, [`als_types::MetaEmptyFact`]). The reference adds these
+    /// with `addFact`, so they are genuine root-module facts; they carry their
+    /// own label rather than [`Self::Fact`] because there is no source
+    /// paragraph behind them and a self-check failure here means the synthesis
+    /// disagreed with the bounds, not that the user wrote something false.
+    MetaFact(SigId),
     /// A synthesized field fact (multiplicity / domain / defined value).
     FieldFact(FieldId),
     /// A synthesized field-group disjointness fact from a pre-colon `disj a, b:
@@ -667,6 +675,20 @@ impl<'a> Lowerer<'a> {
             });
         }
 
+        // 2b. the phase-8 metamodel's emptiness facts. `resolveMeta` appends
+        // these to the *root module's* fact list at synthesis time, so they sit
+        // right after the ordinary module facts — and, like them, at asserted
+        // polarity (they are ground, so nothing here can skolemize either way).
+        // P1 recorded each as a `(name, sig)` pair meaning `no <sig>`; this
+        // replays that, it does not re-derive which sigs are empty.
+        for fact in self.meta_empty_facts() {
+            let f = self.lower_meta_empty_fact(fact.sig)?;
+            conjuncts.push(GoalConjunct {
+                formula: f,
+                provenance: Provenance::MetaFact(fact.sig),
+            });
+        }
+
         // 3. synthesized field facts. Each is `all this: owner | …`, so a
         // nested HO existential in a defined-field value is under a universal —
         // blocked from skolemization (translation-ref §10.6).
@@ -735,6 +757,34 @@ impl<'a> Lowerer<'a> {
             int_sig: self.bounds.int_sig,
             seq_int_sig: self.bounds.seq_int_sig,
         })
+    }
+
+    /// The metamodel's recorded emptiness facts, in synthesis order
+    /// (`sig$fact`, `static$fact`, `var$fact` — only those the synthesis
+    /// actually minted). Empty when the `$` gate never fired.
+    fn meta_empty_facts(&self) -> Vec<als_types::MetaEmptyFact> {
+        self.world
+            .meta
+            .as_ref()
+            .map(|m| m.empty_facts.clone())
+            .unwrap_or_default()
+    }
+
+    /// One emptiness fact: `no <sig>`. The recorded shape is a `(name, sig)`
+    /// pair whose meaning [`als_types::MetaEmptyFact`] states outright, so this
+    /// is a replay of the record rather than a re-derivation of which sigs are
+    /// empty — the synthesis alone decides that (`resolveMeta` `:2230-2237`).
+    fn lower_meta_empty_fact(&mut self, sig: SigId) -> Result<FormulaId, TranslateError> {
+        let span = self.world.sigs[sig].span;
+        self.pol = Pol::asserted();
+        let denote = self.sig_denote(sig, span)?;
+        Ok(self.mk_formula(
+            FormulaKind::MultTest {
+                test: MultTest::No,
+                expr: denote,
+            },
+            span,
+        ))
     }
 
     /// Builds the command formula (translation-ref §2.5(3)).
@@ -1020,23 +1070,12 @@ impl<'a> Lowerer<'a> {
 
         let mut body_parts: Vec<FormulaId> = Vec::new();
         if field.is_defined {
-            // `= e`: bound is `ExactlyOf(e)`; lower `e` in a `this`-context.
-            let value = unwrap_exactly(self.ast(module), field.bound).ok_or_else(|| {
-                TranslateError::LoweringUnsupported {
-                    what: format!("defined field `{}` malformed bound", field.name),
-                    span,
-                }
-            })?;
-            self.binders
-                .push(("this".to_owned(), Binding::Var(this_var)));
-            let e = self.lower_rel(ctx, value);
-            self.binders.pop();
-            let e = e?;
+            let rhs = self.defined_field_value(ctx, &field, this_var, span)?;
             body_parts.push(self.mk_formula(
                 FormulaKind::RelCompare {
                     op: RelCmpOp::Equal,
                     lhs: this_f,
-                    rhs: e,
+                    rhs,
                 },
                 span,
             ));
@@ -1097,6 +1136,86 @@ impl<'a> Lowerer<'a> {
             0 => Ok(None),
             1 => Ok(Some(parts.remove(0))),
             _ => Ok(Some(self.conjoin(parts, span))),
+        }
+    }
+
+    /// The right-hand side of a defined field's `all this: S | this.f = <rhs>`
+    /// fact. A user field (`f = e`) lowers `e` in a `this`-context; a
+    /// synthesized `$`-metamodel relation reads [`als_types::MetaDef`] instead —
+    /// it has no source AST, so its `bound` is a placeholder that must never be
+    /// read (see [`als_types::ResolvedField::bound`]), and its value mentions no
+    /// `this` at all: every meta sig is a `one` sig, so the defined value is a
+    /// constant per owner.
+    fn defined_field_value(
+        &mut self,
+        ctx: Ctx,
+        field: &als_types::ResolvedField,
+        this_var: crate::ir::VarId,
+        span: Span,
+    ) -> Result<RelExprId, TranslateError> {
+        if let Some(def) = &field.meta_def {
+            return self.meta_def_denote(def, span);
+        }
+        let value = unwrap_exactly(self.ast_of(ctx), field.bound).ok_or_else(|| {
+            TranslateError::LoweringUnsupported {
+                what: format!("defined field `{}` malformed bound", field.name),
+                span,
+            }
+        })?;
+        self.binders
+            .push(("this".to_owned(), Binding::Var(this_var)));
+        let e = self.lower_rel(ctx, value);
+        self.binders.pop();
+        e
+    }
+
+    /// The value a synthesized `$`-metamodel relation is defined as (mt-107 P3):
+    /// the sig or field the meta atom reflects, or the union of the meta sigs
+    /// the `fields`/`parent`/`subfields` relations collect. An **empty** union
+    /// is `none` of arity 1, matching the reference's `ExprConstant.EMPTYNESS`
+    /// value (its declared type keeps a `univ` right column — see
+    /// [`als_types::MetaDef::MetaSigs`]).
+    fn meta_def_denote(
+        &mut self,
+        def: &als_types::MetaDef,
+        span: Span,
+    ) -> Result<RelExprId, TranslateError> {
+        match def {
+            als_types::MetaDef::Sig(s) => self.sig_denote(*s, span),
+            als_types::MetaDef::Field(f) => {
+                self.bounds.field_denote.get(f).copied().ok_or_else(|| {
+                    TranslateError::LoweringUnsupported {
+                        what: format!(
+                            "meta field `{}` has no denotation",
+                            self.world.fields[*f].name
+                        ),
+                        span,
+                    }
+                })
+            }
+            // Union in the recorded (reference insertion) order — the members
+            // are a `Vec`, so the tree shape is deterministic (STYLE D1).
+            als_types::MetaDef::MetaSigs(members) => {
+                let mut acc: Option<RelExprId> = None;
+                for &m in members {
+                    let d = self.sig_denote(m, span)?;
+                    acc = Some(match acc {
+                        None => d,
+                        Some(prev) => self.mk_rel(
+                            RelExprKind::Binary {
+                                op: RelBinOp::Union,
+                                lhs: prev,
+                                rhs: d,
+                            },
+                            span,
+                        ),
+                    });
+                }
+                Ok(match acc {
+                    Some(r) => r,
+                    None => self.none_of_arity(1, span),
+                })
+            }
         }
     }
 
@@ -1927,6 +2046,12 @@ impl<'a> Lowerer<'a> {
             } => self.lower_call_formula(ctx, e, span),
             ExprKind::Binary { op, lhs, rhs } => self.lower_binary_formula(ctx, op, lhs, rhs, span),
             ExprKind::Quant { quant, decls, body } => {
+                // A phase-8 ground expansion replaced this binder outright
+                // (mt-107 P3) — it is a fold, not a quantifier, so it never
+                // reaches `lower_quant`.
+                if let Some(ExprChoice::Meta(me)) = self.choice(ctx, e).cloned() {
+                    return self.replay_meta_formula(ctx, &me, span);
+                }
                 self.lower_quant(ctx, quant, &decls, body, span)
             }
             ExprKind::IfThenElse {
@@ -2448,6 +2573,11 @@ impl<'a> Lowerer<'a> {
                 ))
             }
             ExprKind::Comprehension { decls, body } => {
+                // The comprehension arm of the same phase-8 expansion: a union
+                // of guarded singletons, not a comprehension (mt-107 P3).
+                if let Some(ExprChoice::Meta(me)) = self.choice(ctx, e).cloned() {
+                    return self.replay_meta_rel(ctx, &me, span);
+                }
                 self.lower_comprehension(ctx, &decls, body, span)
             }
             ExprKind::Let { bindings, body } => {
@@ -3700,12 +3830,23 @@ impl<'a> Lowerer<'a> {
     /// multiplicity/`seq` marker (the marker constrains the bound, handled at the
     /// quantifier/field level, not the bound value).
     fn lower_decl_bound_set(&mut self, ctx: Ctx, decl: &Decl) -> Result<RelExprId, TranslateError> {
+        self.lower_bound_expr_set(ctx, decl.bound)
+    }
+
+    /// A decl bound's *set* value: the multiplicity marker (`one`/`some`/`set`/…)
+    /// is the binder's business, so it is stripped here and the inner expression
+    /// lowered on its own.
+    fn lower_bound_expr_set(
+        &mut self,
+        ctx: Ctx,
+        bound: ExprId,
+    ) -> Result<RelExprId, TranslateError> {
         let ast = self.ast_of(ctx);
-        let bound = match &ast.exprs[decl.bound].kind {
+        let inner = match &ast.exprs[bound].kind {
             ExprKind::Unary { op, expr } if is_mult_marker(*op) => *expr,
-            _ => decl.bound,
+            _ => bound,
         };
-        self.lower_rel_stripped(ctx, bound)
+        self.lower_rel_stripped(ctx, inner)
     }
 
     /// Lowers an arrow tree to its plain-product value, deliberately ignoring
@@ -3930,6 +4071,199 @@ impl<'a> Lowerer<'a> {
             self.binders.pop();
         }
         r
+    }
+
+    /// Replays a phase-8 `$`-metamodel **ground expansion** as a formula
+    /// (mt-107 P3, [`als_types::MetaExpansion`]): `all`/`some` over a `one`-of
+    /// meta-typed bound is not a quantifier at all, but a fold of the body
+    /// re-resolved once per meta atom.
+    ///
+    /// Each term is `atom in bound implies body` (`All`) or `atom in bound and
+    /// body` (`Some`); the empty fold is `true` / `false`. The expansion
+    /// introduces no quantifier, so the body keeps the *polarity* of the node
+    /// the expansion replaced — but it does sit under the real `and`/`or`/
+    /// `implies` connectives the fold emits, which is what decides
+    /// skolemization (see the `blocked` computation below).
+    fn replay_meta_formula(
+        &mut self,
+        ctx: Ctx,
+        me: &als_types::MetaExpansion,
+        span: Span,
+    ) -> Result<FormulaId, TranslateError> {
+        debug_assert!(
+            !matches!(me.fold, als_types::MetaFold::Comprehension),
+            "comprehension fold reached the formula replay"
+        );
+        // The decl bound was resolved exactly once, into the enclosing table, so
+        // it lowers once against the OUTER context and is shared by every term.
+        let bound_rel = self.lower_bound_expr_set(ctx, me.bound)?;
+
+        // mt-055 / §10.6, applied to the tree this fold actually builds: a
+        // positive `or`/`implies` and a negated `and` each block skolemization
+        // for their whole subtree. An `All` term is `guard implies body`
+        // (blocks when positive) chained with `and` (blocks when negated); a
+        // `Some` term is `guard and body` (blocks when negated) chained with
+        // `or` (blocks when positive). The chain only exists from two bindings
+        // on, which is the single-binding asymmetry below.
+        let saved = self.pol;
+        let chained = me.bindings.len() >= 2;
+        let is_all = matches!(me.fold, als_types::MetaFold::All);
+        self.pol.blocked = saved.blocked
+            || if is_all {
+                saved.positive || chained
+            } else {
+                !saved.positive || chained
+            };
+        let folded = self.meta_formula_fold(ctx, me, is_all, bound_rel, span);
+        self.pol = saved;
+        folded
+    }
+
+    /// The fold loop of [`Self::replay_meta_formula`], split out so the caller
+    /// owns the [`Self::pol`] save/restore across every exit.
+    fn meta_formula_fold(
+        &mut self,
+        ctx: Ctx,
+        me: &als_types::MetaExpansion,
+        is_all: bool,
+        bound_rel: RelExprId,
+        span: Span,
+    ) -> Result<FormulaId, TranslateError> {
+        let mut acc: Option<FormulaId> = None;
+        for binding in &me.bindings {
+            let (guard, body_ctx, _atom_rel) =
+                self.meta_binding_parts(ctx, me, binding, bound_rel, span)?;
+            let body = self.lower_formula(body_ctx, me.body);
+            self.binders.pop();
+            let body = body?;
+            let term = if is_all {
+                self.mk_formula(
+                    FormulaKind::Implies {
+                        antecedent: guard,
+                        consequent: body,
+                    },
+                    span,
+                )
+            } else {
+                self.mk_formula(FormulaKind::And(vec![guard, body]), span)
+            };
+            // The reference accumulates each new term on the LEFT of what it
+            // already has (`answer = term.and(answer)`), so the tree for atoms
+            // `a₁…aₙ` is `tₙ ∘ (tₙ₋₁ ∘ (… ∘ t₁))`. Binary nodes, not one n-ary
+            // node, so the shape matches.
+            acc = Some(match acc {
+                None => term,
+                Some(prev) if is_all => self.mk_formula(FormulaKind::And(vec![term, prev]), span),
+                Some(prev) => self.mk_formula(FormulaKind::Or(vec![term, prev]), span),
+            });
+        }
+        // The empty fold: `true` for `all`, `false` for `some`.
+        Ok(acc.unwrap_or_else(|| self.mk_formula(FormulaKind::Const(is_all), span)))
+    }
+
+    /// The comprehension arm of [`Self::replay_meta_formula`]: the body is still
+    /// a *formula* (a condition), and each term contributes the atom itself when
+    /// the guard and the condition both hold — `(atom in bound and body) => atom
+    /// else none`. The union of those, or `none` of arity 1 when nothing bound.
+    fn replay_meta_rel(
+        &mut self,
+        ctx: Ctx,
+        me: &als_types::MetaExpansion,
+        span: Span,
+    ) -> Result<RelExprId, TranslateError> {
+        debug_assert!(
+            matches!(me.fold, als_types::MetaFold::Comprehension),
+            "a formula fold reached the comprehension replay"
+        );
+        let bound_rel = self.lower_bound_expr_set(ctx, me.bound)?;
+        // Each condition ends up inside a relational if-then-else, the same
+        // non-monotone context `lower_rel`'s own ITE arm blocks skolemization
+        // in (§10.6).
+        let saved = self.pol;
+        self.pol.blocked = true;
+        let folded = self.meta_rel_fold(ctx, me, bound_rel, span);
+        self.pol = saved;
+        folded
+    }
+
+    /// The fold loop of [`Self::replay_meta_rel`], split out so the caller owns
+    /// the [`Self::pol`] save/restore across every exit.
+    fn meta_rel_fold(
+        &mut self,
+        ctx: Ctx,
+        me: &als_types::MetaExpansion,
+        bound_rel: RelExprId,
+        span: Span,
+    ) -> Result<RelExprId, TranslateError> {
+        let mut acc: Option<RelExprId> = None;
+        for binding in &me.bindings {
+            let (guard, body_ctx, atom_rel) =
+                self.meta_binding_parts(ctx, me, binding, bound_rel, span)?;
+            let cond = self.lower_formula(body_ctx, me.body);
+            self.binders.pop();
+            let cond = self.mk_formula(FormulaKind::And(vec![guard, cond?]), span);
+            let none = self.none_of_arity(1, span);
+            let term = self.mk_rel(
+                RelExprKind::IfThenElse {
+                    cond,
+                    then_branch: atom_rel,
+                    else_branch: none,
+                },
+                span,
+            );
+            acc = Some(match acc {
+                None => term,
+                Some(prev) => self.mk_rel(
+                    RelExprKind::Binary {
+                        op: RelBinOp::Union,
+                        lhs: term,
+                        rhs: prev,
+                    },
+                    span,
+                ),
+            });
+        }
+        // The empty fold: `none` of arity 1.
+        Ok(match acc {
+            Some(r) => r,
+            None => self.none_of_arity(1, span),
+        })
+    }
+
+    /// One binding's shared preamble: the `atom in bound` guard, the context the
+    /// body lowers under, and the atom's own denotation. **Pushes the binder** —
+    /// the caller lowers the body and pops it, so a failing body still unwinds.
+    ///
+    /// The body's `ExprId`s live in the expansion node's own arena, so the
+    /// context keeps `ctx`'s module and arena and swaps only the choice table:
+    /// each binding carries its own sibling sub-table, keyed by the same
+    /// `(ModuleId, ExprId)` pairs as its siblings.
+    fn meta_binding_parts<'c>(
+        &mut self,
+        ctx: Ctx<'c>,
+        me: &als_types::MetaExpansion,
+        binding: &'c als_types::MetaBinding,
+        bound_rel: RelExprId,
+        span: Span,
+    ) -> Result<(FormulaId, Ctx<'c>, RelExprId), TranslateError> {
+        let atom_rel = self.sig_denote(binding.atom, span)?;
+        let guard = self.mk_formula(
+            FormulaKind::RelCompare {
+                op: RelCmpOp::Subset,
+                lhs: atom_rel,
+                rhs: bound_rel,
+            },
+            span,
+        );
+        // The variable is ground — it denotes exactly one atom — so it binds as
+        // an expression, never as a quantified `Var` (and so never skolemizes).
+        self.binders.push((me.var.clone(), Binding::Expr(atom_rel)));
+        let body_ctx = Ctx {
+            module: ctx.module,
+            choices: &binding.choices,
+            ast: ctx.ast,
+        };
+        Ok((guard, body_ctx, atom_rel))
     }
 
     /// Binds a macro's parameters to its lowered arguments.

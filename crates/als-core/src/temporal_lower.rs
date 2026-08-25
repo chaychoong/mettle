@@ -408,7 +408,12 @@ fn holds_at_every_state(ir: &Ir, conjunct: &GoalConjunct) -> bool {
     match conjunct.provenance {
         // A `fact` paragraph and the command body are one conjunction evaluated
         // at the initial state (`makeFacts` → `recursiveAddFormula`, probe P-F3).
-        Provenance::Fact | Provenance::Command => false,
+        // A metamodel emptiness fact is added by `resolveMeta` with `addFact`,
+        // so it is a fact paragraph too. The distinction is unobservable here:
+        // no meta sig is ever `var` (mt-107 P0 §M5), so the alternative rule —
+        // `is_temporal_formula`, which the other synthesized facts use — would
+        // return `false` for these as well.
+        Provenance::Fact | Provenance::MetaFact(_) | Provenance::Command => false,
         // `always` iff the constraint is temporal at all — for a static sig that
         // is false and the state-0 form is already the whole story, so lowering
         // it at every state is exact either way.

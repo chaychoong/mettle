@@ -1252,3 +1252,41 @@ fn mt100_a_rel_sorted_macro_still_renders_as_a_set() {
         ],
     );
 }
+
+// ============================ (i) the `$` metamodel ========================
+
+/// mt-107 P3: the metamodel and its ground expansion at the prompt. The jar's
+/// evaluator is not a separate resolution path — the same phase-8 expansion runs
+/// there — and mettle's REPL lowers through the same `lower_formula`/`lower_rel`
+/// arms the solve path uses, so this is a check that the fragment classifier
+/// routes an expansion node to the right one. Cells and expected renderings are
+/// `scratchpad/probe/mt107/out/m5_eval.txt`, verbatim.
+///
+/// `static$` and `var$` are included since the P3 tail taught the lowerer to
+/// consume the synthesis's emptiness facts: this model is fully static, so
+/// every meta sig buckets into `static$` and the `var$fact` empties `var$`.
+#[test]
+fn mt107_the_metamodel_is_evaluable() {
+    assert_cells(
+        "meta.als",
+        &[],
+        &[
+            ("V$", "{V$$0}"),
+            ("V$.subfields", "{V$f$0, V$g$0, W$h$0}"),
+            ("V$.fields", "{V$f$0, V$g$0}"),
+            ("W$.parent", "{V$$0}"),
+            ("V$f.value", "{}"),
+            ("sig$", "{V$$0, W$$0, Z$$0}"),
+            ("field$", "{V$f$0, V$g$0, W$h$0}"),
+            ("static$", "{V$$0, W$$0, Z$$0, V$f$0, V$g$0, W$h$0}"),
+            ("var$", "{}"),
+            // The three folds, each classified by the fragment's own dispatch:
+            // `all`/`some` are formulas, the comprehension a unary relation
+            // whose cardinality is an integer.
+            ("all fx: V$.subfields | some fx.value", "false"),
+            ("some fx: V$.subfields | some fx.value", "false"),
+            ("#{ fx: V$.subfields | some fx.value }", "0"),
+            ("{ fx: V$.subfields | some fx }", "{V$f$0, V$g$0, W$h$0}"),
+        ],
+    );
+}

@@ -79,6 +79,12 @@ pub(crate) fn collect_referenced_literals(
         }
     }
     for (_, field) in world.fields.iter() {
+        // A synthesized `$`-metamodel relation has no source AST — its `bound`
+        // is a placeholder `ExprId` that must never be read (mt-107 P1), and its
+        // value is a union of meta sigs, which can hold no string literal.
+        if field.meta_def.is_some() {
+            continue;
+        }
         let module = world.sigs[field.owner].module;
         c.walk(module, top, field.bound);
     }
