@@ -14,11 +14,13 @@
 mod backend;
 mod cadical_backend;
 mod clause_arena;
+mod dimacs;
 mod solver;
 mod var_order;
 
 pub use backend::{Backend, LiveSolver};
 pub use cadical_backend::{Cadical, CadicalSolver, ProofTraceError};
+pub use dimacs::{write_dimacs, write_dimacs_file};
 pub use solver::{block, Cdcl, CdclSolver};
 
 use std::fmt;

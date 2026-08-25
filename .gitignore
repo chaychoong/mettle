@@ -20,6 +20,13 @@
 # Pure observability, regenerated every run — never committed.
 /status/
 
+# Dev-side external tools (mt-123): the drat-trim proof checker
+# `backend-instrument --certify` verifies UNSAT certificates with, plus its
+# license and provenance note. Same posture as the jar and the corpora — never
+# committed, never shipped, never linked into mettle; fully reproducible from
+# scripts/fetch-drat-trim.sh (pinned by commit SHA).
+/tools/
+
 # OS cruft
 .DS_Store
 

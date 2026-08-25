@@ -68,8 +68,10 @@ cargo build --release -p mettle                              # `--solver cadical
 cargo build --release -p als-conform                         # builds `backend-instrument` too
 
 # the oracle-independent check: one encoding, both solvers, non-zero exit on any
-# verdict difference. --rows takes a newline-separated list of `path[idx]` keys,
-# or `-` to read them from stdin — so a slice comes straight out of a sweep report:
+# verdict difference. Superseded by --certify below (ADR-0027 decision 4) and
+# removed with the own CDCL, but still runnable today. --rows takes a
+# newline-separated list of `path[idx]` keys, or `-` to read them from stdin —
+# so a slice comes straight out of a sweep report:
 python3 -c "import json,sys; d=json.load(open(sys.argv[1])); [print(r['key']) for r in d['per_command'] if r['verdict_bucket'].startswith('agree_')]" report.json \
   | ./target/release/backend-instrument --rows - --cross --conflicts 100000 --jobs 8
 
@@ -77,7 +79,23 @@ python3 -c "import json,sys; d=json.load(open(sys.argv[1])); [print(r['key']) fo
 ./scripts/backend-determinism.sh ./target/release/mettle
 ```
 
-The gauge deliberately has **no** `--solver` flag: the scorecard, the counting nets and the sweep baselines are own-CDCL by construction (ADR-0019 §2). Never capture a baseline from anything else.
+The gauge takes `--solver <name>` (`cadical` is the default since [ADR-0027](docs/adr/0027-cadical-only-solver.md)/mt-121; `mettle` selects the own CDCL). A baseline records which backend produced it, so never compare reports captured under different solvers — re-capture instead.
+
+### Certifying UNSAT verdicts
+
+An UNSAT verdict can be checked by something that shares none of mettle's code: CaDiCaL logs a **DRAT proof**, mettle writes the solved CNF as DIMACS, and [drat-trim](https://github.com/marijnheule/drat-trim) verifies the one against the other ([ADR-0027](docs/adr/0027-cadical-only-solver.md) decision 4). The checker is dev-side only — never committed, never shipped — and arrives by script like the jar and the corpora:
+
+```sh
+scripts/fetch-drat-trim.sh                                   # builds tools/drat-trim/drat-trim (needs a C compiler)
+
+# certify every UNSAT row the committed sweep baseline agrees with the jar on:
+python3 -c "import json,sys; d=json.load(open(sys.argv[1])); [print(k) for k,v in d['entries'].items() if v['verdict_bucket']=='agree_unsat']" baselines/corpus-sweep-sb20.json \
+  | ./target/release/backend-instrument --rows - --certify --jobs 8 --out certified.json
+```
+
+It exits nonzero if any proof fails to check, and keeps that row's `.cnf`/`.drat`/`.check.txt` for inspection (everything else is deleted as it goes — these proofs run to gigabytes across a full audit; pass `--keep-artifacts` to keep them all, `--work-dir` to choose where). `sat`, `unknown` and `checker_timeout` rows are reported but are not failures — none of them is evidence against a proof. The budgets default to the gauge's own, so a certify run re-derives the sweep's verdicts rather than a differently-budgeted rerun; `--checker-timeout` (default 600s) hard-kills a checker that outlives it.
+
+What a verified proof claims is narrow and worth stating: *this CNF is unsatisfiable*. Whether the CNF faithfully encodes the Alloy command is still the evaluator self-check's and the jar's job.
 
 ## House rules (the short version)
 

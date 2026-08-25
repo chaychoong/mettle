@@ -21,6 +21,10 @@
 //! | [`CadicalSolver::total_conflicts`] and siblings | `Internal::stats`, via the vendored accessors |
 //! | [`CadicalSolver::with_proof_trace`] | `Solver::trace_proof`, in the CONFIGURING state |
 //!
+//! The literal mapping itself lives in [`crate::dimacs`], shared with the DIMACS
+//! writer: a proof trace is only checkable against the formula written out in
+//! the *same* numbering the solver was loaded with (mt-123).
+//!
 //! ADR-0019 recorded one contract gap here: the published binding exposes no
 //! conflict *counter*, so budgets bound but spend was unobservable. The fork in
 //! `vendor/cadical` closes it — the three `total_*` methods read CaDiCaL's own
@@ -37,36 +41,12 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use crate::dimacs::dimacs_lit as dimacs;
 use crate::{Assignment, Cnf, Lit, Outcome, Solver, Var};
 
 /// CaDiCaL's own "no conflict limit" sentinel: `Internal::limit_conflicts`
 /// treats any negative value as unlimited (`limit.cpp`).
 const UNLIMITED_CONFLICTS: i32 = -1;
-
-/// The DIMACS literal for `lit`: variable `i` becomes `i + 1`, negated
-/// literals get a minus sign.
-///
-/// Total for every literal a [`Cnf`] can hold: [`Cnf::fresh_var`] caps the pool
-/// at `u32::MAX / 2 == i32::MAX`, so `index + 1` always fits a positive `i32`.
-#[allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_possible_wrap,
-    reason = "Cnf::fresh_var caps the pool at u32::MAX/2 == i32::MAX, so index+1 is a \
-              positive i32 by construction — asserted below"
-)]
-fn dimacs(lit: Lit) -> i32 {
-    let index = lit.var().index();
-    assert!(
-        index < i32::MAX as usize,
-        "variable index {index} outside CaDiCaL's DIMACS range"
-    );
-    let var = index as i32 + 1;
-    if lit.is_positive() {
-        var
-    } else {
-        -var
-    }
-}
 
 /// An incremental CaDiCaL instance holding one [`Cnf`], mirroring
 /// [`CdclSolver`](crate::CdclSolver)'s surface so the two are interchangeable

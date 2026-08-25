@@ -32,6 +32,7 @@
 
 pub mod bench;
 pub mod config;
+pub mod drat_check;
 pub mod error;
 pub mod model;
 mod parse;

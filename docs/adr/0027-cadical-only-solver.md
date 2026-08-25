@@ -242,3 +242,55 @@ Direct FFI (the alternative debt 5 named) was rejected on three grounds:
 3. **The maintained surface is a small patch**, not an FFI layer: three stats
    accessors and three proof-tracer pass-throughs over a pristine MIT
    upstream, mechanically re-derivable against any future binding version.
+
+## Addendum (2026-08-25, mt-123): the proof-certification instrument
+
+Decision 4 is implemented. UNSAT verdicts are now **machine-certifiable**:
+CaDiCaL logs a DRAT proof of its refutation, mettle writes the solved CNF as
+DIMACS text, and an external checker verifies the one against the other.
+
+**Surface.** `als_solve::write_dimacs`/`write_dimacs_file` render a `Cnf` in the
+same literal numbering the CaDiCaL binding loads (one shared `dimacs_lit`, not
+two copies that can drift — the file and the solver must agree by construction
+or a "verified" verdict means nothing). `als_core::instrument::certify_goal`
+encodes one lowered command, writes that CNF, and solves it through
+`CadicalSolver::with_proof_trace`, returning a typed `CertifyOutcome`
+(`Unsat` / `Sat` / `Unknown` / `TriviallyUnsat`). `backend-instrument --certify`
+drives it over a worklist and runs the checker per row.
+
+**Checker.** [drat-trim](https://github.com/marijnheule/drat-trim), pinned at
+commit `2e3b2dc0ecf938addbd779d42877b6ed69d9a985`, **MIT** licensed. It is
+dev-side infrastructure on the jar/corpora pattern — fetched and built by
+`scripts/fetch-drat-trim.sh` into the git-ignored `tools/`, never committed,
+never shipped, never linked. `--certify` fails up front when it is absent.
+
+**Binary DRAT works; the vendor patch does not grow.** The fallback the bead
+carried (extend the patch to expose `ccadical_set_option` and force
+`binary=0`) is **not needed**: CaDiCaL's default binary DRAT is verified by
+drat-trim as-is, which auto-detects the format ("c turning on binary mode
+checking") and reports `s VERIFIED`. Measured on a pigeonhole fixture through
+`with_proof_trace`, then again end-to-end on real corpus rows. Binary proofs
+are also several times smaller than text, which matters at the sizes the gauge
+produces (a single 66k-variable row logs ~2.9 MB).
+
+**What "certified" claims.** Exactly one thing: *this CNF is unsatisfiable*.
+The proof cannot see the Alloy model it came from, so it says nothing about
+whether the encoding is faithful — that remains the job of the evaluator
+self-check (for SAT) and of jar agreement (for both). Certification closes the
+"is the solver telling the truth?" question, not the "did we ask the right
+question?" one.
+
+**Stop-the-line, and what is not.** A proof the checker refuses, a checker that
+cannot run, and a certificate that cannot be produced all fail the run
+(nonzero exit, artifacts kept). A `sat` row (the worklist named something that
+is not UNSAT), an `unknown` row (conflict budget spent) and a `checker_timeout`
+row are visible in the report but are **not** failures: none of them is
+evidence against a proof. Temporal commands are out of scope and typed as
+`temporal_out_of_scope` — their pipeline is a per-length sweep, so there is no
+single CNF one proof could refute.
+
+The certify arm defaults to the solve gauge's own budgets (1M conflicts, 256M
+encode, 20k primary-variable cap, jar-default symmetry with `expect 1`
+forcing), so a certify run re-derives the sweep's verdicts rather than a
+differently-budgeted rerun of them. `--cross` survives until mt-124 deletes it
+with `CdclSolver`; it is superseded here, not by it.
