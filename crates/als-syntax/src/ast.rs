@@ -14,6 +14,8 @@
 //! - Names are owned `String`s for now; interning is a later, mechanical
 //!   change if profiles ask for it.
 
+use std::collections::BTreeMap;
+
 use crate::{define_id, Arena, Span};
 
 define_id! {
@@ -49,6 +51,21 @@ pub struct Ast {
     pub exprs: Arena<ExprId, Expr>,
     /// Declaration arena (fields, quantifier/function parameters).
     pub decls: Arena<DeclId, Decl>,
+    /// The comparison operator token's own [`Span`] for each
+    /// [`ExprKind::Compare`] node, keyed by that node's [`ExprId`].
+    ///
+    /// Additive side table (mt-131): the reference's CUP grammar binds a
+    /// comparison `ExprBinary`'s position to the operator token itself
+    /// (`Alloy.cup:985`), not to the node's overall span, so a
+    /// `subset-redundant` warning on a formula spanning multiple source
+    /// lines anchors at the operator's line, not the left operand's. Every
+    /// `Compare` node's overall [`Span`] (`Expr::span`) still covers the
+    /// whole comparison — this table exists only so warning emission can
+    /// recover the narrower operator position without widening `Expr`'s
+    /// shape. Filled by the parser for every `Compare` node; consulted only
+    /// by the `subset-redundant` warning class (`docs/reference/
+    /// warning-parity.md` §6) — other classes keep their node-span anchor.
+    pub cmp_op_spans: BTreeMap<ExprId, Span>,
 }
 
 /// An identifier with its source location.

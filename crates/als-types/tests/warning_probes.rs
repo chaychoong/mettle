@@ -342,6 +342,21 @@ fn subset_disjoint_mt023() {
     );
 }
 
+/// mt-131: the `059866.als` shape — a subset-redundant comparison whose `in`
+/// operator sits on a *different* source line from its left operand. The
+/// reference's CUP grammar binds the warning to the `in` token's own
+/// position (`Alloy.cup:985`), not the comparison's overall span start, so
+/// the warning must land on the operator's line (5) — not the left
+/// operand's line (4) — matching `docs/reference/warning-parity.md` §6.
+#[test]
+fn subset_disjoint_operator_on_its_own_line_mt131() {
+    assert_warns_at(
+        "sig A {}\nsig B {}\nfact {\n\tA\n\tin B\n}\n",
+        "subset-redundant",
+        5,
+    );
+}
+
 // ---- A6: intersection ----
 
 #[test]

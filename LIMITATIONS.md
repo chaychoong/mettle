@@ -215,14 +215,6 @@ test.
 - **Error text is mettle's,** rendered as caret diagnostics. Two messages are the
   reference's, because each one states a rule about the evaluator: the
   higher-order quantification refusal and the missing string literal.
-- **One warning lands on the wrong line (mt-131).** In `059866.als`, a
-  `subset-redundant` warning sits on a two-line formula. The jar anchors it to
-  the `in` operator's own position (line 100) and mettle anchors it to the start
-  of the node's span (line 99). Warning sets otherwise match the jar on
-  101,969 of 101,970 accepted alloy4fun files, and the total warning count is
-  equal. Warnings never affect the accept or reject answer. The fix gives
-  operators their own position, separate from the node span. See
-  [docs/reference/warning-parity.md](docs/reference/warning-parity.md).
 
 ## Instance XML export
 

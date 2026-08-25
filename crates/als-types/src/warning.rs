@@ -15,13 +15,23 @@
 //! ## Positions
 //! The reference attaches operator warnings (`&`, `.`, `<:`, …) to the operator
 //! `Pos`; mettle's surface AST carries one `Span` per node (no separate
-//! operator span, and adding one would touch `als-syntax`, out of scope for
-//! mt-023), so a binary-operator warning lands at the node's start (the left
-//! operand) rather than the operator glyph. This shifts the *column* but not the
+//! operator span for most binary node kinds, and adding one for every kind
+//! would touch `als-syntax`, out of scope for mt-023), so most
+//! binary-operator warnings land at the node's start (the left operand)
+//! rather than the operator glyph. This shifts the *column* but not the
 //! *line*; the gauge therefore matches at line granularity and reports column
 //! agreement as a secondary metric (see `docs/reference/warning-parity.md`).
 //! Prefix-unary and sub-expression warnings (closure `^`, `int[]`, unused
 //! binder, ITE branch, function-return-disjoint) do land column-exact.
+//!
+//! [`ResolveWarning::SubsetRedundant`] is the one exception (mt-131): its
+//! operator (`in`/`!in`, on an `ExprKind::Compare` node) has a dedicated
+//! additive span table (`als_syntax::ast::Ast::cmp_op_spans`), so it anchors
+//! at the operator token itself — column-exact, and correct even when the
+//! operator falls on a different *line* than the left operand
+//! (`docs/reference/warning-parity.md` §6). The other binary-operator classes
+//! keep the node-start anchor: they already agreed with the jar at line
+//! granularity, so widening the fix to them was out of scope.
 
 use als_syntax::Span;
 
@@ -64,9 +74,12 @@ pub enum ResolveWarning {
         span: Span,
     },
     /// An `in`/`!in` that is statically redundant — a side empty, disjoint, or
-    /// identical (`ExprBinary` A4). Position: the operator.
+    /// identical (`ExprBinary` A4). Position: the `in`/`!in` operator token
+    /// itself (mt-131) — not the comparison's overall span, so this can land
+    /// on a different line than `span` would if it were the merged lhs/rhs
+    /// span. See the module doc's Positions section.
     SubsetRedundant {
-        /// Span of the comparison.
+        /// Span of the `in`/`!in` operator token.
         span: Span,
     },
     /// An `&` whose two operands are always disjoint (`this.type.hasNoTuple()`,

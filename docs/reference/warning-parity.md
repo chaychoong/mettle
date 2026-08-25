@@ -1,7 +1,7 @@
-# Warning parity — the §5.2 catalog vs the reference jar (mt-023, mt-118)
+# Warning parity — the §5.2 catalog vs the reference jar (mt-023, mt-118, mt-131)
 
-This is the evidence document for **bead mt-023** (closed to a single residual cell
-by **mt-118**): mettle's implementation of the
+This is the evidence document for **bead mt-023** (closed to a perfect
+101,970/101,970 alloy4fun match by **mt-118** + **mt-131**): mettle's implementation of the
 full [alloy6-resolution.md](alloy6-resolution.md) **§5.2 warning catalog** and the
 measured parity of its warning *sets* against the reference Alloy 6.2.0 jar. It
 is the discharge of the **LEDGER-002 owner requirement**: *wherever the jar warns,
@@ -38,14 +38,28 @@ table below). Each file is classified exact-match / mettle-missing / mettle-extr
 
 **Position matching is at line granularity.** The reference attaches an
 operator warning (`&`, `.`, `<:`, …) to the operator glyph's `Pos`; mettle's
-surface AST carries one `Span` per node (no separate operator span — adding one
-would touch `als-syntax`, out of scope), so a binary-operator warning lands at the
-node's start (the left operand) — same *line*, shifted *column*. §8 already
-declares the jar's warning **order** JVM-incidental and pins the gauge to compare
-sets, not order; for the same reason the column difference is incidental and the
-gauge matches on `(class, line)`, reporting column-exact agreement as a secondary
+surface AST carries one `Span` per node (no separate operator span, for most
+binary node kinds — adding one for every kind would touch `als-syntax`, out of
+scope), so most binary-operator warnings land at the node's start (the left
+operand) — same *line*, shifted *column*. §8 already declares the jar's
+warning **order** JVM-incidental and pins the gauge to compare sets, not
+order; for the same reason the column difference is incidental and the gauge
+matches on `(class, line)`, reporting column-exact agreement as a secondary
 metric. Prefix-unary and sub-expression warnings (closure `^`, `int[]`/`sum`,
 unused binder, ITE branch, function-return-disjoint) *do* land column-exact.
+
+`subset-redundant` is the one binary-operator class that now lands
+column-exact too (mt-131, §5 item 11): its operator is `in`/`!in`, on the
+`ExprKind::Compare` node, which is the one binary node kind that already had a
+dedicated additive side table reachable from the parser at low cost (`Ast::
+cmp_op_spans`, filled in the Pratt loop's one `Infix::Cmp` arm). The other
+binary-operator classes (`eq-redundant`, `intersect-irrelevant`,
+`plus-irrelevant`, `minus-irrelevant`, `join-empty`, `domain-irrelevant`,
+`range-irrelevant`, `arrow-irrelevant`) are unchanged and still node-start
+anchored — every measured cell for them already agrees at line granularity
+(their operator and node-start columns always fall on the operator's own
+line in the corpus), so re-anchoring them buys nothing and was left alone
+per mt-131's scope (see §6).
 
 ## 2. Stem → class table
 
@@ -121,8 +135,15 @@ files) and the **167-file corpus** (all agree-ACCEPT). Match key `(class, line)`
 
 | corpus | agree-ACCEPT files | identical warn set | mettle-MISSING | mettle-EXTRA | jar warnings | mettle warnings | matched (col-exact) |
 |---|---|---|---|---|---|---|---|
-| alloy4fun | 101,970 | **101,969 (99.999%)** | 1 | 1 | 14,180 | 14,180 | 14,179 (3,370) |
-| corpus (167) | 167 | **166** | **0** | 1 | 9 | 10 | 9 (1) |
+| alloy4fun | 101,970 | **101,970 (100.000%)** | 0 | 0 | 14,180 | 14,180 | 14,180 (8,277) |
+| corpus (167) | 167 | **166** | **0** | 1 | 9 | 10 | 9 (6) |
+
+(Post-mt-131 re-measurement, JVM-free for alloy4fun via the baseline, live-jar
+for the 167-file corpus. The alloy4fun row is now a perfect 101,970/101,970 —
+see §6. The corpus row's lone extra is the pre-existing, unrelated
+`plus-irrelevant` item below, untouched by mt-131; its col-exact count rose
+1→6 as a side effect of `subset-redundant` now landing column-exact
+everywhere it fires, not just at `059866.als`.)
 
 **Campaign arc.** mt-023 first measured full-catalog parity at 101,767/101,970
 identical (99.80%), missing 192 `(class,line)` cells and extra 20. Every resolve-
@@ -132,10 +153,11 @@ underneath — so parity held flat, and the count drifted only through that
 population shift: mt-118 started from 101,772/101,970 identical, missing 194
 (192 `unused-var` + 2 `subset-redundant`), extra 20 (18 `eq-redundant` + 2
 `subset-redundant`). mt-118 (§5 items 7–10) closed all of it but one
-line-attribution artifact, landing at **101,969/101,970 (99.999%)**, missing 1,
-extra 1 — the jar's and mettle's total `(class,line)` warning counts are now
-**exactly equal** (14,180 = 14,180). The one remaining cell pair is root-caused
-in §6.
+line-attribution artifact, landing at 101,969/101,970 (99.999%), missing 1,
+extra 1 — the jar's and mettle's total `(class,line)` warning counts were
+already **exactly equal** (14,180 = 14,180) at that point. **mt-131 (§5 item
+11) closed the last cell**, landing at a perfect **101,970/101,970
+(100.000%)**, missing 0, extra 0 — see §6.
 
 ## 5. Fixes and iterations
 
@@ -229,14 +251,44 @@ for-cell against the banked jar baseline (`crates/als-types/tests/warning_probes
     `Node<:adj` node (no construction-time collapse) and instead teaches
     `same_expr` to dereference such restrictions before comparing — owner-
     identity only, unwrapped operands only, recursive for chains.
+11. **subset-redundant, operator-position anchor (`059866.als` line-attribution
+    artifact closed, mt-131, 2026-08-25)** — the mt-118 residual (§6, below):
+    the reference's CUP grammar binds a comparison `ExprBinary`'s position to
+    the `in`/`!in` token itself (`Alloy.cup:985`), not the node's overall span,
+    which only matters when the comparison's left operand and operator sit on
+    different source lines. `Ast::cmp_op_spans` (`crates/als-syntax/src/
+    ast.rs`) is a purely additive `BTreeMap<ExprId, Span>` side table, filled
+    in the parser's one `Infix::Cmp` arm (`crates/als-syntax/src/parser.rs`,
+    `build_infix`) by capturing the operator token's own span
+    (`Parser::cur_span()`) immediately before it is consumed — no change to
+    `Expr`'s shape, so `als-core` and every other downstream consumer compiles
+    untouched. `subset-redundant` emission (`crates/als-types/src/resolve/
+    expr.rs::compare`) looks up the comparison node's `ExprId` in that table
+    and anchors the warning there instead of at the merged lhs/rhs span; every
+    other warning class keeps its existing node-span anchor (scope note: the
+    document's §1 already says the jar's operator anchor is general across
+    binary-operator classes, but only `subset-redundant` had a live
+    line-level divergence to fix — the rest already agreed at line
+    granularity because their operator always falls on the same line as the
+    node's span start in the measured corpus, so re-anchoring them would only
+    move column, not the `(class, line)` match key, and risks nothing but
+    unreviewed motion; left untouched per this bead's scope). Closes the
+    alloy4fun cell pair to **101,970/101,970 (100.000%)**, missing 0, extra 0
+    — a perfect score — and, as a side effect, raises `subset-redundant` to
+    column-exact everywhere it fires (not just at `059866.als`), lifting the
+    alloy4fun col-exact count 3,370 → 8,277 without moving any `(class, line)`
+    cell.
 
 ## 6. Honest remainder (each root-caused)
 
 **mt-118 (2026-08-24) closed the whole EXTRA family and all but one cell of the
-MISSING family** (§5 items 7–10). What's left is a single cell pair, plus one
-unrelated corpus item mt-118 never touched.
+MISSING family** (§5 items 7–10); **mt-131 (2026-08-25) closed that last
+cell** (§5 item 11). The alloy4fun differential is now a perfect
+101,970/101,970 — no warning-set residual remains there. What's left is one
+unrelated corpus item mt-118 never touched (below); it was never part of the
+mt-023/mt-118/mt-131 line.
 
-### The residual: `059866.als:99`/`100` — a line-attribution artifact, not a semantic miss
+### Closed: `059866.als:99`/`100` — a line-attribution artifact, not a semantic miss (mt-131)
 
 The formula spans two source lines:
 
@@ -250,16 +302,30 @@ the **`in` token's own position** (`Alloy.cup:985`, `CompareExprA ::= ... IN:o
 ...`), not the left operand's span-start, so the jar's subset-redundant warning is
 anchored to line 100 (the operator glyph) — confirmed against `jar.jsonl`.
 mettle's surface AST carries **one `Span` per node** with no separate
-operator-glyph position (already flagged as out of scope for the `als-syntax`
-shape in §1 above), so the binary-operator warning is emitted at the node's
-overall span start — line 99, the left operand. The gauge's `(class, line)` match
-key can't merge these back together: it shows as a MISSING at
-`(subset-redundant, 100)` and an EXTRA at `(subset-redundant, 99)` for what is,
-underneath, the same logical warning firing in the same place for the same
-reason. **Future fix:** thread an operator-glyph `Pos` distinct from the node's
-full `Span` from the parser through to warning emission. Deferred as
-disproportionate for one cell in 150,891 — the change touches `als-syntax`'s AST
-shape for every binary node, not just this warning path.
+operator-glyph position, so the binary-operator warning used to be emitted at
+the node's overall span start — line 99, the left operand. The gauge's
+`(class, line)` match key couldn't merge these back together: it showed as a
+MISSING at `(subset-redundant, 100)` and an EXTRA at `(subset-redundant, 99)`
+for what was, underneath, the same logical warning firing in the same place
+for the same reason.
+
+**Fixed (mt-131, §5 item 11):** an additive side table,
+`Ast::cmp_op_spans: BTreeMap<ExprId, Span>` (`crates/als-syntax/src/ast.rs`),
+records the operator token's own span for every `Compare` node — populated in
+the parser's one `Infix::Cmp` arm by capturing `Parser::cur_span()` right
+before the operator token is consumed. `Expr`'s shape is untouched (no new
+field, no widened span), so `als-core` and every other downstream consumer
+compiled without changes. `subset-redundant` emission
+(`crates/als-types/src/resolve/expr.rs::compare`) now looks the comparison's
+`ExprId` up in that table and anchors the warning at the operator span
+instead of the merged lhs/rhs span. `mettle check` on `059866.als` now points
+at `100:1`, on the `in` token, matching the jar. Only `subset-redundant`
+changed; every other warning class's emission site is untouched (§1's closing
+note explains why the others didn't need it). Regression test:
+`subset_disjoint_operator_on_its_own_line_mt131`
+(`crates/als-types/tests/warning_probes.rs`) — a two-line `A\nin B` subset
+comparison, asserting the warning lands on the operator's line, which would
+have failed against the pre-fix node-start anchor.
 
 ### Superseded root-causes (mt-023-era characterizations, struck by mt-118)
 

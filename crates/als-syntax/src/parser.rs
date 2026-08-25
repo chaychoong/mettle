@@ -1448,13 +1448,18 @@ impl<'src> Parser<'src> {
             if lbp < min_bp {
                 break;
             }
+            // Captured before the bump so `Infix::Cmp` can record the
+            // operator token's own position (mt-131, `Ast::cmp_op_spans`) —
+            // the reference anchors a comparison warning here, not at the
+            // node's overall span start.
+            let op_span = self.cur_span();
             self.bump();
             // Each link adds one node to a left-leaning spine every downstream
             // consumer walks recursively — the mt-021 exposure. The Pratt loop
             // is iterative, so `depth` never sees it.
             self.enter_path()?;
             let child_budget = child_binder_budget(budget, binder_operator_class(infix));
-            lhs = self.build_infix(infix, lhs, rbp, child_budget)?;
+            lhs = self.build_infix(infix, lhs, rbp, child_budget, op_span)?;
         }
         Ok(lhs)
     }
@@ -1514,6 +1519,7 @@ impl<'src> Parser<'src> {
         lhs: ExprId,
         rbp: u8,
         budget: u8,
+        op_span: Span,
     ) -> Result<ExprId, ParseError> {
         match infix {
             Infix::Implies => self.build_implies(lhs, rbp, budget),
@@ -1536,7 +1542,7 @@ impl<'src> Parser<'src> {
                     rhs = self.apply_mult(rhs);
                 }
                 let span = self.espan(lhs).merge(self.espan(rhs));
-                Ok(self.alloc(
+                let id = self.alloc(
                     ExprKind::Compare {
                         op,
                         negated,
@@ -1544,7 +1550,11 @@ impl<'src> Parser<'src> {
                         rhs,
                     },
                     span,
-                ))
+                );
+                // mt-131: the operator token's own position, additive
+                // (`Ast::cmp_op_spans`) — see that field's doc comment.
+                self.ast.cmp_op_spans.insert(id, op_span);
+                Ok(id)
             }
             Infix::Bin(op) => {
                 let rhs = self.parse_operand(rbp, budget)?;

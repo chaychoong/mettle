@@ -822,7 +822,7 @@ impl<'a, 'g> Cx<'a, 'g> {
                 negated,
                 lhs,
                 rhs,
-            } => self.compare(*op, *negated, *lhs, *rhs, span),
+            } => self.compare(e, *op, *negated, *lhs, *rhs, span),
             ExprKind::IfThenElse {
                 cond,
                 then_branch,
@@ -1498,7 +1498,15 @@ impl<'a, 'g> Cx<'a, 'g> {
         }
     }
 
-    fn compare(&mut self, op: CmpOp, negated: bool, lhs: ExprId, rhs: ExprId, span: Span) -> R {
+    fn compare(
+        &mut self,
+        e: ExprId,
+        op: CmpOp,
+        negated: bool,
+        lhs: ExprId,
+        rhs: ExprId,
+        span: Span,
+    ) -> R {
         let world = &self.r.world;
         match op {
             CmpOp::Lt | CmpOp::Gt | CmpOp::Le | CmpOp::Ge => {
@@ -1581,7 +1589,17 @@ impl<'a, 'g> Cx<'a, 'g> {
                                 || bp.has_no_tuple(world)
                                 || same =>
                         {
-                            self.warnings.push(ResolveWarning::SubsetRedundant { span });
+                            // mt-131: the reference's CUP grammar binds this
+                            // warning to the `in`/`!in` operator token, not
+                            // the comparison's overall span — matters when
+                            // the formula spans multiple source lines
+                            // (`warning-parity.md` §6). `cmp_op_spans` is
+                            // populated for every `Compare` node, so this
+                            // always hits; `span` is a defensive fallback,
+                            // never exercised in practice.
+                            let op_span = self.ast().cmp_op_spans.get(&e).copied().unwrap_or(span);
+                            self.warnings
+                                .push(ResolveWarning::SubsetRedundant { span: op_span });
                         }
                         _ => {}
                     }
