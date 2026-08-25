@@ -398,7 +398,11 @@ fn lower_fragment_with<'a>(
     };
     let value = match sort {
         Sort::Formula => LoweredFragment::Formula(lowerer.lower_formula(ctx, input.expr)?),
-        Sort::Int => LoweredFragment::Int(lowerer.lower_int(ctx, input.expr)?),
+        // `visit_int`, not `lower_int`: `A4Solution.eval` renders whatever
+        // `visitThis` returned and never calls `cint`, so a `#` at the root
+        // stays a cardinality — `#(0-8)` is 1, not −8 (mt-052), and
+        // `let x = 3 | #x` is 1 (mt-099).
+        Sort::Int => LoweredFragment::Int(lowerer.visit_int(ctx, input.expr)?),
         Sort::Rel => LoweredFragment::Rel(lowerer.lower_rel(ctx, input.expr)?),
     };
     if let (TemporalPosture::Defer, Some((op, span))) = (posture, lowerer.temporal) {
@@ -533,6 +537,27 @@ enum Sort {
     Formula,
     Int,
     Rel,
+}
+
+/// How an int-sorted operand becomes a relation in a comparison
+/// ([`Lowerer::lower_rel_promote`]). The reference has two distinct routes to
+/// the same `IntToExprCast` node and mt-127 measured that they differ:
+///
+/// - [`Promote::ToSet`] is `toSet(a, visitThis(a))` (`:719-725`), the
+///   translator wrapping whatever it just built. No `toInt`, so a cardinality
+///   stays a cardinality. This is what `=`/`!=` do (`:1285-1306`).
+/// - [`Promote::Cast`] is a resolver-inserted `Int[·]` (`int->Int`,
+///   CAST2SIGINT), which translates as `cint(sub).toExpression()` (`:888`) —
+///   so the operand goes through `toInt` and its peephole. This is what
+///   `in`/`!in` get, because the resolver casts both their operands before the
+///   translator ever sees them.
+///
+/// The one cell that separates them: `#(Int[3]) = 3` is UNSAT (`1 = 3`) while
+/// `#(Int[3]) in 3` is SAT (`3 in 3`).
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Promote {
+    ToSet,
+    Cast,
 }
 
 /// Which side of a join a peeled arrow-column leaf variable lands on
@@ -2356,23 +2381,29 @@ impl<'a> Lowerer<'a> {
                 ))
             }
             CmpOp::Eq | CmpOp::In => {
-                // Integer special case (translation-ref §2.2): `=`/`in` compare as
-                // integers iff BOTH sides are small-int casts; otherwise a
-                // relational compare, promoting a lone small-int side via `Int[·]`.
+                // Integer special case (translation-ref §2.2, §10.7e FACT 1):
+                // `=`/`!=` compare as integers iff BOTH translated sides are
+                // literally `IntToExprCast`; `in`/`!in` never consult cast-ness
+                // (`isIn`, :1327). That single test lives below, after the
+                // promotion — there is no second, sort-level gate, because the
+                // reference has none.
+                //
+                // The promotions differ, and mt-127 measured the difference.
+                // `EQUALS` reaches its operands through `toSet(a, visitThis(a))`
+                // (:1285-1306) — no `toInt`, so `#(Int[3]) = 3` is `1 = 3`,
+                // UNSAT (probe a3). `IN` reaches them through `cset`, but the
+                // resolver has already wrapped both int-typed operands in
+                // `Int[·]` (`int->Int`, confirmed by an `AstDump` of the
+                // resolved tree), and CAST2SIGINT is `cint(sub).toExpression()`
+                // — so `#(Int[3]) in 3` IS `3 in 3`, SAT (probes a7/a8,
+                // s7/s8 for `!in`).
                 let l_int = self.sort_of(ctx, lhs) == Sort::Int;
                 let r_int = self.sort_of(ctx, rhs) == Sort::Int;
-                if matches!(op, CmpOp::Eq) && l_int && r_int {
-                    let l = self.lower_int(ctx, lhs)?;
-                    let r = self.lower_int(ctx, rhs)?;
-                    return Ok(self.mk_formula(
-                        FormulaKind::IntCompare {
-                            op: IntCmpOp::Eq,
-                            lhs: l,
-                            rhs: r,
-                        },
-                        span,
-                    ));
-                }
+                let promote = if matches!(op, CmpOp::Eq) {
+                    Promote::ToSet
+                } else {
+                    Promote::Cast
+                };
                 // `x in A m -> n B`: the reference translates a
                 // multiplicity-marked arrow on the `in` right-hand side as
                 // membership over the stripped product PLUS the per-column
@@ -2391,21 +2422,23 @@ impl<'a> Lowerer<'a> {
                     else {
                         unreachable!("bound_is_higher_order is true only for ExprKind::Arrow");
                     };
-                    let l = self.lower_rel_promote(ctx, lhs, l_int)?;
+                    let l = self.lower_rel_promote(ctx, lhs, l_int, promote)?;
                     let cs = self.arrow_value_constraint(
                         ctx, l, alhs, lhs_mult, rhs_mult, arhs, span, &mut 0,
                     )?;
                     return Ok(self.mk_formula(FormulaKind::And(cs), span));
                 }
-                let l = self.lower_rel_promote(ctx, lhs, l_int)?;
-                let r = self.lower_rel_promote(ctx, rhs, r_int)?;
-                // Both sides an `Int[·]` cast ⇒ an **integer** equality
-                // (translation-ref §2.2's "both sides IntToExprCast" rule) — e.g.
-                // `div[5,0] = div[5,0]`, where both operands are arithmetic
-                // results whose call type is `Int` (so `sort_of` is `Rel`, missing
-                // the first branch). Comparing the underlying ints keeps the
-                // forbid-mode overflow guard (§11.3); the value is identical since
-                // distinct int values map to distinct atoms.
+                let l = self.lower_rel_promote(ctx, lhs, l_int, promote)?;
+                let r = self.lower_rel_promote(ctx, rhs, r_int, promote)?;
+                // Both sides an `Int[·]` cast ⇒ an **integer** equality — the
+                // reference's `eL instanceof IntToExprCast && eR instanceof
+                // IntToExprCast` test, verbatim. It catches the promoted
+                // int-sorted sides above AND an arithmetic result whose call
+                // type is `Int` (`div[5,0] = div[5,0]`, where `sort_of` is
+                // `Rel` and `lower_rel` produces the cast on its own).
+                // Comparing the underlying ints keeps the forbid-mode overflow
+                // guard (§11.3); the value is identical since distinct int
+                // values map to distinct atoms.
                 if matches!(op, CmpOp::Eq) {
                     if let (RelExprKind::IntToAtom(il), RelExprKind::IntToAtom(ir)) =
                         (&self.ir.rel_exprs[l].kind, &self.ir.rel_exprs[r].kind)
@@ -2439,15 +2472,20 @@ impl<'a> Lowerer<'a> {
     }
 
     /// Lowers `e` as a relation, promoting a small-int value to its `Int` atom
-    /// (`Int[e]`, translation-ref §2.2) so it can be set-compared.
+    /// so it can be set-compared — in one of the two ways the reference does
+    /// that, which are not interchangeable (see [`Promote`]).
     fn lower_rel_promote(
         &mut self,
         ctx: Ctx,
         e: ExprId,
         is_int: bool,
+        how: Promote,
     ) -> Result<RelExprId, TranslateError> {
         if is_int {
-            let ie = self.lower_int(ctx, e)?;
+            let ie = match how {
+                Promote::ToSet => self.visit_int(ctx, e)?,
+                Promote::Cast => self.lower_int(ctx, e)?,
+            };
             Ok(self.mk_rel(RelExprKind::IntToAtom(ie), self.span_of(ctx, e)))
         } else {
             self.lower_rel(ctx, e)
@@ -2472,8 +2510,16 @@ impl<'a> Lowerer<'a> {
         // `Int[#A] = Int[#B] + Int[1]` — `+` stays relational **union** per
         // resolution §4.5's "no automatic int<->Int coercion" rule; only the
         // *operand* needs the cast, never the operator).
+        //
+        // This is `toSet` (`:719-725`), NOT a resolver-inserted `Int[·]`: the
+        // reference wraps whatever `visitThis` returned, with no `toInt` on the
+        // way in. So a union operand keeps its cardinality — `(#(Int[3]) +
+        // Int[1]) = Int[1]` is SAT, probe z2 (mt-127). The positions where the
+        // resolver *does* insert a cast, and the peephole therefore does fire,
+        // ask for it explicitly: [`Self::lower_rel_promote`]'s `Promote::Cast`,
+        // the `Int[·]` builtin arm, and `int[·]`/`sum`'s operand.
         if self.sort_of(ctx, e) == Sort::Int {
-            let ie = self.lower_int(ctx, e)?;
+            let ie = self.visit_int(ctx, e)?;
             return Ok(self.mk_rel(RelExprKind::IntToAtom(ie), span));
         }
         match node.kind {
@@ -2494,8 +2540,13 @@ impl<'a> Lowerer<'a> {
             ExprKind::Const(Const::Univ) => Ok(self.live_univ(span)),
             ExprKind::Const(Const::Iden) => Ok(self.live_iden(span)),
             ExprKind::Num(_) => {
-                // A small-int in relation position → its `Int` atom.
-                let ie = self.lower_int(ctx, e)?;
+                // A small-int in relation position → its `Int` atom. This IS
+                // the reference's numeral arm verbatim: `visit(ExprConstant)`
+                // case NUMBER is `IntConstant.constant(n).toExpression()`
+                // (`:918`), i.e. an `IntToExprCast` — which is why a numeral
+                // then-branch makes an if-then-else relational
+                // ([`Self::ite_sort`]).
+                let ie = self.visit_int(ctx, e)?;
                 Ok(self.mk_rel(RelExprKind::IntToAtom(ie), span))
             }
             ExprKind::Str(s) => {
@@ -2810,9 +2861,19 @@ impl<'a> Lowerer<'a> {
             Some(ExprChoice::Spine(SpineChoice::Builtin {
                 op: BuiltinCall::IntAtom,
             })) => {
+                // A source-written `Int[e]` does NOT survive resolution as a
+                // node of its own — the resolver drops it and re-derives the
+                // coercion from context, so `Int[F.v] = 3` resolves to
+                // `F.v = 3` and `#(Int[c => plus[3,4] else 0])` to `#(c => …)`
+                // (`AstDump` of the resolved tree, mt-127 probes q1/q2/u3).
+                // Delegating to `lower_rel` reproduces that: its `Sort::Int`
+                // prefix re-inserts the cast exactly where a relation is
+                // wanted, which is the same rule the resolver applies. Getting
+                // this wrong is observable — keeping the cast here would make
+                // `Int[#(Int[3])] = 3` unwrap to `3 = 3` (SAT) where the jar,
+                // having deleted the cast, compares `1 = 3` (UNSAT).
                 let arg = self.first_box_arg(ctx, e, span)?;
-                let ie = self.lower_int(ctx, arg)?;
-                Ok(self.mk_rel(RelExprKind::IntToAtom(ie), span))
+                self.lower_rel(ctx, arg)
             }
             Some(ExprChoice::Spine(SpineChoice::Macro(mc))) => {
                 self.replay_macro_rel(ctx, &mc, span)
@@ -3060,8 +3121,57 @@ impl<'a> Lowerer<'a> {
 
     // ============================ integers ============================
 
-    #[allow(clippy::too_many_lines)] // one arm per integer-position `ExprKind`
+    /// Lowers `e` in an integer position — the reference's `cint`
+    /// (`TranslateAlloyToKodkod.java:683`), which is `visitThis` followed by
+    /// `toInt`. The `toInt` half is [`Self::to_int`]; the `visitThis` half is
+    /// [`Self::visit_int`].
+    ///
+    /// The split is load-bearing, not cosmetic (mt-127). `cint` is reached from
+    /// exactly five kinds of position — an arithmetic operand, an int
+    /// comparison (`<`/`=<`/`>`/`>=`), the operand of a `Int[·]` cast
+    /// (CAST2SIGINT, :888), a `sum` quantifier's body (:1588) and the **else**
+    /// branch of an integer if-then-else (:788) — plus wherever the resolver
+    /// has inserted an `Int[·]` of its own. Every other position reaches the
+    /// expression through `cset`/`toSet`, which never calls `toInt`. So the
+    /// same `#(Int[3])` is **3** under `>=` and **1** under `=`, and both are
+    /// jar-pinned (`scratchpad/probe/mt127/`, cells a1/a3).
     fn lower_int(&mut self, ctx: Ctx, e: ExprId) -> Result<IntExprId, TranslateError> {
+        let raw = self.visit_int(ctx, e)?;
+        Ok(self.to_int(raw))
+    }
+
+    /// `toInt`'s first arm (`TranslateAlloyToKodkod.java:691-695`): an
+    /// `ExprToIntCast` over an `IntToExprCast` is the operand's raw integer,
+    /// and the cast operator — cardinality or sum — is **discarded**.
+    ///
+    /// `Expression.count()` and `Expression.sum()` are Kodkod's two
+    /// `ExprToIntCast` constructors, so in mettle's IR that is `Card` or
+    /// `AtomToInt` over an [`RelExprKind::IntToAtom`]. The remaining `toInt`
+    /// arms are already in place: arm 2 is [`Self::visit_int`]'s `Sort::Rel`
+    /// prefix, arms 3 and 4 are the identity and the `AtomToInt` fallback it
+    /// ends in.
+    ///
+    /// Only a **bare** cast unwraps. An `IntToAtom` never wraps an if-then-else
+    /// (the reference builds those relationally whenever the then branch
+    /// translates to an `Expression` — see [`Self::ite_sort`]), which is why
+    /// `#(c => plus[3,4] else 0)` stays a real cardinality (probes t1/u3–u6).
+    fn to_int(&self, ie: IntExprId) -> IntExprId {
+        let (IntExprKind::Card(rel) | IntExprKind::AtomToInt(rel)) = self.ir.int_exprs[ie].kind
+        else {
+            return ie;
+        };
+        match self.ir.rel_exprs[rel].kind {
+            RelExprKind::IntToAtom(inner) => inner,
+            _ => ie,
+        }
+    }
+
+    /// The reference's `visitThis` for an integer-position expression: builds
+    /// the node with **no** `toInt` peephole, so a caller that needs `cset`
+    /// semantics (`=`/`!=`, a union operand, the general set position) sees the
+    /// same shape the reference's `toSet` would wrap.
+    #[allow(clippy::too_many_lines)] // one arm per integer-position `ExprKind`
+    fn visit_int(&mut self, ctx: Ctx, e: ExprId) -> Result<IntExprId, TranslateError> {
         let node = self.ast_of(ctx).exprs[e].clone();
         let span = node.span;
         // An expression that resolves to a *relation* of `Int` atoms in an
@@ -3087,6 +3197,15 @@ impl<'a> Lowerer<'a> {
                     Ok(self.mk_int(IntExprKind::Card(r), span))
                 }
                 UnOp::IntOf | UnOp::SumOf => {
+                    // `int[e]`/`sum e` is CAST2INT → `sum(cset(e))`. The
+                    // resolver has already wrapped an int-typed operand in
+                    // `Int[·]`, and the reference's `sum()` helper
+                    // (`TranslateAlloyToKodkod.java:905-909`) strips that cast
+                    // straight back off — so the operand is read through `cint`,
+                    // peephole and all (probe s9, `int[#(Int[3])] = 3` is SAT).
+                    if self.sort_of(ctx, expr) == Sort::Int {
+                        return self.lower_int(ctx, expr);
+                    }
                     let r = self.lower_rel(ctx, expr)?;
                     Ok(self.mk_int(IntExprKind::AtomToInt(r), span))
                 }
@@ -3125,7 +3244,11 @@ impl<'a> Lowerer<'a> {
                     Some(ExprChoice::Spine(SpineChoice::Builtin {
                         op: BuiltinCall::IntCast,
                     })) => {
+                        // Same `sum()`-helper collapse as the `UnOp::IntOf` arm.
                         let arg = self.first_box_arg(ctx, e, span)?;
+                        if self.sort_of(ctx, arg) == Sort::Int {
+                            return self.lower_int(ctx, arg);
+                        }
                         let r = self.lower_rel(ctx, arg)?;
                         Ok(self.mk_int(IntExprKind::AtomToInt(r), span))
                     }
@@ -3156,7 +3279,14 @@ impl<'a> Lowerer<'a> {
                 let c = self.lower_formula(ctx, cond);
                 self.pol = saved;
                 let c = c?;
-                let t = self.lower_int(ctx, then_branch)?;
+                // `visit(ExprITE)` is asymmetric (`:776-789`): the then branch
+                // is `visitThis(x.left)` — whose Kodkod class is what picks the
+                // arm in the first place, so it is never coerced — while the
+                // else branch is `cint(x.right)`. Probes y7 (`(some Node =>
+                // #(Int[3]) else 0) >= 3` is UNSAT: the then branch stays a
+                // cardinality) and s1 (`(no Node => #(Int[1]) else
+                // #(plus[3,4])) >= 7` is SAT: the else branch unwraps).
+                let t = self.visit_int(ctx, then_branch)?;
                 let el = self.lower_int(ctx, else_branch)?;
                 Ok(self.mk_int(
                     IntExprKind::IfThenElse {
@@ -3183,16 +3313,20 @@ impl<'a> Lowerer<'a> {
                     }),
                 }
             }
+            // `visit(ExprLet)` (`:795-802`) is a pass-through: it stores
+            // `visitThis(x.expr)` and returns `visitThis(x.sub)`, both raw, so
+            // the `toInt` peephole fires at the enclosing `cint` and not here
+            // (probes b3/b4, t7).
             ExprKind::Let { bindings, body } => {
                 let pushed = self.push_let_bindings(ctx, &bindings)?;
-                let r = self.lower_int(ctx, body);
+                let r = self.visit_int(ctx, body);
                 for _ in 0..pushed {
                     self.binders.pop();
                 }
                 r
             }
             // A single-element block `{ e }` (a fun body) is just `e`.
-            ExprKind::Block(exprs) if exprs.len() == 1 => self.lower_int(ctx, exprs[0]),
+            ExprKind::Block(exprs) if exprs.len() == 1 => self.visit_int(ctx, exprs[0]),
             _ => Err(TranslateError::LoweringUnsupported {
                 what: "unexpected integer-position expression".to_owned(),
                 span,
@@ -3929,9 +4063,12 @@ impl<'a> Lowerer<'a> {
         implicit_this: bool,
         span: Span,
     ) -> Result<IntExprId, TranslateError> {
+        // `visit(ExprCall)` (`:1010-1050`) returns `visitThis(body)` unchanged,
+        // so the callee's body is raw at the call site and the `toInt` peephole
+        // fires only at the enclosing `cint` (probes b1/b2).
         let (fmod, body, pushed) = self.bind_call_params(ctx, func, args, implicit_this, span)?;
         let fctx = self.ctx(fmod);
-        let r = self.lower_int(fctx, body);
+        let r = self.visit_int(fctx, body);
         for _ in 0..pushed {
             self.binders.pop();
         }
@@ -4049,10 +4186,11 @@ impl<'a> Lowerer<'a> {
     /// reaches `lower_rel`'s macro arm: the caller's `Sort::Int` classification
     /// routes it straight here. The reference inlines the macro *before*
     /// translating, so the body's own translated class is what the surrounding
-    /// arithmetic sees — replaying the body through `lower_int` reproduces that
+    /// arithmetic sees — replaying the body through `visit_int` reproduces that
     /// exactly, including the §2.4 peephole, the `0-(max+1)` fold and the
     /// forbid-mode overflow flag, with no arm of its own (translation-ref
-    /// §10.7j).
+    /// §10.7j). Raw, like the fun-call and `let` pass-throughs: the `toInt`
+    /// peephole belongs to the enclosing `cint`, not to the inlining.
     fn replay_macro_int(
         &mut self,
         caller: Ctx,
@@ -4066,7 +4204,7 @@ impl<'a> Lowerer<'a> {
             ast: None,
         };
         let body = self.world.macros[mc.macro_id].body;
-        let r = self.lower_int(ctx, body);
+        let r = self.visit_int(ctx, body);
         for _ in 0..pushed {
             self.binders.pop();
         }

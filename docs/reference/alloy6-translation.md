@@ -2726,6 +2726,19 @@ Jar-free tests: `eq_typing_conformance.rs` part D (and the formerly `#[ignore]`d
 > int-compare gate re-keyed on the jar's literal-`IntToExprCast` test first. R4's
 > blocker is scoping: `ite_sort` runs before the `let`'s binder is pushed.
 
+> **CORRECTION (mt-127, 2026-08-25): R3 IS CLOSED, and its stated cause above is
+> wrong.** The jar does **not** set-compare `#X = 1`. `EQUALS` reaches its
+> operands through `toSet(a, visitThis(a))`, and `toSet` wraps an `IntExpression`
+> with `.toExpression()` — an `IntToExprCast` — so `#X = 1` is an int comparison
+> in the jar exactly as it already was in mettle, and n1/n2 never discriminated
+> the two readings. What n1/n2 discriminate is **where `toInt` runs**: `cint` is
+> `toInt(visitThis(x))` and nothing else reaches `toInt`, so the peephole must
+> live at the `cint` call sites and not inside the lowering of `#`. No gate
+> re-key was needed. The `in` half of the sentence above is also wrong — the
+> resolver inserts an `Int[·]` around **both** operands of an `in`, so `in` DOES
+> unwrap (`#(Int[3]) in 3` is SAT while `#(Int[3]) = 3` is UNSAT). R3 and R2's
+> k8 both close on the corrected rule; 164 cells, `scratchpad/probe/mt127/NOTES.md`.
+
 * **R1 (i8)** — Alloy's resolver re-wraps a surface `int[·]` in an ITE branch as
   `Int[int[·]]` (`q1_ast.txt`), making it a set, while `#e` in the identical
   position is not re-wrapped. Both carry Alloy type `{Int}`, so the type system

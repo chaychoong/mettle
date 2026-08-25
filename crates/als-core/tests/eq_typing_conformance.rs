@@ -806,3 +806,342 @@ fn part_e_union_sheds_under_a_quantifier_in_the_jar() {
         assert_eq!(solve(&src, false), Ok(true), "{cell} forbid");
     }
 }
+
+// ------- Part F: `toInt`'s unwrap and the `=`/`in` split (mt-127) ------------
+//
+// `cint` (`TranslateAlloyToKodkod.java:683`) is `toInt(visitThis(x))`, and
+// `toInt`'s first arm (:691-695) rewrites an `ExprToIntCast` over an
+// `IntToExprCast` to that operand's raw `intExpr()` — throwing the cast
+// operator away. `Expression.count()` and `Expression.sum()` are Kodkod's two
+// `ExprToIntCast` constructors, so `#` and `int[·]` over a **bare** `Int[·]`
+// cast read the cast's integer and DISCARD the cardinality.
+//
+// Which positions reach `cint` is the whole content of the rule, and it is not
+// what the surface syntax suggests:
+//
+// * `<`/`=<`/`>`/`>=`, arithmetic operands, `Int[·]`, a `sum` quantifier's body
+//   and an int if-then-else's ELSE branch call `cint` directly.
+// * `=`/`!=` do NOT: they reach their operands through `toSet(a,
+//   visitThis(a))` (:1285-1306), which wraps without ever calling `toInt`.
+// * `in`/`!in` DO — not through the translator but through the **resolver**,
+//   which inserts an `Int[·]` (`int->Int`) around each int-typed operand of an
+//   `in` before translation. `AstDump` of the resolved tree shows the cast on
+//   both `in` operands and on neither `=` operand.
+//
+// So the same `#(Int[3])` is 1 under `=`, 3 under `>=`, and 3 under `in`. Every
+// verdict below is the jar's, measured at `scratchpad/probe/mt127/` on the
+// models these helpers build verbatim (`w14_testcells_A.als`,
+// `w14_testcells_B.als`); the probe NOTES carry the full 164-cell table.
+
+/// The mt-127 wave-1 model, verbatim.
+fn mt127_cell(body: &str, scope: &str) -> String {
+    format!(
+        "open util/integer\n\
+         sig Node {{}}\n\
+         one sig F {{ v: Int }}\n\
+         fun three: Int {{ 3 }}\n\
+         run {{ {body} }} for {scope}\n"
+    )
+}
+
+/// The mt-127 gate model: two sigs to take cardinalities of, and a field whose
+/// value is fixed but not exactly bound.
+fn mt127_gate_cell(body: &str, scope: &str) -> String {
+    format!(
+        "open util/integer\n\
+         sig A {{}}\n\
+         sig B {{}}\n\
+         one sig G {{ w: Int }}\n\
+         fact {{ G.w = 7 }}\n\
+         run {{ {body} }} for {scope}\n"
+    )
+}
+
+/// Both overflow modes agree on this cell (nothing in it can overflow).
+fn mt127_both(cell: &str, src: &str, sat: bool) {
+    assert_eq!(solve(src, false), Ok(sat), "{cell} forbid");
+    assert_eq!(solve(src, true), Ok(sat), "{cell} allow");
+}
+
+#[test]
+fn part_f_cardinality_of_a_bare_cast_unwraps_in_an_int_position() {
+    // `Int[3]` is the one-element set {3} and `plus[3,4]` the one-element {7}.
+    // Read by `cint`, both give the cast's integer, not 1.
+    for (cell, body, sat) in [
+        ("a1", "#(Int[3]) >= 3", true),
+        ("a2", "#(Int[3]) >= 2", true),
+        ("a5", "#(Int[3]) < 3", false), // 3 < 3, not 1 < 3
+        ("n6", "#(plus[3,4]) >= 7", true),
+        ("n7", "#(plus[3,4]) >= 2", true),
+        ("u1", "#(plus[plus[3,0],4]) >= 7", true),
+        ("u2", "#(Int[plus[3,4]]) >= 7", true),
+        // an arithmetic operand is a `cint` site, so the unwrap fires INSIDE
+        // and the enclosing `=` then compares 3 with 3
+        ("a6", "plus[#(Int[3]), 0] = 3", true),
+        ("s5", "plus[0, #(Int[3])] = 3", true),
+    ] {
+        mt127_both(cell, &mt127_cell(body, "3 but 4 int"), sat);
+    }
+    // The `sum`-quantifier body is a `cint` site too (:1588).
+    for (cell, body, sat) in [
+        ("s3", "(sum n: Node | #(Int[3])) >= 3", true),
+        ("s4", "(sum n: Node | #(Int[3])) >= 2", true),
+        ("u7", "#(sum n: Node | plus[3,4]) >= 7", true),
+    ] {
+        mt127_both(cell, &mt127_cell(body, "exactly 1 Node, 4 int"), sat);
+    }
+}
+
+#[test]
+fn part_f_equality_reads_the_same_cardinality_raw() {
+    // The decisive contrast with the test above: `=`/`!=` never call `toInt`,
+    // so the identical operand is a cardinality of 1. a1 vs a3 is the pair.
+    for (cell, body, sat) in [
+        ("a3", "#(Int[3]) = 3", false),
+        ("a4", "#(Int[3]) = 1", true),
+        ("z6", "#(Int[3]) != 3", true),
+        ("z7", "#(Int[3]) != 1", false),
+        ("n1", "#(plus[3,4]) = 7", false),
+        ("n2", "#(plus[3,4]) = 1", true),
+        ("s6", "#(Int[3]) = #(Int[5])", true), // 1 = 1
+        // A source-written `Int[·]` does not survive resolution as a node of
+        // its own (the resolver deletes it and re-derives the coercion from
+        // context), so these are a3/a4 again, not `3 = 3`.
+        ("z8", "Int[#(Int[3])] = 3", false),
+        ("z9", "Int[#(Int[3])] = 1", true),
+    ] {
+        mt127_both(cell, &mt127_cell(body, "3 but 4 int"), sat);
+    }
+}
+
+#[test]
+fn part_f_membership_casts_both_operands_so_it_unwraps() {
+    // `isIn` never consults cast-ness (:1327), but the resolver has already
+    // wrapped both int-typed operands in `Int[·]` — and CAST2SIGINT is
+    // `cint(sub).toExpression()`. So `in` lands on the unwrapped side of the
+    // split even though `=`, its structural twin, does not.
+    for (cell, body, sat) in [
+        ("a7", "#(Int[3]) in 3", true),  // {3} in {3}
+        ("a8", "#(Int[3]) in 1", false), // not {1} in {1}
+        ("s7", "#(Int[3]) !in 3", false),
+        ("s8", "#(Int[3]) !in 1", true),
+    ] {
+        mt127_both(cell, &mt127_cell(body, "3 but 4 int"), sat);
+    }
+}
+
+#[test]
+fn part_f_the_int_cast_reader_unwraps_on_both_paths() {
+    // `int[·]`/`sum` is CAST2INT → `sum(cset(e))`, and the `sum()` helper
+    // (:905-909) strips a bare `IntToExprCast` at CONSTRUCTION — so unlike `#`
+    // this reader unwraps under `=` as well.
+    for (cell, body, sat) in [
+        ("a9", "int[Int[3]] >= 3", true),
+        ("a10", "int[Int[3]] = 3", true),
+        ("s9", "int[#(Int[3])] = 3", true),
+    ] {
+        mt127_both(cell, &mt127_cell(body, "3 but 4 int"), sat);
+    }
+}
+
+#[test]
+fn part_f_only_a_bare_cast_unwraps() {
+    // The negative space. A union, an intersection, a join and a real relation
+    // are not `IntToExprCast`s, so `#` of them stays a real cardinality — in an
+    // int position as much as anywhere else.
+    for (cell, body, sat) in [
+        ("n10", "#(plus[3,4] + plus[1,1]) >= 2", true),
+        ("c6", "#(Int[3] + Int[4]) >= 2", true),
+        ("c7", "#(Int[3] + Int[4]) >= 3", false),
+        ("c8", "#(Int[3] & Int) >= 3", false),
+        ("c9", "#(F.v) >= 3", false),
+        // A union OPERAND is reached by `cset`, not by a resolver-inserted
+        // cast, so it keeps its cardinality: {1} ∪ {1}, not {3} ∪ {1}.
+        ("z1", "(#(Int[3]) + Int[1]) = (Int[3] + Int[1])", false),
+        ("z2", "(#(Int[3]) + Int[1]) = Int[1]", true),
+    ] {
+        mt127_both(cell, &mt127_cell(body, "3 but 4 int"), sat);
+    }
+    mt127_both(
+        "c5",
+        &mt127_cell("#Node >= 3", "exactly 3 Node, 4 int"),
+        true,
+    );
+}
+
+#[test]
+fn part_f_an_if_then_else_operand_is_never_a_bare_cast() {
+    // `visit(ExprITE)` builds an IfExpression whenever the then branch
+    // translates to an `Expression` — which a `util/integer` call does, its
+    // declared return type being the `Int` SIG. An IfExpression is not an
+    // `IntToExprCast`, so `#` of one is a real cardinality no matter how the
+    // result is read (t1 vs the a1/n6 rows above), and a source `Int[·]` around
+    // it changes nothing because the resolver deletes it (u3).
+    for (cell, body, sat) in [
+        ("c1", "#(some Node => Int[3] else Int[5]) >= 3", false),
+        ("c2", "#(some Node => Int[3] else Int[5]) = 1", true),
+        ("t1", "#(some Node => plus[3,4] else 0) >= 7", false),
+        ("t2", "#(some Node => plus[3,4] else 0) >= 1", true),
+        ("t3", "#(some Node => plus[3,4] else 0) = 1", true),
+        ("t4", "#(some Node => plus[3,4] else 0) = 7", false),
+        ("t5", "#(no Node => 0 else plus[3,4]) >= 7", false),
+        ("u3", "#(Int[(some Node => plus[3,4] else 0)]) >= 7", false),
+        ("u5", "#(some Node => plus[3,4] else plus[3,4]) >= 7", false),
+        (
+            "u6",
+            "#(let z = (some Node => plus[3,4] else 0) | z) >= 7",
+            false,
+        ),
+    ] {
+        mt127_both(cell, &mt127_cell(body, "exactly 1 Node, 4 int"), sat);
+    }
+}
+
+#[test]
+fn part_f_if_then_else_takes_its_then_branch_raw_and_its_else_through_cint() {
+    // `visit(ExprITE)`'s int arm is asymmetric (:788): the then branch is
+    // `visitThis(x.left)` — its Kodkod class is what selected the arm, so it is
+    // never coerced — while the else branch is `cint(x.right)`. c3 (then, no
+    // unwrap: 1 >= 3) against s1 (else, unwrap: 7 >= 7) is the pair.
+    for (cell, body, sat) in [
+        ("c3", "(some Node => #(Int[3]) else 0) >= 3", false),
+        ("y8", "(some Node => #(Int[3]) else 0) >= 1", true),
+        ("s1", "(no Node => #(Int[1]) else #(plus[3,4])) >= 7", true),
+        ("s2", "(no Node => #(Int[1]) else #(plus[3,4])) >= 2", true),
+        // A NUMERAL then branch is `IntConstant.constant(n).toExpression()`
+        // (:918) — an Expression — so THESE take the relational arm and the
+        // else branch goes through `cset`, unwrapping nothing.
+        ("c4", "(no Node => 0 else #(Int[3])) >= 3", false),
+        ("y4", "(no Node => 0 else #(Int[3])) >= 1", true),
+        ("y5", "(no Node => 0 else #(Int[3])) = 1", true),
+        ("y9", "(no Node => 0 else #(plus[3,4])) >= 7", false),
+        ("y1", "(no Node => 0 else 3) >= 3", true),
+        ("y2", "(some Node => 3 else 0) >= 3", true),
+    ] {
+        mt127_both(cell, &mt127_cell(body, "exactly 1 Node, 4 int"), sat);
+    }
+}
+
+#[test]
+fn part_f_a_call_or_a_let_leaves_the_cast_bare_for_the_enclosing_cint() {
+    // `visit(ExprCall)` and `visit(ExprLet)` are pass-throughs: they return
+    // `visitThis(body)` unchanged, so the peephole belongs to the enclosing
+    // `cint` and not to the inlining. Each `>=` row is unwrapped, each `=` row
+    // is not — the same split as a1/a3, one indirection further in.
+    for (cell, body, sat) in [
+        ("b1", "#(three) >= 3", true),
+        ("b2", "#(three) = 1", true),
+        ("b3", "let z = Int[3] | #z >= 3", true),
+        ("b4", "let z = Int[3] | #z = 1", true),
+        ("b5", "let z = plus[3,4] | #z >= 7", true),
+    ] {
+        mt127_both(cell, &mt127_cell(body, "3 but 4 int"), sat);
+    }
+    mt127_both(
+        "t7",
+        &mt127_cell("#(let z = plus[3,4] | z) >= 7", "exactly 1 Node, 4 int"),
+        true,
+    );
+}
+
+#[test]
+fn part_f_the_equality_gate_is_both_operands_cast() {
+    // §10.7e FACT 1, exercised on shapes with no surface cast anywhere. Two
+    // cardinalities both translate to `IntToExprCast` through `toSet`, so `=`
+    // int-compares them and keeps the forbid-mode overflow guard; gw1/gw3 are
+    // forbid-UNSAT for that reason at a bitwidth their cardinality exceeds,
+    // while gw4/gw5/gw6 are ordinary in-range value cells.
+    for (cell, body, scope, allow, forbid) in [
+        (
+            "gw1",
+            "#A = #B",
+            "exactly 5 A, exactly 5 B, 3 int",
+            true,
+            false,
+        ),
+        (
+            "gw2",
+            "#A in #B",
+            "exactly 5 A, exactly 5 B, 3 int",
+            true,
+            false,
+        ),
+        (
+            "gw3",
+            "#A = #B",
+            "exactly 2 A, exactly 2 B, 3 int",
+            true,
+            false,
+        ),
+        (
+            "gw4",
+            "#A = #B",
+            "exactly 2 A, exactly 3 B, 3 int",
+            false,
+            false,
+        ),
+        (
+            "gw5",
+            "#A = 3",
+            "exactly 3 A, exactly 0 B, 4 int",
+            true,
+            true,
+        ),
+        (
+            "gw6",
+            "#A = 2",
+            "exactly 3 A, exactly 0 B, 4 int",
+            false,
+            false,
+        ),
+    ] {
+        let src = mt127_gate_cell(body, scope);
+        assert_eq!(solve(&src, true), Ok(allow), "{cell} allow");
+        assert_eq!(solve(&src, false), Ok(forbid), "{cell} forbid");
+    }
+
+    // The both-literal-cast controls, plus the one-sided shape: with only ONE
+    // side an `IntToExprCast` the jar set-compares, and `{7} = {7}` holds.
+    let scope = "exactly 0 A, exactly 0 B, 4 int";
+    for (cell, body, sat) in [
+        ("e1", "Int[3] = Int[3]", true),
+        ("e2", "Int[3] = Int[4]", false),
+        ("e3", "plus[3,4] = 7", true),
+        ("e4", "3 = 3", true),
+        ("e5", "3 = 4", false),
+        ("e10", "plus[3,4] = G.w", true),
+        ("e11", "plus[3,3] = G.w", false),
+    ] {
+        mt127_both(cell, &mt127_gate_cell(body, scope), sat);
+    }
+    // An overflowing constant cast: forbid-UNSAT on BOTH the `=` and the `in`
+    // path, so the guard does not tell the two readings apart here.
+    for (cell, body) in [
+        ("e6", "plus[7,1] = plus[7,1]"),
+        ("e7", "plus[7,1] in plus[7,1]"),
+    ] {
+        let src = mt127_gate_cell(body, scope);
+        assert_eq!(solve(&src, true), Ok(true), "{cell} allow");
+        assert_eq!(solve(&src, false), Ok(false), "{cell} forbid");
+    }
+}
+
+#[test]
+fn part_f_the_corpus_shapes_the_unwrap_moves() {
+    // mt-095's k8/k9/k10/k11/k12 — the same `#`/`int[·]` readers under the
+    // part-C forall, where the cast can actually overflow. k10 and k12 are the
+    // cells the unwrap closes: reading `plus[n,7]` raw carries its overflow
+    // flag to the comparison, which the discarded cardinality never did. k8's
+    // operand is an if-then-else and k9's a union, so neither unwraps.
+    for (cell, body, allow, forbid) in [
+        ("k10", "#(plus[n,7]) >= 0", false, false),
+        ("k12", "int[plus[n,7]] >= 0", false, false),
+        ("k8", "#(n>0 => plus[n,7] else 0) >= 0", true, false),
+        ("k11", "#(plus[n,7]) = 0", false, false),
+        ("k9", "#(plus[n,7] + 3) >= 0", true, true),
+    ] {
+        let src = part_e_cell(body);
+        assert_eq!(solve(&src, true), Ok(allow), "{cell} allow");
+        assert_eq!(solve(&src, false), Ok(forbid), "{cell} forbid");
+    }
+}

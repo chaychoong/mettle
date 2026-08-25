@@ -480,3 +480,60 @@ fn mt130_constant_shedding_matches_between_back_ends() {
         assert_differential_both_modes(&src);
     }
 }
+
+// ---- mt-127: the `cint` / `cset` split, encoder vs evaluator ---------------
+
+/// `toInt`'s unwrap and the raw/`cint` split live entirely in `lower.rs`, so
+/// both back ends consume the SAME lowered IR and cannot disagree by
+/// construction — `IntExprKind::Card` over a `RelExprKind::IntToAtom` either
+/// survives lowering or it does not. These models make that measured rather
+/// than argued: each puts a `#`/`int[·]` reader over a bare `Int[·]` cast in a
+/// position where the two readings differ (1 versus the cast's integer) and
+/// brute-forces every instance in both overflow modes.
+///
+/// Bitwidth 2 (`Int` = −2..1) keeps the brute force small; `plus[F.v,1]`
+/// overflows exactly at `F.v = 1`, so the guard is live on the rows that reach
+/// the raw integer and absent on the rows that keep a cardinality.
+#[test]
+fn mt127_cardinality_unwrap_matches_between_back_ends() {
+    let model = |body: &str| {
+        format!(
+            "open util/integer\nsig Node {{}}\none sig F {{ v: one Int }}\n\
+             run {{ {body} }} for 1 but 2 int\n"
+        )
+    };
+    for body in [
+        // The reader split on one and the same operand: unwrapped under an int
+        // comparison and an arithmetic operand, raw under `=`/`!=`, unwrapped
+        // again under `in` (where the resolver casts both sides).
+        "#(plus[F.v,1]) >= 0",
+        "#(plus[F.v,1]) < 0",
+        "#(plus[F.v,1]) = 1",
+        "#(plus[F.v,1]) != 1",
+        "#(plus[F.v,1]) in 1",
+        "#(plus[F.v,1]) !in 1",
+        "plus[#(plus[F.v,1]), 0] = 1",
+        "int[plus[F.v,1]] >= 0",
+        "int[#(plus[F.v,1])] = 1",
+        "Int[#(plus[F.v,1])] = 1",
+        // The negative space: a union, an intersection, a join and a real
+        // relation are not bare casts, so `#` stays a cardinality.
+        "#(plus[F.v,1] + 0) >= 0",
+        "#(plus[F.v,1] & Int) >= 0",
+        "#(F.v) >= 0",
+        "#Node >= 0",
+        "(#(plus[F.v,1]) + 0) = 0",
+        // An if-then-else operand is an IfExpression, never a bare cast.
+        "#(F.v > 0 => plus[F.v,1] else 0) >= 0",
+        "#(F.v > 0 => plus[F.v,1] else 0) = 1",
+        // The if-then-else's own then/else asymmetry in an int position.
+        "(F.v > 0 => #(plus[F.v,1]) else 0) >= 0",
+        "(F.v > 0 => 0 else #(plus[F.v,1])) >= 0",
+        "(F.v > 0 => #(F.v) else #(plus[F.v,1])) >= 0",
+        // Pass-throughs: a `let` and a `sum` body.
+        "(let z = plus[F.v,1] | #z) >= 0",
+        "(sum n: Node | #(plus[F.v,1])) >= 0",
+    ] {
+        assert_differential_both_modes(&model(body));
+    }
+}

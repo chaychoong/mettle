@@ -52,18 +52,14 @@ can give a different verdict, on a synthetic model. The union and short-circuit
 shedding family closed at mt-130 (2026-08-25): the mt-129 wave pinned the jar's
 mechanism from the Kodkod source, and mettle now folds constant emptiness the
 same way, verified on all 137 probe cells with a byte-identical corpus sweep.
-Measurements are in
+The `toInt` cardinality-discard family closed at mt-127 (2026-08-25): reading a
+`#` or `int[·]` over a bare `Int[·]` cast now follows the jar's rule about which
+positions call `cint` and which call `cset`, pinned on 164 probe cells. That
+also closed mt-095's k10/k12 and i13. Measurements are in
 [docs/reference/alloy6-translation.md](docs/reference/alloy6-translation.md)
-§10.7e through §10.7k and `scratchpad/probe/mt129/NOTES.md`.
+§10.7e through §10.7k, `scratchpad/probe/mt129/NOTES.md` and
+`scratchpad/probe/mt127/NOTES.md`.
 
-- **`toInt` throws away a cardinality (mt-127).** When the operand of `#` is
-  itself an `Int[·]` cast and an integer reader consumes the result, the jar
-  reads the operand's raw integer and discards the count. `#(plus[3,4]) >= 7` is
-  SAT in the jar (it reads 7) and UNSAT in mettle (it reads 1). Under a set
-  reader (`=`, `in`) both sides treat `#` as an ordinary cardinality. The fix
-  needs the integer-comparison gate re-keyed on the jar's literal-cast test
-  first; the direct patch was measured and it moved the divergences instead of
-  closing them.
 - **An `int[·]` in an if-then-else branch (mt-128).** Alloy's resolver re-wraps a
   surface `int[e]` as `Int[int[e]]`, which makes the branch a set, and it does
   not re-wrap `#e` in the same position. Both carry Alloy type `{Int}`, so the
