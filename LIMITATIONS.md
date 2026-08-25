@@ -17,12 +17,14 @@ Current measured agreement with the jar is in [docs/STATE.md](docs/STATE.md).
 
 ## Commands mettle cannot run
 
-- **The `Sig$` metamodel.** A model that names a meta sig or meta field
-  (`Vertex$.subfields`) gets a message saying mettle cannot run the command. Two
-  corpus commands are affected, `hc7.als[0]` and `einstein-wikipedia.als[0]`.
-  The jar answers both. The feature needs a synthesis phase that mints a meta sig
-  per user sig, puts those atoms in the universe, and expands quantifiers over
-  them at resolve time. Being built as mt-107.
+- **The `Sig$` metamodel solves; its instance output is not yet jar-shaped.**
+  Since mt-107 P3 (2026-08-25) a model that names a meta sig or meta field
+  (`Vertex$.subfields`) resolves, solves, and evaluates: both affected corpus
+  commands, `hc7.als[0]` and `einstein-wikipedia.als[0]`, agree with the jar.
+  What remains is presentation parity, being built as mt-107 P4: the universe
+  atom order for meta atoms, and `meta="yes"` (plus the `static$`/`var$`
+  attributes) in the instance XML. Until P4 lands, XML or Sterling output for a
+  meta model may order or attribute the meta atoms differently from the jar.
 - **Two commands run past the sweep budgets.** `fullsub2.als[0]` answers UNSAT,
   agreeing with the jar, at about 5.19M conflicts and 27 minutes of wall time;
   run it with `backend-instrument --rows - --conflicts 8000000 --wall 3000`. The
