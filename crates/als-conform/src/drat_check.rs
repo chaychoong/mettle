@@ -268,9 +268,24 @@ fn result_line(output: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// Serializes script writes against the spawns that exec them. A parallel
+    /// test's fork can inherit a just-written script's still-open write fd, and
+    /// the exec then fails ETXTBSY (Linux), turning a verdict test into a
+    /// spurious `ToolFailure`. Writes and spawns never overlapping closes that
+    /// window; lock poisoning is ignored because the guarded sections only
+    /// touch per-test files.
+    static EXEC_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn exec_gate() -> std::sync::MutexGuard<'static, ()> {
+        EXEC_GATE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     /// Writes an executable shell script that fakes a checker, and returns its
     /// path. No `tempfile` dependency for a handful of tests (STYLE P1/P2).
     fn fake_checker(stem: &str, body: &str) -> std::path::PathBuf {
+        let _gate = exec_gate();
         let path = std::env::temp_dir().join(format!("mettle-fake-checker-{stem}.sh"));
         std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("write fake checker");
         #[cfg(unix)]
@@ -284,6 +299,7 @@ mod tests {
 
     /// Runs `checker` against throwaway paths; the fakes ignore their arguments.
     fn run(checker: &Path, secs: u64) -> CheckerReport {
+        let _gate = exec_gate();
         let dir = std::env::temp_dir();
         let log = dir.join(format!(
             "mettle-fake-checker-{}.log",
@@ -303,7 +319,7 @@ mod tests {
         let checker = fake_checker("ok", "printf 'c working\\rs VERIFIED\\n'");
         let report = run(&checker, 30);
         let _ = std::fs::remove_file(&checker);
-        assert_eq!(report.status, CheckerStatus::Verified);
+        assert_eq!(report.status, CheckerStatus::Verified, "{}", report.detail);
         assert!(!report.status.is_fatal());
     }
 
@@ -312,7 +328,12 @@ mod tests {
         let checker = fake_checker("bad", "printf '\\ns NOT VERIFIED\\n'; exit 1");
         let report = run(&checker, 30);
         let _ = std::fs::remove_file(&checker);
-        assert_eq!(report.status, CheckerStatus::NotVerified);
+        assert_eq!(
+            report.status,
+            CheckerStatus::NotVerified,
+            "{}",
+            report.detail
+        );
         assert_eq!(report.detail, "s NOT VERIFIED");
         assert!(report.status.is_fatal());
     }
@@ -324,7 +345,12 @@ mod tests {
         let checker = fake_checker("deriv", "printf '\\rs DERIVATION\\n'");
         let report = run(&checker, 30);
         let _ = std::fs::remove_file(&checker);
-        assert_eq!(report.status, CheckerStatus::NotVerified);
+        assert_eq!(
+            report.status,
+            CheckerStatus::NotVerified,
+            "{}",
+            report.detail
+        );
         assert_eq!(report.detail, "s DERIVATION");
     }
 
@@ -340,7 +366,12 @@ mod tests {
         );
         let report = run(&checker, 30);
         let _ = std::fs::remove_file(&checker);
-        assert_eq!(report.status, CheckerStatus::NotVerified);
+        assert_eq!(
+            report.status,
+            CheckerStatus::NotVerified,
+            "{}",
+            report.detail
+        );
     }
 
     /// A checker that says the right words but exits nonzero is not trusted:
@@ -350,7 +381,12 @@ mod tests {
         let checker = fake_checker("liar", "printf 's VERIFIED\\n'; exit 3");
         let report = run(&checker, 30);
         let _ = std::fs::remove_file(&checker);
-        assert_eq!(report.status, CheckerStatus::NotVerified);
+        assert_eq!(
+            report.status,
+            CheckerStatus::NotVerified,
+            "{}",
+            report.detail
+        );
     }
 
     /// The deadline really kills: a checker that would run for half an hour is
@@ -360,7 +396,7 @@ mod tests {
         let checker = fake_checker("slow", "sleep 1800");
         let report = run(&checker, 1);
         let _ = std::fs::remove_file(&checker);
-        assert_eq!(report.status, CheckerStatus::Timeout);
+        assert_eq!(report.status, CheckerStatus::Timeout, "{}", report.detail);
         assert!(!report.status.is_fatal(), "a deadline is not a refusal");
     }
 
