@@ -340,7 +340,7 @@ The owner un-deferred the whole correctness remainder: cost/benefit deferrals fo
 - ▢ **mt-128** · ADR-0028 · The two known-design `ite_sort` corners: `let`-following sort (probe i23; substitution env per the jar's `visit(ExprLet)`) + the `int[e]` → `Int[int[e]]` re-wrap marker (probe i8). Solve-touching ⇒ immediate sweep.
 - ▢ **mt-129** · ADR-0028 · Union/`lone` guard-shedding mechanism probe wave — **genuine stop**: three candidate rules already refuted by cells (LIMITATIONS §set-former-guard); source/bytecode reading of the jar's overflow machinery + discriminating cells until the rule pins, or a measured impossibility comes back instead.
 - ⛔ **mt-130** · ADR-0028 · Implement the pinned union/`lone` rule (blocked on mt-129's verdict).
-- ▢ **mt-131** · ADR-0028 · Warning-attribution parity: operator-token `Pos` distinct from the node `Span`; closes 059866.als → warning parity 101,970/101,970.
+- ✔ **mt-131** · ADR-0028 · **Warning parity EXACT: 101,970/101,970 files identical, 14,180 = 14,180, the 059866.als residual closed** (sonnet delegate; additive cmp_op_spans side table in the parser, SubsetRedundant re-anchored at the operator token, no other class moved; resolve diff byte-identical; tech-lead re-ran both gauges; 2026-08-25)
 - ▢ **mt-132** · ADR-0028 · Cosmetics close-or-pin: enumerate the documented XML-shape and error-position residuals; each closes to byte-parity or gets a measured impossibility note.
 
 (mt-107, the `Sig$` metamodel, is authorized by the same decision — its bead stays below with ADR-0024's P0–P5 phasing and the P0 stop.)
