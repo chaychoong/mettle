@@ -1161,17 +1161,21 @@ impl<'a, 'g> Cx<'a, 'g> {
             UnOp::IntOf | UnOp::SumOf => {
                 // int[e]/sum e: cast a unary set of Int atoms to a primitive int.
                 let subt = self.infer(e);
+                // CAST2INT (ExprUnary.java:419-426) pushes
+                // `sub.type.intersect(SIGINT.type)` into the operand: the
+                // operand's own bottom-up type intersected with {Int},
+                // independent of the cast's context (§5.2, mt-126). When the
+                // domain-matched candidate has no Int value this collapses to
+                // EMPTY, the ExprChoice ladder finds no arity match, and the
+                // ambiguity error surfaces.
+                let s = subt.intersect(&self.r.world, &Type::unary(self.int_sig()));
                 // A5 (int atoms): the `int[]`/`sum` cast (CAST2INT), when the
                 // operand can hold no Int atoms (§5.2). Position: the operand.
-                if subt
-                    .intersect(&self.r.world, &Type::unary(self.int_sig()))
-                    .has_no_tuple(&self.r.world)
-                {
+                if s.has_no_tuple(&self.r.world) {
                     self.warnings.push(ResolveWarning::IntAtoms {
                         span: self.expr(e).span,
                     });
                 }
-                let s = subt.remove_bool_and_int(self.int_sig());
                 let mut sub = self.resolve(e, &s);
                 self.typecheck_as_set(&mut sub, e);
                 R {
@@ -2307,17 +2311,17 @@ impl<'a, 'g> Cx<'a, 'g> {
                         let mut err = false;
                         for a in args {
                             let at = self.infer(a);
+                            // CAST2INT (ExprUnary.java:419-426) pushes the
+                            // operand's own bottom-up type intersected with
+                            // {Int} (mt-126).
+                            let ap = at.intersect(&self.r.world, &Type::unary(self.int_sig()));
                             // A5 (int atoms): CAST2INT operand that can hold no Int
                             // atoms (§5.2). Position: the operand.
-                            if at
-                                .intersect(&self.r.world, &Type::unary(self.int_sig()))
-                                .has_no_tuple(&self.r.world)
-                            {
+                            if ap.has_no_tuple(&self.r.world) {
                                 self.warnings.push(ResolveWarning::IntAtoms {
                                     span: self.expr(a).span,
                                 });
                             }
-                            let ap = at.remove_bool_and_int(self.int_sig());
                             let mut r = self.resolve(a, &ap);
                             self.typecheck_as_set(&mut r, a);
                             err |= r.err;

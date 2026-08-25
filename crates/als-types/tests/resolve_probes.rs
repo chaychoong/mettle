@@ -2092,3 +2092,372 @@ fn int_cast_two_hop_join_single_candidate_accepted_mt126_p14() {
         "sig X { f: one Int }\nsig A { link: one X }\npred inv { all a: A | int a.link.f >= 0 }\nrun inv\n",
     );
 }
+
+// -- Group B: flip cells (REJECT only with the fix; over-accepted before) --
+
+#[test]
+fn int_cast_domain_incompatible_ambiguous_name_rejected_mt126_p01() {
+    // p01: same-named field `f:C` (non-Int) on disjoint sigs A/B. `x.f`'s
+    // bottom-up type is {C}; {C} ∩ {Int} = EMPTY, so the pushed relevant
+    // type into the ambiguous name `f` is EMPTY, and the JOIN/ExprChoice
+    // ladder finds no arity match — surfacing the ambiguity error instead of
+    // silently over-accepting (the pre-fix `remove_bool_and_int` push was a
+    // no-op on {C} and let this through with an IntAtoms warning). Jar:
+    // REJECT, "ambiguous due to multiple matches" @9:31, `field A <: f` /
+    // `field B <: f` (`scratchpad/probe/mt126/jar-output.txt`).
+    let src = "sig C {}\nsig A { f: one C }\nsig B { f: one C }\npred inv {\n  all x: A | all y: B | int x.f < int y.f\n}\nrun inv\n";
+    let e = reject(src);
+    let ResolveError::AmbiguousName {
+        name, candidates, ..
+    } = &e
+    else {
+        panic!("expected AmbiguousName, got {e:?}\n--- src ---\n{src}");
+    };
+    assert_eq!(name, "field A <: f", "{e:?}");
+    assert_eq!(candidates, &["field A <: f", "field B <: f"], "{e:?}");
+}
+
+#[test]
+fn sum_cast_domain_incompatible_ambiguous_name_rejected_mt126_p02() {
+    // p02: `sum`/`int[.]` symmetry with p01 — same CAST2INT node, same
+    // mechanism, same reject class. Jar: REJECT, identical message/
+    // candidates @8:31.
+    let src = "sig C {}\nsig A { f: one C }\nsig B { f: one C }\npred inv {\n  all x: A | all y: B | sum x.f < sum y.f\n}\nrun inv\n";
+    let e = reject(src);
+    let ResolveError::AmbiguousName {
+        name, candidates, ..
+    } = &e
+    else {
+        panic!("expected AmbiguousName, got {e:?}\n--- src ---\n{src}");
+    };
+    assert_eq!(name, "field A <: f", "{e:?}");
+    assert_eq!(candidates, &["field A <: f", "field B <: f"], "{e:?}");
+}
+
+#[test]
+fn int_cast_mixed_type_same_name_non_int_domain_rejected_mt126_p05() {
+    // p05: `f:C` on A, `f:Int` on B, disjoint domains, cast receiver is A
+    // (non-Int). `x.f`'s bottom-up type (x:A) is {C} alone — B's Int-valued
+    // `f` exists elsewhere in the model but does NOT rescue a non-Int-domain
+    // call site, since the push is a pure function of the operand's own
+    // bottom-up type. Jar: REJECT, "ambiguous", both `field A <: f` and
+    // `field B <: f` listed despite B's domain mismatch, @9:30.
+    let src = "sig C {}\nsig A { f: one C }\nsig B { f: one Int }\npred inv { some x: A | int x.f = 0 }\nrun inv\n";
+    let e = reject(src);
+    let ResolveError::AmbiguousName {
+        name, candidates, ..
+    } = &e
+    else {
+        panic!("expected AmbiguousName, got {e:?}\n--- src ---\n{src}");
+    };
+    assert_eq!(name, "field A <: f", "{e:?}");
+    assert_eq!(candidates, &["field A <: f", "field B <: f"], "{e:?}");
+}
+
+#[test]
+fn int_cast_parenthesized_operand_rejected_mt126_p09() {
+    // p09: `int (x.f)` / `int (y.f)`, parenthesized — parens/PRIME are a
+    // transparent NOOP-typed wrapper in the reference, so this behaves
+    // identically to p01. Jar: REJECT, identical message/candidates @9:32.
+    let src = "sig C {}\nsig A { f: one C }\nsig B { f: one C }\npred inv {\n  all x: A | all y: B | int (x.f) < int (y.f)\n}\nrun inv\n";
+    let e = reject(src);
+    assert!(matches!(e, ResolveError::AmbiguousName { .. }), "{e:?}");
+}
+
+#[test]
+fn int_cast_inside_quantifier_bound_rejected_mt126_p10() {
+    // p10: int cast inside a quantifier's *bound* comprehension rather than
+    // its body. CAST2INT's resolve ignores its own `p` parameter entirely —
+    // the push is a pure function of the operand's bottom-up type, so
+    // syntactic position doesn't matter. Jar: REJECT, same mechanism as p01,
+    // @11:31.
+    let src = "sig C {}\nsig A { f: one C }\nsig B { f: one C }\npred inv {\n  some x: (A - { a: A | int a.f = 0 }) | some x\n}\nrun inv\n";
+    let e = reject(src);
+    assert!(matches!(e, ResolveError::AmbiguousName { .. }), "{e:?}");
+}
+
+#[test]
+fn int_cast_two_hop_join_ambiguous_rejected_mt126_p13() {
+    // p13: the mechanism generalizes to a compound (non-bare-variable) join
+    // operand — `a.link.f`, ambiguity on the last hop. `a.link` has a
+    // unique, unambiguous type X, so this hits the same EMPTY-push mechanism
+    // one join-level deeper. Jar: REJECT, "ambiguous", `field X <: f` /
+    // `field Y <: f` @11:34.
+    let src = "sig C {}\nsig X { f: one C }\nsig Y { f: one C }\nsig A { link: one X }\npred inv { all a: A | int a.link.f >= 0 }\nrun inv\n";
+    let e = reject(src);
+    let ResolveError::AmbiguousName {
+        name, candidates, ..
+    } = &e
+    else {
+        panic!("expected AmbiguousName, got {e:?}\n--- src ---\n{src}");
+    };
+    assert_eq!(name, "field X <: f", "{e:?}");
+    assert_eq!(candidates, &["field X <: f", "field Y <: f"], "{e:?}");
+}
+
+/// The 3 real alloy4fun codes (idx 073243/074069/074067,
+/// `corpus/alloy4fun/2024-25/jyS8Bmceejj9pLbTW.json`), an automated
+/// production-line model where `Component.position` and `Robot.position` are
+/// both `one Position` (not Int) on disjoint sigs. `Inv4`'s
+/// `int c.position < int p.position` (`c`/`p` both `Component`-typed) hits
+/// the p01 mechanism exactly: `c.position`'s bottom-up type is {Position}
+/// (Robot's field is filtered out at the domain-join), {Position} ∩ {Int} =
+/// EMPTY. Sources verbatim from `scratchpad/probe/mt126/cells/r{1,2,3}-*.als`
+/// (== `scratchpad/probe/mt126/source-codes.txt`); jar verdicts match
+/// `baselines/alloy4fun-resolve.txt` exactly (lines 24884/25242/25241).
+#[test]
+fn alloy4fun_component_robot_position_ambiguous_rejected_mt126_r1_073243() {
+    let src = r"open util/ordering[Position]
+
+// Consider the following model of an automated production line
+// The production line consists of several positions in sequence
+sig Position {}
+
+// Products are either components assembled in the production line or
+// other resources (e.g. pre-assembled products or base materials)
+sig Product {}
+
+// Components are assembled in a given position from other parts
+sig Component extends Product {
+    parts : set Product,
+    position : one Position
+}
+sig Resource extends Product {}
+
+// Robots work somewhere in the production line
+sig Robot {
+        position : one Position
+}
+
+// Specify the following invariants!
+// You can check their correctness with the different commands and
+// specifying a given invariant you can assume the others to be true.
+pred Inv1 {
+  all c : Component | some c.parts// A component requires at least one part
+
+}
+
+
+pred Inv2 {
+  no c : Component | c in c.^parts// A component cannot be a part of itself
+
+}
+
+
+pred Inv3 {
+  all c : Component | some r : Robot | c.position = r.position // The position where a component is assembled must have at least one robot
+
+}
+
+
+pred Inv4 {
+  all c : Component | no p : c.parts :> Component | int c.position < int p.position
+
+}
+";
+    let e = reject(src);
+    let ResolveError::AmbiguousName {
+        name, candidates, ..
+    } = &e
+    else {
+        panic!("expected AmbiguousName, got {e:?}");
+    };
+    assert_eq!(name, "field Component <: position", "{e:?}");
+    assert_eq!(
+        candidates,
+        &["field Component <: position", "field Robot <: position"],
+        "{e:?}"
+    );
+    // Jar position 45:59 — the `position` token right after `int c.`.
+    let at =
+        u32::try_from(src.find("int c.position").expect("source has the cast") + "int c.".len())
+            .expect("offset fits");
+    assert_eq!(
+        (span_of(&e).start, span_of(&e).end),
+        (at, at + u32::try_from("position".len()).expect("fits")),
+        "{e:?}"
+    );
+}
+
+#[test]
+fn alloy4fun_component_robot_position_ambiguous_rejected_mt126_r2_074069() {
+    let src = r"open util/ordering[Position]
+
+// Consider the following model of an automated production line
+// The production line consists of several positions in sequence
+sig Position {}
+
+// Products are either components assembled in the production line or
+// other resources (e.g. pre-assembled products or base materials)
+sig Product {}
+
+// Components are assembled in a given position from other parts
+sig Component extends Product {
+    parts : set Product,
+    position : one Position
+}
+sig Resource extends Product {}
+
+// Robots work somewhere in the production line
+sig Robot {
+        position : one Position
+}
+
+// Specify the following invariants!
+// You can check their correctness with the different commands and
+// specifying a given invariant you can assume the others to be true.
+pred Inv1 { // A component requires at least one part
+
+
+
+
+  all x:Component | #x.^parts>0
+}
+
+
+pred Inv2 { // A component cannot be a part of itself
+
+
+
+
+
+  all c: Component| all p: c.parts| p!=c
+}
+
+
+pred Inv3 { // The position where a component is assembled must have at least one robot
+
+
+
+  all x : Component , y : Robot | x.position = y.position
+
+
+
+  all c: Component| all p: c.parts| p!=c
+}
+
+
+pred Inv4 { // The parts required by a component cannot be assembled in a later position
+    all c : Component | no p : c.parts :> Component | int c.position < int p.position
+}
+";
+    let e = reject(src);
+    let ResolveError::AmbiguousName {
+        name, candidates, ..
+    } = &e
+    else {
+        panic!("expected AmbiguousName, got {e:?}");
+    };
+    assert_eq!(name, "field Component <: position", "{e:?}");
+    assert_eq!(
+        candidates,
+        &["field Component <: position", "field Robot <: position"],
+        "{e:?}"
+    );
+    // Jar position 58:61 — the `position` token right after `int c.`.
+    let at =
+        u32::try_from(src.find("int c.position").expect("source has the cast") + "int c.".len())
+            .expect("offset fits");
+    assert_eq!(
+        (span_of(&e).start, span_of(&e).end),
+        (at, at + u32::try_from("position".len()).expect("fits")),
+        "{e:?}"
+    );
+}
+
+#[test]
+fn alloy4fun_component_robot_position_ambiguous_rejected_mt126_r3_074067() {
+    let src = r"open util/ordering[Position]
+
+// Consider the following model of an automated production line
+// The production line consists of several positions in sequence
+sig Position {}
+
+// Products are either components assembled in the production line or
+// other resources (e.g. pre-assembled products or base materials)
+sig Product {}
+
+// Components are assembled in a given position from other parts
+sig Component extends Product {
+    parts : set Product,
+    position : one Position
+}
+sig Resource extends Product {}
+
+// Robots work somewhere in the production line
+sig Robot {
+        position : one Position
+}
+
+// Specify the following invariants!
+// You can check their correctness with the different commands and
+// specifying a given invariant you can assume the others to be true.
+pred Inv1 { // A component requires at least one part
+
+
+
+
+  all x:Component | #x.^parts>0
+}
+
+
+pred Inv2 { // A component cannot be a part of itself
+
+
+
+
+
+  all c: Component| all p: c.parts| p!=c
+}
+
+
+pred Inv3 { // The position where a component is assembled must have at least one robot
+
+
+
+
+
+
+
+
+  all c: Component | c.position in Robot.position
+}
+
+
+pred Inv4 { // The parts required by a component cannot be assembled in a later position
+    all c : Component | no p : c.parts :> Component | int c.position < int p.position
+}
+";
+    let e = reject(src);
+    let ResolveError::AmbiguousName {
+        name, candidates, ..
+    } = &e
+    else {
+        panic!("expected AmbiguousName, got {e:?}");
+    };
+    assert_eq!(name, "field Component <: position", "{e:?}");
+    assert_eq!(
+        candidates,
+        &["field Component <: position", "field Robot <: position"],
+        "{e:?}"
+    );
+    // Jar position 59:61 — the `position` token right after `int c.`.
+    let at =
+        u32::try_from(src.find("int c.position").expect("source has the cast") + "int c.".len())
+            .expect("offset fits");
+    assert_eq!(
+        (span_of(&e).start, span_of(&e).end),
+        (at, at + u32::try_from("position".len()).expect("fits")),
+        "{e:?}"
+    );
+}
+
+/// Extracts the `Span` from any [`ResolveError`] variant this file's `r1`-`r3`
+/// tests can raise (only `AmbiguousName` in practice, but this stays generic
+/// so a future variant change fails loudly instead of silently).
+fn span_of(e: &ResolveError) -> als_syntax::Span {
+    match e {
+        ResolveError::AmbiguousName { span, .. } => *span,
+        other => panic!("no span extraction for {other:?}"),
+    }
+}
