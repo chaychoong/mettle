@@ -37,6 +37,35 @@ The stage-1 sweep's 3 residual `lowering` rows split 1 + 2: ertms_1A[5] (sized, 
 
 The narrowing shipped as designed (`ModuleGraph::dollar_names` collected at load; `Resolver::compute_meta_gate` decides once sig/field labels exist; `Cx::lenient` reads it; the `X$f` form requires `f` declared by `X` itself — the faithful shape, since an inherited field's meta sig sits under its owner). **Measured over all 150,891 codes (full pre/post mettle-side diff, independently re-verified by the tech lead): exactly 5 codes flip, all accept → reject `UnknownName`, each matching the jar's own reject at the same line and column. Over-accepts 314 → 309; corpus 167/167; the two meta models and all 7 mt-097 probe cells byte-identical in behavior.** The estimate's sixth code (060669, `Course$projects`) stays lenient, correctly — `Course` declares `projects`, so it is a genuine meta name (the jar's own error prints the resolved meta-sig type `{this/Course$projects}` before rejecting on the join shape); its over-accept is attributable to the missing feature (mt-107), not the stopgap, and this ADR's "6 caused by the stopgap" over-attributed by one. Deliberate posture pin: the narrowed gate stays model-wide, as the reference's `seenDollar` is — one genuine meta name still leniences the whole model (test-pinned so it reads as a decision, not a hole). Full record: `scratchpad/probe/mt106/mt108-report.md`, reference-doc §11 (alloy4fun-resolve-pass.md).
 
+## Addendum — P0 EXECUTED, 2026-08-25 (mt-107 authorized by [ADR-0028](0028-zero-gap-campaign.md)): PROCEED to P1, sizing stands
+
+The ~50-cell wave ran at 140 cells (`scratchpad/probe/mt107/`, predictions
+first, all jar-verified). Both named stop-gates are clear: the expansion guard
+matched the source reading on all 48 M2 cells, and meta atoms perturb no
+symmetry count (24 of 24 counts identical with and without them). Atom order
+is a clean append (root user atoms, then all `S$`, then all `S$f`, then
+opened-module atoms; labels `A$$0` / `A$r$0`).
+
+The wave's one major surprise: the four meta relation names (`value`, `fields`,
+`parent`, `subfields`) are one field per meta sig, so they are N-way ambiguous
+and the jar rejects with its ambiguous-name error whenever narrowing cannot
+pick a single non-empty candidate (16 of 140 cells). The wave priced this as a
+dependency on unbuilt ExprChoice work; that premise was stale. ADR-0023 and
+the mt-115 ambiguity retry shipped on 2026-08-23, so the machinery exists and
+meta fields route through it as ordinary same-named fields. The estimate
+therefore stays at the original ~9–13 days. Tech-lead decision under the
+standing Option-B delegation: proceed to P1.
+
+Design amendments a builder must carry (full detail in the wave notes):
+meta names are body-only (phase 8 runs after all declaration phases, so
+expansion never crosses a `pred` boundary and the relation-valued-parameter
+worry is gone); `meta="yes"` appears on sigs and fields in the XML, which
+re-opens mt-071's X-03 cell for P4; `enum` and `util/ordering` mint their own
+meta families; builtins (`Int$`, `String$`, `univ$`, `none$`) reject; the
+reference copies its inconsistent var-inheritance halves (bucket `S$f` by
+field variability, declare its `value` by sig variability) and mettle copies
+both.
+
 ## Consequences
 
 - LIMITATIONS' `Sig$` entry gains the sizing pointer; the `seen_dollar` leniency description changes when mt-108 lands.
