@@ -124,3 +124,21 @@ change. Rule: a bead may pin its CELLS as fact, never its mechanism —
 probe-first applies to the bead's own theory of the fix, and a delegate
 brief should say what must be TRUE afterward (which cells flip, which
 hold), not which internal change to make.
+
+## mt-137 (2026-08-26): a new sharing semantics must be audited against every EXISTING sharing site
+
+The design pass specified a polarity-blind class cache for the two sharing
+sites the probes named (formula-`let` uses, zero-param pred calls) and gave the
+evaluator the matching memo. Implementation then found a THIRD, pre-existing
+sharing site nobody had listed: the formula-ITE desugaring lowers its condition
+once and negates that same id, so the encoder's per-id cache (polarity-blind
+since mt-049) was already reusing guards across polarity there — jar-faithfully,
+as it turns out — while the unmemoised evaluator judged afresh and tripped the
+self-check on a cell (`g5_let_shared_ite`) that mints no class at all. The
+boundary cells caught it because the brief demanded "these 11 cells must NOT
+move", not just "these 8 must flip". Rules: (1) when changing reuse/caching
+semantics, grep for every place the IR already shares node ids — the new
+mechanism's blast radius includes the old sharing, not just the sharing you
+add; (2) a matched encoder/evaluator pair must mirror EVERY memo, not only the
+newly added one; (3) negative-space cells (must-not-move) are what surface
+latent incoherence — always bank them alongside the must-flip cells.

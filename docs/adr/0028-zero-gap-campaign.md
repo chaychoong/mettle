@@ -1,6 +1,6 @@
 # ADR-0028 — The zero-gap campaign: the owner un-defers the whole correctness remainder
 
-**Status:** Accepted (owner decision, 2026-08-25)
+**Status:** Accepted (owner decision, 2026-08-25) — **COMPLETE 2026-08-26: every bead ✔** (completion note at the end)
 **Date:** 2026-08-25 · **Beads:** mt-126–mt-132 (new) + mt-107 (authorized, was owner-gated)
 **Supersedes/amends:** [ADR-0024](0024-sig-metamodel-sized-defer.md) decision 1 (the `Sig$` feature defer — reversed), [ADR-0025](0025-over-accept-remainder-ranked.md) item 5 (the int-cast defer — lifted), and the "documented defer" posture on the mt-096 latent solve corners and the two cosmetic-parity residuals in [LIMITATIONS.md](../../LIMITATIONS.md).
 
@@ -87,3 +87,43 @@ commit so a failing end-of-run sweep bisects cleanly.
 - The combined feature-complete review ([REVIEW-v0.1.0.md](../REVIEW-v0.1.0.md))
   remains the standing owner gate and is unaffected; this campaign runs ahead
   of it.
+
+## Completion note (2026-08-26, tech lead)
+
+Every bead closed, in two days, with four beads the campaign itself surfaced
+folded in along the way. Outcomes against the "end state, if everything
+closes" list above — **all met**:
+
+- **mt-126** int-cast slice: over-accepts 4 → 1, drop-in 0 held on the full
+  150,891-code diff.
+- **mt-127** int-compare gate re-keyed on the jar's literal-cast test + the
+  `toInt` double-unwrap (the bead's own premise refuted first, probes-first).
+- **mt-128** the `ite_sort` corners were ONE question; the merge closed 7
+  divergent cells (5 unfiled) and refiled the g5 family as mt-137.
+- **mt-129/130** the union/`lone` guard mechanism PINNED from Kodkod source
+  (refuting mt-096's "uninspectable folding"), then shipped: 137/137 cells.
+- **mt-107** the `Sig$` metamodel, all five phases in ~1 day (ADR-0024's
+  ~9–13-day sizing beaten because ADR-0023 pre-paid the ambiguity machinery):
+  the lowering bucket emptied (agree 552 → 554), the last over-accept closed —
+  **alloy4fun 100.0000% both directions**.
+- **mt-131** warning parity exact: 101,970/101,970 files, 14,180 = 14,180.
+- **mt-132** cosmetics close-or-pin complete; also fixed a real CLI panic on
+  multi-byte spans.
+- Surfaced and closed en route: **mt-133** (open$N alias numbering rule
+  derived), **mt-134** (both counting nets mismatch-free), **mt-135**
+  (defined-field jar crashes — deliberate documented defer: the jar's side is
+  an accidental `StackOverflowError`, mettle keeps answering), **mt-136**
+  (the jar's trivial-solution enumerator SBP — SB-20 96/0, a real corpus row
+  converted), **mt-137** (the polarity-blind translation cache,
+  [ADR-0029](0029-polarity-blind-translation-cache.md)/LEDGER-017 — the
+  campaign's last bead).
+
+End state, measured at mt-137's close (2026-08-26): stage-1 agree 554/564 with
+every non-agreeing row jar-parity or ADR-0026-priced, DISAGREE 0, self-check 0;
+alloy4fun 100.0000% agreement both directions; SB-0 71/0 and SB-20 96/0, both
+mismatch-free; warning parity exact; the mt-095..mt-137 probe-cell battery at
+0 divergences. LIMITATIONS now holds exactly what this ADR said it should:
+honest capacity notes, deliberate better-than-reference divergences, and
+zero-incidence disclosed corners — no cost/benefit correctness deferrals
+remain. The post-campaign direction is a fresh owner decision
+(STATE.md "Next chunk").
