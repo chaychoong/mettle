@@ -2739,12 +2739,30 @@ Jar-free tests: `eq_typing_conformance.rs` part D (and the formerly `#[ignore]`d
 > unwrap (`#(Int[3]) in 3` is SAT while `#(Int[3]) = 3` is UNSAT). R3 and R2's
 > k8 both close on the corrected rule; 164 cells, `scratchpad/probe/mt127/NOTES.md`.
 
-* **R1 (i8)** — Alloy's resolver re-wraps a surface `int[·]` in an ITE branch as
-  `Int[int[·]]` (`q1_ast.txt`), making it a set, while `#e` in the identical
-  position is not re-wrapped. Both carry Alloy type `{Int}`, so the type system
-  does not distinguish them; this is an inconsistency inside Alloy's own
-  `ExprUnary` resolution, and mettle has no such wrapper to read. m1
-  (`int[plus[n,7]]` as the then branch) agrees, so the corner is narrow.
+> **CORRECTION (mt-128, 2026-08-26): R1 AND R4 ARE CLOSED, and they were never
+> two corners.** Both are the same question — which Kodkod class `visitThis`
+> returns — asked by `visit(ExprITE)`; mettle had two independent walks for it,
+> `ite_sort` (mt-095, this section) and `fragment_sort_in` (mt-052, the evaluator
+> console), and each one carried a different subset of the rule. Merging them
+> into a single `visit_sort` closed R1, R4 and five further cells no one had
+> filed. R1's stated cause is *confirmed* and generalized: the resolver re-wraps
+> a source `int[e]` as `Int[int[e]]` in exactly the positions mt-127 measured as
+> calling `cset`, and leaves it bare in exactly the positions that call `cint` —
+> the resolver's wrap and the translator's coercion split are one boundary
+> (13-cell AST dump, `scratchpad/probe/mt128/x2_positions_dump.txt`). R4's stated
+> blocker is confirmed but incomplete: the binder can also be *outside* the
+> if-then-else, and a `let`-macro argument needs the same treatment while a
+> func/pred parameter does not. See
+> [§10.7l](#107l-mt-128-one-classifier-for-visitthiss-kodkod-class-jar-verified-2026-08-26).
+
+* **R1 (i8) — CLOSED at mt-128.** Alloy's resolver re-wraps a surface `int[·]` in
+  an ITE branch as `Int[int[·]]` (`q1_ast.txt`), making it a set, while `#e` in
+  the identical position is not re-wrapped. Both carry Alloy type `{Int}`, so
+  the type system does not distinguish them, and mettle had no such wrapper to
+  read. mt-128 found it does not need one: the re-wrap follows mt-127's
+  `cset`/`cint` boundary exactly, so classifying `int[·]` as relational in the
+  dispatch reproduces it. m1 (`int[plus[n,7]]` as the then branch) agrees either
+  way, so the corner was narrow.
 * **R2 (i13, k8)** — `Expression.count()` applies a shrouded cast's DefCond
   where `.sum()` does not, but a *union*-shrouded cast under `#` (k9) does not
   guard, so it is not simply "`count` propagates". Mechanism not chased.
@@ -2770,8 +2788,12 @@ Jar-free tests: `eq_typing_conformance.rs` part D (and the formerly `#[ignore]`d
   UNSAT is the cast's guard firing through the `Card` operand, the "casts nested
   inside a `Card`/`sum` operand" corner §10.7e already lists as out of scope, now
   with jar cells attached.
-* **R4 (i23)** — mettle's `sort_of` does not follow a `let` binding to an
-  int-valued RHS; its numeral twin i22 agrees, giving a clean minimal pair.
+* **R4 (i23) — CLOSED at mt-128.** mettle's `sort_of` did not follow a `let`
+  binding to an int-valued RHS; its numeral twin i22 agrees, giving a clean
+  minimal pair. The fix is not scoped to a `let` inside the branch: mt-128's y1
+  puts the binder outside the if-then-else and y7 puts it behind a `let`-macro
+  argument, and both need the same treatment — while y4's func parameter needs
+  the opposite one.
 * **R5 (k4/k16, a doc correction, not a new divergence)** — §10.7e FACT 3's
   "union-nested casts guard too" does not hold for k4/k16: a union-nested cast
   contributes no guard to a set-level `=` there. **Narrowed by §10.7h (mt-096):**
@@ -2806,6 +2828,21 @@ and mt-056's eager formula-`let` lowering translates a `let` RHS once at the
 binding site. Cells 10–13 put the shared node under a quantifier, so the cache
 key carries a free-variable binding — the sub-corner §10.7f called untested —
 and those agree too.
+
+> **CORRECTION (mt-128, 2026-08-26): the `let` half of that last claim is no
+> longer true, and it is a live divergence.** mt-056 made a formula-valued `let`
+> binding *lazy* on purpose — `Binding::Formula` is kept unlowered and re-lowered
+> at each use under the use's ambient polarity, because freezing it at the
+> binding site minted skolems the jar refuses. That is the right call for
+> skolemization and the wrong one for the cache: each use now gets its own
+> polarity-correct guard where the jar reuses the first visit's. So
+> `g5_let_shared` is jar forbid-**SAT** and mettle forbid-**UNSAT**, and it has
+> been since mt-056. mt-128 re-pinned it and found the corner is wider than a
+> `let` — two calls of the same `pred` reach one `fun.getBody()` object and share
+> the cache entry too, so `P or (not P)` is jar-SAT and mettle-UNSAT. Four cells,
+> `scratchpad/probe/mt128/x5_g5.als` and `x6_g5sharing.als`; filed as its own
+> candidate bead, not fixed at mt-128. The `visit(ExprITE)` half of the claim
+> above still holds (`g5_let_shared_ite` and `g5_ite_both` agree).
 
 ### 10.7h mt-096: the layer-(2) set-former guard corner — measured and PINNED (jar-verified 2026-08-20)
 
@@ -3182,6 +3219,109 @@ the m1 grid. Recorded in [LIMITATIONS.md](../../LIMITATIONS.md).
 * **`Int[int[8]]` never reaches the cast in mettle** (m3 `f11_castrt`, 6 cells):
   the §2.4 `int[Int[e]]` peephole leaves an `AtomToInt`, which `overflow_capable`
   reports non-capable by construction. Pre-existing, orthogonal to the literal.
+
+### 10.7l mt-128: one classifier for `visitThis`'s Kodkod class (jar-verified 2026-08-26)
+
+**Mission.** Close §10.7g's two surviving residuals, R1 (`i8`) and R4 (`i23`) —
+the last divergences anywhere in the mt-095/mt-096/mt-127 wave set.
+
+**Outcome: they were never two corners, and the fix is a deletion.** Both are
+`visit(ExprITE)` asking which Kodkod class the then branch translates to. mettle
+answered that question in two places — `ite_sort`, written at mt-095 for this
+dispatch, and `fragment_sort_in`, written at mt-052 for the evaluator console's
+render dispatch — and neither knew about the other. `fragment_sort_in` was
+already the complete rule; `ite_sort` was `sort_of` plus one special case.
+Merging them into a single `visit_sort` closed R1, R4 and **five further
+divergent cells nobody had filed**, and needed no new rule at all beyond the
+binder distinction below. 38 jar-verdict cells across six waves plus 21
+resolved-AST cells across two more; `scratchpad/probe/mt128/NOTES.md`.
+
+#### The rule, as measured
+
+`visit_sort(e)` is "the class of `visitThis(e)`". It differs from `sort_of`'s
+question — which routes coercions *inside* an expression — at exactly four
+forms, and only two dispatches in the whole translator can observe the
+difference, because every other position runs a coercion helper that erases it:
+
+| form | `visitThis` returns | why |
+|---|---|---|
+| a numeral | `Expression` | `visit(ExprConstant)` NUMBER is `IntConstant.constant(n).toExpression()` (`:918`), and `instanceof Expression` is tested first |
+| `int[e]`, `sum e` | `Expression` | the resolver re-wraps CAST2INT as `Int[int[e]]` wherever a relation is wanted |
+| `Int[e]` | whatever `e` returns | the resolver **deletes** a written cast and re-derives it from context (mt-127) |
+| a `let`-bound name | whatever the binding returns | `visit(ExprLet)` is `env.put(x.var, visitThis(x.expr))` (`:797`) — stored raw |
+
+**Where the resolver re-wraps `int[e]`, pinned on 13 AST cells**
+(`x2_positions_dump.txt`): wrapped under `=`, `in` (both operands), `some`,
+`#`'s own operand, `+`, `&`, **both** if-then-else branches, and a `let` value;
+left bare under a comparison, an arithmetic operand, a `sum` quantifier body,
+and an enclosing `int[·]` (which is idempotent — `int[int[e]]` collapses to one
+node, the one prediction of thirteen that missed). That is mt-127's `cset`/`cint`
+table, position for position. **The resolver's wrap and the translator's
+coercion split are the same boundary**, which is why mettle needs no marker for
+the re-wrap: `lower_rel` already re-inserts the cast in exactly those positions.
+
+**Not every binder is raw.** `visit(ExprCall)` is
+`newenv.put(f.get(i), cset(x.args.get(i)))` (`:1013`), so a func/pred parameter
+is an `Expression` however int-valued the argument was, while a `let`-macro
+argument is substituted syntactically and stays raw. The discriminating triple
+puts the same `#Node` through all three:
+
+| cell | binder | jar forbid | reading |
+|---|---|---|---|
+| `y1` | `let z = #Node \| … (n<=0 => z else plus[n,7]) …` | **UNSAT** | int — raw (`:797`) |
+| `y4` | `fun sel[z: Int, n: Int]` called `sel[#Node, n]` | **SAT** | set — `cset` (`:1013`) |
+| `y7` | `let sel[z, n] = …` called `sel[#Node, n]` | **UNSAT** | int — substituted |
+
+#### The cells this closed
+
+Seven, all one merge, all forbid-mode (allow agrees throughout):
+
+| cell | body | jar | mettle before |
+|---|---|---|---|
+| `v1`/`i8` | `(n<=0 => int[F.v] else plus[n,7]) >= 0` | SAT | UNSAT |
+| `y9` | the same with prefix `sum F.v` | SAT | UNSAT |
+| `y8` | the same nested one if-then-else deep | SAT | UNSAT |
+| `v2`/`i23` | `(n<=0 => (let z = #Node \| z) else plus[n,7]) >= 0` | UNSAT | SAT |
+| `y1` | the same `let` moved outside the if-then-else | UNSAT | SAT |
+| `y7` | the same value passed as a `let`-macro argument | UNSAT | SAT |
+| `v3` | `(n<=0 => Int[#Node] else plus[n,7]) >= 0` | UNSAT | SAT |
+
+`v3` is the corner mt-127's notes listed as unpinned: `spine_sort` answered `Rel`
+for `Int[·]` where, after the resolver's delete, it should answer the argument's
+class. A written `Int[·]` around a `#` in a then branch is the only shape that
+separates the two, and it does.
+
+#### The `some`/`no`/`one`/`lone`/`&` cast: separable, and already right
+
+mt-127 left the resolver's cast on those operands unmodelled because no cell then
+separated the readings — a singleton is non-empty either way. Cells that *do*
+separate them exist: at `exactly 8 Node` with bitwidth 4 the cardinality is out
+of −8..7, so under `noOverflow` the cast is empty (§10.7e FACT 2) and the
+multiplicity test sees it. `some (#Node)` is allow-SAT / forbid-UNSAT, `one` the
+same, `some ((#Node) & Int)` the same, `lone` SAT both ways, and `no (#Node)`
+UNSAT both ways. **All eight cells agree** — `lower_rel`'s `Int[·]` guard already
+re-inserts the cast where the resolver does, so "left raw" described mettle's
+AST bookkeeping and never its lowered semantics. Recorded, not fixed; the cells
+are in `eq_typing_conformance.rs` part G so it stays that way.
+
+#### mettle
+
+`crates/als-core/src/lower.rs`. `ite_sort` is deleted and `sort_of`'s ITE arm
+calls `visit_sort` — the `fragment_sort*` family renamed, since it was never
+evaluator-specific. `Binding::Expr` gains a `raw_sort` field recording the class
+the reference's `env` holds, `Some(…)` for the binders that substitute (a `let`,
+a macro argument) and `None` for the ones that coerce (a parameter, a quantifier
+variable, `this`, an instance atom global); `visit_name_sort` falls through to a
+new `binder_sort` for names bound outside the expression being classified. The
+sort is computed *before* the binding is pushed, so a self-shadowing `let x = x`
+classifies against the outer `x` and terminates.
+
+Jar-free tests: `eq_typing_conformance.rs` part G — five tests, 28 cells, each in
+both overflow modes.
+Regression: the full mt-095/mt-096/mt-127 wave set, 359 cells, **3 divergences
+before and 1 after**, the survivor being the g5 cache corner (§10.7g's
+correction), which is a different mechanism and predates this bead. Corpus sweep
+unmoved — 554 agreements, DISAGREE 0, stage-1 report byte-identical.
 
 ### 10.8 mt-053 `univ`/`iden` live-universe probes (jar-verified 2026-07-21)
 

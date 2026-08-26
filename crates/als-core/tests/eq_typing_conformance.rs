@@ -1145,3 +1145,232 @@ fn part_f_the_corpus_shapes_the_unwrap_moves() {
         assert_eq!(solve(&src, false), Ok(forbid), "{cell} forbid");
     }
 }
+
+// ------- Part G: one classifier for `visitThis`'s Kodkod class (mt-128) -----
+//
+// Jar cells from `scratchpad/probe/mt128/` (`x3_verdicts.als` → `v*`,
+// `x4_castsep.als` → `c*`, `x7_binders.als` → `y1`–`y6`, `x8_macro.als` →
+// `y7`–`y10`; raw jar output in the matching `*_jar.txt`, resolved-AST evidence
+// in `x1_ast_dump.txt` and `x2_positions_dump.txt`). Rule in translation-ref
+// §10.7l. Jar-free: the expected verdicts are constants recorded from that wave.
+//
+// mt-095 read the if-then-else dispatch off the then branch and mt-052 read the
+// evaluator console's render dispatch off a fragment's root. mt-128 measured
+// that these are one question — which Kodkod class `visitThis` returns — and
+// merged the two walks, which closed every cell below at once.
+
+#[test]
+fn part_g_a_cast_in_a_then_branch_is_a_set() {
+    // The resolver re-wraps a source `int[e]` as `Int[int[e]]` in every position
+    // that wants a relation, an if-then-else branch included
+    // (`x2_positions_dump.txt`), so the branch translates to an `IntToExprCast`
+    // — an `Expression` — and the if-then-else is relational. `#e` in the same
+    // position is left bare and stays an `IntExpression`. Both carry Alloy type
+    // `{Int}`, so nothing but the resolved AST tells them apart.
+    for (cell, body, allow, forbid) in [
+        (
+            "v1/i8",
+            "(n<=0 => int[F.v] else plus[n,7]) >= 0",
+            false,
+            true,
+        ),
+        ("y9", "(n<=0 => sum F.v else plus[n,7]) >= 0", false, true),
+        (
+            "i2 control",
+            "(n<=0 => #Node else plus[n,7]) >= 0",
+            false,
+            false,
+        ),
+        // Nested: the inner if-then-else is relational because *its* then branch
+        // is a cast, and the outer one inherits that class.
+        (
+            "y8",
+            "(n<=0 => (n<=0 => int[F.v] else 0) else plus[n,7]) >= 0",
+            false,
+            true,
+        ),
+    ] {
+        let src = part_d_cell(body);
+        assert_eq!(solve(&src, true), Ok(allow), "{cell} allow");
+        assert_eq!(solve(&src, false), Ok(forbid), "{cell} forbid");
+    }
+}
+
+#[test]
+fn part_g_a_written_int_cast_is_deleted_not_relational() {
+    // `Int[e]` does not survive resolution: it is deleted and the coercion is
+    // re-derived from context (mt-127's finding, `x1_ast_dump.txt` cmd[2]). So
+    // `Int[#Node]` in a then branch leaves a bare `#`, and the if-then-else is
+    // an **int** one — where classifying `Int[·]` as relational made it a set.
+    for (cell, body, allow, forbid) in [
+        (
+            "v3",
+            "(n<=0 => Int[#Node] else plus[n,7]) >= 0",
+            false,
+            false,
+        ),
+        ("v4", "(n<=0 => Int[0] else plus[n,7]) >= 0", false, true),
+        (
+            "v10",
+            "(n<=0 => Int[int[F.v]] else plus[n,7]) >= 0",
+            false,
+            true,
+        ),
+    ] {
+        let src = part_d_cell(body);
+        assert_eq!(solve(&src, true), Ok(allow), "{cell} allow");
+        assert_eq!(solve(&src, false), Ok(forbid), "{cell} forbid");
+    }
+}
+
+#[test]
+fn part_g_a_let_inside_the_then_branch_passes_its_class_through() {
+    // `visit(ExprLet)` is `env.put(x.var, visitThis(x.expr))`
+    // (`TranslateAlloyToKodkod.java:797`) — the value is stored RAW, so the
+    // binding's class reaches the dispatch. The sort therefore cannot be read
+    // before the binder is in scope, which is what made `let z = #Node | z`
+    // relational.
+    for (cell, body, allow, forbid) in [
+        (
+            "v2/i23",
+            "(n<=0 => (let z = #Node | z) else plus[n,7]) >= 0",
+            false,
+            false,
+        ),
+        (
+            "i22",
+            "(n<=0 => (let z = 0 | z) else plus[n,7]) >= 0",
+            false,
+            true,
+        ),
+        (
+            "v5",
+            "(n<=0 => (let z = int[F.v] | z) else plus[n,7]) >= 0",
+            false,
+            true,
+        ),
+        (
+            "v6",
+            "(n<=0 => (let z = plus[3,4] | z) else plus[n,7]) >= 0",
+            false,
+            true,
+        ),
+        // Shadowing: the innermost binding of the name the body mentions wins.
+        (
+            "v7",
+            "(n<=0 => (let z = 0 | let y = #Node | z) else plus[n,7]) >= 0",
+            false,
+            true,
+        ),
+        (
+            "v8",
+            "(n<=0 => (let z = #Node | let y = 0 | y) else plus[n,7]) >= 0",
+            false,
+            true,
+        ),
+    ] {
+        let src = part_d_cell(body);
+        assert_eq!(solve(&src, true), Ok(allow), "{cell} allow");
+        assert_eq!(solve(&src, false), Ok(forbid), "{cell} forbid");
+    }
+}
+
+/// The Part-G cell shape for a binder that **encloses** the if-then-else rather
+/// than sitting inside it: an extra preamble declaration, and a body that is the
+/// whole run formula. Matches `scratchpad/probe/mt128/x7_binders.als` and
+/// `x8_macro.als` exactly.
+fn part_g_binder_cell(preamble: &str, body: &str) -> String {
+    format!(
+        "open util/integer\n\
+         sig Node {{}}\n\
+         one sig F {{ v: one Int }}\n\
+         fact FixV {{ F.v = 1 }}\n\
+         {preamble}\n\
+         run {{ {body} }} for 3 but 4 int\n"
+    )
+}
+
+#[test]
+fn part_g_a_substituting_binder_is_raw_and_a_parameter_is_coerced() {
+    // The discriminating triple: the same `#Node` bound by a `let`, passed as a
+    // func parameter, and passed as a `let`-macro argument. `visit(ExprLet)`
+    // (`:797`) and the macro's syntactic substitution keep it an
+    // `IntExpression`; `visit(ExprCall)` is
+    // `newenv.put(f.get(i), cset(x.args.get(i)))` (`:1013`), which makes a
+    // parameter an `Expression` however int-valued the argument was.
+    let quant = "all n: {x: Int | x>=1 and x<=7} |";
+    let sel = "fun sel[z: Int, n: Int]: Int { (n<=0 => z else plus[n,7]) }";
+    let mac = "let sel[z, n] = (n<=0 => z else plus[n,7])";
+    for (cell, preamble, body, allow, forbid) in [
+        // A `let` outside the if-then-else: raw, so int-sorted.
+        (
+            "y1",
+            "",
+            format!("let z = #Node | {quant} (n<=0 => z else plus[n,7]) >= 0"),
+            false,
+            false,
+        ),
+        (
+            "y2",
+            "",
+            format!("let z = 0 | {quant} (n<=0 => z else plus[n,7]) >= 0"),
+            false,
+            true,
+        ),
+        (
+            "y3",
+            "",
+            format!("let z = int[F.v] | {quant} (n<=0 => z else plus[n,7]) >= 0"),
+            false,
+            true,
+        ),
+        // The same `#Node` as a func parameter: `cset`-ed, so relational.
+        (
+            "y4",
+            sel,
+            format!("{quant} sel[#Node, n] >= 0"),
+            false,
+            true,
+        ),
+        ("y5", sel, format!("{quant} sel[0, n] >= 0"), false, true),
+        // ... and as a `let`-macro argument: substituted, so raw again.
+        (
+            "y7",
+            mac,
+            format!("{quant} sel[#Node, n] >= 0"),
+            false,
+            false,
+        ),
+        ("y10", mac, format!("{quant} sel[0, n] >= 0"), false, true),
+    ] {
+        let src = part_g_binder_cell(preamble, &body);
+        assert_eq!(solve(&src, true), Ok(allow), "{cell} allow");
+        assert_eq!(solve(&src, false), Ok(forbid), "{cell} forbid");
+    }
+}
+
+#[test]
+fn part_g_a_multiplicity_test_can_see_an_overflowed_cast() {
+    // mt-127 left the resolver's cast on a `some`/`no`/`one`/`lone`/`&` operand
+    // unmodelled because no cell then separated the readings. These do: at
+    // `exactly 8 Node` with bitwidth 4 the cardinality is out of −8..7, and
+    // under `noOverflow` the cast around it is empty (§10.7e FACT 2), which a
+    // multiplicity test observes directly. mettle already agreed on all eight —
+    // `lower_rel` re-inserts the cast in exactly the positions the resolver
+    // does — so this test is here to keep that true, not to record a fix.
+    for (cell, body, nodes, allow, forbid) in [
+        ("c1", "some (#Node)", 8, true, false),
+        ("c2", "no (#Node)", 8, false, false),
+        ("c3", "one (#Node)", 8, true, false),
+        ("c4", "lone (#Node)", 8, true, true),
+        ("c5", "some ((#Node) & Int)", 8, true, false),
+        ("c7", "no ((#Node) & Int)", 8, false, false),
+        ("c8", "some ((#Node) + 1)", 8, true, true),
+        // In range, nothing overflows and the cast is a singleton either way.
+        ("c6", "some (#Node)", 7, true, true),
+    ] {
+        let src = format!("sig Node {{}}\nrun {{ {body} }} for exactly {nodes} Node, 4 int\n");
+        assert_eq!(solve(&src, true), Ok(allow), "{cell} allow");
+        assert_eq!(solve(&src, false), Ok(forbid), "{cell} forbid");
+    }
+}

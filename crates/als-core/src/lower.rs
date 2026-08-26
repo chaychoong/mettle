@@ -271,7 +271,7 @@ pub enum FragmentRoot {
     /// `Expression`-translating root in `Int[·]`, and `A4Solution.eval` then
     /// renders bare only what came back an `IntExpression`
     /// (`scratchpad/src794/A4Solution.java:1064-1070`). See
-    /// [`Lowerer::fragment_sort`].
+    /// [`Lowerer::visit_sort`].
     Evaluator,
     /// A `fun` body the instance writer evaluates directly (`A4SolutionWriter`
     /// builds the `Expr` itself and never goes through the evaluator's
@@ -369,7 +369,7 @@ fn lower_fragment_with<'a>(
         binders: input
             .globals
             .iter()
-            .map(|(name, value)| (name.clone(), Binding::Expr(*value)))
+            .map(|(name, value)| (name.clone(), Binding::coerced(*value)))
             .collect(),
         inline_stack: Vec::new(),
         temporal: None,
@@ -393,7 +393,7 @@ fn lower_fragment_with<'a>(
     // The same three-way split `lower_command` applies inside a command body,
     // here applied to the fragment's root: the input *is* the expression.
     let sort = match input.root {
-        FragmentRoot::Evaluator => lowerer.fragment_sort(ctx, input.expr),
+        FragmentRoot::Evaluator => lowerer.visit_sort(ctx, input.expr),
         FragmentRoot::Value => lowerer.sort_of(ctx, input.expr),
     };
     let value = match sort {
@@ -482,7 +482,29 @@ enum Binding {
     /// A `let` binding, a func/pred parameter, or a macro argument → the
     /// already-lowered value expression (substituted in place, the reference's
     /// inlining).
-    Expr(RelExprId),
+    ///
+    /// `raw_sort` records the class the reference's `env` holds, which is not
+    /// always the class `value` has. The reference stores **raw** for the
+    /// binders that substitute — `visit(ExprLet)` is
+    /// `env.put(x.var, visitThis(x.expr))` (`TranslateAlloyToKodkod.java:797`)
+    /// and a `let`-macro is substituted syntactically before translation — and
+    /// **coerced** for the binders that do not: `visit(ExprCall)` is
+    /// `newenv.put(f.get(i), cset(x.args.get(i)))` (`:1013`), so a func/pred
+    /// parameter is an `Expression` however int-valued its argument was.
+    /// Lowering here always produces a relation (`lower_rel` re-inserts the
+    /// `Int[·]` the reference's `cset` would), so the pre-coercion class has to
+    /// be carried alongside; `None` is "the reference coerced here too".
+    ///
+    /// Only [`Lowerer::visit_sort_in`] reads it, and only the `if-then-else`
+    /// dispatch and the evaluator console's render dispatch can observe it —
+    /// both ask which Kodkod class `visitThis` returned. Probes y1/y4/y7
+    /// (`scratchpad/probe/mt128/x7_binders.als`, `x8_macro.als`) put the same
+    /// `#Node` through a `let`, a parameter and a macro argument and get
+    /// `int`, `Expression`, `int` — the discriminating triple for this field.
+    Expr {
+        value: RelExprId,
+        raw_sort: Option<Sort>,
+    },
     /// A formula-valued `let` binding (Alloy allows a `let` to bind a boolean:
     /// `let p = some a | p …`), kept **unlowered** (translation-ref §10.6a,
     /// mt-056). The jar translates the RHS once and *places that Kodkod node at
@@ -514,6 +536,30 @@ enum Binding {
     /// mt-040): the parameter is invoked as `param[args]` in the body and inlined
     /// as the real call, never used as a relational value.
     Callable(als_types::CallableChoice),
+}
+
+impl Binding {
+    /// A binder the reference **coerces** at the binding site, so what its `env`
+    /// holds is an `Expression` whatever the value was: a func/pred parameter
+    /// (`newenv.put(f.get(i), cset(x.args.get(i)))`,
+    /// `TranslateAlloyToKodkod.java:1013`), a quantifier/comprehension/`sum`
+    /// variable, `this`, an instance atom global.
+    fn coerced(value: RelExprId) -> Self {
+        Binding::Expr {
+            value,
+            raw_sort: None,
+        }
+    }
+
+    /// A binder the reference **substitutes**, so the value's own class survives
+    /// to the use site: `visit(ExprLet)` (`:797`) stores `visitThis(x.expr)`
+    /// raw, and a `let`-macro argument is substituted before translation.
+    fn substituted(value: RelExprId, raw_sort: Sort) -> Self {
+        Binding::Expr {
+            value,
+            raw_sort: Some(raw_sort),
+        }
+    }
 }
 
 /// A resolution context: the module the expression lives in and the choice
@@ -934,7 +980,7 @@ impl<'a> Lowerer<'a> {
             let bound = self.sig_denote(sig, span)?;
             if let Some(upper) = self.abstract_upper(bound) {
                 let x = self.fo_skolemize("this", bound, 1, upper, span, &mut skolem_constraints);
-                self.binders.push(("this".to_owned(), Binding::Expr(x)));
+                self.binders.push(("this".to_owned(), Binding::coerced(x)));
             } else {
                 let vid = self.ir.vars.alloc(Var {
                     name: "this".to_owned(),
@@ -982,7 +1028,7 @@ impl<'a> Lowerer<'a> {
                     let x = self.mint_skolem(ctx, &name.text, &decl, name.span)?;
                     skolem_constraints
                         .extend(self.skolem_decl_constraints(ctx, x, &decl, bound_span)?);
-                    self.binders.push((name.text.clone(), Binding::Expr(x)));
+                    self.binders.push((name.text.clone(), Binding::coerced(x)));
                 } else if let Some(upper) = fo_upper.clone() {
                     let x = self.fo_skolemize(
                         &name.text,
@@ -992,7 +1038,7 @@ impl<'a> Lowerer<'a> {
                         name.span,
                         &mut skolem_constraints,
                     );
-                    self.binders.push((name.text.clone(), Binding::Expr(x)));
+                    self.binders.push((name.text.clone(), Binding::coerced(x)));
                 } else {
                     // Un-boundable bound: an ordinary first-order existential.
                     let vid = self.ir.vars.alloc(Var {
@@ -2545,7 +2591,7 @@ impl<'a> Lowerer<'a> {
                 // case NUMBER is `IntConstant.constant(n).toExpression()`
                 // (`:918`), i.e. an `IntToExprCast` — which is why a numeral
                 // then-branch makes an if-then-else relational
-                // ([`Self::ite_sort`]).
+                // ([`Self::visit_sort`]).
                 let ie = self.visit_int(ctx, e)?;
                 Ok(self.mk_rel(RelExprKind::IntToAtom(ie), span))
             }
@@ -3153,7 +3199,7 @@ impl<'a> Lowerer<'a> {
     ///
     /// Only a **bare** cast unwraps. An `IntToAtom` never wraps an if-then-else
     /// (the reference builds those relationally whenever the then branch
-    /// translates to an `Expression` — see [`Self::ite_sort`]), which is why
+    /// translates to an `Expression` — see [`Self::visit_sort`]), which is why
     /// `#(c => plus[3,4] else 0)` stays a real cardinality (probes t1/u3–u6).
     fn to_int(&self, ie: IntExprId) -> IntExprId {
         let (IntExprKind::Card(rel) | IntExprKind::AtomToInt(rel)) = self.ir.int_exprs[ie].kind
@@ -3535,7 +3581,7 @@ impl<'a> Lowerer<'a> {
                     let x = self.mint_skolem(ctx, &name.text, &decl, name.span)?;
                     out.skolem_constraints
                         .extend(self.skolem_decl_constraints(ctx, x, &decl, bound_span)?);
-                    self.binders.push((name.text.clone(), Binding::Expr(x)));
+                    self.binders.push((name.text.clone(), Binding::coerced(x)));
                     out.pushed += 1;
                     group.push(x);
                 }
@@ -3574,7 +3620,7 @@ impl<'a> Lowerer<'a> {
                         name.span,
                         &mut out.skolem_constraints,
                     );
-                    self.binders.push((name.text.clone(), Binding::Expr(x)));
+                    self.binders.push((name.text.clone(), Binding::coerced(x)));
                     out.pushed += 1;
                     group.push(x);
                 }
@@ -4122,7 +4168,8 @@ impl<'a> Lowerer<'a> {
                             span,
                         })?
                 };
-                self.binders.push(("this".to_owned(), Binding::Expr(this)));
+                self.binders
+                    .push(("this".to_owned(), Binding::coerced(this)));
                 pushed += 1;
                 continue;
             }
@@ -4132,7 +4179,7 @@ impl<'a> Lowerer<'a> {
                     span,
                 });
             };
-            self.binders.push((p.name.clone(), Binding::Expr(av)));
+            self.binders.push((p.name.clone(), Binding::coerced(av)));
             pushed += 1;
         }
         self.inline_stack.push(func);
@@ -4396,7 +4443,8 @@ impl<'a> Lowerer<'a> {
         );
         // The variable is ground — it denotes exactly one atom — so it binds as
         // an expression, never as a quantified `Var` (and so never skolemizes).
-        self.binders.push((me.var.clone(), Binding::Expr(atom_rel)));
+        self.binders
+            .push((me.var.clone(), Binding::coerced(atom_rel)));
         let body_ctx = Ctx {
             module: ctx.module,
             choices: &binding.choices,
@@ -4447,7 +4495,11 @@ impl<'a> Lowerer<'a> {
             let b = if let Some((_, c)) = mc.callables.iter().find(|(j, _)| *j == i) {
                 Binding::Callable(c.clone())
             } else {
-                Binding::Expr(self.lower_rel(arg_ctx, mc.args[i])?)
+                // A `let`-macro is substituted syntactically, so the argument's
+                // own class is what reaches the use site — the `visit(ExprLet)`
+                // side of the split, not the `visit(ExprCall)` one (probe y7).
+                let raw_sort = self.visit_sort(arg_ctx, mc.args[i]);
+                Binding::substituted(self.lower_rel(arg_ctx, mc.args[i])?, raw_sort)
             };
             bindings.push((name.clone(), b));
         }
@@ -4592,10 +4644,10 @@ impl<'a> Lowerer<'a> {
                 // load-bearing in three places beyond the value itself:
                 // [`Self::lower_rel`]'s guard re-wraps it as `Int[min]`
                 // (the jar's `toSet` → `.toExpression()`); the ITE dispatch
-                // reads it through [`Self::ite_sort`] and takes the int branch,
+                // reads it through [`Self::visit_sort`] and takes the int branch,
                 // dragging the else branch with it (`no F => (0-8) else 1`
                 // renders bare `1`); and the evaluator console renders it bare
-                // (`-8`, not `{-8}`) through [`Self::fragment_sort_in`].
+                // (`-8`, not `{-8}`) through the same walk.
                 // See [`Self::minus_folds_to_min`].
                 BinOp::Diff if self.minus_folds_to_min(ctx, *op, *lhs, *rhs) => Sort::Int,
                 _ => Sort::Rel,
@@ -4604,7 +4656,11 @@ impl<'a> Lowerer<'a> {
             ExprKind::Name(_) | ExprKind::AtName(_) => self.name_sort(ctx, e),
             ExprKind::Arrow { .. } | ExprKind::Comprehension { .. } => Sort::Rel,
             ExprKind::Compare { .. } => Sort::Formula,
-            ExprKind::IfThenElse { then_branch, .. } => self.ite_sort(ctx, *then_branch),
+            // `visit(ExprITE)` (`:783-789`) reads the *then* branch's translated
+            // Kodkod class and coerces the else branch to match, so the ITE's
+            // own sort is that class — [`Self::visit_sort`]'s question, not this
+            // walk's (mt-128).
+            ExprKind::IfThenElse { then_branch, .. } => self.visit_sort(ctx, *then_branch),
             ExprKind::Quant { quant, .. } => {
                 if matches!(quant, Quant::Sum) {
                     Sort::Int
@@ -4619,66 +4675,66 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// The sort an `if-then-else` takes, read off its **then** branch alone
-    /// (translation-ref §10.7g, mt-095 probes i1/i2, i5, m2/m4).
-    ///
-    /// `visit(ExprITE)` tests the *then* branch's translated Kodkod class and
-    /// coerces the else branch to match (`cform`/`cset`/`cint`) — the else
-    /// branch never votes. The one place mettle's `sort_of` disagrees with that
-    /// class is a bare numeral: `visit(ExprConstant)` case `NUMBER` is
-    /// `IntConstant.constant(n).toExpression()`, an `IntToExprCast`, which is an
-    /// `Expression` — and `instanceof Expression` is tested *before*
-    /// `instanceof IntExpression`, so a numeral branch makes the ITE relational.
-    ///
-    /// Everywhere else a numeral behaves int-sorted anyway, because `toInt`
-    /// unwraps an `IntToExprCast` back to its `IntExpression` (mettle's
-    /// `IntToAtom` peephole in `lower_int`) — the ITE dispatch is the sole
-    /// position where the distinction is observable.
-    fn ite_sort(&self, ctx: Ctx, then_branch: ExprId) -> Sort {
-        match &self.ast_of(ctx).exprs[then_branch].kind {
-            ExprKind::Num(_) => Sort::Rel,
-            _ => self.sort_of(ctx, then_branch),
-        }
-    }
-
-    /// The sort the **evaluator console's own top-level dispatch** gives a
-    /// fragment's root (evaluator contract §3, probes E-60–E-79).
+    /// Which Kodkod class the reference's `visitThis` returns for `e`
+    /// (translation-ref §10.7g/§10.7l, evaluator contract §3).
     ///
     /// A different question from [`Self::sort_of`]'s, which routes coercions
-    /// *inside* an expression and is the solve path's classifier too — hence a
-    /// separate walk rather than an edit to that one. Here the question is only
-    /// "does this root translate to a Kodkod `IntExpression`", because that is
-    /// the sole branch of `A4Solution.eval` that renders a bare numeral; an
-    /// `Expression` becomes an `A4TupleSet` and prints `{n}`.
+    /// *inside* an expression — hence a separate walk rather than an edit to
+    /// that one. Two dispatches ask this one, and only these two can observe it,
+    /// because everywhere else the coercion helpers erase the difference:
     ///
-    /// Three int-*typed* forms translate to an `Expression` and so render
-    /// `{n}` here where [`Self::sort_of`] says `Int`:
+    /// - `visit(ExprITE)` (`TranslateAlloyToKodkod.java:783-789`) tests the
+    ///   *then* branch's class and coerces the else branch to match
+    ///   (`cform`/`cset`/`cint`) — the else branch never votes (mt-095 probes
+    ///   i1/i2, i5, m2/m4);
+    /// - `A4Solution.eval` renders an `IntExpression` as a bare numeral and an
+    ///   `Expression` as an `A4TupleSet` printed `{n}` (probes E-60–E-79).
+    ///
+    /// mt-095 and mt-052 each found a piece of this rule and wrote it down
+    /// separately, one for each caller; mt-128 measured that they are the same
+    /// rule and merged them. The forms where the answer differs from
+    /// [`Self::sort_of`]'s:
     ///
     /// - a **numeral literal** — `visit(ExprConstant)` NUMBER is
-    ///   `IntConstant.constant(n).toExpression()`, the same fact mt-095 pinned
-    ///   for the ITE dispatch (probes E-60–E-64; out-of-range literals wrap
-    ///   two's-complement and still render `{n}`, E-63/E-64);
-    /// - **`int[e]` / `sum[e]` / `int e` / `sum e`** — `CAST2INT`, which the
-    ///   evaluator's re-resolve re-wraps as `Int[int[e]]` (probes E-70–E-73).
+    ///   `IntConstant.constant(n).toExpression()`, an `IntToExprCast`, and
+    ///   `instanceof Expression` is tested before `instanceof IntExpression`
+    ///   (probes i5, E-60–E-64; out-of-range literals wrap two's-complement and
+    ///   still render `{n}`, E-63/E-64);
+    /// - **`int[e]` / `sum[e]` / `int e` / `sum e`** — CAST2INT, which the
+    ///   resolver re-wraps as `Int[int[e]]` in every position that wants a
+    ///   relation, an `IntToExprCast` again (probes E-70–E-73, and mt-128's
+    ///   i8/y9 plus the AST dump `scratchpad/probe/mt128/x2_positions_dump.txt`,
+    ///   which shows the wrap present under `=`/`in`/`some`/`#`/`+`/`&`/an ITE
+    ///   branch and absent under a comparison, an arithmetic operand and a
+    ///   `sum` quantifier body — exactly mt-127's `cset`/`cint` split);
+    /// - a user-written **`Int[e]`** is *deleted* by the resolver and re-derived
+    ///   from context, so it is transparent rather than relational (E-74/E-75,
+    ///   and mt-128's v3: `Int[#Node]` in a then branch makes the ITE **int**);
+    /// - a **`let`** is transparent, because `visit(ExprLet)` (`:797`) stores
+    ///   `visitThis(x.expr)` raw — for a binder inside `e` from the `lets`
+    ///   parameter, for one already on the binder stack from
+    ///   [`Self::binder_sort`] (probes i23/E-76/E-77 and y1).
     ///
-    /// And symmetrically, a user-written **`Int[e]`** is *dropped* by that same
-    /// re-resolve, so it is transparent rather than relational (E-74/E-75) —
-    /// `Int[#A]` renders bare `1`.
+    /// Everywhere else a numeral or a cast behaves int-sorted anyway, because
+    /// `toInt` unwraps an `IntToExprCast` back to its `IntExpression` (mettle's
+    /// `IntToAtom` peephole in [`Self::to_int`]).
     ///
-    /// `let` is transparent because the reference's `visit(ExprLet)` substitutes
-    /// (the body's own translation is the result), so a body that is just the
-    /// bound name takes the binding's shape (E-76/E-77).
-    ///
-    /// Only the rendered *shape* moves: [`Self::lower_rel`] and
-    /// [`Self::lower_int`] each open with the coercion guard for the other sort,
-    /// so both dispatches compute the same value.
-    fn fragment_sort(&self, ctx: Ctx, e: ExprId) -> Sort {
-        self.fragment_sort_in(ctx, e, &mut Vec::new())
+    /// At the evaluator only the rendered *shape* moves — [`Self::lower_rel`]
+    /// and [`Self::lower_int`] each open with the coercion guard for the other
+    /// sort, so both dispatches compute the same value. At the `if-then-else`
+    /// it is the value that moves, because a relational branch puts the else
+    /// branch inside an `Int[·]` cast, and under `noOverflow` an overflowing
+    /// cast is empty (§10.7e FACT 2) where an int branch propagates the
+    /// overflow instead.
+    fn visit_sort(&self, ctx: Ctx, e: ExprId) -> Sort {
+        self.visit_sort_in(ctx, e, &mut Vec::new())
     }
 
-    /// [`Self::fragment_sort`] carrying the enclosing `let` bindings, innermost
-    /// last, so a body that is just a bound name can be followed to its value.
-    fn fragment_sort_in(&self, ctx: Ctx, e: ExprId, lets: &mut Vec<(String, ExprId)>) -> Sort {
+    /// [`Self::visit_sort`] carrying the `let` bindings seen on the way down,
+    /// innermost last, so a body that is just a bound name can be followed to
+    /// its value. Bindings from *outside* `e` are not here; they are on the
+    /// lowerer's binder stack, and [`Self::binder_sort`] reads them there.
+    fn visit_sort_in(&self, ctx: Ctx, e: ExprId, lets: &mut Vec<(String, ExprId)>) -> Sort {
         match &self.ast_of(ctx).exprs[e].kind {
             ExprKind::Num(_) => Sort::Rel,
             ExprKind::Unary { op, expr } => match op {
@@ -4695,31 +4751,29 @@ impl<'a> Lowerer<'a> {
                 | UnOp::Before
                 | UnOp::Historically
                 | UnOp::Once => Sort::Formula,
-                _ => self.fragment_sort_in(ctx, *expr, lets),
+                _ => self.visit_sort_in(ctx, *expr, lets),
             },
             ExprKind::Binary {
                 op: BinOp::Join, ..
-            } => self.fragment_spine_sort(ctx, e, lets),
-            ExprKind::BoxJoin { .. } => self.fragment_spine_sort(ctx, e, lets),
-            ExprKind::Name(_) | ExprKind::AtName(_) => self.fragment_name_sort(ctx, e, lets),
+            } => self.visit_spine_sort(ctx, e, lets),
+            ExprKind::BoxJoin { .. } => self.visit_spine_sort(ctx, e, lets),
+            ExprKind::Name(_) | ExprKind::AtName(_) => self.visit_name_sort(ctx, e, lets),
             ExprKind::IfThenElse { then_branch, .. } => {
                 // The else branch never votes (mt-095): `visit(ExprITE)` reads
                 // the then branch's translated class and coerces the else one to
                 // match. Probe E-78: `(some A => int[3] else 0)` is `{3}`.
-                self.fragment_sort_in(ctx, *then_branch, lets)
+                self.visit_sort_in(ctx, *then_branch, lets)
             }
             ExprKind::Let { bindings, body } => {
                 let depth = lets.len();
                 for b in bindings {
                     lets.push((b.name.text.clone(), b.value));
                 }
-                let sort = self.fragment_sort_in(ctx, *body, lets);
+                let sort = self.visit_sort_in(ctx, *body, lets);
                 lets.truncate(depth);
                 sort
             }
-            ExprKind::Block(exprs) if exprs.len() == 1 => {
-                self.fragment_sort_in(ctx, exprs[0], lets)
-            }
+            ExprKind::Block(exprs) if exprs.len() == 1 => self.visit_sort_in(ctx, exprs[0], lets),
             // Everything left — a formula, a comprehension, an arrow, a
             // `sum`/other quantifier, a string or constant — is classified the
             // same either way, so there is one rule for it, not two.
@@ -4727,7 +4781,7 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    fn fragment_name_sort(&self, ctx: Ctx, e: ExprId, lets: &[(String, ExprId)]) -> Sort {
+    fn visit_name_sort(&self, ctx: Ctx, e: ExprId, lets: &[(String, ExprId)]) -> Sort {
         match self.choice(ctx, e) {
             Some(ExprChoice::Name(NameChoice::Var(v))) => {
                 // Innermost wins, and the binding is classified against only the
@@ -4736,19 +4790,39 @@ impl<'a> Lowerer<'a> {
                 match lets.iter().rposition(|(name, _)| name == v) {
                     Some(i) => {
                         let value = lets[i].1;
-                        self.fragment_sort_in(ctx, value, &mut lets[..i].to_vec())
+                        self.visit_sort_in(ctx, value, &mut lets[..i].to_vec())
                     }
-                    // A quantifier/comprehension binder or an instance atom
-                    // global: relational, as `name_sort` also says.
-                    None => Sort::Rel,
+                    // Not bound inside `e`, so the binder is enclosing it and
+                    // the lowerer's stack is where its class is recorded.
+                    None => self.binder_sort(v),
                 }
             }
-            Some(ExprChoice::Name(NameChoice::Macro(mc))) => self.fragment_macro_sort(mc),
+            Some(ExprChoice::Name(NameChoice::Macro(mc))) => self.visit_macro_sort(mc),
             _ => self.name_sort(ctx, e),
         }
     }
 
-    fn fragment_spine_sort(&self, ctx: Ctx, e: ExprId, lets: &mut Vec<(String, ExprId)>) -> Sort {
+    /// The class the reference's `env` holds for an already-bound `name` —
+    /// the other half of [`Self::visit_name_sort`], for binders that enclose the
+    /// expression being classified rather than sitting inside it.
+    ///
+    /// Only a substituting binder can hold a non-`Expression`: `visit(ExprLet)`
+    /// stores `visitThis(x.expr)` raw (`:797`) and a `let`-macro argument is
+    /// substituted before translation, so both record a `raw_sort`. A
+    /// quantifier/comprehension/`sum` variable is a Kodkod `Variable`, a
+    /// func/pred parameter is `cset(arg)` (`:1013`), and an instance atom global
+    /// is a relation — all `Expression`s. An unbound name is a sig or field,
+    /// also relational. Probes y1 (a `let`) against y4 (a parameter) put the
+    /// same `#Node` through both and get opposite verdicts.
+    fn binder_sort(&self, name: &str) -> Sort {
+        match self.binders.iter().rev().find(|(n, _)| n == name) {
+            Some((_, Binding::Expr { raw_sort, .. })) => raw_sort.unwrap_or(Sort::Rel),
+            Some((_, Binding::Formula { .. })) => Sort::Formula,
+            _ => Sort::Rel,
+        }
+    }
+
+    fn visit_spine_sort(&self, ctx: Ctx, e: ExprId, lets: &mut Vec<(String, ExprId)>) -> Sort {
         match self.choice(ctx, e) {
             Some(ExprChoice::Spine(SpineChoice::Builtin {
                 op: BuiltinCall::IntCast,
@@ -4758,25 +4832,28 @@ impl<'a> Lowerer<'a> {
             })) => {
                 let span = self.ast_of(ctx).exprs[e].span;
                 match self.first_box_arg(ctx, e, span) {
-                    Ok(arg) => self.fragment_sort_in(ctx, arg, lets),
+                    Ok(arg) => self.visit_sort_in(ctx, arg, lets),
                     Err(_) => Sort::Rel,
                 }
             }
-            Some(ExprChoice::Spine(SpineChoice::Macro(mc))) => self.fragment_macro_sort(mc),
+            Some(ExprChoice::Spine(SpineChoice::Macro(mc))) => self.visit_macro_sort(mc),
             _ => self.spine_sort(ctx, e),
         }
     }
 
-    /// A macro call is inlined by the reference's `visit(ExprCall)`, so the
-    /// body's own translated class is what reaches the dispatch. The body lives
-    /// in its own module and choice table, so it starts with a fresh `let` env.
-    fn fragment_macro_sort(&self, mc: &als_types::MacroChoice) -> Sort {
+    /// A `let`-macro is substituted before the reference's translator ever runs,
+    /// so the body's own class is what reaches the dispatch. The body lives in
+    /// its own module and choice table, so it starts with a fresh `let` env; its
+    /// *arguments* are on the binder stack, recorded substituted rather than
+    /// coerced, and [`Self::binder_sort`] reads them there (probe y7 against y4:
+    /// the same `#Node` is int through a macro and a set through a parameter).
+    fn visit_macro_sort(&self, mc: &als_types::MacroChoice) -> Sort {
         let ctx = Ctx {
             module: mc.body_module,
             choices: &mc.body_choices,
             ast: None,
         };
-        self.fragment_sort_in(ctx, self.world.macros[mc.macro_id].body, &mut Vec::new())
+        self.visit_sort_in(ctx, self.world.macros[mc.macro_id].body, &mut Vec::new())
     }
 
     fn name_sort(&self, ctx: Ctx, e: ExprId) -> Sort {
@@ -4964,7 +5041,11 @@ impl<'a> Lowerer<'a> {
     /// `lower_rel`. Int values need no special case — `lower_rel`'s `Int[·]`
     /// cast guard wraps them and the symmetric `int[·]` guard unwraps them at the
     /// use site, so an int-valued `let` round-trips as a `Binding::Expr` exactly
-    /// as before this seam existed.
+    /// as before this seam existed. What that round trip does *not* preserve is
+    /// the binding's Kodkod class, which `visit(ExprLet)` keeps raw (`:797`) and
+    /// the `if-then-else` dispatch reads — hence `raw_sort`. It is computed
+    /// before the binding is pushed, so a self-shadowing `let x = x` classifies
+    /// against the outer `x` and the walk terminates.
     fn push_let_bindings(
         &mut self,
         ctx: Ctx,
@@ -4982,7 +5063,8 @@ impl<'a> Lowerer<'a> {
                     depth: self.binders.len(),
                 }
             } else {
-                Binding::Expr(self.lower_rel(ctx, b.value)?)
+                let raw_sort = self.visit_sort(ctx, b.value);
+                Binding::substituted(self.lower_rel(ctx, b.value)?, raw_sort)
             };
             self.binders.push((b.name.text.clone(), binding));
             pushed += 1;
@@ -5066,7 +5148,7 @@ impl<'a> Lowerer<'a> {
                         let vid = *vid;
                         Ok(self.mk_rel(RelExprKind::Var(vid), span))
                     }
-                    Binding::Expr(id) => Ok(*id),
+                    Binding::Expr { value, .. } => Ok(*value),
                     // A formula-valued `let` binding has no relational value; a
                     // use in relation position is a checker type error, so defer
                     // typed here rather than fabricate one (translation-ref §2;
