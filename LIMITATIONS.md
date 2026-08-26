@@ -29,17 +29,6 @@ Current measured agreement with the jar is in [docs/STATE.md](docs/STATE.md).
   (4 corpus commands). Unbounded model checking (`for 1.. steps`) returns the
   jar's own refusal text (2 corpus commands). These match the reference exactly.
 
-## Counting differences
-
-- **One model double-counts under symmetry breaking (mt-134).** Enumerating
-  `hc7.als[0]` with symmetry breaking at the jar's default strength gives 128
-  instances where the jar gives 64: one symmetry the jar's breaking predicate
-  cuts and mettle's does not, on a model that combines the `Sig$` metamodel
-  with two private ordering modules. Verdicts are unaffected (symmetry
-  breaking never changes SAT or UNSAT), and the same command's count matches
-  the jar exactly with symmetry off. Found 2026-08-25, the first day this
-  comparison could run at all. One corpus row.
-
 ## Models mettle accepts that Alloy rejects
 
 Over the 150,891 alloy4fun submissions, mettle and the jar now agree on every
@@ -53,6 +42,13 @@ neither appears in any corpus.
   accepts it and then reports that it cannot run the command. A receiver-style
   call of a zero-argument predicate (`H.s.noDuplicates`) is a type error in the
   jar; mettle accepts it. Neither appears in either corpus. Open.
+- **A user-written defined field on a `one` sig can crash the jar; mettle
+  answers (mt-135).** When the field's bound is a simple combination of
+  relations (`one sig C { g = A + B }`), the jar's bounds computer inlines it
+  as an expression and then throws `UnsupportedOperationException` from
+  `addSymbolicBound`; binding directly to one sig (`g = A`) makes the jar
+  `StackOverflowError`. mettle solves both and answers. Measured on jar 6.2.0
+  at mt-134 (translation-ref §16.3.1); no corpus model has the shape. Open.
 
 ## Overflow guard corners
 
