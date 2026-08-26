@@ -7,6 +7,8 @@
 //!    into symmetry classes (§16.2) from the goal's relation bounds, and the
 //!    **relation order** for SBP generation (§16.3): every post-skolem
 //!    non-constant relation, sorted by `(arity asc, name asc byte-wise)`.
+//!    Both range over the relations the *reference* bounds, which is not quite
+//!    the set mettle bounds — see [`is_reference_bounded`] (§16.3.1, mt-134).
 //! 2. [`Encoder::generate_sbp`](super::Encoder::generate_sbp) turns that plan into
 //!    a single [`Bool`] — the conjunction of lex-leq circuits over every adjacent
 //!    atom pair of every class (§16.3) — conjoined with the goal circuit by
@@ -123,6 +125,27 @@ fn is_skolem(ir: &Ir, rel: RelId) -> bool {
     ir.relations[rel].name.starts_with('$')
 }
 
+/// Whether the reference bounds `rel` at all — i.e. whether it would appear in
+/// the jar's `bounds.relations()`, the set both [`detect_partition`] and
+/// [`rel_parts`] range over (translation-ref §16.2/§16.3).
+///
+/// The one relation mettle holds that the jar does not is a `$`-metamodel field
+/// (mt-107): `BoundsComputer` binds a defined field of a `one` sig to a plain
+/// expression and allocates no Kodkod relation for it
+/// (`BoundsComputer.java:426-431`), and every metamodel field is built that way
+/// (`CompModule.resolveMeta`, `:2170`-`:2228`). mettle keeps a placeholder
+/// relation pinned by the defined-field fact, so it must be filtered here or it
+/// eats SBP slots the reference spends on real relations (mt-134, §16.3.1).
+///
+/// Dropping these tuplesets from the partition is **refinement-neutral**, not
+/// just faithful: a field's upper bound is a union of products of its columns'
+/// sig atom sets ([`crate::bounds_builder`]'s `field_upper`), every sig atom set
+/// is itself a union of classes of the partition the remaining relations induce,
+/// and a union of class-products never splits a class.
+fn is_reference_bounded(ir: &Ir, rel: RelId) -> bool {
+    !ir.relations[rel].is_meta_field
+}
+
 /// Whether a relation is one of the three **builtin sig relations** (`Int`,
 /// `seq/Int`, `String`), excluded from partition refinement. `Int` is not a
 /// bounds relation on the jar side at all (the Alloy `Int` sig translates to
@@ -173,8 +196,9 @@ fn is_builtin_sig(ir: &Ir, rel: RelId) -> bool {
 /// (§16.2): an unconditional singleton per int and per string atom (the jar's
 /// per-integer exact bounds + per-string-atom `s2k` singletons, never
 /// mention-gated on its solve path — §16.1.1) and, for each **non-skolem,
-/// non-builtin** relation, its lower bound (iff non-empty and strictly smaller
-/// than upper) and its upper bound (iff non-empty).
+/// non-builtin, reference-bounded** relation ([`is_reference_bounded`]), its
+/// lower bound (iff non-empty and strictly smaller than upper) and its upper
+/// bound (iff non-empty).
 fn detect_partition(
     ir: &Ir,
     bounds: &Bounds,
@@ -198,10 +222,11 @@ fn detect_partition(
         tuplesets.push(vec![t]);
     }
 
-    // Retained relation bounds (§16.2): non-skolem, non-builtin. Lower iff
-    // non-empty and strictly smaller than upper; upper iff non-empty.
+    // Retained relation bounds (§16.2): non-skolem, non-builtin, and one the
+    // reference actually bounds. Lower iff non-empty and strictly smaller than
+    // upper; upper iff non-empty.
     for (rel, bound) in bounds.iter() {
-        if is_skolem(ir, rel) || is_builtin_sig(ir, rel) {
+        if is_skolem(ir, rel) || is_builtin_sig(ir, rel) || !is_reference_bounded(ir, rel) {
             continue;
         }
         let lower = bound.lower();
@@ -253,8 +278,9 @@ fn detect_partition(
 }
 
 /// The relation order for SBP generation (translation-ref §16.3,
-/// SymmetryBreaker.java:284 `relParts`): every relation in the post-skolem bounds
-/// whose `lower.size() != upper.size()` (constants skipped), sorted by **arity
+/// SymmetryBreaker.java:284 `relParts`): every **reference-bounded** relation
+/// ([`is_reference_bounded`]) in the post-skolem bounds whose
+/// `lower.size() != upper.size()` (constants skipped), sorted by **arity
 /// ascending, then name ascending byte-wise** (Java `String.compareTo` = UTF-16
 /// code-unit order; ASCII in practice, which byte-wise `str` ordering matches).
 /// `$`-prefixed skolems sort before `this/…` at the same arity, so they eat SBP
@@ -283,6 +309,7 @@ fn rel_parts(ir: &Ir, bounds: &Bounds, temporal: bool) -> Vec<RelId> {
     let mut parts: Vec<RelId> = bounds
         .iter()
         .filter(|(_, bound)| bound.lower().len() != bound.upper().len())
+        .filter(|&(rel, _)| is_reference_bounded(ir, rel))
         .filter(|&(rel, _)| !(temporal && is_skolem(ir, rel)))
         .map(|(rel, _)| rel)
         .collect();
@@ -322,8 +349,17 @@ mod tests {
             arity: 1,
             span: span(),
             mutability: Mutability::Static,
+            is_meta_field: false,
         });
         bounds.bind(rel, RelBound::new(TupleSet::empty(1), unary(&[0, 1])));
+        rel
+    }
+
+    /// Same, but marked as a `$`-metamodel field placeholder — a relation the
+    /// reference never bounds (see [`is_reference_bounded`]).
+    fn free_meta_field(ir: &mut Ir, bounds: &mut Bounds, name: &str) -> RelId {
+        let rel = free(ir, bounds, name);
+        ir.relations[rel].is_meta_field = true;
         rel
     }
 
@@ -415,5 +451,47 @@ mod tests {
 
         assert_eq!(flat.classes(), per_state.classes());
         assert_eq!(per_state.relparts().len(), 3);
+    }
+
+    /// `$`-metamodel field placeholders are invisible to **both** halves of the
+    /// plan (translation-ref §16.3.1, mt-134): the reference binds those fields
+    /// to expressions and has no bounds relation for them
+    /// (`BoundsComputer.java:426-431`), so they neither join `relparts` — where
+    /// they would eat the soft cap ahead of real relations — nor refine the
+    /// partition. Here `so/Ord$.subfields` sorts first at arity 1, and its
+    /// universe-wide upper bound would otherwise take the leading SBP slot.
+    #[test]
+    fn meta_field_placeholders_are_invisible_to_the_plan() {
+        let universe = Universe::new(vec!["A$0".to_owned(), "A$1".to_owned()]);
+        let mut ir = Ir::default();
+        let mut bounds = Bounds::new(universe.clone());
+        let _ = free_meta_field(&mut ir, &mut bounds, "so/Ord$.subfields");
+        let _ = free(&mut ir, &mut bounds, "this/A");
+
+        let plan = build_plan(&ir, &bounds, universe.len(), false);
+        assert_eq!(names(&ir, plan.relparts()), vec!["this/A"]);
+
+        // And the partition is the one the reference-bounded relations alone
+        // give: both atoms stay interchangeable.
+        let mut without = Bounds::new(universe.clone());
+        let mut only_real = Ir::default();
+        let _ = free(&mut only_real, &mut without, "this/A");
+        assert_eq!(
+            plan.classes(),
+            build_plan(&only_real, &without, universe.len(), false).classes()
+        );
+    }
+
+    /// The exclusion is **field**-scoped, not `$`-scoped: a metamodel *sig*
+    /// relation (`this/A$`) is a real Kodkod relation on the reference side, so
+    /// it keeps refining the partition and keeps its `relparts` slot.
+    #[test]
+    fn meta_sig_relations_are_still_reference_bounded() {
+        let universe = Universe::new(vec!["A$0".to_owned(), "A$1".to_owned()]);
+        let mut ir = Ir::default();
+        let mut bounds = Bounds::new(universe.clone());
+        let _ = free(&mut ir, &mut bounds, "this/A$");
+        let plan = build_plan(&ir, &bounds, universe.len(), false);
+        assert_eq!(names(&ir, plan.relparts()), vec!["this/A$"]);
     }
 }

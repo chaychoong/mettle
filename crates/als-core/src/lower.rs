@@ -3688,6 +3688,7 @@ impl<'a> Lowerer<'a> {
             arity,
             span,
             mutability: Mutability::Static,
+            is_meta_field: false,
         });
         let lower = TupleSet::empty(arity);
         self.skolem_bounds.push((rel, RelBound::new(lower, upper)));

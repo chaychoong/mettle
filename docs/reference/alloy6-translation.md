@@ -3883,14 +3883,85 @@ pairs (A0,A1),(A1,A2): the mirror filter leaves exactly `v_{A0}→v_{A1}` and
 instances (jar-verified count 3; SB-0 raw count 7). The contract reproduces
 the pinned probe exactly.
 
+### 16.3.1 Which relations `bounds.relations()` actually holds — defined fields (mt-134, 2026-08-26)
+
+Both §16.2 and §16.3 range over `bounds.relations()`, and that set is *not* one
+relation per sig plus one per field. `BoundsComputer` binds a **defined field of
+a `one` sig** to a plain Kodkod `Expression` and allocates no relation for it
+(`BoundsComputer.java:426-431`):
+
+```java
+if (isOne && f.decl().expr.mult() == ExprUnary.Op.EXACTLYOF) {
+    Expression sim = sim(f.decl().expr);
+    if (sim != null) { sol.addField(f, sol.a2k(s).product(sim)); continue; }
+}
+```
+
+`sim` (`:297-335`) accepts only a "simple combination of relations": NOOP /
+EXACTLYOF unwrapping, `->`/`+`/`.` binaries, `none`, `Int`, a `Sig`, or a
+`Field`; anything else returns null and the field falls through to a real
+bounded relation. A field that takes the defined path is absent from
+`bounds.relations()`, so it **never refines the partition and never joins
+`relParts`**.
+
+On Alloy 6.2.0 the fields that reach this path in practice are exactly the
+`$` **metamodel** fields. `CompModule.resolveMeta` builds every one of them with
+`addDefinedField` on an `Attr.ONE` meta sig (`:2170` `value` for a sig, `:2185`
+`value` for a field, `:2191` `fields`, `:2206` `parent`, `:2228` `subfields`),
+and each bound is a `Sig`, a `Field`, a `+`-chain of meta sigs, or
+`ExprConstant.EMPTYNESS` — all `sim`-able. A *user* `f = e` field of a `one` sig
+whose RHS is `sim`-able crashes the reference before it can be solved:
+`BoundsComputer.java:455-461` runs `sol.addSymbolicBound(f)` for every field of
+every **non-meta** sig, and `A4Solution.addSymbolicBound` (`:2075`) throws
+`UnsupportedOperationException` when the field maps to a non-`Relation`
+expression (measured: `sig A{} sig B{} one sig C { g = A + B } run {...}` →
+`ErrorFatal … UnsupportedOperationException`, jar 6.2.0). Inside a sig body a
+field reference resolves through `this`, so the common `g = f` shape is not
+`sim`-able and takes the ordinary bounded path.
+
+**Measured on `hc-atd/hc7.als` cmd 0 (`run show for 3`), SB 20**, via a
+classpath-shadowed `SymmetryBreaker` printing the partition, `relParts`, and
+every accepted lex bit. The jar's `relParts` is exactly nine entries:
+
+```
+arity 1: this/End, this/Joint, this/var$
+arity 2: this/Vertex.left, this/Vertex.right
+arity 3: this/Vertex.carryL, this/Vertex.carryR, this/Vertex.momentL, this/Vertex.momentR
+```
+
+with no `X$.value` / `X$.fields` / `X$.parent` / `X$.subfields` anywhere, and
+its post-`breakMatrixSymmetries` symmetries hold one non-singleton class,
+`{Vertex$0, Vertex$1, Vertex$2}`. Each pair fills 23 bits before the cap check
+at a relation boundary stops it (`End` 1, `Joint` 1, `var$` 1, `left` 4,
+`right` 4, `carryL` 6, `carryR` 6 — 17 < 20 when `carryR` starts, so it runs
+whole and `momentL`/`momentR` never do).
+
+**mettle's departure and the fix.** mettle keeps a placeholder relation for each
+metamodel field — it is what `Sig$.value` and friends denote, pinned by the
+defined-field fact the lowerer emits (mt-107) — so before mt-134 its `relParts`
+carried 40 extra entries. Fifteen of them (`X$.fields`/`X$.parent`/`X$.subfields`,
+upper = the whole universe) sort ahead of `this/End` at arity 1 and touch every
+class, so the 20-entry cap was exhausted on unconstrained placeholders and
+`Joint`, `left`, `right`, `carryL`, `carryR` never contributed a bit: SB-20 count
+128 against the jar's 64, one unbroken `Vertex` swap. `als_core::ir::Relation`
+now carries `is_meta_field`, and `als_core::encode::symmetry` filters on it in
+both `detect_partition` and `rel_parts`, restoring the nine-entry order above.
+
+Dropping those tuplesets from §16.2 is refinement-neutral as well as faithful: a
+field's upper bound is a union of products of its columns' sig atom sets, every
+sig atom set is itself a union of classes of the partition the remaining
+relations induce, and a union of class-products never splits a class.
+
 ### 16.4 What mettle mirrors where (mt-048)
 
 - `SolveOptions::symmetry: u32`, **default 20** (drop-in = the jar's default);
   `0` disables (the ADR-0002 counting regime, unchanged as the yardstick).
 - **`expect == 1` ⇒ effective symmetry 0**, applied wherever a command's
   verdict/count is produced for jar comparison (exec CLI, gauge both stages).
-- Detection input = every non-skolem relation bound in the command's bounds
-  (skolems excluded — detection is pre-skolemization, §16.1.2), plus an
+- Detection input = every non-skolem, **reference-bounded** relation bound in the
+  command's bounds (skolems excluded — detection is pre-skolemization, §16.1.2;
+  `$`-metamodel field placeholders excluded — the reference has no relation for
+  them at all, §16.3.1), plus an
   unconditional singleton per **int atom** and per **string atom** (the jar's
   per-int exact bounds and per-string `s2k` singletons, which its solve path
   never clears — §16.1.1). No mention-gating anywhere.

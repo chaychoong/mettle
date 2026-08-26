@@ -369,6 +369,7 @@ impl<'a> BoundsBuilder<'a> {
             span,
             // Builtins are never `var`-declared (alloy6-temporal.md §(d)).
             mutability: Mutability::Static,
+            is_meta_field: false,
         });
         self.bounds
             .bind(rel, RelBound::exact(unary_tupleset(atoms)));
@@ -572,6 +573,12 @@ impl<'a> BoundsBuilder<'a> {
                 Mutability::Static
             };
             let rel = self.alloc_named(&name, stored_arity, field.span, mutability);
+            // A `$`-metamodel field has no reference bounds relation at all —
+            // `BoundsComputer` inlines it as an expression
+            // (`BoundsComputer.java:426-431`). mettle still needs a relation to
+            // denote it, so the placeholder is marked instead of skipped; see
+            // [`crate::ir::Relation::is_meta_field`] (mt-134).
+            self.ir.relations[rel].is_meta_field = field.meta_def.is_some();
             self.bounds
                 .bind(rel, RelBound::new(TupleSet::empty(stored_arity), upper));
             self.field_rel.insert(fid, rel);
@@ -1142,6 +1149,7 @@ impl<'a> BoundsBuilder<'a> {
                 // A string literal's singleton is an exact constant — rigid
                 // across every state (alloy6-temporal.md §(d), probe T-13).
                 mutability: Mutability::Static,
+                is_meta_field: false,
             });
             let mut singleton = TupleSet::empty(1);
             singleton.insert(Tuple::new(vec![atom]));
@@ -1175,6 +1183,9 @@ impl<'a> BoundsBuilder<'a> {
             arity,
             span,
             mutability,
+            // Sig-backed and ordering relations are all reference-bounded; the
+            // one exception is a metamodel field, marked by [`Self::alloc_fields`].
+            is_meta_field: false,
         })
     }
 

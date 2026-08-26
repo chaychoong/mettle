@@ -372,6 +372,7 @@ fn register_globals(
                 // One exact singleton per atom: atoms are rigid, so an atom
                 // binding never varies between states (ADR-0015 decision 1).
                 mutability: Mutability::Static,
+                is_meta_field: false,
             });
             let expr = ir.rel_exprs.alloc(RelExpr {
                 kind: RelExprKind::Relation(rel),

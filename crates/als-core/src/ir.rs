@@ -101,6 +101,19 @@ pub struct Relation {
     /// Static/variable partition (ADR-0015 decision 1). Set at every allocation
     /// site from the resolved `var` flags; see [`Mutability`].
     pub mutability: Mutability,
+    /// A `$`-metamodel field relation (mt-107), for which the **reference has
+    /// no bounds relation at all**: `BoundsComputer` binds a defined field of a
+    /// `one` sig to a plain expression instead of allocating a Kodkod relation
+    /// (`BoundsComputer.java:426-431`), and every metamodel field is exactly
+    /// that (`CompModule.resolveMeta` builds them with `addDefinedField` on
+    /// `Attr.ONE` sigs, `:2170`/`:2185`/`:2191`/`:2206`/`:2228`).
+    ///
+    /// mettle keeps a relation here — it is what `Sig$.value` and friends
+    /// denote, pinned by the defined-field fact the lowerer emits — so the flag
+    /// is what lets the parts of the pipeline that model *the reference's*
+    /// bounds skip it. Symmetry breaking is one such part, and the only one:
+    /// see [`crate::encode::symmetry`] (translation-ref §16.2/§16.3, mt-134).
+    pub is_meta_field: bool,
 }
 
 impl Relation {
@@ -503,12 +516,14 @@ mod tests {
             arity: 1,
             span: span(),
             mutability: Mutability::Static,
+            is_meta_field: false,
         });
         let next = ir.relations.alloc(Relation {
             name: "this/Node.next".to_owned(),
             arity: 2,
             span: span(),
             mutability: Mutability::Static,
+            is_meta_field: false,
         });
         let n = ir.vars.alloc(Var {
             name: "n".to_owned(),

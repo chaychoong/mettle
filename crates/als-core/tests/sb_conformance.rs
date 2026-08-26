@@ -252,3 +252,37 @@ fn root_module_this_prefix_fixes_relation_order() {
         "mt055-wetdry SB=20 = 1652"
     );
 }
+
+/// mt-134 (translation-ref §16.3.1): the `$` metamodel's field relations must
+/// stay out of both the partition and `relParts`. `BoundsComputer` binds a
+/// defined field of a `one` sig to a plain expression and allocates no Kodkod
+/// relation for it (`BoundsComputer.java:426-431`), and every metamodel field is
+/// built exactly that way (`CompModule.resolveMeta`, `:2170`-`:2228`), so the
+/// jar's `relParts` here is just three entries — `this/A`, `this/var$`,
+/// `this/A.f`. mettle keeps a placeholder relation per metamodel field (mt-107,
+/// it is what `A$.subfields` denotes), and before the fix all 33 of them joined
+/// `relParts`: the 21 `lib/L*$.{fields,parent,subfields}` placeholders have the
+/// whole universe as their upper bound, touch every class, and sort ahead of
+/// `this/A`, so they exhausted the 20-entry cap on their own and neither
+/// `this/A` nor `this/A.f` ever contributed a bit — the SBP came out vacuous
+/// (SB=20 counted the raw 566).
+///
+/// This probe mirrors `hc-atd/hc7.als`'s shape — a metamodel reference in the
+/// goal plus enough opened-module sigs to bind the cap — at a scale small enough
+/// to enumerate directly. The real `hc7.als[0]` divergence (128 vs the jar's 64
+/// at SB=20) is covered by the solve-gauge's cached SB-20 count baseline.
+/// Jar-pinned counts (probe files: `scratchpad/probe/mt134/meta/{lib,root}.als`):
+/// **151** at SB=20, **566** at SB=0.
+#[test]
+fn metamodel_field_placeholders_stay_out_of_relparts() {
+    let lib = "module lib\none sig L1, L2, L3, L4, L5, L6, L7 {}\n";
+    let root = "open lib\n\
+                sig A { f: set A }\n\
+                run { some A and some A$.subfields } for 3\n";
+    assert_eq!(count_at_multi(lib, root, 20), 151, "mt134 meta SB=20 = 151");
+    assert_eq!(
+        count_at_multi(lib, root, 0),
+        566,
+        "mt134 meta SB=0 = 566 (raw)"
+    );
+}

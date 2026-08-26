@@ -154,6 +154,7 @@ pub fn unroll(ir: &mut Ir, bounds: &Bounds, k: usize) -> UnrolledBounds {
                             // `var` declaration (STYLE G2).
                             span: template.span,
                             mutability: Mutability::Variable,
+                            is_meta_field: template.is_meta_field,
                         });
                         // Atoms are rigid: only the value varies between
                         // states, so every copy keeps the original's bound.
@@ -319,6 +320,7 @@ mod tests {
             arity: 1,
             span: span(),
             mutability,
+            is_meta_field: false,
         })
     }
 
