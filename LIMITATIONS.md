@@ -96,7 +96,17 @@ are in [docs/reference/alloy6-translation.md](docs/reference/alloy6-translation.
   across polarity is a reference defect — but it is a divergence. It arrived with
   mt-056, which made a formula-valued `let` lazy on purpose to stop minting
   skolems the jar refuses, so closing it means a translation cache rather than a
-  revert. Four probe cells, zero corpus incidence.
+  revert. Four probe cells, zero corpus incidence. The design is decided
+  ([ADR-0029](docs/adr/0029-polarity-blind-translation-cache.md), LEDGER-017,
+  2026-08-26): translation classes over the per-use lowered copies, first-visit
+  polarity wins in encoder and evaluator alike; a follow-up 8-cell wave
+  (`scratchpad/probe/mt137/`) pinned the boundary — only zero-parameter pred
+  calls and `let` bindings share, skolemization severs sharing. Implementation
+  in flight under mt-137; two corners stay deliberately open afterward: the
+  temporal path keeps per-use translation (the jar's temporal cache lineage is
+  unprobed, zero incidence), and first-visit order can differ from the jar on
+  shapes where its short-circuit constant folding visits conjuncts in a
+  different order (zero incidence; every probe cell matches).
 - **Three nearby corners, kept as unverified.** A cast nested inside a `Card` or
   `sum` operand contributes no comparison-level guard flag (the jar merges those
   conditions transitively; this comes from reading the source and no probe has confirmed it). A cast in a quantifier
