@@ -109,7 +109,10 @@ impl<L: ModuleLoader> Builder<'_, L> {
         // addSeq), so mettle materializes them here where the graph is built, so
         // the stdlib funcs resolve through the normal search order (§3.2/§4.5).
         let mut opens = self.files.file(file).ast_ref().opens.clone();
-        opens.extend(synthetic_opens(self.files.file(file).ast_ref()));
+        let user_opens_len = opens.len();
+        let (synthetic, synthetic_integer_idx) = synthetic_opens(self.files.file(file).ast_ref());
+        let synthetic_integer_idx = synthetic_integer_idx.map(|i| user_opens_len + i);
+        opens.extend(synthetic);
         let parent_name = self.modules[module].module_name.clone();
         let parent_path = self.files.file(file).path.clone();
         let parent_params = self.modules[module].params.clone();
@@ -123,7 +126,7 @@ impl<L: ModuleLoader> Builder<'_, L> {
         }
 
         // Phase 2 + 3: aliases, then dedup / duplicate-alias reject.
-        let aliases = compute_aliases(&opens);
+        let aliases = compute_aliases(&opens, synthetic_integer_idx);
         let edges = build_edges(&opens, &targets, &aliases, &parent_params)?;
         self.modules[module].opens = edges;
         Ok(())
@@ -303,10 +306,19 @@ fn build_edges(
 /// Computes each `open`'s alias (resolution-doc §2.4): explicit `as`, the
 /// no-arg plain-filename auto-alias, else the `open$N` placeholder rewritten to
 /// the target basename when that basename is a free legal identifier.
-fn compute_aliases(opens: &[Open]) -> Vec<String> {
+///
+/// `synthetic_integer_idx` is the index within `opens` of the synthetic
+/// `util/integer` auto-open (from `synthetic_opens`), or `None` for the
+/// `util/integer` module itself. See the `open$N` counter comment below for
+/// why it needs special handling here.
+fn compute_aliases(opens: &[Open], synthetic_integer_idx: Option<usize>) -> Vec<String> {
     let mut aliases: Vec<Option<String>> = vec![None; opens.len()];
 
     // Pass 1: fixed aliases (explicit `as` and the plain-filename auto-alias).
+    // The synthetic `util/integer` open is given an explicit `as` by
+    // `synthetic_opens` (mirroring `util/sequniv as seq`), so it already
+    // resolves here like any other aliased open — no special case needed in
+    // this pass.
     for (i, open) in opens.iter().enumerate() {
         let path = join_segments(&open.module);
         if let Some(name) = &open.alias {
@@ -317,8 +329,37 @@ fn compute_aliases(opens: &[Open]) -> Vec<String> {
     }
 
     // Pass 2: placeholders → basename if the basename is free, else `open$N`.
+    //
+    // `CompModule.addOpen` (CompModule.java:1325) computes `"open$" + (1 +
+    // opens.size())` at the point each open is inserted into the module's
+    // own per-instance `opens` map, so the k-th (1-based) open placed there
+    // gets `open$(k+1)`. `opens.size()` starts at 1, not 0:
+    // `CompParser.alloy_parseStream` (decompiled from the pinned jar; ~line
+    // 2662-2663 per its own embedded LineNumberTable) auto-opens
+    // `util/integer` into every module except itself, with the fixed alias
+    // `"integer"`, *before* the file's own tokens are parsed — so it always
+    // occupies counter slot 1, ahead of every user- and enum-triggered open,
+    // regardless of where in `ast.opens`/`synthetic_opens`'s *array* mettle
+    // happens to place its own synthesized copy of that open (mt-133
+    // einstein gate: `synthetic_opens` puts `util/integer` before the
+    // enum-derived opens but after the file's own explicit opens, which
+    // does not match the jar's "always first" placement whenever both an
+    // explicit open and an enum are present — using the raw array index
+    // there mis-numbered every enum-derived open by one). `counter` below
+    // is therefore the 1-based position of this open among opens *other
+    // than* the synthetic `util/integer` one, in array order (which does
+    // match the jar's true source order for every other open, since a
+    // module's own `open` declarations must all precede any paragraph,
+    // enum declarations included) — `open$(counter + 1)` is the jar's
+    // `open$(k+1)` for that k. Live-probe-confirmed (mt-133) — see
+    // scratchpad/probe/mt133/NOTES.md.
     let mut used: BTreeSet<String> = aliases.iter().flatten().cloned().collect();
+    let mut counter = 0usize;
     for (i, open) in opens.iter().enumerate() {
+        if Some(i) == synthetic_integer_idx {
+            continue;
+        }
+        counter += 1;
         if aliases[i].is_some() {
             continue;
         }
@@ -332,7 +373,7 @@ fn compute_aliases(opens: &[Open]) -> Vec<String> {
             used.insert(basename.clone());
             aliases[i] = Some(basename);
         } else {
-            aliases[i] = Some(format!("open${i}"));
+            aliases[i] = Some(format!("open${}", counter + 1));
         }
     }
 
@@ -435,13 +476,20 @@ fn collect_dollar_segments(ast: &Ast, out: &mut BTreeSet<String>) {
 
 /// The opens the reference synthesizes at parse time but which never appear in
 /// the AST's `open` list (resolution-doc §3.2, §4.5):
+/// - `util/integer`, auto-opened into every module (see below);
 /// - each `enum N {…}` → `open util/ordering[N]` (auto-aliased `ordering`);
 /// - any use of the `seq` field keyword → `open util/sequniv as seq`.
 ///
 /// Materializing them here (rather than in the parser) keeps mt-011's AST a
 /// faithful mirror of source and confines the desugaring to the graph layer
 /// that owns module instantiation.
-fn synthetic_opens(ast: &Ast) -> Vec<Open> {
+///
+/// Returns the synthesized opens plus the index, within the returned `Vec`,
+/// of the `util/integer` auto-open (`None` when this file *is*
+/// `util/integer`, so nothing was synthesized for it) — mt-133 needs this so
+/// `compute_aliases` can special-case its counter slot (see the comment at
+/// its push site below).
+fn synthetic_opens(ast: &Ast) -> (Vec<Open>, Option<usize>) {
     use als_syntax::ast::{Ident, Para};
 
     let mut out = Vec::new();
@@ -449,23 +497,49 @@ fn synthetic_opens(ast: &Ast) -> Vec<Open> {
     // Alloy auto-opens `util/integer` into every module, so its arithmetic
     // funcs (`plus`, `add`, `gte`, …) are globally available without an explicit
     // `open` (jar-verified 2026-07-16: a model using `plus`/`add` with no open
-    // resolves). Skip `util/integer` itself to avoid a self-cycle; a module that
-    // opens it explicitly simply dedups (same file/args/alias).
+    // resolves). Skip `util/integer` itself to avoid a self-cycle.
+    //
+    // Mechanism, pinned by mt-133 (scratchpad/probe/mt133/NOTES.md):
+    // `CompParser.alloy_parseStream` calls this module's own `addOpen` with
+    // the fixed alias `"integer"` before parsing the file's own tokens — an
+    // ordinary `addOpen` call, just with an explicit alias, exactly like the
+    // `util/sequniv as seq` open below. So this entry always keeps `integer`
+    // in the jar (it never enters the `open$N` placeholder/rescue
+    // competition at all) and always occupies the *first* counter slot,
+    // before any user- or enum-triggered open. Giving it `alias:
+    // Some("integer")` here (rather than `None`) mirrors that exactly: it
+    // resolves through `compute_aliases`'s existing explicit-alias branch,
+    // so a module that also writes an explicit, unaliased `open
+    // util/integer` can never win the `integer` name away from it (their
+    // keys differ, matching the jar's non-dedup). `compute_aliases` also
+    // excludes this specific entry from the counter it uses to number
+    // `open$N` placeholders for every *other* open, since — unlike this
+    // entry — those others sit at whatever array position `ast.opens` plus
+    // the enum loop below puts them at, which does not always match the
+    // jar's "`util/integer` is always first" placement (mt-133 einstein
+    // gate: 5 enum-derived opens after this one in the array need numbers
+    // as if `util/integer` were still first).
     let self_name = ast
         .header
         .as_ref()
         .map(|h| join_segments(&h.name))
         .unwrap_or_default();
-    if self_name != "util/integer" {
+    let synthetic_integer_idx = if self_name == "util/integer" {
+        None
+    } else {
         let span = synthetic_span();
         out.push(Open {
             module: qual(&["util", "integer"], span),
             args: Vec::new(),
-            alias: None,
+            alias: Some(Ident {
+                text: "integer".to_owned(),
+                span,
+            }),
             is_private: false,
             span,
         });
-    }
+        Some(0)
+    };
     for &para_id in &ast.paragraphs {
         if let Para::Enum(e) = &ast.paras[para_id] {
             // `open util/ordering[N]` — target and arg are synthetic names
@@ -495,7 +569,7 @@ fn synthetic_opens(ast: &Ast) -> Vec<Open> {
             span,
         });
     }
-    out
+    (out, synthetic_integer_idx)
 }
 
 /// Builds a [`QualName`] from string segments at a single span.
