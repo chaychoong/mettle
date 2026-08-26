@@ -234,17 +234,12 @@ test.
 exactly, and the jar's own reader accepted every file it was given (30 of 30:
 mt-071's 18, plus 12 more at mt-132). On a model whose instance is determinate,
 the whole document is byte-identical to the jar's, escaping and lazy ID
-numbering included. Four things still differ. None affects a reader. The schema
+numbering included. Three things still differ (the `m<i>` index divergence
+inside `util/ordering` closed 2026-08-26 with the mt-132 follow-up's stdlib
+declaration reorder). None affects a reader. The schema
 is in
 [docs/reference/alloy6-instance-xml.md](docs/reference/alloy6-instance-xml.md).
 
-- **`m<i>` index assignment inside an embedded stdlib module.** The set of macro
-  skolems, and which module each one belongs to, match the jar exactly. Within a
-  module both engines number in declaration order, so a model whose funcs are
-  all its own agrees index for index. The one place they differ is
-  `util/ordering`, because mettle's embedded copy declares `first, next, prev,
-  last` and the jar's declares `first, last, prev, next`. Closing it means
-  reordering mettle's own stdlib text.
 - **`<source>` entries.** mettle writes the model path as given on the command
   line; the jar always resolves it to an absolute path. Given an absolute path
   mettle writes the same bytes. mettle also names its embedded modules

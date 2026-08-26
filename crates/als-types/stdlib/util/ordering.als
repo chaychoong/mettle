@@ -18,15 +18,21 @@ private one sig Ord {
     pred/totalOrder[elem, First, Next]
 }
 
+// Declaration order `first, last, prev, next` is load-bearing: the XML
+// writer's `m<i>` fun-skolem indices number reachable zero-arg funs in
+// declaration order per module, and the jar's util/ordering declares in
+// this order (mt-132 probe `Macros.als`, jar `m2 first m3 last m4 prev
+// m5 next`). Forward references between funs are legal, so bodies may
+// mention `next` before its declaration.
 fun first: one elem { Ord.First }
-fun next: elem -> elem { Ord.Next }
+fun last: one elem { elem - next.elem }
 // `~next` is ambiguous: `util/integer` is auto-opened into every module and
 // also exports a 0-ary `next(): Int -> Int`; under transpose there is no join
 // context to filter it out by type, so a bare `next` here has two live
 // candidates. `this/next` scopes the lookup to this module's own
 // declarations only (resolution-doc §2.4/§4.4), which is unambiguous.
 fun prev: elem -> elem { ~this/next }
-fun last: one elem { elem - next.elem }
+fun next: elem -> elem { Ord.Next }
 
 fun prevs [e: elem]: set elem { e.^prev }
 fun nexts [e: elem]: set elem { e.^next }

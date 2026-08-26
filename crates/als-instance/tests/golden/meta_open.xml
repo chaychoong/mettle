@@ -152,10 +152,9 @@
    <types> <type ID="4"/> </types>
 </skolem>
 
-<skolem label="$ao/next" ID="m1">
-   <tuple> <atom label="A$0"/> <atom label="A$1"/> </tuple>
-   <tuple> <atom label="A$1"/> <atom label="A$2"/> </tuple>
-   <types> <type ID="4"/> <type ID="4"/> </types>
+<skolem label="$ao/last" ID="m1">
+   <tuple> <atom label="A$2"/> </tuple>
+   <types> <type ID="4"/> </types>
 </skolem>
 
 <skolem label="$ao/prev" ID="m2">
@@ -164,9 +163,10 @@
    <types> <type ID="4"/> <type ID="4"/> </types>
 </skolem>
 
-<skolem label="$ao/last" ID="m3">
-   <tuple> <atom label="A$2"/> </tuple>
-   <types> <type ID="4"/> </types>
+<skolem label="$ao/next" ID="m3">
+   <tuple> <atom label="A$0"/> <atom label="A$1"/> </tuple>
+   <tuple> <atom label="A$1"/> <atom label="A$2"/> </tuple>
+   <types> <type ID="4"/> <type ID="4"/> </types>
 </skolem>
 
 </instance>

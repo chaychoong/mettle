@@ -49,10 +49,9 @@
    <types> <type ID="5"/> </types>
 </skolem>
 
-<skolem label="$ordering/next" ID="m1">
-   <tuple> <atom label="Red$0"/> <atom label="Green$0"/> </tuple>
-   <tuple> <atom label="Green$0"/> <atom label="Blue$0"/> </tuple>
-   <types> <type ID="5"/> <type ID="5"/> </types>
+<skolem label="$ordering/last" ID="m1">
+   <tuple> <atom label="Blue$0"/> </tuple>
+   <types> <type ID="5"/> </types>
 </skolem>
 
 <skolem label="$ordering/prev" ID="m2">
@@ -61,9 +60,10 @@
    <types> <type ID="5"/> <type ID="5"/> </types>
 </skolem>
 
-<skolem label="$ordering/last" ID="m3">
-   <tuple> <atom label="Blue$0"/> </tuple>
-   <types> <type ID="5"/> </types>
+<skolem label="$ordering/next" ID="m3">
+   <tuple> <atom label="Red$0"/> <atom label="Green$0"/> </tuple>
+   <tuple> <atom label="Green$0"/> <atom label="Blue$0"/> </tuple>
+   <types> <type ID="5"/> <type ID="5"/> </types>
 </skolem>
 
 </instance>
