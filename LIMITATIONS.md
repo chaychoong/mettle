@@ -62,21 +62,27 @@ same way, verified on all 137 probe cells with a byte-identical corpus sweep.
 The `toInt` cardinality-discard family closed at mt-127 (2026-08-25): reading a
 `#` or `int[·]` over a bare `Int[·]` cast now follows the jar's rule about which
 positions call `cint` and which call `cset`, pinned on 164 probe cells. That
-also closed mt-095's k10/k12 and i13. Measurements are in
-[docs/reference/alloy6-translation.md](docs/reference/alloy6-translation.md)
-§10.7e through §10.7k, `scratchpad/probe/mt129/NOTES.md` and
-`scratchpad/probe/mt127/NOTES.md`.
+also closed mt-095's k10/k12 and i13. The if-then-else dispatch family closed at
+mt-128 (2026-08-26): the two entries this list used to carry, an `int[·]` and a
+`let` in a then branch, turned out to be one question asked twice, and merging
+mettle's two answers to it also closed five cells nobody had filed. Measurements
+are in [docs/reference/alloy6-translation.md](docs/reference/alloy6-translation.md)
+§10.7e through §10.7l, `scratchpad/probe/mt129/NOTES.md`,
+`scratchpad/probe/mt127/NOTES.md` and `scratchpad/probe/mt128/NOTES.md`.
 
-- **An `int[·]` in an if-then-else branch (mt-128).** Alloy's resolver re-wraps a
-  surface `int[e]` as `Int[int[e]]`, which makes the branch a set, and it does
-  not re-wrap `#e` in the same position. Both carry Alloy type `{Int}`, so the
-  type system does not tell them apart. mettle carries no marker for the re-wrap.
-  The fix threads the resolver's marker through to the sort decision.
-- **A `let` binding an integer value is read as relational (mt-128).** The sort
-  of an if-then-else is read off the then branch before lowering descends into
-  it, so a `let` binder in that branch is not yet in scope and its name reads as
-  relational. The fix threads a substitution environment through the sort
-  decision, the shape the jar's own `visit(ExprLet)` uses.
+- **A formula translated at one polarity is reused at the other (mt-128).** The
+  jar memoises a translated formula on the node and its free-variable bindings
+  but not on polarity, so wherever one syntax tree node is reached at both
+  polarities, every use gets the overflow guard minted at the first visit. A
+  `let` and a `pred` both do that: `let p = (#Node < 0) | p or (not p)` and
+  `pred P { #Node < 0 } … P or (not P)` are jar-SAT at `exactly 8 Node` because
+  the guard never flips, where mettle translates each use at its own polarity and
+  gets UNSAT. mettle's behaviour is the more defensible one — excluded-middle
+  failing under `noOverflow` is deliberate Alloy semantics, and reusing a guard
+  across polarity is a reference defect — but it is a divergence. It arrived with
+  mt-056, which made a formula-valued `let` lazy on purpose to stop minting
+  skolems the jar refuses, so closing it means a translation cache rather than a
+  revert. Four probe cells, zero corpus incidence.
 - **Three nearby corners, kept as unverified.** A cast nested inside a `Card` or
   `sum` operand contributes no comparison-level guard flag (the jar merges those
   conditions transitively; this comes from reading the source and no probe has confirmed it). A cast in a quantifier
