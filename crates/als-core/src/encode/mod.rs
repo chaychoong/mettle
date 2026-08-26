@@ -129,6 +129,20 @@ enum ExtKey {
 /// in `RelId` × tuple order (deterministic, STYLE D2).
 pub(crate) type PrimaryMap = BTreeMap<(RelId, Tuple), Var>;
 
+/// What [`Encoder::finish_goal`] hands back: the top-level circuit and the
+/// finished CNF, plus which of two questions the circuit answers.
+pub(crate) struct EncodedGoal {
+    /// The circuit the driver asserts.
+    pub(crate) goal: Bool,
+    pub(crate) cnf: Cnf,
+    /// The goal folded to constant TRUE on the static path, so [`Self::goal`] is
+    /// the **residual** — "differ from the trivial instance" — and not the goal
+    /// (translation-ref §16.5, mt-136). The trivial instance itself is a
+    /// solution the driver must produce without asking the solver, and a
+    /// residual that folds to `false` means it is the *only* one.
+    pub(crate) trivially_sat: bool,
+}
+
 /// The relational-to-SAT encoder for one command.
 ///
 /// Borrows the lowered [`Ir`], the [`Bounds`], and the primary-variable map; owns
@@ -403,17 +417,41 @@ impl<'a> Encoder<'a> {
     /// **Symmetry breaking (translation-ref §16.1).** When `sbp` is `Some` (a
     /// non-zero [`crate::SolveOptions::symmetry`]) and the goal circuit did **not**
     /// fold to a constant, the lex-leader predicate is generated and conjoined with
-    /// the goal (§16.1.5: the jar skips the SBP entirely on a trivial circuit,
-    /// returning the constant before conjoining). The SBP adds only Tseitin
+    /// the goal (§16.1.5: the reference's *first* translation returns the constant
+    /// before conjoining, so `sbp` is spent nowhere else). The SBP adds only Tseitin
     /// auxiliaries, so the primary-variable set is unchanged.
+    ///
+    /// **A constant-TRUE circuit is not the end of the story** (§16.5, mt-136).
+    /// The reference has a dedicated enumerator for it
+    /// (`ExtendedSolver.SolutionIterator.nextTrivialSolution`, `:212-260`): it
+    /// answers with the trivial instance and then re-translates the *residual*
+    /// problem — "differ from that instance" — from scratch, complete with a fresh
+    /// partition and a real SBP over it. So the "skip the SBP on a trivial
+    /// circuit" rule is about the first translation only; the enumeration that
+    /// follows is quotiented after all. [`Encoder::trivial_residual`] builds that
+    /// residual, and [`EncodedGoal::trivially_sat`] tells the driver the returned
+    /// [`Bool`] is it rather than the goal.
     pub(crate) fn finish_goal(
         mut self,
         goal: FormulaId,
         sbp: Option<&symmetry::SbpPlan>,
         symmetry: u32,
-    ) -> Result<(Bool, Cnf), TranslateError> {
+    ) -> Result<EncodedGoal, TranslateError> {
         let span = self.ir.formulas[goal].span;
         let g = self.formula(goal)?;
+        // The residual path is static-only: the reference's temporal pipeline
+        // never reaches `nextTrivialSolution`, and mettle's trace enumerator
+        // blocks over the lasso selector as well as the primaries, so grafting
+        // the trivial-first shape on would be a behavior change with no oracle
+        // behind it. `lasso` is `Some` exactly on a temporal encode.
+        if g == Bool::TRUE && self.lasso.is_none() {
+            let residual = self.trivial_residual(symmetry, span)?;
+            return Ok(EncodedGoal {
+                goal: residual,
+                cnf: self.cnf,
+                trivially_sat: true,
+            });
+        }
         // §16.1.5: a goal that folded to a constant TRUE/FALSE gets no SBP.
         let g = match (g, sbp) {
             (Bool::Lit(_), Some(plan)) if !plan.is_trivial() && symmetry > 0 => {
@@ -422,7 +460,70 @@ impl<'a> Encoder<'a> {
             }
             _ => g,
         };
-        Ok((g, self.cnf))
+        Ok(EncodedGoal {
+            goal: g,
+            cnf: self.cnf,
+            trivially_sat: false,
+        })
+    }
+
+    /// The **residual** circuit of a trivially-true goal (translation-ref §16.5,
+    /// `ExtendedSolver.java:224-257`): "this assignment differs from the trivial
+    /// instance", quotiented by a fresh lex-leader predicate.
+    ///
+    /// The reference builds the residual formula as a disjunction over the free
+    /// relations — `r.some()` when `r`'s lower is empty, `r != <lower>` otherwise.
+    /// Both say the same thing in mettle's encoding, where a relation's lower
+    /// tuples are fixed and only the upper−lower tuples carry primary variables:
+    /// `r` differs from its lower exactly when one of its primary variables is
+    /// true. So the whole disjunction collapses to the OR of every free primary
+    /// variable, and "no free relations" — the reference's `changes.isEmpty()` —
+    /// falls out as the empty OR, [`Bool::FALSE`]: the trivial instance is the
+    /// only one.
+    ///
+    /// The SBP is generated over [`symmetry::build_trivial_plan`], **not** the
+    /// plan the goal's own translation used: the residual is a fresh translation
+    /// over narrower bounds and detects its own, coarser partition.
+    fn trivial_residual(
+        &mut self,
+        symmetry: u32,
+        span: als_syntax::Span,
+    ) -> Result<Bool, TranslateError> {
+        let exclusion = self.excludes_trivial_instance();
+        if symmetry == 0 || exclusion == Bool::FALSE {
+            return Ok(exclusion);
+        }
+        let (ir, bounds) = (self.ir, self.bounds);
+        let plan = symmetry::build_trivial_plan(ir, bounds);
+        if plan.is_trivial() {
+            return Ok(exclusion);
+        }
+        let s = self.generate_sbp(&plan, symmetry, span)?;
+        Ok(self.circ().and(exclusion, s))
+    }
+
+    /// The OR of every free primary variable of a **reference-bounded** relation
+    /// (see [`symmetry::is_reference_bounded`]) — the residual formula's whole
+    /// content, per [`Encoder::trivial_residual`]. Iterates in the bounds' `RelId`
+    /// order and each bound's ascending tuple order, i.e. exactly the order the
+    /// primaries were minted in (STYLE D1).
+    fn excludes_trivial_instance(&mut self) -> Bool {
+        let (ir, bounds, prim) = (self.ir, self.bounds, self.prim);
+        let mut free: Vec<Bool> = Vec::new();
+        for (rel, bound) in bounds.iter() {
+            if !symmetry::is_reference_bounded(ir, rel) {
+                continue;
+            }
+            for t in bound.upper().iter() {
+                if bound.lower().contains(t) {
+                    continue;
+                }
+                if let Some(&var) = prim.get(&(rel, t.clone())) {
+                    free.push(Bool::var(var));
+                }
+            }
+        }
+        self.circ().or_many(free)
     }
 
     /// Generates the lex-leader symmetry-breaking predicate for `plan`

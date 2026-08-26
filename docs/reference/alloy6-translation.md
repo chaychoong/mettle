@@ -3940,6 +3940,10 @@ cached in `scratchpad/src794/`; `SymmetryDetector.java`, `SymmetryBreaker.java`,
 5. **SBP generation.** After FOL→Bool translation, `generateSBP(interpreter,
    options)` is conjoined with the goal circuit — **unless the circuit folded
    to a constant** (trivial TRUE/FALSE returns before the SBP is conjoined).
+   **CORRECTION (mt-136, 2026-08-26): "trivial ⇒ no SBP" is true only of this
+   first translation.** Enumerating past a trivially-SAT translation re-enters
+   the symmetry machinery through a second, fresh translation with reduced
+   bounds and a *coarser* partition — see §16.5, which pins that path.
 6. **`expect 1` forces SB=0** (§3, A4Solution) — applies at the command
    boundary, not inside Kodkod.
 
@@ -4105,8 +4109,78 @@ relations induce, and a union of class-products never splits a class.
   unconditional singleton per **int atom** and per **string atom** (the jar's
   per-int exact bounds and per-string `s2k` singletons, which its solve path
   never clears — §16.1.1). No mention-gating anywhere.
-- SBP participates in the encode-effort budget like any other gates; the SBP
-  is skipped when the goal circuit folds to a constant (§16.1.5).
+- SBP participates in the encode-effort budget like any other gates; on a goal
+  circuit that folds to a constant, the first translation carries no SBP
+  (§16.1.5) but enumeration re-enters the machinery through the residual
+  problem (§16.5).
 - SB-20 count parity is checked by a dedicated gauge mode (both sides at
   symmetry 20, live jar); the SB-0 counting net and its ADR-0002 authority are
   untouched.
+
+### 16.5 Enumeration past a trivially-SAT translation (mt-136, 2026-08-26)
+
+When the whole goal circuit folds to constant **TRUE**, the first translation
+returns trivially satisfiable and §16.1.5 applies: no CNF, no SBP. What the
+reference does *next* was unpinned until mt-136, and it is where two SB-20
+count divergences (probe cells c5/c7 below) came from. Source:
+`ExtendedSolver.SolutionIterator.nextTrivialSolution`
+(`scratchpad/src794/ExtendedSolver.java:212-260`, fetched at `794226dd` from
+`org.alloytools.pardinus.core`); call-stack and partition dumps in
+`scratchpad/probe/mt136/` (mt-134 shadow-class methodology).
+
+The pinned contract:
+
+1. **The first instance is the trivial one**: every free relation (`lower !=
+   upper`) at its **lower bound**. In mettle's encoding that is the all-false
+   assignment of the free primary variables (lower tuples are fixed
+   constants).
+2. **A residual problem replaces the translation**: formula = `OR` over the
+   free relations of "`r` differs from its lower" — `r.some()` when the lower
+   is empty, else `r != r_1` where `r_1` is a **fresh exact relation bound to
+   the lower** (`boundExactly`). With no free relations the residual is
+   `FALSE` and the enumeration ends at count 1.
+3. **The residual is translated from scratch** (`Translator.translate` on the
+   new formula): the non-incremental retention keeps only the mentioned
+   relations — the free ones plus the `r_1` constants — and `usesInts` is
+   false (the exclusion formula has no int expressions), so **the int bounds
+   are cleared**. The fresh `SymmetryDetector.partition` therefore sees *only*
+   the free relations' lowers/uppers (the `r_1` exacts duplicate the lowers):
+   no per-int/per-string singletons, no refinement from any relation the
+   first pass pinned exact. Atoms that a pinned `util/ordering` chain (§16.3
+   route, or `breakTotalOrder`'s aggressive rebind) had made distinguishable
+   **re-fuse into one class**, and every unmentioned atom joins one big
+   residual class. `generateSBP` then runs normally over this coarser
+   partition — `relParts` = the free relations (the `r_1` exacts never join;
+   free skolem relations do, as ordinary relations of the fresh bounds).
+4. **Counting**: total = 1 + the SBP-quotiented count of assignments differing
+   from the trivial instance, enumerated with ordinary primary-variable
+   blocking clauses. The trivial instance is a fixed point of every residual
+   symmetry (its lowers refine the residual partition), so it can never be
+   another orbit's representative: no double- or under-count.
+
+**The c5 surprise this pins** (`cells/c5_subset.als`: `open util/ordering[S]`,
+`sig A in S`, `run {} for exactly 3 S`): the residual partition knows nothing
+of the pinned order, so the SBP quotients the subset sig `A` by the full
+symmetric group over `S`'s atoms — counting subsets **by size only** (jar 4 =
+∅/1/2/3), even though the pinned order makes `S$0` and `S$1` semantically
+distinguishable and SB-0 honestly enumerates all 8 subsets. The reference
+conflates order-distinguishable instances here; drop-in means matching it,
+and SB-0 (the ADR-0002 counting authority) is unaffected. The same mechanism
+with no ordering at all is `cells/c11_vacuous_no_ordering.als` (jar 8/4) —
+the path is *not* ordering-specific; any trivially-TRUE circuit with free
+relations takes it.
+
+**What mettle mirrors (static path only):** `build_trivial_plan` in
+`encode/symmetry.rs` (residual partition per item 3), the exclusion clause =
+`OR` of all free reference-bounded primaries, trivial-instance-first
+enumeration in `solve.rs`. The temporal driver is deliberately untouched —
+its enumeration semantics are the LEDGER-014/P-076 probe set, and no probed
+temporal cell reaches a trivially-TRUE whole-circuit fold. Jar-pinned counts:
+`crates/als-core/tests/trivial_enum_conformance.rs` (11 cells, sym0+sym20).
+
+The mt-136 probe wave also **confirmed LEDGER-004's pinning eligibility on
+every cell**, including the adversarial c10 (`for 3 S, 3 A` — a non-exact
+child whose scope numerically fills its parent): 48/48/8/8, jar and mettle
+agreeing at both symmetry settings. The bead's filed suspicion (an
+eligibility gap between `breakTotalOrder` and mettle's leaf-or-enum gate) is
+REFUTED; the divergences were this section's enumeration path all along.

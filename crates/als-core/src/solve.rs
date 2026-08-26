@@ -26,7 +26,7 @@ use als_solve::{block, Assignment, Backend, Cnf, LiveSolver, Outcome, Var};
 
 use crate::bounds::{Bounds, Tuple, TupleSet, Universe};
 use crate::bounds_builder::BoundsResult;
-use crate::encode::{Bool, Encoder, PrimaryMap};
+use crate::encode::{Bool, EncodedGoal, Encoder, PrimaryMap};
 use crate::error::TranslateError;
 #[cfg(debug_assertions)]
 use crate::eval::self_check;
@@ -231,6 +231,13 @@ pub(crate) struct Translated {
     pub(crate) layout: Vec<RelDecode>,
     pub(crate) universe: Universe,
     pub(crate) trivially_unsat: bool,
+    /// The goal folded to constant TRUE on the static path (translation-ref
+    /// §16.5, mt-136), so [`Self::cnf`] encodes the **residual** problem —
+    /// "differ from the trivial instance" — rather than the goal. Every consumer
+    /// of the CNF owes the trivial instance ([`trivial_instance`]) one answer
+    /// before it: a residual `UNSAT` here means "no *further* instance", never
+    /// "no instance", and `trivially_unsat` is then about the residual too.
+    pub(crate) trivially_sat: bool,
     /// The augmented bounds the encoder used (base bounds + skolem bounds), so the
     /// self-check evaluator shares the encoder's exact relation bounds for the
     /// (C) constant-escape predicate (translation-ref §10.7c ext, mt-051).
@@ -338,7 +345,11 @@ pub(crate) fn translate(
         bounds.seq_int_sig,
         lasso.as_ref(),
     );
-    let (goal_bool, mut cnf) = encoder.finish_goal(goal.goal, sbp_plan.as_ref(), opts.symmetry)?;
+    let EncodedGoal {
+        goal: goal_bool,
+        mut cnf,
+        trivially_sat,
+    } = encoder.finish_goal(goal.goal, sbp_plan.as_ref(), opts.symmetry)?;
 
     let mut trivially_unsat = false;
     match goal_bool {
@@ -353,6 +364,7 @@ pub(crate) fn translate(
         layout,
         universe: bounds.bounds.universe.clone(),
         trivially_unsat,
+        trivially_sat,
         bounds: aug_bounds,
         lasso,
     })
@@ -572,6 +584,27 @@ pub(crate) fn decode(layout: &[RelDecode], universe: &Universe, assign: &Assignm
     }
 }
 
+/// The **trivial instance** of a trivially-satisfied goal (translation-ref
+/// §16.5): every relation at its lower bound, which is what the reference
+/// answers first when a goal's circuit folds to constant TRUE
+/// (`ExtendedSolver.java:218`, `:243`).
+///
+/// Decoded through [`decode`] like any solved model, from the all-false
+/// assignment — mettle fixes a relation's lower tuples and gives a primary
+/// variable only to the upper−lower ones, so "all primaries false" *is* "every
+/// relation at its lower bound". Sized from the layout rather than the CNF: the
+/// decode reads exactly the layout's variables, and the CNF has been moved into
+/// the solver by the time callers want this.
+pub(crate) fn trivial_instance(layout: &[RelDecode], universe: &Universe) -> Instance {
+    let vars = layout
+        .iter()
+        .flat_map(|rd| rd.floating.iter())
+        .map(|(_, var)| var.index() + 1)
+        .max()
+        .unwrap_or(0);
+    decode(layout, universe, &Assignment::new(vec![false; vars]))
+}
+
 /// Solves one lowered command, returning its first verdict (translation-ref §4).
 ///
 /// # Errors
@@ -588,6 +621,14 @@ pub fn solve_goal(
     opts: &SolveOptions,
 ) -> Result<SolveVerdict, TranslateError> {
     let t = translate(ir, scoped, goal, bounds, None, *opts)?;
+    // Checked before `trivially_unsat`, which under `trivially_sat` is about the
+    // residual: a goal every assignment satisfies is SAT, and the witness the
+    // reference shows for it is the trivial instance (translation-ref §16.5).
+    if t.trivially_sat {
+        let inst = trivial_instance(&t.layout, &t.universe);
+        debug_self_check(ir, scoped, goal, &inst, *opts, &t.bounds);
+        return Ok(SolveVerdict::Sat(inst));
+    }
     if t.trivially_unsat {
         return Ok(SolveVerdict::Unsat);
     }
@@ -610,6 +651,12 @@ pub fn solve_goal(
 /// instance and blocks its primary-variable projection; the sequence ends at the
 /// first `Unsat`. Blocking over primary variables (never Tseitin auxiliaries)
 /// makes the count the **raw / SB-0** model count (ADR-0002 counting net).
+///
+/// A goal whose circuit folds to constant TRUE takes the reference's
+/// trivial-solution shape instead (translation-ref §16.5, mt-136): the first
+/// instance is the trivial one — every relation at its lower bound, produced
+/// without a solver call — and the CNF the solve/block loop then runs on is the
+/// *residual*, which already excludes it.
 ///
 /// Enumeration is **exact by contract** and ignores
 /// [`SolveOptions::conflict_budget`] (the per-solve verdict budget): a
@@ -643,6 +690,12 @@ pub struct InstanceEnumerator<'a> {
     layout: Vec<RelDecode>,
     universe: Universe,
     done: bool,
+    /// The goal folded to constant TRUE, so the first instance is the trivial
+    /// one and the CNF is the residual (translation-ref §16.5, mt-136). Cleared
+    /// as soon as that instance is yielded; the solve/block loop takes over from
+    /// there. No blocking clause is owed for it — the residual already excludes
+    /// it, which is the whole point of the reference's re-translation.
+    pending_trivial: bool,
     // Self-check inputs (ADR-0011 decision 5): every enumerated SAT instance is
     // re-evaluated against the full goal (debug builds).
     ir: &'a Ir,
@@ -679,6 +732,19 @@ impl Iterator for InstanceEnumerator<'_> {
     fn next(&mut self) -> Option<Instance> {
         if self.done {
             return None;
+        }
+        if self.pending_trivial {
+            self.pending_trivial = false;
+            let inst = trivial_instance(&self.layout, &self.universe);
+            debug_self_check(
+                self.ir,
+                self.scoped,
+                self.goal,
+                &inst,
+                self.opts,
+                &self.bounds,
+            );
+            return Some(inst);
         }
         let outcome = if let Some(remaining) = self.budget_remaining {
             // Effort = conflicts + decisions + propagation clause-visits. The
@@ -782,7 +848,10 @@ pub fn enumerate<'a>(
     let t = translate(ir, scoped, goal, bounds, None, *opts)?;
     // A trivially-UNSAT goal (the encoded `Bool` folded to constant-false) gets an
     // empty clause, so the solver reports UNSAT on the first `next()` and the
-    // enumerator terminates cleanly with no instances.
+    // enumerator terminates cleanly with no instances. Under `trivially_sat` the
+    // same shape says "no instance *beyond* the trivial one" — the trivial
+    // instance is yielded first regardless, so the sequence has length one
+    // (translation-ref §16.5, the reference's `changes.isEmpty()` case).
     let mut cnf = t.cnf;
     if t.trivially_unsat {
         cnf.add_clause(vec![]);
@@ -794,6 +863,7 @@ pub fn enumerate<'a>(
         layout: t.layout,
         universe: t.universe,
         done: false,
+        pending_trivial: t.trivially_sat,
         ir,
         scoped,
         goal,

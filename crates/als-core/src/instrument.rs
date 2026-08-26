@@ -282,8 +282,21 @@ pub fn certify_goal(
     // Ordered before the file write on purpose: a goal that folded to `false`
     // has no CNF worth checking, and writing an empty-clause DIMACS plus a
     // zero-length proof would dress an encode-time truth up as a checked one.
-    if t.trivially_unsat {
+    if t.trivially_unsat && !t.trivially_sat {
         return Ok(CertifyOutcome::TriviallyUnsat);
+    }
+    // A goal every assignment satisfies is SAT at encode time, and the CNF
+    // `translate` produced for it is the *residual* — the question of a
+    // **second** instance (translation-ref §16.5). Certifying that would attach
+    // a proof to a formula this row's verdict never came from.
+    if t.trivially_sat {
+        return Ok(CertifyOutcome::Sat(CertifyMeasurements {
+            num_vars: t.cnf.num_vars(),
+            num_clauses: t.cnf.clauses().len(),
+            conflicts_used: 0,
+            encode_ms,
+            solve_ms: 0,
+        }));
     }
 
     write_dimacs_file(&t.cnf, cnf_path).map_err(|source| CertifyError::CnfWrite {
@@ -350,6 +363,16 @@ fn decide(t: &Translated, cx: Decide<'_>) -> InstrumentOutcome {
         solve_ms: 0,
         self_check_fail: None,
     };
+    // As in `certify_goal`: a trivially-satisfied goal answers SAT from its own
+    // trivial instance, and the CNF here is the residual (translation-ref §16.5).
+    if t.trivially_sat {
+        out.verdict = InstrumentVerdict::Sat;
+        let inst = crate::solve::trivial_instance(&t.layout, &t.universe);
+        out.self_check_fail = crate::eval::self_check(ir, scoped, goal, &inst, opts, &t.bounds)
+            .err()
+            .map(|f| f.to_string());
+        return out;
+    }
     if t.trivially_unsat {
         return out;
     }

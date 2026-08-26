@@ -12,8 +12,12 @@
 //! 2. [`Encoder::generate_sbp`](super::Encoder::generate_sbp) turns that plan into
 //!    a single [`Bool`] — the conjunction of lex-leq circuits over every adjacent
 //!    atom pair of every class (§16.3) — conjoined with the goal circuit by
-//!    [`super::Encoder::finish_goal`] (unless the goal folded to a constant,
-//!    §16.1.5).
+//!    [`super::Encoder::finish_goal`].
+//!
+//! A goal whose circuit folds to constant TRUE gets a **second** plan instead:
+//! [`build_trivial_plan`], the partition of the reference's *residual*
+//! translation (§16.5, mt-136). See its docs for why that partition is coarser
+//! than [`build_plan`]'s.
 //!
 //! **Determinism (STYLE D1/D2).** The partition is computed by an exact-signature
 //! grouping (see [`build_plan`]) that is a pure function of the bounds; classes
@@ -119,6 +123,39 @@ pub(crate) fn build_plan(ir: &Ir, bounds: &Bounds, int_start: usize, temporal: b
     SbpPlan { classes, relparts }
 }
 
+/// Computes the [`SbpPlan`] the reference uses to enumerate a **trivially true**
+/// goal — the plan of its *residual* translation (translation-ref §16.5,
+/// `ExtendedSolver.java:212-260`, mt-136).
+///
+/// When the goal circuit folds to constant TRUE every assignment within bounds
+/// satisfies it, so plain iteration would return one instance forever. The
+/// reference instead answers with the trivial instance (every relation at its
+/// lower bound) and then re-translates, **from scratch**, the question "which
+/// assignment differs from that one": a disjunction over the free relations of
+/// `r.some()` (empty lower) or `r != <exact constant = lower>`. That fresh
+/// translation keeps only the relations its formula mentions — the free ones,
+/// plus the exact constants holding their lowers — and clears the int bounds, so
+/// the partition it detects is **strictly coarser** than [`build_plan`]'s:
+///
+/// - no unconditional per-int / per-string singletons (§16.1.1's tuplesets are
+///   not in these bounds at all),
+/// - no exact relation refines anything, so a pinned `util/ordering` `Next`
+///   chain no longer splits its sig's atoms into singletons,
+/// - skolems participate like any other relation (the residual bounds hold no
+///   `isSkolem` marks to skip on — the temporal exclusion in [`rel_parts`] is
+///   the *other* path's rule).
+///
+/// The exact constants are bound to the free relations' own lowers, which
+/// [`trivial_partition`] already feeds, so re-feeding them would be
+/// refinement-neutral; they are simply not modelled. `relparts` needs no
+/// residual variant either: [`rel_parts`] already selects exactly the free
+/// reference-bounded relations, in the same `(arity, name)` order.
+pub(crate) fn build_trivial_plan(ir: &Ir, bounds: &Bounds) -> SbpPlan {
+    let classes = trivial_partition(ir, bounds, bounds.universe.len());
+    let relparts = rel_parts(ir, bounds, false);
+    SbpPlan { classes, relparts }
+}
+
 /// Whether a relation is a **skolem** (name begins with `$`) — user identifiers
 /// cannot start with `$`, so this is unambiguous (translation-ref §16.1/§16.3).
 fn is_skolem(ir: &Ir, rel: RelId) -> bool {
@@ -142,7 +179,7 @@ fn is_skolem(ir: &Ir, rel: RelId) -> bool {
 /// sig atom sets ([`crate::bounds_builder`]'s `field_upper`), every sig atom set
 /// is itself a union of classes of the partition the remaining relations induce,
 /// and a union of class-products never splits a class.
-fn is_reference_bounded(ir: &Ir, rel: RelId) -> bool {
+pub(crate) fn is_reference_bounded(ir: &Ir, rel: RelId) -> bool {
     !ir.relations[rel].is_meta_field
 }
 
@@ -239,6 +276,35 @@ fn detect_partition(
         }
     }
 
+    partition_by_signature(&tuplesets, usize_n)
+}
+
+/// The partition of the reference's **residual** translation (see
+/// [`build_trivial_plan`]): the same grouping over a strictly smaller input set —
+/// only the free reference-bounded relations' own bounds, with no int/string
+/// singletons and no exact relation in sight.
+fn trivial_partition(ir: &Ir, bounds: &Bounds, usize_n: usize) -> Vec<Vec<AtomId>> {
+    let mut tuplesets: Vec<Vec<&Tuple>> = Vec::new();
+    for (rel, bound) in bounds.iter() {
+        let (lower, upper) = (bound.lower(), bound.upper());
+        if lower.len() == upper.len() || !is_reference_bounded(ir, rel) {
+            continue;
+        }
+        // A free relation's upper strictly contains its lower, so only the
+        // lower can be the empty tupleset the jar's non-emptiness check drops.
+        if !lower.is_empty() {
+            tuplesets.push(lower.iter().collect());
+        }
+        tuplesets.push(upper.iter().collect());
+    }
+    partition_by_signature(&tuplesets, usize_n)
+}
+
+/// Groups `[0, usize_n)`'s atoms into the coarsest partition `tuplesets` admits —
+/// the shared core of [`detect_partition`] and [`trivial_partition`], which
+/// differ only in which tuplesets they feed it (see [`detect_partition`] for the
+/// correctness argument).
+fn partition_by_signature(tuplesets: &[Vec<&Tuple>], usize_n: usize) -> Vec<Vec<AtomId>> {
     // Signature of each atom: map (tupleset ordinal, column) → set of continuation
     // tuples (the other columns, in order). Two atoms are in the same class iff
     // their whole signature maps are equal.
@@ -342,8 +408,14 @@ mod tests {
         set
     }
 
-    /// Allocates `name` with a free unary bound (so it contributes SBP bits).
-    fn free(ir: &mut Ir, bounds: &mut Bounds, name: &str) -> RelId {
+    /// Allocates `name` with the given unary bounds.
+    fn bound(
+        ir: &mut Ir,
+        bounds: &mut Bounds,
+        name: &str,
+        lower: &[usize],
+        upper: &[usize],
+    ) -> RelId {
         let rel = ir.relations.alloc(Relation {
             name: name.to_owned(),
             arity: 1,
@@ -351,8 +423,21 @@ mod tests {
             mutability: Mutability::Static,
             is_meta_field: false,
         });
-        bounds.bind(rel, RelBound::new(TupleSet::empty(1), unary(&[0, 1])));
+        bounds.bind(rel, RelBound::new(unary(lower), unary(upper)));
         rel
+    }
+
+    /// Allocates `name` with a free unary bound (so it contributes SBP bits).
+    fn free(ir: &mut Ir, bounds: &mut Bounds, name: &str) -> RelId {
+        bound(ir, bounds, name, &[], &[0, 1])
+    }
+
+    /// The classes as plain atom indices, for readable assertions.
+    fn class_indices(plan: &SbpPlan) -> Vec<Vec<usize>> {
+        plan.classes()
+            .iter()
+            .map(|c| c.iter().map(|a| a.index()).collect())
+            .collect()
     }
 
     /// Same, but marked as a `$`-metamodel field placeholder — a relation the
@@ -479,6 +564,82 @@ mod tests {
         assert_eq!(
             plan.classes(),
             build_plan(&only_real, &without, universe.len(), false).classes()
+        );
+    }
+
+    /// The residual partition refines on the **free** relations only
+    /// (translation-ref §16.5, mt-136): the reference's re-translation keeps
+    /// only the relations its "differ from the trivial instance" formula
+    /// mentions, so an exact relation — a pinned `util/ordering` chain, in the
+    /// cells that motivated this — no longer splits the atoms it names. Here
+    /// `this/P` pins `A$0`, which the goal's own plan sees and the residual's
+    /// does not.
+    #[test]
+    fn the_residual_partition_ignores_exact_relations() {
+        let universe = Universe::new(vec!["A$0".to_owned(), "A$1".to_owned(), "A$2".to_owned()]);
+        let mut ir = Ir::default();
+        let mut bounds = Bounds::new(universe.clone());
+        let _ = bound(&mut ir, &mut bounds, "this/P", &[0], &[0]);
+        let _ = bound(&mut ir, &mut bounds, "this/A", &[], &[0, 1, 2]);
+
+        let goal_plan = build_plan(&ir, &bounds, universe.len(), false);
+        assert_eq!(class_indices(&goal_plan), vec![vec![0], vec![1, 2]]);
+
+        let residual = build_trivial_plan(&ir, &bounds);
+        assert_eq!(class_indices(&residual), vec![vec![0, 1, 2]]);
+        assert_eq!(
+            names(&ir, residual.relparts()),
+            vec!["this/A"],
+            "an exact relation contributes no SBP bits either way"
+        );
+    }
+
+    /// Skolems **refine** the residual partition, unlike the goal's own
+    /// (`detect_partition` skips them there). The reference's residual bounds
+    /// are freshly built and carry no skolem marks to skip on: `$x` is an
+    /// ordinary free relation in that translation.
+    #[test]
+    fn skolems_refine_the_residual_partition() {
+        let universe = Universe::new(vec!["A$0".to_owned(), "A$1".to_owned()]);
+        let mut ir = Ir::default();
+        let mut bounds = Bounds::new(universe.clone());
+        let _ = bound(&mut ir, &mut bounds, "$x", &[], &[0]);
+
+        assert_eq!(
+            class_indices(&build_plan(&ir, &bounds, universe.len(), false)),
+            vec![vec![0, 1]],
+            "the goal's own partition skips skolem bounds"
+        );
+        assert_eq!(
+            class_indices(&build_trivial_plan(&ir, &bounds)),
+            vec![vec![0], vec![1]]
+        );
+    }
+
+    /// Atoms no free relation mentions fuse into one class — including the int
+    /// run, which [`build_plan`] splits into unconditional singletons (§16.1.1)
+    /// and the residual translation does not see at all (its bounds carry no
+    /// ints). This is the other half of why the residual partition is coarser.
+    #[test]
+    fn unmentioned_atoms_fuse_in_the_residual_partition() {
+        let universe = Universe::new(
+            ["A$0", "A$1", "0", "1"]
+                .iter()
+                .map(|&s| s.to_owned())
+                .collect(),
+        );
+        let mut ir = Ir::default();
+        let mut bounds = Bounds::new(universe.clone());
+        let _ = bound(&mut ir, &mut bounds, "this/A", &[], &[0, 1]);
+
+        // `int_start = 2`: the two trailing atoms are the int run.
+        assert_eq!(
+            class_indices(&build_plan(&ir, &bounds, 2, false)),
+            vec![vec![0, 1], vec![2], vec![3]]
+        );
+        assert_eq!(
+            class_indices(&build_trivial_plan(&ir, &bounds)),
+            vec![vec![0, 1], vec![2, 3]]
         );
     }
 
