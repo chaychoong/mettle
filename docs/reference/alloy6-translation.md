@@ -4063,6 +4063,22 @@ expression (measured: `sig A{} sig B{} one sig C { g = A + B } run {...}` →
 field reference resolves through `this`, so the common `g = f` shape is not
 `sim`-able and takes the ordinary bounded path.
 
+**mt-135 probe wave (2026-08-26, 9 cells, `scratchpad/probe/mt135/`)** mapped
+the crash gate exactly: `one` sig ∧ `=`-declared field ∧ `sim`-able RHS.
+`univ` **is** `sim`-able (`Sig.UNIV` is a `Sig`, the generic branch takes it),
+so `g = univ` joins the `UnsupportedOperationException` family with `+` and
+`->` combinations; a **bare sig** RHS (`g = A`) crashes differently —
+`StackOverflowError` in `PardinusBounds$SymbolicStructures.transitiveDeps`,
+a self-recursive dependency walk. The crash is solve-time only (resolution
+completes, the `DEFINED` flag and all, on every cell), fires for `check` as
+for `run`, and fires whether or not the command mentions the field (bounds
+are computed for the whole reachable world). `g = none` never gets there: a
+resolve-time reject on both engines with the same message. A defined field on
+a non-`one` sig takes the ordinary bounded path and solves. mettle answers
+every crash cell; the divergence is deliberately kept (LIMITATIONS, mt-135) —
+the jar side is an uncaught crash, not a designed refusal, and no corpus
+model has the shape.
+
 **Measured on `hc-atd/hc7.als` cmd 0 (`run show for 3`), SB 20**, via a
 classpath-shadowed `SymmetryBreaker` printing the partition, `relParts`, and
 every accepted lex bit. The jar's `relParts` is exactly nine entries:

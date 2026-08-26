@@ -42,13 +42,27 @@ neither appears in any corpus.
   accepts it and then reports that it cannot run the command. A receiver-style
   call of a zero-argument predicate (`H.s.noDuplicates`) is a type error in the
   jar; mettle accepts it. Neither appears in either corpus. Open.
-- **A user-written defined field on a `one` sig can crash the jar; mettle
-  answers (mt-135).** When the field's bound is a simple combination of
-  relations (`one sig C { g = A + B }`), the jar's bounds computer inlines it
-  as an expression and then throws `UnsupportedOperationException` from
-  `addSymbolicBound`; binding directly to one sig (`g = A`) makes the jar
-  `StackOverflowError`. mettle solves both and answers. Measured on jar 6.2.0
-  at mt-134 (translation-ref §16.3.1); no corpus model has the shape. Open.
+- **A user-written defined field on a `one` sig crashes the jar; mettle
+  answers (mt-135, closed as a deliberate defer 2026-08-26).** The crash gate,
+  probe-mapped at mt-135 (9 cells, `scratchpad/probe/mt135/`): the owning sig
+  is `one`, the field is declared with `=`, and the bound is `sim`-able — a
+  sig, `univ`, or a `+`/`->` combination of them. A `sim`-able combination
+  (`g = A + B`, `g = A -> B`, `g = univ`) throws
+  `UnsupportedOperationException` from `A4Solution.addSymbolicBound`; a bare
+  sig (`g = A`) instead `StackOverflowError`s in
+  `PardinusBounds$SymbolicStructures.transitiveDeps`. The crash is solve-time
+  and unconditional per command — `check` vs `run` and whether the command
+  mentions the field are irrelevant — and reaches the jar user as a raw
+  uncaught-exception stack trace, not a diagnostic. Non-crashing neighbors:
+  `g = none` is a clean resolve-time reject on **both** sides with the same
+  message (no divergence); a defined field on a non-`one` sig, or one whose
+  bound references another field (`g = f`), solves fine on both sides. mettle
+  answers every crash-family cell. Deliberately NOT matched: the jar side is
+  an accidental crash, not a designed refusal, so this sits with the
+  correctChord FILE_TIMEOUT rows ("mettle answers, the jar produces no
+  verdict") rather than with the HO clean-diagnostic parity family. Zero
+  incidence in all three corpora (grep-verified at mt-135). Measured on jar
+  6.2.0 (translation-ref §16.3.1).
 
 ## Overflow guard corners
 
