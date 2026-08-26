@@ -42,6 +42,7 @@ use crate::ir::{
 };
 
 use crate::freevars::FreeVars;
+use crate::trans_class::TransClassId;
 use circuit::{Circuit, GateCache};
 use int::{IntBuilder, IntVal};
 use matrix::Matrix;
@@ -273,6 +274,22 @@ pub(crate) struct Encoder<'a> {
     /// Integer values carry their accumulated overflow flag (translation-ref
     /// §11.3): consumed at comparisons by the polarity guard, dropped at `Int[·]`.
     int_cache: BTreeMap<(IntExprId, EnvKey), (IntVal, Bool)>,
+    /// **Translation classes** (mt-137, ADR-0029): the goal's grouping of the
+    /// per-use copies the reference translated as ONE shared node. Empty on the
+    /// temporal path and on the overwhelming majority of static goals.
+    trans_classes: &'a BTreeMap<FormulaId, TransClassId>,
+    /// The class memo: one entry per `(class, free-var bindings)`, holding the
+    /// value the class's FIRST visit produced — at that visit's ambient polarity,
+    /// and returned verbatim at every later visit whatever ITS polarity is.
+    ///
+    /// That blindness is the point, not an oversight: the jar's `FOL2BoolCache`
+    /// keys on node identity plus the free-variable tuple and never consults
+    /// `Environment.negated`, so a shared node reached at the opposite polarity
+    /// gets the first visit's overflow guard direction verbatim (LEDGER-017).
+    /// The `EnvKey` half is [`Encoder::env_key`] over the node's own free
+    /// variables — every member of a validated class has the same ones —
+    /// reproducing the jar's per-tuple keying under quantifiers.
+    class_cache: BTreeMap<(TransClassId, EnvKey), Bool>,
 }
 
 impl<'a> Encoder<'a> {
@@ -296,6 +313,7 @@ impl<'a> Encoder<'a> {
         int_sig: Option<RelId>,
         seq_int_sig: Option<RelId>,
         lasso: Option<&'a crate::temporal::LassoSelector>,
+        trans_classes: &'a BTreeMap<FormulaId, TransClassId>,
     ) -> Self {
         let universe_len = bounds.universe.len();
         let int_end = int_start + if bitwidth >= 1 { 1usize << bitwidth } else { 0 };
@@ -329,6 +347,8 @@ impl<'a> Encoder<'a> {
             gates: GateCache::new(),
             base_rel_cache: BTreeMap::new(),
             base_const_cache: BTreeMap::new(),
+            trans_classes,
+            class_cache: BTreeMap::new(),
         }
     }
 
@@ -1112,8 +1132,23 @@ impl<'a> Encoder<'a> {
     // ------------------------------------------------------------- formulas
 
     /// Encodes a formula to a single boolean value.
+    ///
+    /// A node in a translation class ([`Encoder::class_cache`]) is served from
+    /// the class memo instead of the per-id one, so the whole class shares one
+    /// first visit — the jar's shared-node behaviour, including the polarity
+    /// blindness (mt-137, ADR-0029). Everything else keeps the per-id memo.
     fn formula(&mut self, id: FormulaId) -> Result<Bool, TranslateError> {
         let key = (id, self.env_key(self.freevars.formula(id)));
+        if let Some(&class) = self.trans_classes.get(&id) {
+            let class_key = (class, key.1);
+            if let Some(&b) = self.class_cache.get(&class_key) {
+                return Ok(b);
+            }
+            self.check_capacity(self.ir.formulas[id].span)?;
+            let b = self.formula_uncached(id)?;
+            self.class_cache.insert(class_key, b);
+            return Ok(b);
+        }
         if let Some(&b) = self.formula_cache.get(&key) {
             return Ok(b);
         }
@@ -1912,6 +1947,7 @@ mod tests {
             None,
             None,
             None,
+            &crate::trans_class::NO_CLASSES,
         )
     }
 

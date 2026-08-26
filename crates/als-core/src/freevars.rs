@@ -25,6 +25,7 @@ use crate::ir::{
 /// Sets are `BTreeSet<VarId>` (ordered — deterministic iteration). The analysis
 /// is total over the IR, including nodes the encoder later defers (temporal /
 /// arithmetic): computing their free vars is harmless and keeps the walk simple.
+#[derive(Debug)]
 pub(crate) struct FreeVars {
     formulas: Vec<BTreeSet<VarId>>,
     rel_exprs: Vec<BTreeSet<VarId>>,

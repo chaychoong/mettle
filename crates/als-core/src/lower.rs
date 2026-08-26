@@ -82,6 +82,7 @@ use crate::ir::{
     RelExprKind, RelId, RelUnOp, Relation, TemporalBinOp, TemporalUnOp, Var,
 };
 use crate::scope::ScopedUniverse;
+use crate::trans_class::TransClassId;
 
 /// The lowered command goal (mt-031) and its provenance-labeled top-level
 /// conjuncts (bookkeeping for mt-033's CNF encoder and for debugging).
@@ -116,6 +117,22 @@ pub struct LoweredGoal {
     /// them. `None` when the model uses no integers.
     pub int_sig: Option<RelId>,
     pub seq_int_sig: Option<RelId>,
+    /// **Translation classes** (mt-137, ADR-0029): the per-use copies the
+    /// reference would have translated as ONE shared Kodkod node, grouped so the
+    /// encoder and evaluator can reuse a class's first visit at every later reach
+    /// — polarity and all, which is the jar's polarity-blind `FOL2BoolCache`
+    /// (LEDGER-017).
+    ///
+    /// Minted at lowering (one class per formula-valued `let` binding instance,
+    /// one per zero-parameter pred callee across the whole goal) and filtered by
+    /// [`crate::trans_class::validate`], which drops a class whose copies are not
+    /// structurally identical — the mt-056 compatibility hinge, and the jar's
+    /// post-skolemization severing. Empty for the overwhelming majority of goals,
+    /// which is what keeps this inert everywhere it does not apply.
+    ///
+    /// **Static path only.** [`crate::temporal_lower`] re-mints per-state copies,
+    /// so it ships an empty table rather than one pointing at pre-elimination ids.
+    pub trans_classes: BTreeMap<FormulaId, TransClassId>,
 }
 
 /// One top-level conjunct of the goal, with where it came from.
@@ -189,6 +206,8 @@ pub fn lower_command(
         var_bound: BTreeMap::new(),
         bitwidth: scoped.bitwidth,
         strings_closed: true,
+        class_members: Vec::new(),
+        pred_classes: BTreeMap::new(),
     };
     lowerer.lower(command_index, TemporalPosture::Defer)
 }
@@ -231,6 +250,8 @@ pub fn lower_command_keeping_temporal(
         var_bound: BTreeMap::new(),
         bitwidth: scoped.bitwidth,
         strings_closed: true,
+        class_members: Vec::new(),
+        pred_classes: BTreeMap::new(),
     };
     lowerer.lower(command_index, TemporalPosture::Keep)
 }
@@ -384,6 +405,8 @@ fn lower_fragment_with<'a>(
         var_bound: BTreeMap::new(),
         bitwidth: input.bitwidth,
         strings_closed: false,
+        class_members: Vec::new(),
+        pred_classes: BTreeMap::new(),
     };
     let ctx = Ctx {
         module: input.module,
@@ -527,10 +550,19 @@ enum Binding {
     /// identically. `module` is kept purely as a tripwire: if a use ever arrives
     /// under a different module's context the lookup defers typed instead of
     /// reading `expr` against the wrong table.
+    ///
+    /// `class` is the [`TransClassId`] this binding *instance* mints (mt-137,
+    /// ADR-0029). The jar stores the RHS's single translated node in its env, so
+    /// every use reaches one node and its polarity-blind cache; mettle re-lowers
+    /// per use and instead records each use's root under this class, which the
+    /// encoder then treats as one node. One class per binding instance, not per
+    /// `let` in the source: a `let` inside a pred called twice binds twice, and
+    /// the jar's two `visit(ExprLet)` calls likewise store two distinct nodes.
     Formula {
         expr: ExprId,
         module: ModuleId,
         depth: usize,
+        class: TransClassId,
     },
     /// A callable (func/pred) passed to a higher-order macro by bare name (§3.7,
     /// mt-040): the parameter is invoked as `param[args]` in the body and inlined
@@ -707,6 +739,18 @@ struct Lowerer<'a> {
     /// them all), false for an evaluator fragment (mt-062), whose input may
     /// name a literal the solved command never referenced.
     strings_closed: bool,
+    /// Translation-class members (mt-137, ADR-0029), indexed by
+    /// [`TransClassId`]: the roots registered under each class, in registration
+    /// (lowering) order. Filtered into [`LoweredGoal::trans_classes`] by
+    /// [`crate::trans_class::validate`] once the walk is done — nothing consults
+    /// it during lowering, so minting a class can never change what is lowered.
+    class_members: Vec<Vec<FormulaId>>,
+    /// The class each **zero-parameter** pred callee shares across the whole
+    /// goal. The jar's `cacheForConstants` lives on the translator instance and
+    /// is keyed on the `Func` alone, so a call in a fact and a call in the
+    /// command body reach one node; a callee with any parameter is never cached
+    /// there (`f.count() > 0`, probes j2/j3) and so never appears here.
+    pred_classes: BTreeMap<FuncIdx, TransClassId>,
 }
 
 impl<'a> Lowerer<'a> {
@@ -820,6 +864,10 @@ impl<'a> Lowerer<'a> {
         }
 
         let goal = self.conjoin(conjuncts.iter().map(|c| c.formula).collect(), cmd.span);
+        // The translation classes are filtered only now, over the finished arena:
+        // validation is a structural comparison of the registered copies, and a
+        // copy is not final until its whole subtree has been lowered (mt-137).
+        let trans_classes = crate::trans_class::validate(self.ir, &self.class_members);
         Ok(LoweredGoal {
             goal,
             conjuncts,
@@ -827,7 +875,28 @@ impl<'a> Lowerer<'a> {
             has_higher_order_skolem: self.has_higher_order_skolem,
             int_sig: self.bounds.int_sig,
             seq_int_sig: self.bounds.seq_int_sig,
+            trans_classes,
         })
+    }
+
+    // ========================= translation classes =========================
+
+    /// Mints a fresh, empty translation class (mt-137, ADR-0029).
+    fn mint_class(&mut self) -> TransClassId {
+        let id = TransClassId::from_index(self.class_members.len());
+        self.class_members.push(Vec::new());
+        id
+    }
+
+    /// Records `root` as one of `class`'s member copies. Called at every use of a
+    /// formula-valued `let` and at every zero-parameter pred call — the two
+    /// formula-level places the reference reaches one already-translated node.
+    fn register_class(&mut self, class: TransClassId, root: FormulaId) {
+        let Some(slot) = self.class_members.get_mut(class.index()) else {
+            debug_assert!(false, "registering into an unminted translation class");
+            return;
+        };
+        slot.push(root);
     }
 
     /// The metamodel's recorded emptiness facts, in synthesis order
@@ -4070,6 +4139,25 @@ impl<'a> Lowerer<'a> {
         implicit_this: bool,
         span: Span,
     ) -> Result<FormulaId, TranslateError> {
+        // A ZERO-parameter callee is the jar's `cacheForConstants` case: the
+        // translator keeps one translated node per such `Func` and hands it to
+        // every call, so the calls form one translation class (mt-137,
+        // ADR-0029). `f.count() > 0` bypasses that cache outright — one
+        // parameter severs the sharing even with an identical argument at both
+        // calls (probes j2/j3) — so a parametered callee mints nothing. Minted
+        // BEFORE the body is walked, so the callee's class id precedes any class
+        // its own body mints, and the outer class wins the `validate` tie-break.
+        let class = if self.world.funcs[func].params.is_empty() {
+            Some(if let Some(&c) = self.pred_classes.get(&func) {
+                c
+            } else {
+                let c = self.mint_class();
+                self.pred_classes.insert(func, c);
+                c
+            })
+        } else {
+            None
+        };
         let (fmod, body, pushed) = self.bind_call_params(ctx, func, args, implicit_this, span)?;
         let fctx = self.ctx(fmod);
         let r = self.lower_formula(fctx, body);
@@ -4077,6 +4165,9 @@ impl<'a> Lowerer<'a> {
             self.binders.pop();
         }
         self.inline_stack.pop();
+        if let (Some(class), Ok(root)) = (class, &r) {
+            self.register_class(class, *root);
+        }
         r
     }
 
@@ -5056,11 +5147,14 @@ impl<'a> Lowerer<'a> {
             let is_formula = self.sort_of(ctx, b.value) == Sort::Formula
                 || self.name_bound_to_formula(ctx, b.value);
             let binding = if is_formula {
-                // Deliberately NOT lowered here — see [`Binding::Formula`].
+                // Deliberately NOT lowered here — see [`Binding::Formula`]. The
+                // class is minted here, once per binding instance, and every use
+                // registers the root it lowers into (mt-137, ADR-0029).
                 Binding::Formula {
                     expr: b.value,
                     module: ctx.module,
                     depth: self.binders.len(),
+                    class: self.mint_class(),
                 }
             } else {
                 let raw_sort = self.visit_sort(ctx, b.value);
@@ -5108,7 +5202,8 @@ impl<'a> Lowerer<'a> {
                     expr,
                     module,
                     depth,
-                } => Some((*expr, *module, *depth)),
+                    class,
+                } => Some((*expr, *module, *depth, *class)),
                 _ => None,
             });
         let Some(bound) = found else {
@@ -5117,7 +5212,7 @@ impl<'a> Lowerer<'a> {
                 span,
             });
         };
-        let Some((expr, module, depth)) = bound else {
+        let Some((expr, module, depth, class)) = bound else {
             return Err(TranslateError::LoweringUnsupported {
                 what: format!("non-formula binding `{name}` used in a formula position"),
                 span,
@@ -5137,6 +5232,11 @@ impl<'a> Lowerer<'a> {
         let tail = self.binders.split_off(depth);
         let lowered = self.lower_formula(ctx, expr);
         self.binders.extend(tail);
+        // The jar reaches ONE translated node here (the env holds it), so every
+        // use joins this binding's translation class (mt-137, ADR-0029).
+        if let Ok(root) = lowered {
+            self.register_class(class, root);
+        }
         lowered
     }
 

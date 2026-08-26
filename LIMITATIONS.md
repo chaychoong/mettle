@@ -84,29 +84,22 @@ are in [docs/reference/alloy6-translation.md](docs/reference/alloy6-translation.
 §10.7e through §10.7l, `scratchpad/probe/mt129/NOTES.md`,
 `scratchpad/probe/mt127/NOTES.md` and `scratchpad/probe/mt128/NOTES.md`.
 
-- **A formula translated at one polarity is reused at the other (mt-128).** The
-  jar memoises a translated formula on the node and its free-variable bindings
-  but not on polarity, so wherever one syntax tree node is reached at both
-  polarities, every use gets the overflow guard minted at the first visit. A
-  `let` and a `pred` both do that: `let p = (#Node < 0) | p or (not p)` and
-  `pred P { #Node < 0 } … P or (not P)` are jar-SAT at `exactly 8 Node` because
-  the guard never flips, where mettle translates each use at its own polarity and
-  gets UNSAT. mettle's behaviour is the more defensible one — excluded-middle
-  failing under `noOverflow` is deliberate Alloy semantics, and reusing a guard
-  across polarity is a reference defect — but it is a divergence. It arrived with
-  mt-056, which made a formula-valued `let` lazy on purpose to stop minting
-  skolems the jar refuses, so closing it means a translation cache rather than a
-  revert. Four probe cells, zero corpus incidence. The design is decided
-  ([ADR-0029](docs/adr/0029-polarity-blind-translation-cache.md), LEDGER-017,
-  2026-08-26): translation classes over the per-use lowered copies, first-visit
-  polarity wins in encoder and evaluator alike; a follow-up 8-cell wave
-  (`scratchpad/probe/mt137/`) pinned the boundary — only zero-parameter pred
-  calls and `let` bindings share, skolemization severs sharing. Implementation
-  in flight under mt-137; two corners stay deliberately open afterward: the
-  temporal path keeps per-use translation (the jar's temporal cache lineage is
-  unprobed, zero incidence), and first-visit order can differ from the jar on
-  shapes where its short-circuit constant folding visits conjuncts in a
-  different order (zero incidence; every probe cell matches).
+- **Polarity-blind translation reuse — CLOSED (mt-137, 2026-08-26), three
+  narrow corners disclosed.** The jar memoises a translated formula on node
+  identity and free-variable bindings but never polarity, so a formula-valued
+  `let`'s uses and a zero-parameter pred's calls all get the first visit's
+  overflow guard (`let p = (#Node < 0) | p or (not p)` and `P or (not P)` are
+  jar forbid-SAT at `exactly 8 Node`). mettle now reproduces this with
+  translation classes ([ADR-0029](docs/adr/0029-polarity-blind-translation-cache.md),
+  LEDGER-017): 19 probe cells at parity, encoder and evaluator alike, and the
+  self-check stays coherent. What stays deliberately open, all zero-incidence:
+  the **temporal path** keeps per-use translation (the jar's temporal cache
+  lineage is unprobed); **first-visit order** can differ from the jar on shapes
+  where its short-circuit constant folding visits conjuncts in a different
+  order (every probe cell matches); and a **REPL query** over such a shape
+  answers polarity-correctly where the jar's evaluator would reuse — fragments
+  carry no class table, so an evaluated `let p = … | p or (not p)` is honest
+  UNSAT-shaped at the prompt while the solved command above it matches the jar.
 - **Three nearby corners, kept as unverified.** A cast nested inside a `Card` or
   `sum` operand contributes no comparison-level guard flag (the jar merges those
   conditions transitively; this comes from reading the source and no probe has confirmed it). A cast in a quantifier

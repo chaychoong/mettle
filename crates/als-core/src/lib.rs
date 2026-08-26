@@ -24,6 +24,7 @@ pub mod temporal;
 pub mod temporal_enum;
 pub mod temporal_lower;
 pub mod temporal_solve;
+mod trans_class;
 
 // Re-exported because `SolveOptions::backend` is a public field of this type:
 // a caller that sets it (the CLI's `--solver`, the instrument) should not have to
@@ -61,3 +62,4 @@ pub use temporal_solve::{
     normalize_state, solve_temporal_command, TemporalSolveConfig, TemporalTrace, TemporalVerdict,
     TraceArtifacts,
 };
+pub use trans_class::TransClassId;

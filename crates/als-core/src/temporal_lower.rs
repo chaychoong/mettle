@@ -281,6 +281,12 @@ pub fn lower_temporal_command(
     Ok(LoweredGoal {
         goal,
         conjuncts,
+        // Translation classes are dropped explicitly, not left to go stale
+        // (mt-137, ADR-0029 decision 5): the elimination above re-mints every
+        // formula per state, so the input goal's class members name ids this
+        // goal no longer contains. Temporal × overflow × cross-polarity sharing
+        // is unprobed and out of scope; LIMITATIONS records it.
+        trans_classes: BTreeMap::new(),
         ..temporal
     })
 }

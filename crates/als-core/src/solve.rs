@@ -344,6 +344,15 @@ pub(crate) fn translate(
         bounds.int_sig,
         bounds.seq_int_sig,
         lasso.as_ref(),
+        // Translation classes are a STATIC-path artifact (mt-137, ADR-0029
+        // decision 5). `lower_temporal_command` already ships an empty table, so
+        // this is belt and braces: no temporal encode can consult a class,
+        // whichever goal it was handed.
+        if unrolled.is_none() {
+            &goal.trans_classes
+        } else {
+            &crate::trans_class::NO_CLASSES
+        },
     );
     let EncodedGoal {
         goal: goal_bool,

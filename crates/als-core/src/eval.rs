@@ -40,6 +40,7 @@ use als_syntax::ArenaId;
 
 use crate::bounds::{AtomId, Bounds, Tuple, TupleSet};
 use crate::error::TranslateError;
+use crate::freevars::FreeVars;
 use crate::ir::{
     FormulaId, FormulaKind, IntCmpOp, IntExprId, IntExprKind, Ir, MultTest, QuantKind, RelBinOp,
     RelCmpOp, RelConst, RelExprId, RelExprKind, RelId, RelUnOp, VarId,
@@ -47,6 +48,7 @@ use crate::ir::{
 use crate::lower::{LoweredGoal, Provenance};
 use crate::scope::ScopedUniverse;
 use crate::solve::{Instance, SolveOptions};
+use crate::trans_class::TransClassId;
 
 /// A concrete three-sorted evaluator over one solved [`Instance`].
 ///
@@ -100,7 +102,41 @@ pub struct Evaluator<'a> {
     /// [`Instance`] cannot carry it and the driver threads it here instead.
     /// `None` on every static path, where the atom cannot occur.
     loop_state: Option<usize>,
+    /// The goal's **translation classes** (mt-137, ADR-0029), when this
+    /// evaluator was pointed at a goal that has any. Empty otherwise, which is
+    /// what keeps the memo below inert on every other path.
+    trans_classes: BTreeMap<FormulaId, TransClassId>,
+    /// Per-node free-variable sets. `Some` exactly when the memos below are
+    /// armed ([`Self::with_trans_classes`]); they key on precisely the free
+    /// variables the encoder's own key uses, so the two agree on which visits
+    /// share an entry.
+    freevars: Option<FreeVars>,
+    /// First-visit-wins memo over `(class, free-var bindings)` — the evaluator's
+    /// twin of the encoder's class cache, and the reason a jar-matching
+    /// polarity-blind SAT instance still passes its own self-check.
+    ///
+    /// Cleared at the top of [`Self::accepts`]: the values are truths *about one
+    /// instance*, so they must never outlive the instance being checked (the
+    /// brute-force differential reuses one evaluator across instances).
+    class_memo: BTreeMap<(TransClassId, EnvKey), bool>,
+    /// First-visit-wins memo over `(node id, free-var bindings)` — the twin of
+    /// the encoder's [`crate::encode`] `formula_cache`, which has keyed on the
+    /// node and its free variables and NEVER on polarity since mt-049.
+    ///
+    /// Wherever lowering genuinely produces one formula node reached twice —
+    /// the formula-`if`/`then`/`else` desugaring `(c ∧ t) ∨ (¬c ∧ e)` is the
+    /// standing producer, since it lowers `c` once and negates that id — the
+    /// encoder therefore hands the second reach the first visit's guard, and an
+    /// unmemoised evaluator would judge the same node afresh at its own
+    /// polarity and reject the instance the solver just produced. This is what
+    /// makes the two agree; probe cell `g5_let_shared_ite` is the witness.
+    id_memo: BTreeMap<(FormulaId, EnvKey), bool>,
 }
+
+/// A memo key's environment part: the bindings of exactly the memoised node's
+/// **free variables**, in `VarId` order — the same shape (and the same meaning)
+/// as the encoder's own key.
+type EnvKey = Vec<(VarId, Tuple)>;
 
 impl<'a> Evaluator<'a> {
     /// Builds an evaluator for `instance` under the command's integer parameters.
@@ -130,7 +166,38 @@ impl<'a> Evaluator<'a> {
             int_sig,
             seq_int_sig,
             loop_state: None,
+            trans_classes: BTreeMap::new(),
+            freevars: None,
+            class_memo: BTreeMap::new(),
+            id_memo: BTreeMap::new(),
         }
+    }
+
+    /// Arms this evaluator with the **encoder's sharing** for `goal`: its
+    /// translation classes (mt-137, ADR-0029) and, underneath them, the same
+    /// first-visit-wins memo on node identity the encoder has had since mt-049.
+    ///
+    /// Both matter for the same reason. The encoder reuses a shared translation
+    /// *whatever polarity* the later reach is at, because the reference's
+    /// `FOL2BoolCache` does (LEDGER-017); an evaluator that re-derives the node
+    /// at its own polarity would then reject exactly the instances the solver
+    /// produces, turning every jar-matching verdict into a self-check failure.
+    /// Armed, both walk the same IR in the same order under the same `Not`-only
+    /// polarity flip, so their first visits coincide by construction.
+    ///
+    /// Builder-style, like [`Self::with_loop_state`]: the free-variable analysis
+    /// the keys need costs a pass over the arena, so a goal that can share
+    /// nothing — no classes and no formula node reachable from two places — pays
+    /// for none of it. Callers that evaluate *fragments* rather than a goal (the
+    /// REPL, the instance writer) do not arm it: they have no goal, and the
+    /// reference gives each evaluated expression a fresh translator anyway.
+    #[must_use]
+    pub fn with_trans_classes(mut self, goal: &LoweredGoal) -> Self {
+        if !goal.trans_classes.is_empty() || has_shared_formula(self.ir) {
+            self.freevars = Some(FreeVars::build(self.ir));
+        }
+        self.trans_classes = goal.trans_classes.clone();
+        self
     }
 
     /// Points this evaluator at a solved **lasso trace**: `LoopIs(l)` then holds
@@ -155,6 +222,21 @@ impl<'a> Evaluator<'a> {
     /// solver-produced goal, is an internal inconsistency, since the encoder
     /// would have deferred it before solving.
     pub fn accepts(&mut self, f: FormulaId) -> Result<bool, TranslateError> {
+        // The memos hold truths about ONE instance, so they never outlive it:
+        // the brute-force differential drives thousands of instances through a
+        // single evaluator.
+        self.class_memo.clear();
+        self.id_memo.clear();
+        self.accepts_sharing_classes(f)
+    }
+
+    /// [`Self::accepts`] **keeping** the memos already populated (mt-137).
+    ///
+    /// Only [`localize`] uses it, and only after the whole goal has been
+    /// evaluated: re-checking the conjuncts one at a time must reuse the shared
+    /// values the goal walk settled on, or the localization could disagree with
+    /// the verdict it is explaining.
+    fn accepts_sharing_classes(&mut self, f: FormulaId) -> Result<bool, TranslateError> {
         self.overflow = false;
         self.pol_positive = true;
         self.quant_frames.clear();
@@ -177,6 +259,51 @@ impl<'a> Evaluator<'a> {
     /// A [`TranslateError`] for a temporal connective (never reaches a Rung-3
     /// goal) or an unsupported integer op nested in a comparison.
     pub fn eval_formula(&mut self, id: FormulaId) -> Result<bool, TranslateError> {
+        if self.freevars.is_none() {
+            return self.eval_formula_uncached(id);
+        }
+        let env = self.env_key(id);
+        // A classed node is served from the CLASS memo only — the encoder skips
+        // its per-id cache for exactly these nodes, so mirroring that keeps the
+        // two walks reaching for the same entry at the same moment.
+        if let Some(&class) = self.trans_classes.get(&id) {
+            let key = (class, env);
+            if let Some(&hit) = self.class_memo.get(&key) {
+                return Ok(hit);
+            }
+            let v = self.eval_formula_uncached(id)?;
+            self.class_memo.insert(key, v);
+            return Ok(v);
+        }
+        let key = (id, env);
+        if let Some(&hit) = self.id_memo.get(&key) {
+            return Ok(hit);
+        }
+        let v = self.eval_formula_uncached(id)?;
+        self.id_memo.insert(key, v);
+        Ok(v)
+    }
+
+    /// A memo key's environment part: the bindings of exactly this node's free
+    /// variables, in `VarId` order — the same key the encoder builds, so a visit
+    /// the encoder shared is a visit this shares (mt-137).
+    fn env_key(&self, id: FormulaId) -> EnvKey {
+        let Some(fv) = &self.freevars else {
+            return Vec::new();
+        };
+        fv.formula(id)
+            .iter()
+            .map(|v| {
+                let t = self.env.get(v).cloned().unwrap_or_else(|| {
+                    debug_assert!(false, "free var {v:?} unbound during evaluation");
+                    Tuple::new(Vec::new())
+                });
+                (*v, t)
+            })
+            .collect()
+    }
+
+    fn eval_formula_uncached(&mut self, id: FormulaId) -> Result<bool, TranslateError> {
         let node = &self.ir.formulas[id];
         match &node.kind {
             FormulaKind::Const(b) => Ok(*b),
@@ -1034,6 +1161,89 @@ fn closure(r: &TupleSet) -> TupleSet {
     }
 }
 
+/// Whether any formula node in `ir` is referenced from more than one place — the
+/// precondition for the encoder's per-id memo to hand one reach the translation
+/// another reach minted, at the other polarity.
+///
+/// mettle's lowerer re-walks pred/fun bodies and formula-`let` right-hand sides
+/// into fresh nodes, so most goals share no formula node at all and can skip the
+/// free-variable analysis entirely. The formula-`if`/`then`/`else` desugaring is
+/// the standing exception: it lowers the condition once and puts that same id
+/// under a `Not`.
+///
+/// A flat scan of the three arenas, not a reachability walk from the goal: it is
+/// linear, allocation-free past one counter vector, and being conservative
+/// (counting references from nodes this goal never reaches) can only arm a memo
+/// that would have been correct anyway.
+fn has_shared_formula(ir: &Ir) -> bool {
+    let mut refs = vec![0u8; ir.formulas.len()];
+    let mut shared = false;
+    let mut bump = |id: FormulaId, shared: &mut bool| {
+        let slot = &mut refs[id.index()];
+        if *slot == 0 {
+            *slot = 1;
+        } else {
+            *shared = true;
+        }
+    };
+    for (_, f) in ir.formulas.iter() {
+        match &f.kind {
+            FormulaKind::Const(_)
+            | FormulaKind::LoopIs { .. }
+            | FormulaKind::RelCompare { .. }
+            | FormulaKind::IntCompare { .. }
+            | FormulaKind::MultTest { .. } => {}
+            FormulaKind::Not(x)
+            | FormulaKind::TemporalUnary { body: x, .. }
+            | FormulaKind::Quant { body: x, .. } => bump(*x, &mut shared),
+            FormulaKind::And(xs) | FormulaKind::Or(xs) => {
+                for &x in xs {
+                    bump(x, &mut shared);
+                }
+            }
+            FormulaKind::Implies {
+                antecedent,
+                consequent,
+            } => {
+                bump(*antecedent, &mut shared);
+                bump(*consequent, &mut shared);
+            }
+            FormulaKind::Iff(l, r) | FormulaKind::TemporalBinary { lhs: l, rhs: r, .. } => {
+                bump(*l, &mut shared);
+                bump(*r, &mut shared);
+            }
+        }
+        if shared {
+            return true;
+        }
+    }
+    for (_, e) in ir.rel_exprs.iter() {
+        match &e.kind {
+            RelExprKind::IfThenElse { cond, .. } => bump(*cond, &mut shared),
+            RelExprKind::Comprehension { body, .. } => bump(*body, &mut shared),
+            RelExprKind::Relation(_)
+            | RelExprKind::Var(_)
+            | RelExprKind::Const(_)
+            | RelExprKind::Binary { .. }
+            | RelExprKind::Unary { .. }
+            | RelExprKind::Prime(_)
+            | RelExprKind::IntToAtom(_) => {}
+        }
+        if shared {
+            return true;
+        }
+    }
+    for (_, e) in ir.int_exprs.iter() {
+        if let IntExprKind::IfThenElse { cond, .. } = &e.kind {
+            bump(*cond, &mut shared);
+        }
+        if shared {
+            return true;
+        }
+    }
+    false
+}
+
 // =============================== self-check net ===============================
 
 /// A structured self-check failure: a solver-produced [`Instance`] does **not**
@@ -1149,7 +1359,8 @@ fn self_check_inner(
         goal.int_sig,
         goal.seq_int_sig,
         bounds,
-    );
+    )
+    .with_trans_classes(goal);
     if let Some(l) = loop_state {
         ev = ev.with_loop_state(l);
     }
@@ -1165,7 +1376,7 @@ fn self_check_inner(
 /// Walks the conjuncts, returning the first that fails on its own.
 fn localize(ev: &mut Evaluator<'_>, goal: &LoweredGoal) -> SelfCheckFailure {
     for (i, c) in goal.conjuncts.iter().enumerate() {
-        match ev.accepts(c.formula) {
+        match ev.accepts_sharing_classes(c.formula) {
             Ok(true) => {}
             Ok(false) => {
                 let detail = if ev.overflow {

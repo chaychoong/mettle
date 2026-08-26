@@ -144,3 +144,37 @@ the encoder and the evaluator.**
   sweep's count nets and baselines will confirm as verdict/count-neutral.
 - The stage-1 sweep runs immediately after implementation (encoder-touching
   change), plus both SB nets against cached baselines.
+
+## Addendum at implementation (2026-08-26, tech lead) — decision 4 extended
+
+The implementation surfaced one fact this ADR had not accounted for, and the
+accepted fix extends decision 4. mettle's formula-`if`/`then`/`else`
+desugaring lowers the condition **once** and negates that same `FormulaId`, so
+the encoder's per-id `formula_cache` — polarity-blind since mt-049 — was
+already reusing the positive visit's guard at the negated reach. That is
+jar-faithful (the jar's `visit(ExprITE)` builds `c.implies(t) and
+c.not().implies(e)` around ONE `c` node, which its cache then shares the same
+way), but it meant the unmemoised, polarity-correct evaluator could reject an
+instance the solver had just produced: probe cell `g5_let_shared_ite` tripped
+the debug self-check with no translation class involved at all — a
+pre-existing latent incoherence, not something this bead introduced.
+
+So the evaluator gains **two** memos, not one: the class memo this ADR
+specified, and a per-id memo that is the exact twin of the encoder's mt-049
+`formula_cache`. Both are armed only when they can matter (the goal has
+classes, or some formula node is referenced twice in the arena) and cleared
+per instance. The per-id memo is also a measured speedup — the debug
+`solve_corpus` gauntlet drops from 532s to 69s, because the evaluator was
+re-walking shared DAG subtrees.
+
+Two implementation details worth recording: a root registered under two
+classes (a formula-`let` whose body is a bare use, inside a zero-param pred)
+resolves deterministically to the outer pred class (minted first, lower id);
+and the structural-identity walk compares bound variables up to a
+correspondence (re-lowering a `let` RHS containing a quantifier allocates
+fresh `VarId`s per copy while the jar still shares that node — probe j5), with
+a 1M node-pair meter per class whose exhaustion drops the class, costing at
+worst the parity it would have bought, never soundness. REPL fragments carry
+no classes (`lower_fragment` has no goal to hang the table on; the jar's
+evaluator gets a fresh translator per query anyway) — the one visible residue
+is recorded in LIMITATIONS.
