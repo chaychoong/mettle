@@ -198,6 +198,7 @@ mod tests {
             outcome: Outcome::Sat {
                 instance_count: None,
             },
+            elapsed_ms: None,
         }
     }
 
@@ -210,6 +211,7 @@ mod tests {
             outcome: Outcome::Unsat {
                 instance_count: None,
             },
+            elapsed_ms: None,
         }
     }
 
@@ -258,6 +260,7 @@ mod tests {
                         kind: ShimErrorKind::Command,
                         message: "boom".to_string(),
                     },
+                    elapsed_ms: None,
                 }]),
             },
         ];

@@ -132,6 +132,7 @@ fn collect_into(path: &Path, out: &mut Vec<PathBuf>) {
 fn print_bench_usage() {
     eprintln!(
         "usage: conform bench [<corpus-dir>] [OPTIONS]\n\
+         \x20\x20\x20conform bench --solve [OPTIONS]        (mt-138: solve-time head-to-head, mettle vs. jar)\n\
          \n\
          Runs mettle's parse+resolve pipeline and (unless --skip-jar) the pinned\n\
          reference jar over the same corpus, and prints one deterministic\n\
@@ -147,6 +148,15 @@ fn print_bench_usage() {
          \x20\x20--skip-jar           mettle-only run -- no JDK required, no jar conformance/timing\n\
          \x20\x20--cold-sample N      fresh-JVM-per-file sample size (default 10)\n\
          \x20\x20--timeout SECS       per-JVM-invocation wall-clock budget in seconds (default 60)\n\
+         \x20\x20--json PATH          write the report as JSON to PATH\n\
+         \n\
+         --solve mode (mt-138): per-command solve-time head-to-head, mettle (CaDiCaL) vs. the\n\
+         reference jar (sat4j), at the LEDGER-001 defaults (symmetry 20, forbid overflow, sat4j).\n\
+         Replaces the parse+resolve report above; ignores --skip-jar/--threads/--cold-sample.\n\
+         \x20\x20--jar PATH           reference jar (as above)\n\
+         \x20\x20--shim PATH          OracleShim.java source (default: the copy in crates/als-conform/shim/)\n\
+         \x20\x20--timeout SECS       per-file JVM wall-clock budget in seconds (default 60)\n\
+         \x20\x20--only SUBSTR        keep only files whose path contains SUBSTR (repeatable)\n\
          \x20\x20--json PATH          write the report as JSON to PATH"
     );
 }
@@ -157,72 +167,117 @@ fn missing_value(flag: &str) -> ExitCode {
     ExitCode::from(2)
 }
 
-/// Parses `conform bench`'s own argument grammar and runs it. Kept
-/// separate from [`parse_args`]/the legacy Net-0 flow entirely -- `bench`
-/// has different inputs (a config struct, not `OracleConfig` + enumeration
-/// cap) and a different report shape, so bolting it onto the existing flag
-/// set would conflate two independent command surfaces.
-fn bench_main(args: &[String]) -> ExitCode {
-    let mut cfg = als_conform::BenchConfig::default();
-    let mut json_out: Option<PathBuf> = None;
-    let mut corpus_dir: Option<PathBuf> = None;
+/// The parsed result of `conform bench`'s own argument grammar.
+struct BenchArgs {
+    cfg: als_conform::BenchConfig,
+    json_out: Option<PathBuf>,
+    corpus_dir: Option<PathBuf>,
+    /// `--solve` (mt-138): dispatch to [`solve_bench_main`] instead of the
+    /// default parse+resolve report.
+    solve: bool,
+    /// `--only` (mt-138, `--solve`-only): row-selection filter.
+    only: Vec<String>,
+}
+
+/// Parses `conform bench`'s own argument grammar, or returns the `ExitCode`
+/// to exit with immediately (`--help`, or a parse error). Split out of
+/// [`bench_main`] to keep that function under the line-count cap -- this is
+/// pure argument parsing, no I/O.
+fn parse_bench_args(args: &[String]) -> Result<BenchArgs, ExitCode> {
+    let mut out = BenchArgs {
+        cfg: als_conform::BenchConfig::default(),
+        json_out: None,
+        corpus_dir: None,
+        solve: false,
+        only: Vec::new(),
+    };
 
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--jar" => {
                 let Some(v) = it.next() else {
-                    return missing_value("--jar");
+                    return Err(missing_value("--jar"));
                 };
-                cfg.jar_path = PathBuf::from(v);
+                out.cfg.jar_path = PathBuf::from(v);
             }
             "--shim" => {
                 let Some(v) = it.next() else {
-                    return missing_value("--shim");
+                    return Err(missing_value("--shim"));
                 };
-                cfg.shim_source = PathBuf::from(v);
+                out.cfg.shim_source = PathBuf::from(v);
             }
             "--threads" => {
                 let Some(n) = it.next().and_then(|v| v.parse().ok()) else {
-                    return missing_value("--threads");
+                    return Err(missing_value("--threads"));
                 };
-                cfg.threads = n;
+                out.cfg.threads = n;
             }
-            "--skip-jar" => cfg.skip_jar = true,
+            "--skip-jar" => out.cfg.skip_jar = true,
             "--cold-sample" => {
                 let Some(n) = it.next().and_then(|v| v.parse().ok()) else {
-                    return missing_value("--cold-sample");
+                    return Err(missing_value("--cold-sample"));
                 };
-                cfg.cold_sample = n;
+                out.cfg.cold_sample = n;
             }
             "--timeout" => {
                 let Some(secs) = it.next().and_then(|v| v.parse().ok()) else {
-                    return missing_value("--timeout");
+                    return Err(missing_value("--timeout"));
                 };
-                cfg.jvm_timeout = Duration::from_secs(secs);
+                out.cfg.jvm_timeout = Duration::from_secs(secs);
             }
             "--json" => {
                 let Some(v) = it.next() else {
-                    return missing_value("--json");
+                    return Err(missing_value("--json"));
                 };
-                json_out = Some(PathBuf::from(v));
+                out.json_out = Some(PathBuf::from(v));
+            }
+            "--solve" => out.solve = true,
+            "--only" => {
+                let Some(v) = it.next() else {
+                    return Err(missing_value("--only"));
+                };
+                out.only.push(v.clone());
             }
             "-h" | "--help" => {
                 print_bench_usage();
-                return ExitCode::SUCCESS;
+                return Err(ExitCode::SUCCESS);
             }
             other if other.starts_with("--") => {
                 eprintln!("conform bench: unknown option {other}");
                 print_bench_usage();
-                return ExitCode::from(2);
+                return Err(ExitCode::from(2));
             }
-            other if corpus_dir.is_none() => corpus_dir = Some(PathBuf::from(other)),
+            other if out.corpus_dir.is_none() => out.corpus_dir = Some(PathBuf::from(other)),
             other => {
                 eprintln!("conform bench: unexpected extra argument {other}");
                 print_bench_usage();
-                return ExitCode::from(2);
+                return Err(ExitCode::from(2));
             }
         }
+    }
+    Ok(out)
+}
+
+/// Runs `conform bench`. Kept separate from [`parse_args`]/the legacy Net-0
+/// flow entirely -- `bench` has different inputs (a config struct, not
+/// `OracleConfig` + enumeration cap) and a different report shape, so
+/// bolting it onto the existing flag set would conflate two independent
+/// command surfaces.
+fn bench_main(args: &[String]) -> ExitCode {
+    let BenchArgs {
+        mut cfg,
+        json_out,
+        corpus_dir,
+        solve,
+        only,
+    } = match parse_bench_args(args) {
+        Ok(parsed) => parsed,
+        Err(code) => return code,
+    };
+
+    if solve {
+        return solve_bench_main(&cfg, corpus_dir, only, json_out.as_deref());
     }
 
     if let Some(dir) = corpus_dir {
@@ -267,6 +322,76 @@ fn bench_main(args: &[String]) -> ExitCode {
         ExitCode::from(1)
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+/// `conform bench --solve` (mt-138): the solve-time head-to-head report.
+/// Shares `bench`'s `--jar`/`--shim`/`--timeout`/`--json` values (already
+/// parsed into `cfg` by [`bench_main`]) and the positional `<corpus-dir>`,
+/// but builds and runs a [`als_conform::SolveBenchConfig`] instead --
+/// `--skip-jar`/`--threads`/`--cold-sample` don't apply to this mode (there
+/// is no jar-optional path: the whole point is the jar comparison).
+fn solve_bench_main(
+    cfg: &als_conform::BenchConfig,
+    corpus_dir: Option<PathBuf>,
+    only: Vec<String>,
+    json_out: Option<&Path>,
+) -> ExitCode {
+    let mut solve_cfg = als_conform::SolveBenchConfig {
+        jar_path: cfg.jar_path.clone(),
+        shim_source: cfg.shim_source.clone(),
+        jvm_timeout: cfg.jvm_timeout,
+        only,
+        ..als_conform::SolveBenchConfig::default()
+    };
+    if let Some(dir) = corpus_dir {
+        solve_cfg.corpus_roots = vec![dir];
+    }
+
+    let report = match als_conform::run_solve_bench(&solve_cfg) {
+        Ok(report) => report,
+        Err(als_conform::ConformError::JarNotFound(path)) => {
+            eprintln!(
+                "conform bench --solve: reference jar not found at {}\n\
+                 Fetch it per docs/reference/alloy6-reference.md.",
+                path.display()
+            );
+            return ExitCode::from(2);
+        }
+        Err(e) => {
+            eprintln!("conform bench --solve: {e}");
+            return ExitCode::from(2);
+        }
+    };
+
+    print!("{}", report.render_text());
+
+    if let Some(path) = json_out {
+        match report.to_json() {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(path, json) {
+                    eprintln!(
+                        "conform bench --solve: failed to write {}: {e}",
+                        path.display()
+                    );
+                    return ExitCode::from(2);
+                }
+            }
+            Err(e) => {
+                eprintln!("conform bench --solve: {e}");
+                return ExitCode::from(2);
+            }
+        }
+    }
+
+    if report.disagreements.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        eprintln!(
+            "conform bench --solve: {} verdict disagreement(s) between mettle and the jar -- see above",
+            report.disagreements.len()
+        );
+        ExitCode::from(1)
     }
 }
 

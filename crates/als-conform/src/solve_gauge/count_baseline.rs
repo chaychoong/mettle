@@ -644,6 +644,7 @@ mod tests {
                 outcome: Outcome::Sat {
                     instance_count: Some(3),
                 },
+                elapsed_ms: None,
             },
             CommandResult {
                 index: 1,
@@ -653,6 +654,7 @@ mod tests {
                 outcome: Outcome::Unsat {
                     instance_count: None,
                 },
+                elapsed_ms: None,
             },
             CommandResult {
                 index: 2,
@@ -663,6 +665,7 @@ mod tests {
                     kind: ShimErrorKind::Command,
                     message: "boom".to_owned(),
                 },
+                elapsed_ms: None,
             },
         ]);
         let FileCounts::Commands(m) = file_counts_from_outcome(&cmds) else {

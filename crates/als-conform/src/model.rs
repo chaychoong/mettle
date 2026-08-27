@@ -63,6 +63,13 @@ pub struct CommandResult {
     pub check: bool,
     pub expects: Option<bool>,
     pub outcome: Outcome,
+    /// `OracleShim`'s in-JVM translation+solve timer for this command
+    /// (mt-138's `bench --solve`), excluding JVM startup and the file's one
+    /// parse. `None` for shim output that doesn't carry it (there is none
+    /// today -- every `OracleShim` build emits it -- but the field stays
+    /// optional rather than required so an older cached `.class` still
+    /// parses instead of failing the whole file).
+    pub elapsed_ms: Option<u64>,
 }
 
 /// The outcome of running the oracle over one whole file: either every

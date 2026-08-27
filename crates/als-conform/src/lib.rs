@@ -24,6 +24,10 @@
 //!   conformance + speed benchmark (`conform bench`) -- per-stage mettle-vs-jar
 //!   agreement (parse, resolve) plus honest mettle/jar timing, reusing the
 //!   mt-020 `ResolveGaugeShim` machinery.
+//! - [`bench::run_solve_bench`] / [`bench::SolveBenchReport`] (mt-138): the
+//!   solve-time head-to-head (`conform bench --solve`) -- mettle (`CaDiCaL`)
+//!   vs. the reference jar (`sat4j`), per command, over the same corpus the
+//!   solve gauge sweeps.
 //!
 //! This crate never prints and never exits the process (STYLE E3) --
 //! that is `src/bin/conform.rs`'s job alone.
@@ -43,7 +47,10 @@ pub mod solve_gauge;
 pub mod status;
 pub mod warnings_baseline;
 
-pub use bench::{run_bench, BenchConfig, BenchReport, DEFAULT_CORPUS_ROOTS};
+pub use bench::{
+    run_bench, run_solve_bench, BenchConfig, BenchReport, SolveBenchConfig, SolveBenchReport,
+    DEFAULT_CORPUS_ROOTS,
+};
 pub use config::{EnumerationCap, OracleConfig};
 pub use error::ConformError;
 pub use model::{CommandResult, FileOutcome, FileResult, Outcome, ShimErrorKind};

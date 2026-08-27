@@ -53,6 +53,7 @@
 
 mod jar_side;
 mod mettle_side;
+mod solve;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -60,6 +61,8 @@ use std::time::Duration;
 use serde::Serialize;
 
 use crate::error::ConformError;
+
+pub use solve::{run_solve_bench, SolveBenchConfig, SolveBenchReport};
 
 // ---------------------------------------------------------------------------
 // Report schema

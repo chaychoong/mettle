@@ -25,6 +25,10 @@ struct RawCommand {
     instance_count: Option<u32>,
     #[serde(default)]
     error: Option<RawShimError>,
+    /// mt-138: `OracleShim`'s in-JVM translation+solve timer. Additive --
+    /// absent on older shim output, which still parses (`#[serde(default)]`).
+    #[serde(default)]
+    elapsed_ms: Option<u64>,
 }
 
 /// One line of `OracleShim`'s stdout: either a per-command result (has
@@ -94,6 +98,7 @@ fn to_command_result(raw: RawCommand) -> Result<CommandResult, (ShimErrorKind, S
         check: raw.check,
         expects,
         outcome,
+        elapsed_ms: raw.elapsed_ms,
     })
 }
 

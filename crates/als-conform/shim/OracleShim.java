@@ -30,13 +30,17 @@ import java.util.List;
  * command-index order:
  * <pre>
  *   {"index":0,"label":"show","check":false,"expects":-1,
- *    "verdict":"SAT","instance_count":null}
+ *    "verdict":"SAT","instance_count":null,"elapsed_ms":12}
  * </pre>
- * A command whose translation/solve throws reports a structured error
- * instead of a verdict:
+ * {@code elapsed_ms} times only {@code execute_command} (translation +
+ * solve, plus enumeration when {@code enumCap != 0}) via
+ * {@code System.nanoTime()} -- it excludes JVM startup and the one
+ * {@code parseEverything_fromFile} call per file. A command whose
+ * translation/solve throws reports a structured error instead of a
+ * verdict, still timed the same way:
  * <pre>
  *   {"index":1,"label":"broken","check":true,"expects":-1,
- *    "error":{"kind":"command","message":"..."}}
+ *    "error":{"kind":"command","message":"..."},"elapsed_ms":3}
  * </pre>
  * A file that fails to parse before any command runs prints exactly one
  * line and nothing else:
@@ -110,14 +114,19 @@ public final class OracleShim {
         sb.append("\"label\":\"").append(escape(cmd.label)).append("\",");
         sb.append("\"check\":").append(cmd.check).append(',');
         sb.append("\"expects\":").append(cmd.expects).append(',');
+        long startNanos = System.nanoTime();
         try {
             A4Solution sol = TranslateAlloyToKodkod.execute_command(A4Reporter.NOP, world.getAllReachableSigs(), cmd, opts);
             boolean sat = sol.satisfiable();
             Integer count = enumCap == 0 ? null : countInstances(sol, enumCap);
+            long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000L;
             sb.append("\"verdict\":\"").append(sat ? "SAT" : "UNSAT").append("\",");
-            sb.append("\"instance_count\":").append(count == null ? "null" : count.toString());
+            sb.append("\"instance_count\":").append(count == null ? "null" : count.toString()).append(',');
+            sb.append("\"elapsed_ms\":").append(elapsedMs);
         } catch (Throwable t) {
-            sb.append("\"error\":{\"kind\":\"command\",\"message\":\"").append(escape(messageOf(t))).append("\"}");
+            long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000L;
+            sb.append("\"error\":{\"kind\":\"command\",\"message\":\"").append(escape(messageOf(t))).append("\"},");
+            sb.append("\"elapsed_ms\":").append(elapsedMs);
         }
         sb.append('}');
         return sb.toString();
