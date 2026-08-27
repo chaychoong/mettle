@@ -9,9 +9,10 @@ translate: an unsupported construct produces a typed error that says so. And
 mettle never rejects a model the jar accepts. Almost nothing in this file can
 change a SAT or UNSAT verdict; every entry says whether it can.
 
-The zero-gap campaign ([ADR-0028](docs/adr/0028-zero-gap-campaign.md)) is
-running now and covers most of the remaining correctness items. Those entries
-name the bead that is closing them.
+The zero-gap campaign ([ADR-0028](docs/adr/0028-zero-gap-campaign.md)) closed
+on 2026-08-26 with every bead shipped. Everything left in this file is either a
+deliberate difference, a disclosed zero-incidence corner, or an honest capacity
+limit.
 
 Current measured agreement with the jar is in [docs/STATE.md](docs/STATE.md).
 
