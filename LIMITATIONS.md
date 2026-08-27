@@ -1,401 +1,654 @@
 # Limitations
 
-This file lists what mettle cannot do today, and every place where mettle behaves
-differently from the reference Alloy 6.2.0 jar. It describes the present state.
-Git history holds the record of how each gap was found and closed.
+This file lists what mettle cannot do today. It also lists every difference from the reference Alloy Analyzer 6.2.0 jar.
 
-Two rules hold everywhere below. mettle never answers a command it cannot
-translate: an unsupported construct produces a typed error that says so. And
-mettle never rejects a model the jar accepts. Almost nothing in this file can
-change a SAT or UNSAT verdict; every entry says whether it can.
+The file describes the present state only. Every listed gap is open today. Closed gaps leave this file, and git history keeps the record.
 
-Everything listed here is open: a deliberate difference, a disclosed
-zero-incidence corner, or an honest capacity limit. When a gap closes, its
-entry is removed.
+Two rules apply throughout:
 
-Current measured agreement with the jar is in [docs/STATE.md](docs/STATE.md).
+- mettle never answers a command that it cannot translate. An unsupported construct produces a typed error.
+- mettle never rejects a model that the Alloy jar accepts.
+
+Almost no entry can change a SAT or UNSAT verdict. Each entry states its effect. See [docs/STATE.md](docs/STATE.md) for current measured agreement.
 
 ## Commands mettle cannot run
 
-- **Two commands run past the sweep budgets.** `fullsub2.als[0]` answers UNSAT,
-  agreeing with the jar, at about 5.19M conflicts and 27 minutes of wall time;
-  run it with `backend-instrument --rows - --conflicts 8000000 --wall 3000`. The
-  default budget is not raised for it, because one extra agreement costs about
-  2.5 times the sweep wall time ([ADR-0017](docs/adr/0017-gauge-default-budgets-paired-frontier.md)).
-  `correctChord.als[13]` has no answer to agree with: the jar times out on that
-  file at any budget.
-- **Two shapes where the jar also refuses.** A higher-order declaration that
-  cannot be skolemized returns the jar's own `HigherOrderDeclException` message
-  (4 corpus commands). Unbounded model checking (`for 1.. steps`) returns the
-  jar's own refusal text (2 corpus commands). These match the reference exactly.
+### Commands beyond the sweep budgets
+
+`fullsub2.als[0]` answers UNSAT and agrees with the jar. It uses about 5.19M conflicts and takes 27 minutes.
+
+Run it with:
+
+```console
+backend-instrument --rows - --conflicts 8000000 --wall 3000
+```
+
+The default budget stays unchanged. One extra agreement costs about 2.5x the sweep wall time. See [docs/adr/0017-gauge-default-budgets-paired-frontier.md](docs/adr/0017-gauge-default-budgets-paired-frontier.md).
+
+**SAT/UNSAT effect:** No. A larger budget produces the same UNSAT verdict as the jar.
+
+`correctChord.als[13]` has no reference verdict. The jar times out on that file at any budget.
+
+**SAT/UNSAT effect:** No. Neither side supplies a verdict to compare.
+
+### Commands the jar also refuses
+
+A higher-order declaration that cannot be skolemized returns the jar's own HigherOrderDeclException message. This shape covers 4 corpus commands.
+
+**SAT/UNSAT effect:** No. Both engines refuse the command with the same message.
+
+Unbounded model checking (`for 1.. steps`) returns the jar's own refusal text. This shape covers 2 corpus commands.
+
+**SAT/UNSAT effect:** No. Both engines refuse the command with the same text.
 
 ## Models mettle accepts that Alloy rejects
 
-Over the 150,891 alloy4fun submissions, mettle and the jar now agree on every
-verdict: mettle rejects nothing the jar accepts and accepts nothing the jar
-rejects (100.0000% agreement, measured 2026-08-25). Three known shapes remain
-where mettle is more accepting than the jar, and none appears in any corpus.
+mettle and the jar agree in both directions on all 150,891 alloy4fun submissions. Agreement is 100.0000%, measured 2026-08-25.
 
-- **Two shapes with no measured incidence.** A post-colon `disj` on a quantifier
-  or run-pred declaration (`x: disj e`) is a resolve error in the jar; mettle
-  accepts it and then reports that it cannot run the command. A receiver-style
-  call of a zero-argument predicate (`H.s.noDuplicates`) is a type error in the
-  jar; mettle accepts it. Neither appears in either corpus. Open.
-- **A user-written defined field on a `one` sig crashes the jar; mettle
-  answers (a deliberate defer, decided 2026-08-26).** The crash gate,
-  probe-mapped at mt-135 (9 cells, `scratchpad/probe/mt135/`): the owning sig
-  is `one`, the field is declared with `=`, and the bound is `sim`-able — a
-  sig, `univ`, or a `+`/`->` combination of them. A `sim`-able combination
-  (`g = A + B`, `g = A -> B`, `g = univ`) throws
-  `UnsupportedOperationException` from `A4Solution.addSymbolicBound`; a bare
-  sig (`g = A`) instead `StackOverflowError`s in
-  `PardinusBounds$SymbolicStructures.transitiveDeps`. The crash is solve-time
-  and unconditional per command — `check` vs `run` and whether the command
-  mentions the field are irrelevant — and reaches the jar user as a raw
-  uncaught-exception stack trace, not a diagnostic. Non-crashing neighbors:
-  `g = none` is a clean resolve-time reject on **both** sides with the same
-  message (no divergence); a defined field on a non-`one` sig, or one whose
-  bound references another field (`g = f`), solves fine on both sides. mettle
-  answers every crash-family cell. Deliberately NOT matched: the jar side is
-  an accidental crash, not a designed refusal, so this sits with the
-  correctChord FILE_TIMEOUT rows ("mettle answers, the jar produces no
-  verdict") rather than with the HO clean-diagnostic parity family. Zero
-  incidence in all three corpora (grep-verified at mt-135). Measured on jar
-  6.2.0 (translation-ref §16.3.1).
+Three known shapes remain. None appears in any corpus.
+
+### Post-colon `disj`
+
+A post-colon `disj` on a quantifier or run-pred declaration (`x: disj e`) causes a resolve error in the jar. mettle accepts it, then reports that it cannot run the command.
+
+Measured incidence is zero. The gap is open.
+
+**SAT/UNSAT effect:** No. mettle does not answer the command.
+
+### Receiver-style call of a zero-argument predicate
+
+A receiver-style call such as `H.s.noDuplicates` causes a type error in the jar. mettle accepts it.
+
+Measured incidence is zero. The gap is open.
+
+**SAT/UNSAT effect:** No.
+
+### Defined field on a `one` sig
+
+This deliberate defer was decided 2026-08-26. A user-written defined field on a `one` sig crashes the jar. mettle answers it.
+
+The crash gate is probe-mapped across 9 cells in `scratchpad/probe/mt135/`. The owning sig is `one`, the field uses `=`, and the bound is sim-able.
+
+A sim-able bound is a sig, `univ`, or a `+`/`->` combination. A sim-able combination throws UnsupportedOperationException from A4Solution.addSymbolicBound. A bare sig StackOverflowErrors in PardinusBounds$SymbolicStructures.transitiveDeps.
+
+The crash occurs during solving and is unconditional for each command. The jar exposes a raw stack trace. It gives no diagnostic.
+
+The nearby shapes do not crash:
+
+- `g = none` gets the same clean resolve-time rejection and message on both sides.
+- A defined field on a non-`one` sig solves on both sides.
+- A defined field whose bound references another field solves on both sides.
+
+mettle answers every crash-family cell. The jar crash is accidental. Designed refusals form a separate family.
+
+This case belongs to the family where mettle answers and the jar gives no verdict. Clean-diagnostic parity is a separate family.
+
+Incidence is zero in all three corpora. The measurement uses jar 6.2.0.
+
+**SAT/UNSAT effect:** No. The jar produces no verdict.
 
 ## Overflow guard corners
 
-These are the places where mettle's overflow guard differs from the jar's under
-the default `noOverflow` mode. All have zero incidence in both corpora and were
-found with hand-written probe models. They are the one group in this file that
-can give a different verdict, on a synthetic model. Measurements are in
-[docs/reference/alloy6-translation.md](docs/reference/alloy6-translation.md)
-§10.7e through §10.7l.
+These entries describe differences under the default noOverflow mode. They have zero incidence in both corpora and come from hand-written probe models.
 
-- **Three corners of the translation-class cache.** mettle reproduces the jar's
-  polarity-blind formula reuse — a formula-valued `let`'s uses and a
-  zero-parameter pred's calls all get the first visit's overflow guard — with
-  translation classes
-  ([ADR-0029](docs/adr/0029-polarity-blind-translation-cache.md), LEDGER-017).
-  Three corners stay deliberately open, all zero-incidence: the **temporal
-  path** keeps per-use translation (the jar's temporal cache lineage is
-  unprobed); **first-visit order** can differ from the jar on shapes where its
-  short-circuit constant folding visits conjuncts in a different order (every
-  probe cell matches); and a **REPL query** over such a shape answers
-  polarity-correctly where the jar's evaluator would reuse — fragments carry no
-  class table, so an evaluated `let p = … | p or (not p)` is honest
-  UNSAT-shaped at the prompt while the solved command above it matches the jar.
-- **Three nearby corners, kept as unverified.** A cast nested inside a `Card` or
-  `sum` operand contributes no comparison-level guard flag (the jar merges those
-  conditions transitively; this comes from reading the source and no probe has confirmed it). A cast in a quantifier
-  declaration bound gets the emptiness semantics but not the declaration-level
-  guard. Casts nested under `&` or `-` are source-read as guarding like unions
-  and have not been probe-confirmed.
+This is the only group that can change a verdict, on a synthetic model. Measurements are in sections 10.7e through 10.7l of [docs/reference/alloy6-translation.md](docs/reference/alloy6-translation.md).
 
-## Differences we chose on purpose
+### Translation-class cache
 
-Each of these is a place where mettle is safer than the reference. None of them
-can change a verdict on a real model.
+mettle reproduces the jar's polarity-blind formula reuse with translation classes. A formula-valued `let` and a zero-parameter pred use the first visit's overflow guard.
 
-- **Very long flat operator chains are rejected instead of parsed.** The parser
-  bounds root-to-leaf AST path depth at 768 and reports a typed `TooDeep` error.
-  Without the bound, a plain `.als` file crashed the process. The jar is not safe
-  here either: it throws a raw `StackOverflowError` at 5,000 chained terms, so
-  there is no correct reference behaviour to copy. Real input is far below the
-  bound: the longest chain in the 150,891 alloy4fun codes is 113 terms, and the
-  longest in the vendored corpus is 8. See
-  [ADR-0022](docs/adr/0022-recursion-depth-safety-flat-chains.md).
-  One residual: an AST built through the `als-syntax` API without going through
-  the parser is not bounded, so printing or dumping such a tree can still
-  overflow the stack in a release build. That is documented in code as
-  `print::MAX_SAFE_PRINT_PATH`. Closing it needs the iterative printer rewrite,
-  which ADR-0022 evaluated and rejected.
-- **Deeply nested expressions give a typed error.** The parser guards recursion
-  depth at 256 levels and reports `TooDeep`. The jar throws a raw
-  `StackOverflowError`. See [docs/reference/fuzzing.md](docs/reference/fuzzing.md) §3.
-- **An unterminated block comment is an error.** The reference lexer silently
-  ignores a `/*` that never closes. Well-formed input cannot reach this.
-- **Two parse-error positions differ from the jar's.** Both engines reject the
-  file either way; only the caret moves. Over the 14,560 alloy4fun codes both
-  reject at the syntax level, 99.79% land on the jar's exact line and column
-  ([docs/reference/alloy4fun-error-pass.md](docs/reference/alloy4fun-error-pass.md)
-  §5). Ten hand-written malformed models re-measured against the jar on
-  2026-08-25 put eight on the exact position and both misses in one family, a
-  brace-introduced declaration list. On `some x: A | x in {a, b }` the jar
-  consumes the whole comma-separated name list and reports at the `}`, column
-  31; mettle decides the brace opens a block once the first name is in and
-  reports at the comma, column 27, naming the construct it wanted. Matching
-  would mean adding lookahead to the block-versus-comprehension decision, which
-  is the one parser choice the alloy4fun accept-reject differential pins. The
-  second family is a different line: mettle lexes the whole file before parsing,
-  so a stray character on line 3 preempts a parse error on line 2 that the jar
-  reports first. A stray character on its own lands on the jar's exact position.
-- **Identifier characters follow Rust's Unicode classes.** Java's classes are
-  slightly wider. Only
-  exotic non-ASCII identifiers can differ. One alloy4fun submission used `€` as
-  an operand: Java counts a currency symbol as an identifier character and mettle
-  does not, so mettle reports a lexing error where the jar reports a type error.
-  Both reject the file. See
-  [docs/reference/alloy4fun-error-pass.md](docs/reference/alloy4fun-error-pass.md).
-- **One-state temporal commands are answered.** The jar crashes with a null
-  pointer error on the subset of `for 1 steps` commands whose translation folds
-  to a constant, and answers the rest. mettle answers all of them, and conforms
-  wherever the jar answers. The crash is filed upstream as
-  [AlloyTools#350](https://github.com/AlloyTools/org.alloytools.alloy/issues/350).
-  See [LEDGER-015](SEMANTICS_LEDGER.md).
+See [docs/adr/0029-polarity-blind-translation-cache.md](docs/adr/0029-polarity-blind-translation-cache.md) and LEDGER-017.
+
+Three corners remain deliberately open. All have zero incidence.
+
+1. The temporal path keeps per-use translation. The jar's temporal cache lineage is unprobed.
+2. First-visit order can differ when the jar's short-circuit constant folding visits conjuncts in another order. Every probe cell matches.
+3. A REPL query answers polarity-correctly where the jar's evaluator would reuse.
+
+Fragments carry no class table. At the prompt, `let p = ... | p or (not p)` is honestly UNSAT-shaped. The solved command above it still matches the jar.
+
+**SAT/UNSAT effect:** Yes. This overflow-guard group can change a verdict on a synthetic model.
+
+### Nearby unverified corners
+
+Three nearby corners remain unverified.
+
+- A cast inside a Card or sum operand adds no comparison-level guard flag. This comes from source reading, without a probe.
+- A cast in a quantifier declaration bound gets emptiness semantics but no declaration-level guard.
+- Casts under `&` or `-` appear to guard like unions. This comes from source reading, without probe confirmation.
+
+**SAT/UNSAT effect:** Yes. This overflow-guard group can change a verdict on a synthetic model.
+
+## Differences chosen on purpose
+
+Each difference makes mettle safer than the reference. None can change a verdict on a real model.
+
+### Very long flat operator chains
+
+mettle rejects very long flat operator chains. Root-to-leaf AST path depth stops at 768 with a typed `TooDeep` error.
+
+Without this bound, a plain `.als` file crashed the process. The jar throws a raw StackOverflowError at 5,000 chained terms. It supplies no correct reference behavior to copy.
+
+The longest chain in 150,891 alloy4fun codes has 113 terms. The longest in the vendored corpus has 8.
+
+An AST built through the als-syntax API without the parser remains unbounded. Printing such a tree can overflow the stack in a release build.
+
+Code records this risk as print::MAX_SAFE_PRINT_PATH. The iterative printer rewrite was evaluated and rejected in [docs/adr/0022-recursion-depth-safety-flat-chains.md](docs/adr/0022-recursion-depth-safety-flat-chains.md).
+
+**SAT/UNSAT effect:** No, on any observed input. Real chains stay far below the bound.
+
+### Deeply nested expressions
+
+mettle returns a typed `TooDeep` error at 256 levels. The jar throws a raw StackOverflowError.
+
+See section 3 of [docs/reference/fuzzing.md](docs/reference/fuzzing.md).
+
+**SAT/UNSAT effect:** No, on any observed input. Real nesting stays far below the bound.
+
+### Unterminated block comments
+
+An unterminated block comment is an error. The reference lexer silently ignores a `/*` that never closes. Well-formed input cannot reach this difference.
+
+**SAT/UNSAT effect:** No.
+
+### Parse-error positions
+
+Two parse-error families differ from the jar. Both engines reject the input. Only the caret moves.
+
+Across the 14,560 alloy4fun codes that both reject at syntax level, 99.79% use the jar's exact line and column. See section 5 of [docs/reference/alloy4fun-error-pass.md](docs/reference/alloy4fun-error-pass.md).
+
+Ten hand-written malformed models were re-measured 2026-08-25. Eight positions match exactly. Both misses belong to one family, a brace-introduced declaration list.
+
+For `some x: A | x in {a, b }`, the jar consumes the comma-separated name list. It reports at the `}`, column 31.
+
+mettle treats the brace as a block after the first name. It reports at the comma, column 27, and names the expected construct.
+
+Matching needs lookahead in the block-versus-comprehension decision. This is the one parser choice pinned by the alloy4fun accept-reject differential.
+
+In the second family, mettle lexes the full file before parsing. A stray character on line 3 preempts a parse error on line 2 that the jar reports first.
+
+A stray character alone lands at the jar's exact position.
+
+**SAT/UNSAT effect:** No. Both engines reject the input.
+
+### Identifier characters
+
+mettle uses Rust's Unicode classes for identifiers. Java's classes are slightly wider. Only exotic non-ASCII identifiers differ.
+
+One alloy4fun submission used the euro sign as an operand. Java treats a currency symbol as an identifier character. mettle does not.
+
+mettle reports a lexing error. The jar reports a type error. See [docs/reference/alloy4fun-error-pass.md](docs/reference/alloy4fun-error-pass.md).
+
+**SAT/UNSAT effect:** No. Both engines reject the file.
+
+### One-state temporal commands
+
+mettle answers one-state temporal commands. The jar crashes with a null pointer error when a `for 1 steps` command folds to a constant.
+
+The jar answers the remaining commands. mettle answers all of them and conforms where the jar answers.
+
+The upstream report is [AlloyTools issue 350](https://github.com/AlloyTools/org.alloytools.alloy/issues/350). See LEDGER-015 in [SEMANTICS_LEDGER.md](SEMANTICS_LEDGER.md).
+
+**SAT/UNSAT effect:** No. mettle conforms wherever the jar produces a verdict.
 
 ## Bounded temporal solving
 
-- **UNSAT means "no instance within the `steps` bound".** It does not mean the
-  assertion holds. Raising the bound can flip the answer. `mettle exec` says so
-  in the verdict line: `VALID (no counterexample within 10 steps)`.
-- **Unbounded model checking is out of scope,** as it is for the jar out of the
-  box. The reference's bounded engine refuses `for 1.. steps` before solving, and
-  mettle raises the same message. Reaching the unbounded path needs the external
-  `electrod` solver, whose semantics the contract could not vouch for.
-- **`for exactly N.. steps` is unverified.** The probes covered only the bounded
-  form `exactly N..M`, where the jar discards the written upper bound and mettle
-  now matches it. On an open range, `exactly` is still ignored. This needs its
-  own probe cell.
-- **An unused macro holding a temporal operator is treated as non-temporal.**
-  mettle follows a used macro into its body when deciding whether a command is
-  temporal, matching the jar. An unused macro never reaches the jar's fact set or
-  command body either, so the two should agree, but only the used shapes were
-  probed. Kept as an assumption, recorded in
-  [SEMANTICS_LEDGER.md](SEMANTICS_LEDGER.md).
-- **A static command's evaluator refuses temporal operators.** The jar evaluates
-  them over its degenerate one-state trace and answers correctly. mettle reports
-  that it cannot evaluate them. This is a missing feature. mettle gives no wrong
-  answer here.
+### Meaning of UNSAT
+
+For a bounded temporal command, UNSAT means no instance exists within the steps bound. It gives no claim beyond that bound.
+
+Raising the bound can change the answer. `mettle exec` states the bound in its verdict line:
+
+```text
+VALID (no counterexample within 10 steps)
+```
+
+**SAT/UNSAT effect:** No. The verdict states the bounded semantics directly.
+
+### Unbounded model checking
+
+Unbounded model checking is out of scope, as it is for the jar out of the box. The bounded reference engine refuses `for 1.. steps` before solving.
+
+mettle returns the same message. The unbounded path needs the external electrod solver. The contract could not vouch for its semantics.
+
+**SAT/UNSAT effect:** No. Neither engine produces a verdict through the bounded path.
+
+### Open exact ranges
+
+`for exactly N.. steps` is unverified. Probes cover only `exactly N..M`. The jar discards the written upper bound there, and mettle matches.
+
+On an open range, `exactly` is still ignored. This shape needs its own probe cell.
+
+**SAT/UNSAT effect:** No. No measured verdict difference is known.
+
+### Unused temporal macros
+
+An unused macro that contains a temporal operator is treated as non-temporal. mettle follows a used macro into its body when classifying a command.
+
+This matches the jar. An unused macro never reaches the jar's fact set or command body, so the engines should agree.
+
+Only used shapes were probed. [SEMANTICS_LEDGER.md](SEMANTICS_LEDGER.md) records the unused case as an assumption.
+
+**SAT/UNSAT effect:** No. No measured verdict difference is known.
+
+### Static-command evaluation
+
+mettle's evaluator refuses temporal operators on a static command. The jar evaluates them over its degenerate one-state trace and answers correctly.
+
+mettle reports that it cannot evaluate the expression. This feature is missing. mettle gives no wrong answer.
+
+**SAT/UNSAT effect:** No. The difference affects evaluation after solving.
 
 ## Counting and enumeration
 
-The conformance test compares verdicts. Instance counts are compared separately
-([ADR-0002](docs/adr/0002-conformance-oracle.md)), and these entries
-affect counts only. A verdict never moves.
+The conformance test compares verdicts. It compares instance counts separately. See [docs/adr/0002-conformance-oracle.md](docs/adr/0002-conformance-oracle.md).
 
-- **An abstract ordered sig with free children counts differently at symmetry 0.**
-  The jar mints atoms per child and counts each atom-to-child labelling as its own
-  instance, so its count is `n!` times mettle's (9216 against 384 at `for 4 A`).
-  mettle mints canonical parent atoms. Cases with a determinate population count
-  exactly.
-- **A plain-product arrow quantifier declaration is read first-order.** For
-  `some p: A -> univ`, the jar reads `p` as any sub-relation and mettle reads it
-  as one pair. Verdicts agree; the counts differ. The counting test skips this
-  shape.
-- **Temporal counts are relative to a configuration.** The jar's plain "next
-  trace" never leaves the static configuration its first solve landed on, so its
-  count is the traces of its own first configuration and mettle's is the traces
-  of mettle's. On a command whose configuration space has more than one member,
-  exact parity is not reachable. mettle reproduces the algorithm exactly and the
-  test reports such a disagreement as a typed skip. See
-  [LEDGER-014](SEMANTICS_LEDGER.md).
-- **Enumeration is exact; the order is the solver's.** Every distinct instance
-  appears once and the sequence ends at a true UNSAT. Which instance or trace
-  appears first comes from CaDiCaL.
-- **Per-state symmetry breaking uses a different bit order.** mettle groups a
-  relation's state copies together; the jar groups a state's relations together.
-  Any fixed bit order is a sound lex-leader predicate, so this changes only which
-  isomorphic representative survives.
+Every entry in this section affects counts or presentation only. None affects a verdict.
+
+### Abstract ordered sigs with free children
+
+An abstract ordered sig with free children counts differently at symmetry 0. The jar mints atoms per child.
+
+It treats each atom-to-child labelling as a separate instance. Its count is n! times mettle's count.
+
+The counts are 9216 against 384 at `for 4 A`. mettle mints canonical parent atoms. Cases with a determinate population count exactly.
+
+**SAT/UNSAT effect:** No. Only the instance count differs.
+
+### Plain-product arrow declarations
+
+mettle reads a plain-product arrow quantifier declaration as first-order. For `some p: A -> univ`, the jar treats p as any sub-relation.
+
+mettle treats p as one pair. The counting test skips this shape.
+
+**SAT/UNSAT effect:** No. Verdicts agree. Counts differ.
+
+### Temporal counts
+
+Temporal counts are relative to a configuration. The jar's plain "next trace" stays within the static configuration from its first solve.
+
+Its count covers traces from its own first configuration. mettle's count covers traces from mettle's first configuration.
+
+Exact parity is unreachable when the configuration space has more than one member. mettle reproduces the algorithm exactly. The test reports a typed skip.
+
+See LEDGER-014 in [SEMANTICS_LEDGER.md](SEMANTICS_LEDGER.md).
+
+**SAT/UNSAT effect:** No. Only the count differs.
+
+### Enumeration order
+
+Enumeration is exact. Order comes from the solver. Every distinct instance appears once. The sequence ends at a true UNSAT.
+
+CaDiCaL determines which instance appears first.
+
+**SAT/UNSAT effect:** No. Enumeration remains exact.
+
+### Per-state symmetry breaking
+
+mettle groups a relation's state copies together. The jar groups a state's relations together.
+
+Either fixed bit order gives a sound lex-leader predicate. Only the surviving isomorphic representative changes.
+
+**SAT/UNSAT effect:** No. Only the representative changes.
 
 ## Names, order and text
 
-mettle prints the same sets as the jar, with its own spelling and order
-([LEDGER-012](SEMANTICS_LEDGER.md)). None of this is compared by the conformance
-test.
+mettle prints the same sets as the jar, with its own spelling and order. See LEDGER-012 in [SEMANTICS_LEDGER.md](SEMANTICS_LEDGER.md).
 
-- **Tuple order is mettle's solve order.** For a value spanning several atom
-  classes, mettle prints sig atoms in declaration order, then integers ascending,
-  then strings. The reference console prints strings first, then integers in its
-  XML reader's order, then sig atoms. The sets are the same. Re-measured against
-  the jar on 2026-08-25: a relation holding `A + 1 + 3 + "zz" + "aa"` renders as
-  `{"aa", "zz", 1, 3, A$0, A$1}` in the reference console and
-  `{A$0, A$1, 1, 3, "aa", "zz"}` here. Matching the console byte for byte would
-  mean copying its serialize-and-reparse round trip purely for the reordering
-  side effect.
-- **Atom labels for a non-exact subsig differ.** mettle mints subsig atoms from
-  the parent's pool, so `sig B extends A` yields `A$2` where the jar yields
-  `B$0`. Re-measured on 2026-08-25 with `sig A {} sig B extends A {}` forced to
-  one atom each: that label is the only difference in the whole instance XML for
-  that model. The pool is built during bounds construction, before any writer
-  sees it, so the label is not a rendering choice.
-- **Trace rendering copies the reference's shape.** The
-  `---Trace---` header, the per-state blocks and the loop marker are the jar's.
-  The lines inside a block are mettle's own instance rendering. The exact frame
-  is pinned line by line against the jar's own captured trace by
-  `a_forced_trace_renders_state_by_state_with_the_loop_marked` in
-  `crates/mettle/tests/exec.rs`.
-- **Error text is mettle's,** rendered as caret diagnostics. Two messages are the
-  reference's, because each one states a rule about the evaluator: the
-  higher-order quantification refusal and the missing string literal. Both are
-  still emitted verbatim, each pinned by its own test.
+The conformance test compares none of these details.
+
+### Tuple order
+
+mettle uses solve order: sig atoms in declaration order, then ascending integers, then strings.
+
+The reference console prints strings first, then integers in its XML reader's order, then sig atoms. The sets are equal.
+
+A relation containing `A + 1 + 3 + "zz" + "aa"` was re-measured 2026-08-25. The reference console renders `{"aa", "zz", 1, 3, A$0, A$1}`.
+
+mettle renders `{A$0, A$1, 1, 3, "aa", "zz"}`. Byte parity would require the console's serialize-and-reparse round trip and its reordering side effect.
+
+**SAT/UNSAT effect:** No. The sets are equal.
+
+### Atom labels
+
+Atom labels differ for a non-exact subsig. mettle mints subsig atoms from the parent's pool.
+
+Thus, `sig B extends A` yields `A$2` in mettle and `B$0` in the jar.
+
+This was re-measured 2026-08-25 with one atom each. The label was the only difference in the complete instance XML.
+
+Bounds construction builds the pool before any writer sees it. Bounds construction determines the label.
+
+**SAT/UNSAT effect:** No. Only the atom label differs.
+
+### Trace rendering
+
+Trace rendering copies the reference shape. It uses the jar's `---Trace---` header, per-state blocks, and loop marker.
+
+Lines inside each block use mettle's instance rendering. The test a_forced_trace_renders_state_by_state_with_the_loop_marked pins the frame line by line.
+
+The test is in `crates/mettle/tests/exec.rs` and uses a captured jar trace.
+
+**SAT/UNSAT effect:** No. Only rendering differs.
+
+### Error text
+
+mettle uses its own caret diagnostics. Two messages come from the reference because they state evaluator rules.
+
+They cover the higher-order quantification refusal and the missing string literal. mettle emits both verbatim, and separate tests pin them.
+
+**SAT/UNSAT effect:** No. Only diagnostic text differs.
 
 ## Instance XML export
 
-`mettle exec <file.als> --xml <PATH>` writes the reference writer's structure
-exactly, and the jar's own reader accepted every file it was given (30 of 30:
-mt-071's 18, plus 12 more at mt-132). On a model whose instance is determinate,
-the whole document is byte-identical to the jar's, escaping and lazy ID
-numbering included. Three things still differ. None affects a reader. The
-schema is in
-[docs/reference/alloy6-instance-xml.md](docs/reference/alloy6-instance-xml.md).
+`mettle exec <file.als> --xml <PATH>` writes the reference writer's structure exactly. The jar's reader accepted every file tested, 30 of 30.
 
-- **`<source>` entries.** mettle writes the model path as given on the command
-  line; the jar always resolves it to an absolute path. Given an absolute path
-  mettle writes the same bytes. mettle also names its embedded modules
-  `<stdlib>/util/integer.als` where the jar writes
-  `/$alloy4$/models/util/integer.als`, and writes them after the user's files
-  where the jar writes `util/integer` immediately after the root. Both of those
-  stay. mettle's stdlib is a clean-room text
-  ([ADR-0006](docs/adr/0006-licensing-posture.md)), so an embedded module's
-  `content=` cannot match the jar's whatever the entry is called, and writing the
-  jar's path would name a file mettle does not ship.
-- **A range or increment scope records its lower endpoint.** `for 3 but 1..3 P`
-  writes `1 P` in the `command=` attribute where the jar writes `3 P`. Both
-  engines solve at the low end and agree on the verdict, so only the recorded
-  text differs. The resolved command keeps the starting value alone, so the
-  written upper endpoint never reaches the writer.
-- **Skolem `<types>` columns** come from the solver bound. The jar derives them
-  from a declared type. See [LEDGER-013](SEMANTICS_LEDGER.md).
+For a determinate instance, the complete document is byte-identical. This includes escaping and lazy ID numbering.
 
-`writeMetamodel` (`metamodel="yes"`) is a separate jar entry point that never
-appears together with a solved instance, and mettle does not implement it.
+The differences below do not affect a reader. See [docs/reference/alloy6-instance-xml.md](docs/reference/alloy6-instance-xml.md).
+
+### `<source>` entries
+
+mettle writes the model path supplied on the command line. The jar writes an absolute path. Given an absolute path, mettle writes the same bytes.
+
+mettle names embedded modules `<stdlib>/util/integer.als`. The jar uses `/$alloy4$/models/util/integer.als`.
+
+mettle writes embedded modules after user files. The jar places util/integer directly after the root.
+
+These differences remain. mettle's standard library is clean-room text, so embedded content= cannot match the jar's.
+
+The jar path also names a file that mettle does not ship. See [docs/adr/0006-licensing-posture.md](docs/adr/0006-licensing-posture.md).
+
+**SAT/UNSAT effect:** No. The differences do not affect an XML reader.
+
+### Range and increment scope text
+
+A range or increment scope records its lower endpoint. For `for 3 but 1..3 P`, mettle writes `1 P` in the command= attribute.
+
+The jar writes `3 P`. Both engines solve at the low end and agree.
+
+**SAT/UNSAT effect:** No. Only recorded text differs.
+
+### Skolem `<types>` columns
+
+mettle gets Skolem `<types>` columns from the solver bound. The jar gets them from a declared type.
+
+See LEDGER-013 in [SEMANTICS_LEDGER.md](SEMANTICS_LEDGER.md).
+
+**SAT/UNSAT effect:** No. The difference does not affect an XML reader.
+
+### Metamodel output
+
+writeMetamodel (metamodel="yes") is a separate jar entry point. It never appears with a solved instance. mettle does not implement it.
+
+**SAT/UNSAT effect:** No. It is separate from solved-instance output.
 
 ## The evaluator REPL
 
-`mettle exec --repl` and `--eval <EXPR>` evaluate against one solved instance,
-built from the contract in
-[docs/reference/alloy6-evaluator.md](docs/reference/alloy6-evaluator.md).
-Rendering shapes match the reference. The remaining edges:
+`mettle exec --repl` and `--eval <EXPR>` evaluate expressions against one solved instance. The contract is in [docs/reference/alloy6-evaluator.md](docs/reference/alloy6-evaluator.md).
 
-- **Only sig atoms are registered as names.** An integer atom is named `-3` and a
-  string atom `"hi"`, and neither lexes as an identifier, so neither was ever
-  reachable by name. They are reached as arithmetic and as string literals, as in
-  the reference. Every skolem name the solve minted is registered too.
-- **Every sig atom in the universe has a name, including atoms no sig holds.**
-  The reference's instance display renames such atoms to `unused0`; mettle keeps
-  the minting sig's name, so `A$2` names that atom even when `A = {A$0}`. Which
-  label the reference's evaluator accepts for such an atom was never pinned.
-  Unverified.
-- **An under-applied predicate or function gets a generic message.** Typing
-  `isEmpty` with no arguments is rejected, with a message about an unresolved
-  name. The reference explains the parameter list instead. Correct answer, worse
-  message.
-- **A string literal the command never referenced cannot be evaluated.** It has
-  no atom in that command's universe. The reference behaves the same way.
-- **No enumeration and no line editing.** The prompt offers no "next instance"
-  navigation, and the read loop is hand-rolled, with no history and no readline
-  editing (no dependency was taken for it). `:state N` on a temporal command is
-  the only trace control.
+Rendering shapes match the reference.
 
-## mettle serve
+### Registered names
 
-`mettle serve` solves one command and answers the Sterling provider protocol on
-`127.0.0.1`. The reference jar ships no Sterling, so nothing here is a
-conformance question ([ADR-0016](docs/adr/0016-rung5-remainder-serve-xml-packaging.md)
-Decision 2). What it does not do:
+Only sig atoms are registered as names. An integer atom is named `-3`, and a string atom is named `"hi"`.
 
-- **The views are not customizable.** There is a graph view and a table view,
-  both drawn as a pure function of the instance. There is no projection over
-  sigs, no hand-placement or saved layout, no user themes beyond following the
-  system light and dark setting, and no per-relation show and hide beyond the
-  builtin and `private` toggle the reference visualizer also has. Edge labels are
-  spread using estimated character widths, because the layout never measures
-  rendered text, so a dense bundle can still overlap.
-- **One unprobed enumeration corner.** After a fork, "next trace" stays inside
-  the fork's trace length. Budget or capacity exhaustion mid-enumeration is a
-  typed stop. mettle never repeats a trace or invents one.
-- **An external Sterling loses the loop point.** mettle serves the jar's
-  `looplength` dialect. The `sterling-ts` parser reads `backloop` and never
-  `looplength`. mettle's own frontend reads the jar dialect, so this affects only
-  interop with an upstream Sterling build.
-- **A stale `datumId` is refused.** Forge, the only other provider, answers about
-  its current instance anyway. An answer about a different instance is a wrong
-  answer, so mettle says which instance it is on instead.
-- **Almost no solve knobs.** `--allow-overflow`, `--conflicts` and
-  `--encode-budget` are `exec` options. `serve` always solves at their defaults.
-  `--solver` is the exception, because which backend answered is not something a
-  visualization should leave unstated.
-- **One session, one command, no shutdown verb.** Several browser tabs share one
-  solved session behind a mutex. A file with several commands needs `--command`.
-  The server stops on Ctrl-C; the protocol has no shutdown message.
+Neither form lexes as an identifier, so neither was reachable by name. Arithmetic and string literals reach them, as in the reference.
+
+Every skolem name minted by the solve is registered.
+
+**SAT/UNSAT effect:** No. This affects evaluator name lookup after solving.
+
+### Names for unused atoms
+
+Every sig atom in the universe has a name, including atoms that no sig holds. The reference display renames these atoms to unused0.
+
+mettle keeps the minting sig's name. Thus, `A$2` names the atom even when `A = {A$0}`.
+
+The accepted reference evaluator label was never pinned. This behavior is unverified.
+
+**SAT/UNSAT effect:** No. This affects evaluator name lookup after solving.
+
+### Under-applied calls
+
+An under-applied predicate or function gets a generic unresolved-name message. The reference explains the parameter list.
+
+The answer is correct. The message is worse.
+
+**SAT/UNSAT effect:** No. Only the diagnostic differs.
+
+### Unreferenced string literals
+
+A string literal absent from the command has no atom in that command's universe. It cannot be evaluated.
+
+The reference behaves the same way.
+
+**SAT/UNSAT effect:** No. Both evaluators have the same limit.
+
+### Prompt features
+
+The prompt has no enumeration and no line editing. It has no next-instance navigation, history, or readline.
+
+The read loop is hand-written, and no dependency was taken. `:state N` is the only trace control for a temporal command.
+
+**SAT/UNSAT effect:** No. These are prompt features after solving.
+
+## `mettle serve`
+
+`mettle serve` solves one command and serves the Sterling provider protocol on 127.0.0.1.
+
+The reference jar ships no Sterling. These entries are not conformance questions. See Decision 2 in [docs/adr/0016-rung5-remainder-serve-xml-packaging.md](docs/adr/0016-rung5-remainder-serve-xml-packaging.md).
+
+### Views
+
+Views are not customizable. mettle provides a graph view and a table view. Both are pure functions of the instance.
+
+There is no sig projection, hand placement, saved layout, or user theme beyond system light/dark. Per-relation controls cover only the builtin-and-private toggle that the reference visualizer also has.
+
+Edge labels use estimated character widths. The layout does not measure rendered text, so a dense bundle can overlap.
+
+**SAT/UNSAT effect:** No. These limits affect visualization only.
+
+### Enumeration after a fork
+
+One enumeration corner is unprobed. After a fork, "next trace" stays within the fork's trace length.
+
+Budget or capacity exhaustion during enumeration produces a typed stop. mettle never repeats or invents a trace.
+
+**SAT/UNSAT effect:** No. This affects enumeration after solving.
+
+### External Sterling loop points
+
+An external Sterling loses the loop point. mettle serves the jar's `looplength` dialect. The sterling-ts parser reads only `backloop`.
+
+mettle's frontend reads the jar dialect. The issue affects only interoperation with an upstream Sterling build.
+
+**SAT/UNSAT effect:** No. This affects trace display only.
+
+### Stale datum IDs
+
+mettle refuses a stale datumId and states which instance is current. Forge answers against its current instance instead.
+
+That Forge behavior can answer about a different instance, which is wrong.
+
+**SAT/UNSAT effect:** No. This concerns provider queries after solving.
+
+### Solve options
+
+`mettle serve` exposes almost no solve options. `--allow-overflow`, `--conflicts` and `--encode-budget` are exec options. Serve uses their defaults.
+
+`--solver` is the exception. A visualization must state which backend supplied its answer.
+
+**SAT/UNSAT effect:** No. Serve uses the documented defaults.
+
+### Sessions and shutdown
+
+The server supports one session and one command. Browser tabs share one solved session behind a mutex.
+
+A multi-command file needs `--command`. The server stops on Ctrl-C. The protocol has no shutdown message.
+
+**SAT/UNSAT effect:** No. These limits concern session control.
 
 ## The solver
 
-Since [ADR-0027](docs/adr/0027-cadical-only-solver.md) the solver is CaDiCaL
-1.9.5, through the vendored MIT binding in `vendor/cadical`. `--solver` remains
-as the plugin interface, and `cadical` is the one name it resolves.
+Since [ADR-0027](docs/adr/0027-cadical-only-solver.md), mettle uses CaDiCaL 1.9.5. It uses the vendored MIT binding in `vendor/cadical`.
 
-- **Every build needs a C++ toolchain.** The backend is compiled unconditionally,
-  so release artifacts, the container image and the nix package all carry about
-  100 vendored C++ sources and link libstdc++. The Dockerfile installs a
-  toolchain and nix's stdenv already provides one.
-- **Determinism is a property of a fixed build.** A fixed CaDiCaL build answers
-  identically every run. CaDiCaL's restart policy compares floating-point
-  averages of clause glue, so cross-architecture divergence was possible in
-  principle. `.cargo/config.toml` pins `-ffp-contract=off` for the vendored C++,
-  and the cross-target battery has measured full byte-identity on all four
-  release targets, twice. That identity is a hard release-tag gate from v0.1.2
-  on. The guarantee covers the builds we pin and test. It is not a mathematical
-  property of the algorithm.
-- **The x86_64 macOS target has a horizon.** That leg runs on `macos-15-intel`,
-  GitHub's last Intel macOS runner image, which retires in autumn 2027.
-- **A DRAT certificate proves one narrow thing.** `backend-instrument --certify`
-  has CaDiCaL log a proof of an UNSAT verdict and has drat-trim check it against
-  the exact CNF that was solved. That establishes that this CNF is unsatisfiable.
-  Whether the CNF is the right encoding of the Alloy command is still the
-  evaluator self-check's job for SAT answers, and the jar's for both.
-- **`--conflicts` caps effort per solve,** and the solver stays usable
-  afterwards. There is no decision-count budget.
+`--solver` remains the plugin interface. It resolves only `cadical`.
+
+### C++ toolchain
+
+Every build needs a C++ toolchain because the backend compiles unconditionally.
+
+Release artifacts, the container image, and the nix package include about 100 vendored C++ sources. They link libstdc++.
+
+The Dockerfile installs a toolchain. nix's stdenv provides one.
+
+**SAT/UNSAT effect:** No. This is a build requirement.
+
+### Determinism
+
+Determinism applies to a fixed build. A fixed CaDiCaL build answers identically on every run.
+
+CaDiCaL's restart policy compares floating-point averages of clause glue. Cross-architecture divergence was therefore possible in principle.
+
+`.cargo/config.toml` sets `-ffp-contract=off` for the vendored C++. The cross-target battery measured full byte-identity on all four release targets, twice.
+
+From v0.1.2, that identity is a hard release-tag gate. The guarantee covers the pinned and tested builds only.
+
+**SAT/UNSAT effect:** No. No measured effect exists for the pinned and tested builds.
+
+### x86_64 macOS horizon
+
+The x86_64 macOS target runs on macos-15-intel. This is GitHub's last Intel macOS runner image, and it retires in autumn 2027.
+
+**SAT/UNSAT effect:** No. This concerns release infrastructure.
+
+### DRAT certificates
+
+`backend-instrument --certify` makes CaDiCaL log a proof for an UNSAT verdict. drat-trim checks it against the exact CNF solved.
+
+This proves that the CNF is unsatisfiable. The certificate gives no proof that the CNF correctly encodes the Alloy command.
+
+The evaluator self-check covers the encoding for SAT answers. The jar covers it for both verdicts.
+
+**SAT/UNSAT effect:** No. This entry states the certificate's proof boundary.
+
+### Conflict budgets
+
+`--conflicts` caps effort for each solve. The solver remains usable after reaching the cap.
+
+There is no decision-count budget.
+
+**SAT/UNSAT effect:** No. Budget exhaustion produces no verdict.
 
 ## Solve budgets and capacity
 
-- **`mettle exec` applies no solve budgets, on purpose.** The reference runs a
-  command until it answers, and `exec` is the drop-in surface, so a wide `steps`
-  range on a big model can genuinely grind (`leader.als` takes about 11 minutes).
-  `--conflicts` and `--encode-budget` are the opt-ins. The conformance sweep owns
-  budgeted runs.
-- **A budgeted command that runs out reports a typed defer.** The verdict is
-  never wrong, and every such command is solvable at a larger budget.
+### `mettle exec` budgets
+
+`mettle exec` applies no solve budgets, by design. The reference runs a command until it answers, and exec is the drop-in surface.
+
+A wide steps range on a large model can take a long time. `leader.als` takes about 11 minutes.
+
+`--conflicts` and `--encode-budget` enable budgets. The conformance sweep owns budgeted runs.
+
+**SAT/UNSAT effect:** No. The default waits for an answer.
+
+### Budget exhaustion
+
+A budgeted command that runs out reports a typed defer. It never reports a wrong verdict.
+
+Every such command is solvable with a larger budget.
+
+**SAT/UNSAT effect:** No. Exhaustion produces a typed defer and no verdict.
 
 ## Modules and the standard library
 
-- **Only `util/*` is embedded** as the last-resort module fallback. The jar
-  serves any of its bundled `models/*` files that way. A model that opens a
-  non-util jar-embedded module fails to load in mettle. The alloy4fun run showed
-  this is negligible: the only such cases were 6 codes whose jar rejection is a
-  genuine parse error.
-- **`util/ordering` exact pinning covers childless and enum ordered sigs only.**
-  An ordered sig with children is governed by the hand-built `pred/totalOrder`
-  formula instead. Verdicts and counts are jar-pinned either way. See
-  [LEDGER-004](SEMANTICS_LEDGER.md).
-- **Two `util/ordering` detection corners are unverified.** A module-level fact
-  that spells the fields by explicit qualification (`Ord.First`) is deliberately
-  not matched; the jar may pin there, and it has zero corpus incidence, so mettle
-  under-approximates. The `pred/totalOrder` keyword over a genuinely non-exact
-  element sig does not pin, and the jar's behaviour there was not probed.
-- **`fun/add` index arithmetic could wrap.** In `util/sequence`'s `copy`,
-  `append` and `subseq`, the index arithmetic can wrap at a `SeqIdx` scope past
-  about 4 under bitwidth 4. Pre-existing and unprobed. Unverified.
+### Embedded modules
+
+Only `util/*` is embedded as a last-resort module fallback. The jar also serves its bundled `models/*` files this way.
+
+A model that opens a non-util jar-embedded module fails to load in mettle.
+
+This had negligible effect in the alloy4fun run. The only cases were 6 codes whose jar rejection was a genuine parse error.
+
+**SAT/UNSAT effect:** No. The known cases are rejected by the jar.
+
+### `util/ordering` exact pinning
+
+`util/ordering` exact pinning covers childless and enum ordered sigs only. An ordered sig with children uses the hand-built pred/totalOrder formula.
+
+Verdicts and counts are pinned to the jar in both cases. See LEDGER-004 in [SEMANTICS_LEDGER.md](SEMANTICS_LEDGER.md).
+
+**SAT/UNSAT effect:** No. Verdicts match.
+
+### `util/ordering` detection corners
+
+Two corners remain unverified.
+
+A module fact using explicit field qualification such as `Ord.First` is deliberately not matched. The jar may pin there.
+
+This shape has zero corpus incidence, so mettle under-approximates it.
+
+The pred/totalOrder keyword does not pin a genuinely non-exact element sig. The jar's behavior there was not probed.
+
+**SAT/UNSAT effect:** No. No measured verdict difference is known.
+
+### `fun/add` index arithmetic
+
+`fun/add` index arithmetic could wrap. In the `util/sequence` copy, append and subseq can wrap their index arithmetic.
+
+This can occur at a SeqIdx scope past about 4 under bitwidth 4. The corner is pre-existing, unprobed, and unverified.
+
+**SAT/UNSAT effect:** No. No measured verdict difference is known.
 
 ## Internal differences that cannot change an answer
 
-- The reference's reflexive `r = r` padding is not emitted. It keeps unreferenced
-  relations alive for Kodkod's solver and carries no meaning.
-- `Int/min` and `Int/max` relations are not bound. The jar bounds them and then
-  never references them in its translation, because `fun/min` and `fun/max` lower
-  as integer constants.
-- The jar's redundant per-column membership constraints on arrow field bounds are
-  omitted at every depth. They are entailed by the top-level membership.
+### Reflexive padding
+
+mettle omits the reference's reflexive `r = r` padding. The jar uses it to keep unreferenced relations alive for Kodkod's solver.
+
+The padding has no meaning.
+
+**SAT/UNSAT effect:** No.
+
+### `Int/min` and `Int/max`
+
+mettle does not bind the `Int/min` and `Int/max` relations. The jar binds them but never references them.
+
+`fun/min` and `fun/max` lower as integer constants.
+
+**SAT/UNSAT effect:** No.
+
+### Arrow field bounds
+
+mettle omits the jar's redundant per-column membership constraints on arrow field bounds at every depth.
+
+Top-level membership entails these constraints.
+
+**SAT/UNSAT effect:** No.
 
 ## Permanent non-goals for v1
 
-No native GUI (Sterling and the CLI only). No unbounded model checking (temporal
-solving is bounded). No obscure syntax corners beyond those tracked here.
+### Native GUI
 
-## How this file is maintained
+v1 has no native GUI. It provides Sterling and the CLI only.
 
-Every construct that parses but cannot be solved is listed here and fails with a
-precise message. mettle never answers wrongly. As each gap closes, its entry is
-removed and the conformance scorecard in [docs/STATE.md](docs/STATE.md) records
-the new agreement level.
+**SAT/UNSAT effect:** No.
+
+### Unbounded model checking
+
+v1 has no unbounded model checking. Temporal solving is bounded.
+
+**SAT/UNSAT effect:** No. mettle refuses unbounded commands.
+
+### Obscure syntax corners
+
+v1 does not cover obscure syntax corners beyond those tracked in this file.
+
+**SAT/UNSAT effect:** No. Unsupported constructs produce a typed error.
+
+## Maintenance
+
+Every construct that parses but cannot be solved appears in this file. Each fails with a precise message.
+
+mettle never answers wrongly. When a gap closes, its entry leaves this file. The scorecard in [docs/STATE.md](docs/STATE.md) records the new agreement level.

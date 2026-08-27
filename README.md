@@ -1,119 +1,93 @@
-# mettle
-
 [![CI](https://github.com/chaychoong/mettle/actions/workflows/ci.yml/badge.svg)](https://github.com/chaychoong/mettle/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/chaychoong/mettle)](https://github.com/chaychoong/mettle/releases)
 
-**A conformance-tested reimplementation of Alloy 6 as a single self-contained binary.** It needs no Java runtime. mettle reads standard `.als` files, the same language as the reference Alloy Analyzer. It finds instances and counterexamples, steps through temporal traces, and shows all of it in your browser, from a first-class CLI. It tracks **Alloy 6.2.0**, the latest release of the reference implementation.
+# mettle
+
+mettle is a conformance-tested reimplementation of Alloy 6 in one self-contained binary. It needs no Java runtime. It reads standard `.als` files, the same language as the reference Alloy Analyzer. It finds instances and counterexamples, steps through temporal traces, and visualizes in the browser from a CLI. mettle tracks Alloy 6.2.0, the latest release of the reference implementation.
 
 <picture>
   <source srcset="docs/screenshots/graph-dark.png" media="(prefers-color-scheme: dark)">
   <img src="docs/screenshots/graph-light.png" alt="mettle's graph view: a file_system.als counterexample rendered as a layered graph with per-signature hues and a skolem witness, next to the evaluator pane">
 </picture>
 
-> ⚠️ **Zero-versioned by intention.** mettle stays on 0.x because it is not yet meant to be production-ready. The version number makes no claim about how close it is; the scorecard below says that. The aim is to be Alloy exactly, and to earn the right to diverge later. See [what it can and can't do yet](LIMITATIONS.md) and the [roadmap](docs/ROADMAP.md).
+mettle aims to replace Alloy without changing its behaviour. The conformance scorecard is the measure: each model that both tools execute must produce the same answer. When mettle cannot execute something, it reports `CANNOT EXECUTE` with a typed reason. It never guesses.
 
-## Usage
+> mettle stays on version 0.x on purpose. It is not yet meant for production. The version number makes no claim about progress. The scorecard does. See [what it can and can't do yet](LIMITATIONS.md) and the [roadmap](docs/ROADMAP.md).
 
-### Install
+## Install
 
-Binary releases cover macOS (arm64, x86_64) and Linux (arm64, x86_64). There are no runtime dependencies.
+Binary releases support macOS arm64 and x86_64, and Linux arm64 and x86_64. They have no runtime dependencies.
 
 ```sh
-# homebrew
 brew install chaychoong/tap/mettle
-
-# shell installer
 curl -LsSf https://github.com/chaychoong/mettle/releases/latest/download/mettle-installer.sh | sh
-
-# nix
 nix run github:chaychoong/mettle -- --help
-
-# docker
 docker pull ghcr.io/chaychoong/mettle
+```
 
-# from source (the toolchain version is fixed by rust-toolchain.toml)
+Build from source with the toolchain version fixed by `rust-toolchain.toml`:
+
+```sh
 cargo build --release
 ```
 
 `cargo install` from crates.io is deliberately not a channel.
 
-mettle solves with **CaDiCaL** ([ADR-0027](docs/adr/0027-cadical-only-solver.md)), built from sources vendored in `vendor/cadical`, so a build from source needs a C++ toolchain. `exec` and `serve` take `--solver <name>` to pick the SAT backend, and `cadical` is the one name it accepts today. What that costs is written up in [LIMITATIONS.md](LIMITATIONS.md).
+mettle uses CaDiCaL. It builds from sources vendored in `vendor/cadical`; a source build needs a C++ toolchain. See the [solver decision](docs/adr/0027-cadical-only-solver.md). `exec` and `serve` take `--solver <name>`. `cadical` is the only accepted name today. [LIMITATIONS.md](LIMITATIONS.md) describes the costs.
 
-### Try it
+## Try it
 
-You can run mettle straight from GHCR without installing anything. Point it at any `.als` file:
+Run a model in Docker without an install:
 
 ```sh
-# solve every command in a model
 docker run --rm -v "$PWD":/work ghcr.io/chaychoong/mettle exec /work/model.als
-
-# visualize one in the browser, then open http://localhost:4030
 docker run --rm -p 4030:4030 -v "$PWD":/work ghcr.io/chaychoong/mettle serve /work/model.als --bind 0.0.0.0
 ```
 
-### What you can run
+Open http://localhost:4030 after you start `serve`.
 
-```sh
-# Take every run/check command in the file to a verdict, with instances and
-# counterexamples rendered. This includes Alloy 6 temporal models: mettle
-# searches for a lasso trace and prints it state by state, with the loop marked.
-mettle exec model.als
+## Commands
 
-# An evaluator REPL over the solved instance. On a temporal command it is a
-# trace debugger, and `:state N` moves the evaluation point through the loop.
-mettle exec model.als --repl
+`mettle exec model.als` runs each run/check command to a verdict and renders instances and counterexamples. For an Alloy 6 temporal model, it searches for a lasso trace and prints each state with the loop marked.
 
-# Solve one command and explore it in the browser: graph and table views, the
-# trace rail, an evaluator pane, and New Trace / New Config / New Init /
-# New Fork enumeration. It speaks the Sterling provider protocol, so external
-# Sterling clients work too.
-mettle serve model.als
+`mettle exec model.als --repl` starts an evaluator REPL over the solved instance. For a temporal command, it acts as a trace debugger; `:state N` moves the evaluation point through the loop.
 
-# Write the solved command as instance XML, in the same byte shape as the
-# reference jar's own writer.
-mettle exec model.als --xml out.xml
-
-# Parse, resolve, and typecheck, with rustc-style caret diagnostics.
-mettle parse model.als
-mettle check model.als
-```
-
-The temporal trace rail draws the lasso's loop:
+`mettle serve model.als` solves one command for exploration in the browser. It opens graph and table views, a trace rail, an evaluator pane, and New Trace / New Config / New Init / New Fork enumeration. It speaks the Sterling provider protocol, so external Sterling clients work too.
 
 <img src="docs/screenshots/trace-rail.png" alt="mettle's trace stepper on a temporal model: a six-state lasso with the amber loop arc marking that state 5 repeats forever">
 
-## The measure of success
+`mettle exec model.als --xml out.xml` writes the solved command as instance XML in the same byte shape as the jar's writer.
 
-mettle's goal is to be a **drop-in replacement for the latest Alloy**. We measure that claim against the reference Alloy 6.2.0 jar, which is fixed at one exact version and SHA-256, and we re-measure on every change. The conformance scorecard below is how we track it: on every model both tools can execute, they must give the same answer. Where mettle cannot execute something yet, it says so and reports `CANNOT EXECUTE` with a reason. It never guesses, so a verdict you get is a verdict that was checked.
+`mettle parse model.als` and `mettle check model.als` parse, resolve, and typecheck with rustc-style caret diagnostics.
 
 ## Conformance
 
-The figures below were measured on 2026-08-27 over the committed corpora (alloytools-models plus portus-63: 167 files, 564 `run`/`check` commands) and regenerate from a checkout, with the commands at the end of this section. They are deterministic, so they come out byte-identical across runs and machines. Speed is a separate question and lives in [BENCHMARKS.md](BENCHMARKS.md).
+The scorecard measures the committed corpora, alloytools-models plus portus-63: 167 files and 564 run/check commands. The figures below were measured on 2026-08-27. You can regenerate them from a checkout with the commands below. All results are deterministic and byte-identical across runs and machines.
 
-### Correctness
+The reference is the Alloy Analyzer 6.2.0 jar.
 
-Four independent checks, each a differential comparison against the fixed jar:
+| Check | Result |
+| --- | --- |
+| Verdict agreement, SAT/UNSAT against the jar | 554 of 564 agree (290 SAT / 264 UNSAT), 0 disagreements |
+| Self-check, each mettle instance re-verified by its independent evaluator | 0 failures |
+| Counting, all solutions at small scopes against the jar | 71 exact matches at symmetry 0, 96 at symmetry 20, 0 mismatches |
+| Syntax and resolution, lex, parse, print, re-parse, resolve, and typecheck against the jar | 167 of 167 files, 100% agreement |
 
-| Check | What it does | Result |
-|---|---|---|
-| **Verdict agreement** | compares every command's SAT/UNSAT verdict with the jar's | **554 of 564 agree (290 SAT / 264 UNSAT), 0 disagreements** |
-| **Self-check** | re-verifies every instance mettle emits, using mettle's own independent evaluator | **0 failures** |
-| **Counting** | enumerates all solutions at small scopes and counts them against the jar, at two symmetry settings | **71 exact matches at symmetry 0, 96 at symmetry 20, 0 mismatches** |
-| **Syntax and resolution** | lex, parse, print and re-parse round-trip, then resolve and typecheck accept/reject against the jar | **167 of 167 files, 100% agreement** |
+Of the 10 remaining commands, mettle answers 2 where the jar times out, leaving nothing to compare. Two run past the default solve budget. Four are higher-order commands that the jar also errors on. Two are temporal commands that mettle rejects with the same text as the jar. The corpus produced 0 panics.
 
-Of the 10 remaining commands, 2 are commands mettle answers but the jar times out on, so there is nothing to compare. For the other 8, mettle reports a typed reason and gives no verdict: 2 run past the default solve budget, 4 are higher-order commands the jar also errors on, and 2 are temporal commands mettle rejects with the same text the jar uses. There were **0 panics** across the corpus, as always.
+CaDiCaL can log a DRAT proof for an UNSAT verdict. An external checker can verify it against the CNF that mettle solved. See [CONTRIBUTING.md](CONTRIBUTING.md) for the recipe.
 
-An UNSAT verdict can also be machine-certified: CaDiCaL logs a DRAT proof, and an external checker verifies it against the CNF mettle solved. [CONTRIBUTING.md](CONTRIBUTING.md) has the recipe.
+A differential pass over 150,891 snippets from [Alloy4Fun](https://github.com/haslab/Alloy4Fun) was measured on 2026-08-25. It found 0 disagreements in either direction and 100.0000% agreement. mettle rejects nothing the jar accepts and accepts nothing the jar rejects. Error positions match exactly on 99.79% of parse errors. Warning emission matches exactly: all 101,970 warning-bearing files are identical, and every one of the jar's 14,180 warnings matches by class and line.
 
-Beyond the corpus, a differential pass over 150,891 snippets from the [Alloy4Fun](https://github.com/haslab/Alloy4Fun) dataset (measured 2026-08-25) found **0 disagreements in either direction**: mettle rejects nothing the jar accepts and accepts nothing the jar rejects, **100.0000% agreement**; error positions match exactly on 99.79% of parse errors. Warning emission matches the jar exactly: all 101,970 files identical, every one of the jar's 14,180 warnings matched by class and line. A mutation fuzzer runs 4,248 mutants per CI run, verified to 88,500 offline, and holds three properties: no panic, sane spans, round-trip stable.
+A mutation fuzzer runs 4,248 mutants per CI run and has verified 88,500 offline. It checks for no panic, sane spans, and round-trip stability.
 
-Every behavioral rule mettle matches is written down in the [Semantics Ledger](SEMANTICS_LEDGER.md). Every disagreement ever found was root-caused and has a regression test in the tree.
+The [Semantics Ledger](SEMANTICS_LEDGER.md) records every matched behavioural rule. Every disagreement found has a root cause and a regression test.
 
-### Speed
+## Benchmarks
 
-Measured numbers live in **[BENCHMARKS.md](BENCHMARKS.md)**: startup (native binary against a cold JVM), parse plus resolve over the whole corpus (about 21 times faster as batch wall clock, with the caveats spelled out there), and a per-command solve head-to-head of mettle's compiled-in CaDiCaL against the jar's default SAT4J, with verdict agreement asserted on every compared row.
+[BENCHMARKS.md](BENCHMARKS.md) has the measured numbers. It covers startup, native binary against a cold JVM; parse and resolve over the whole corpus, about 21 times faster as batch wall clock; and per-command solving, mettle's CaDiCaL against the jar's default SAT4J. It states the caveats and asserts verdict agreement on every compared row.
 
-### Regenerate
+## Regenerate the scorecard
 
 ```sh
 ./scripts/fetch-corpora.sh                                  # corpora are fetched, never committed
@@ -124,27 +98,10 @@ cargo build --release -p als-conform -p mettle
 cargo test --release -p als-syntax --test corpus_roundtrip  # syntax check
 ```
 
-## Found a difference from Alloy?
+## Found a difference from Alloy
 
-That is the most valuable contribution you can make. mettle's whole claim is "Alloy, exactly", so **any** model where mettle and the Alloy Analyzer disagree is a bug here, however small. That includes a different verdict, a different error, mettle accepting something Alloy rejects, mettle rejecting something Alloy accepts, and any trace or evaluator answer that differs.
+A model that disagrees with the Alloy Analyzer is a valuable contribution. Any difference is a mettle bug. This includes a different verdict or error, accepting a model the Alloy Analyzer rejects, rejecting a model it accepts, or a differing trace or evaluator answer.
 
-1. Check [LIMITATIONS.md](LIMITATIONS.md) first. Every *known* gap and deliberate divergence is listed there, and a `CANNOT EXECUTE` report means mettle declined to answer, so it is not a disagreement.
-2. [Open a divergence issue](https://github.com/chaychoong/mettle/issues/new?template=divergence.md) with the smallest `.als` you can make that shows it, the exact command you ran, what Alloy says (version 6.2.0 is the reference), what mettle says, and your `mettle --version`.
+Check [LIMITATIONS.md](LIMITATIONS.md) first. It lists each known gap and deliberate divergence. A `CANNOT EXECUTE` report declines an answer; it is not a disagreement.
 
-Shrinking the model is appreciated and optional. A big model that disagrees is still a real find. Every confirmed divergence gets root-caused and a regression test.
-
-## How it's built, and whether you should use it
-
-This project is built primarily by an AI agent fleet, with a human product owner steering and reviewing. The process itself is checked into the repo, if you are curious how it was run: [CLAUDE.md](CLAUDE.md), the [ADRs](docs/adr/), the human-owned [Semantics Ledger](SEMANTICS_LEDGER.md), and the [task ledger](docs/TASKS.md).
-
-Should you use it? I dogfood mettle, and I like it better than the reference Analyzer, partly because I made it and partly because it feels lighter. You might like it because it installs in seconds and runs anywhere without a JVM. It is a reimplementation, so **there may be behavioral differences from real Alloy that we haven't found yet.** We work to close that gap continually. The scorecard and every check above regenerate from a checkout with one script against the fixed reference jar, and every confirmed divergence gets root-caused and a regression test. The possibility of an unfound difference is always there. Known gaps and deliberate divergences are in [LIMITATIONS.md](LIMITATIONS.md); if you find a new one, [that's the most valuable thing you can hand us](#found-a-difference-from-alloy).
-
-Note: the *product* contains no JVM. The *test infrastructure* deliberately runs the reference Alloy jar to regenerate the scorecard, which is the whole point of it.
-
-## Documentation
-
-Start at **[docs/README.md](docs/README.md)** (index) or **[docs/ROADMAP.md](docs/ROADMAP.md)** (the plan). Current gaps: [LIMITATIONS.md](LIMITATIONS.md). To hack on mettle itself, **[CONTRIBUTING.md](CONTRIBUTING.md)** has the workspace setup, build, and test story.
-
-## License
-
-mettle is **MPL-2.0** ([LICENSE](LICENSE)). The `util/*` standard library is a clean-room rewrite, written against interface descriptions and never against upstream text ([ADR-0006](docs/adr/0006-licensing-posture.md)). The reference Alloy jar is used only as a test oracle, and is never shipped or embedded. Test corpora are fetched locally by script and never redistributed.
+File an issue with the smallest `.als` that shows the problem, the exact command, what Alloy 6.2.0 says, what mettle says, and `mettle --version` output. Use the [divergence issue form](https://github.com/chaychoong/mettle/issues/new?template=divergence.md). Shrinking the model is welcome but optional. Each confirmed divergence gets a root cause and a regression test.
