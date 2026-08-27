@@ -1,6 +1,6 @@
 # ADR-0025 — The over-accept remainder, fully sized and ranked (the conformance endgame packet)
 
-**Status:** Proposed — this is the owner's ranking packet across ALL remaining resolver-conformance work; the individual authorizations it references are marked per item.
+**Status:** Closed — the ranking packet is discharged: every item it ranked has shipped (mt-110, mt-111/[LEDGER-016](../../SEMANTICS_LEDGER.md), the [ADR-0023](0023-compound-operand-bidirectional-resolution.md) phases) or moved to its own decision ([ADR-0028](0028-zero-gap-campaign.md) amended item 5). The packet text below is unchanged.
 **Date:** 2026-08-23 · **Bead:** mt-109 (sizing) · **Evidence:** `scratchpad/probe/mt109/{families-mechanism,mult-flag}.md` + 88 probe cells + a regenerated full jar verdict set; [ADR-0023](0023-compound-operand-bidirectional-resolution.md) (+ its two addenda), [ADR-0024](0024-sig-metamodel-sized-defer.md), [LEDGER-016](../../SEMANTICS_LEDGER.md).
 
 ## Context

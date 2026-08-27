@@ -1,6 +1,6 @@
 # ADR-0024 — The `Sig$` metamodel thread, sized: defer the feature pinned; narrow the `seen_dollar` stopgap now
 
-**Status:** Proposed — the feature question (build vs stay pinned) is the owner's, packaged here alongside [ADR-0023](0023-compound-operand-bidirectional-resolution.md) so both named threads are decided from one packet. The stopgap narrowing (mt-108) is a no-fork conformance tightening the tech lead authorizes under the standing Option-B delegation, independent of the feature call.
+**Status:** Superseded on the feature call by [ADR-0028](0028-zero-gap-campaign.md) (owner, 2026-08-25) — the defer this packet recommended was reversed and mt-107 shipped under the campaign (closure note at the end of this file). The stopgap narrowing (mt-108) shipped 2026-08-23 under the standing Option-B delegation, independent of the feature call. The packet text below is unchanged.
 **Date:** 2026-08-23 · **Bead:** mt-106 (sizing) → mt-107 (feature, owner-gated) + mt-108 (stopgap narrowing, authorized)
 **Evidence:** `scratchpad/probe/mt106/sig-meta-design.md` (the full memo), `scratchpad/probe/mt097/a_meta*` (7 jar-verified probe cells), and a reference-source reading of `resolveMeta`/the quantifier ground-expansion (pinned commit `794226dd` — the mt-016 source-pinning practice; clean-room applies to stdlib text only, per ADR-0006).
 
