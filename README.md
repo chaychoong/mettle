@@ -86,9 +86,9 @@ The temporal trace rail draws the lasso's loop:
 
 mettle's goal is to be a **drop-in replacement for the latest Alloy**. We measure that claim against the reference Alloy 6.2.0 jar, which is fixed at one exact version and SHA-256, and we re-measure on every change. The conformance scorecard below is how we track it: on every model both tools can execute, they must give the same answer. Where mettle cannot execute something yet, it says so and reports `CANNOT EXECUTE` with a reason. It never guesses, so a verdict you get is a verdict that was checked.
 
-## Benchmarks
+## Conformance
 
-The correctness figures below were measured on 2026-08-25, the speed figures on 2026-07-27. Both run over the committed corpora (alloytools-models plus portus-63: 167 files, 564 `run`/`check` commands) and regenerate from a checkout, with the commands at the end of this section. Correctness numbers are deterministic, so they come out byte-identical across runs and machines. Timings vary with the machine.
+The figures below were measured on 2026-08-27 over the committed corpora (alloytools-models plus portus-63: 167 files, 564 `run`/`check` commands) and regenerate from a checkout, with the commands at the end of this section. They are deterministic, so they come out byte-identical across runs and machines. Speed is a separate question and lives in [BENCHMARKS.md](BENCHMARKS.md).
 
 ### Correctness
 
@@ -96,31 +96,22 @@ Four independent checks, each a differential comparison against the fixed jar:
 
 | Check | What it does | Result |
 |---|---|---|
-| **Verdict agreement** | compares every command's SAT/UNSAT verdict with the jar's | **552 of 564 agree (288 SAT / 264 UNSAT), 0 disagreements** |
+| **Verdict agreement** | compares every command's SAT/UNSAT verdict with the jar's | **554 of 564 agree (290 SAT / 264 UNSAT), 0 disagreements** |
 | **Self-check** | re-verifies every instance mettle emits, using mettle's own independent evaluator | **0 failures** |
-| **Counting** | enumerates all solutions at small scopes and counts them against the jar, at two symmetry settings | **69 exact matches at symmetry 0, 93 at symmetry 20, 0 mismatches** |
+| **Counting** | enumerates all solutions at small scopes and counts them against the jar, at two symmetry settings | **71 exact matches at symmetry 0, 96 at symmetry 20, 0 mismatches** |
 | **Syntax and resolution** | lex, parse, print and re-parse round-trip, then resolve and typecheck accept/reject against the jar | **167 of 167 files, 100% agreement** |
 
-Of the 12 remaining commands, 2 are commands mettle answers but the jar times out on, so there is nothing to compare. For the other 10, mettle reports a typed reason and gives no verdict: 2 run past the default solve budget, 2 hit a gap in lowering, 4 are higher-order commands the jar also errors on, and 2 are temporal commands mettle rejects with the same text the jar uses. There were **0 panics** across the corpus, as always.
+Of the 10 remaining commands, 2 are commands mettle answers but the jar times out on, so there is nothing to compare. For the other 8, mettle reports a typed reason and gives no verdict: 2 run past the default solve budget, 4 are higher-order commands the jar also errors on, and 2 are temporal commands mettle rejects with the same text the jar uses. There were **0 panics** across the corpus, as always.
 
 An UNSAT verdict can also be machine-certified: CaDiCaL logs a DRAT proof, and an external checker verifies it against the CNF mettle solved. [CONTRIBUTING.md](CONTRIBUTING.md) has the recipe.
 
-Beyond the corpus, a differential pass over 150,891 snippets from the [Alloy4Fun](https://github.com/haslab/Alloy4Fun) dataset (measured 2026-08-25) found **0 disagreements in either direction**: mettle rejects nothing the jar accepts and accepts nothing the jar rejects, **100.0000% agreement**; error positions match exactly on 99.79% of parse errors. Warning emission matches the jar on 101,969 of the 101,970 files, with the jar's and mettle's warning counts equal. A mutation fuzzer runs 4,248 mutants per CI run, verified to 88,500 offline, and holds three properties: no panic, sane spans, round-trip stable.
+Beyond the corpus, a differential pass over 150,891 snippets from the [Alloy4Fun](https://github.com/haslab/Alloy4Fun) dataset (measured 2026-08-25) found **0 disagreements in either direction**: mettle rejects nothing the jar accepts and accepts nothing the jar rejects, **100.0000% agreement**; error positions match exactly on 99.79% of parse errors. Warning emission matches the jar exactly: all 101,970 files identical, every one of the jar's 14,180 warnings matched by class and line. A mutation fuzzer runs 4,248 mutants per CI run, verified to 88,500 offline, and holds three properties: no panic, sane spans, round-trip stable.
 
 Every behavioral rule mettle matches is written down in the [Semantics Ledger](SEMANTICS_LEDGER.md). Every disagreement ever found was root-caused and has a regression test in the tree.
 
 ### Speed
 
-Parse plus resolve over the whole 167-file corpus, mettle against the jar's own batch API, measured 2026-07-27:
-
-| | mettle | Alloy jar |
-|---|---|---|
-| whole corpus, one process | **61.5 ms** | 1,305 ms (warm JVM, startup excluded) |
-| median per file | **1.1 ms** | 5.4 ms (in-JVM) / 160 ms (cold JVM, startup included) |
-
-The like-for-like comparison is the batch row, about 21 times faster. Read it as whole-corpus wall clock: mettle's total uses thread parallelism while the jar's batch API is single-threaded, and the bench tool prints this caveat itself. The cold-start column is closer to what interactive use feels like, because mettle is a native binary with no VM to warm up.
-
-Solving is compared for *agreement* under budgets and is never raced. The enumeration and counting checks above bound it: everything the jar answers at small scopes, mettle answers identically, and two corpus temporal commands solve under mettle's budgets where the jar times out.
+Measured numbers live in **[BENCHMARKS.md](BENCHMARKS.md)**: startup (native binary against a cold JVM), parse plus resolve over the whole corpus (about 21 times faster as batch wall clock, with the caveats spelled out there), and a per-command solve head-to-head of mettle's compiled-in CaDiCaL against the jar's default SAT4J, with verdict agreement asserted on every compared row.
 
 ### Regenerate
 
@@ -130,7 +121,6 @@ cargo build --release -p als-conform -p mettle
 ./target/release/solve-gauge --jobs 8                       # verdict sweep + self-check
 ./target/release/solve-gauge --count --jobs 8               # counting check, symmetry 0
 ./target/release/solve-gauge --count --count-symmetry 20 --jobs 8
-./target/release/conform bench                              # speed table (needs the jar in oracle/)
 cargo test --release -p als-syntax --test corpus_roundtrip  # syntax check
 ```
 

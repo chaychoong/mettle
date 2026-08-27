@@ -19,6 +19,7 @@ Every doc in the project is reachable from here. Nothing is orphaned. Superseded
 - **[../PORTING_RULES.md](../PORTING_RULES.md)**: Java to Rust translation rules.
 - **[../SEMANTICS_LEDGER.md](../SEMANTICS_LEDGER.md)**: human-owned behavioral rules recorded against Alloy. Agents implement from here.
 - **[../LIMITATIONS.md](../LIMITATIONS.md)**: the current list of what mettle can't do yet.
+- **[../BENCHMARKS.md](../BENCHMARKS.md)**: measured speed comparisons against the reference jar (startup, parse+resolve, solve head-to-head) and how to reproduce them.
 - **[../CONTRIBUTING.md](../CONTRIBUTING.md)**: external-contributor guide. Covers setup (`scripts/bootstrap.sh`), the build and test gauntlet, a digest of the house rules, and where to send a divergence report (issue template at `.github/ISSUE_TEMPLATE/divergence.md`).
 
 ## Decisions
