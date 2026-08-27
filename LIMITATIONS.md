@@ -9,10 +9,9 @@ translate: an unsupported construct produces a typed error that says so. And
 mettle never rejects a model the jar accepts. Almost nothing in this file can
 change a SAT or UNSAT verdict; every entry says whether it can.
 
-The zero-gap campaign ([ADR-0028](docs/adr/0028-zero-gap-campaign.md)) closed
-on 2026-08-26 with every bead shipped. Everything left in this file is either a
-deliberate difference, a disclosed zero-incidence corner, or an honest capacity
-limit.
+Everything listed here is open: a deliberate difference, a disclosed
+zero-incidence corner, or an honest capacity limit. When a gap closes, its
+entry is removed.
 
 Current measured agreement with the jar is in [docs/STATE.md](docs/STATE.md).
 
@@ -34,9 +33,8 @@ Current measured agreement with the jar is in [docs/STATE.md](docs/STATE.md).
 
 Over the 150,891 alloy4fun submissions, mettle and the jar now agree on every
 verdict: mettle rejects nothing the jar accepts and accepts nothing the jar
-rejects (100.0000% agreement, measured 2026-08-25 after mt-107 phase P2).
-Two known shapes remain where mettle is more accepting than the jar, and
-neither appears in any corpus.
+rejects (100.0000% agreement, measured 2026-08-25). Three known shapes remain
+where mettle is more accepting than the jar, and none appears in any corpus.
 
 - **Two shapes with no measured incidence.** A post-colon `disj` on a quantifier
   or run-pred declaration (`x: disj e`) is a resolve error in the jar; mettle
@@ -44,7 +42,7 @@ neither appears in any corpus.
   call of a zero-argument predicate (`H.s.noDuplicates`) is a type error in the
   jar; mettle accepts it. Neither appears in either corpus. Open.
 - **A user-written defined field on a `one` sig crashes the jar; mettle
-  answers (mt-135, closed as a deliberate defer 2026-08-26).** The crash gate,
+  answers (a deliberate defer, decided 2026-08-26).** The crash gate,
   probe-mapped at mt-135 (9 cells, `scratchpad/probe/mt135/`): the owning sig
   is `one`, the field is declared with `=`, and the bound is `sim`-able — a
   sig, `univ`, or a `+`/`->` combination of them. A `sim`-able combination
@@ -70,36 +68,22 @@ neither appears in any corpus.
 These are the places where mettle's overflow guard differs from the jar's under
 the default `noOverflow` mode. All have zero incidence in both corpora and were
 found with hand-written probe models. They are the one group in this file that
-can give a different verdict, on a synthetic model. The union and short-circuit
-shedding family closed at mt-130 (2026-08-25): the mt-129 wave pinned the jar's
-mechanism from the Kodkod source, and mettle now folds constant emptiness the
-same way, verified on all 137 probe cells with a byte-identical corpus sweep.
-The `toInt` cardinality-discard family closed at mt-127 (2026-08-25): reading a
-`#` or `int[·]` over a bare `Int[·]` cast now follows the jar's rule about which
-positions call `cint` and which call `cset`, pinned on 164 probe cells. That
-also closed mt-095's k10/k12 and i13. The if-then-else dispatch family closed at
-mt-128 (2026-08-26): the two entries this list used to carry, an `int[·]` and a
-`let` in a then branch, turned out to be one question asked twice, and merging
-mettle's two answers to it also closed five cells nobody had filed. Measurements
-are in [docs/reference/alloy6-translation.md](docs/reference/alloy6-translation.md)
-§10.7e through §10.7l, `scratchpad/probe/mt129/NOTES.md`,
-`scratchpad/probe/mt127/NOTES.md` and `scratchpad/probe/mt128/NOTES.md`.
+can give a different verdict, on a synthetic model. Measurements are in
+[docs/reference/alloy6-translation.md](docs/reference/alloy6-translation.md)
+§10.7e through §10.7l.
 
-- **Polarity-blind translation reuse — CLOSED (mt-137, 2026-08-26), three
-  narrow corners disclosed.** The jar memoises a translated formula on node
-  identity and free-variable bindings but never polarity, so a formula-valued
-  `let`'s uses and a zero-parameter pred's calls all get the first visit's
-  overflow guard (`let p = (#Node < 0) | p or (not p)` and `P or (not P)` are
-  jar forbid-SAT at `exactly 8 Node`). mettle now reproduces this with
-  translation classes ([ADR-0029](docs/adr/0029-polarity-blind-translation-cache.md),
-  LEDGER-017): 19 probe cells at parity, encoder and evaluator alike, and the
-  self-check stays coherent. What stays deliberately open, all zero-incidence:
-  the **temporal path** keeps per-use translation (the jar's temporal cache
-  lineage is unprobed); **first-visit order** can differ from the jar on shapes
-  where its short-circuit constant folding visits conjuncts in a different
-  order (every probe cell matches); and a **REPL query** over such a shape
-  answers polarity-correctly where the jar's evaluator would reuse — fragments
-  carry no class table, so an evaluated `let p = … | p or (not p)` is honest
+- **Three corners of the translation-class cache.** mettle reproduces the jar's
+  polarity-blind formula reuse — a formula-valued `let`'s uses and a
+  zero-parameter pred's calls all get the first visit's overflow guard — with
+  translation classes
+  ([ADR-0029](docs/adr/0029-polarity-blind-translation-cache.md), LEDGER-017).
+  Three corners stay deliberately open, all zero-incidence: the **temporal
+  path** keeps per-use translation (the jar's temporal cache lineage is
+  unprobed); **first-visit order** can differ from the jar on shapes where its
+  short-circuit constant folding visits conjuncts in a different order (every
+  probe cell matches); and a **REPL query** over such a shape answers
+  polarity-correctly where the jar's evaluator would reuse — fragments carry no
+  class table, so an evaluated `let p = … | p or (not p)` is honest
   UNSAT-shaped at the prompt while the solved command above it matches the jar.
 - **Three nearby corners, kept as unverified.** A cast nested inside a `Card` or
   `sum` operand contributes no comparison-level guard flag (the jar merges those
@@ -252,10 +236,8 @@ test.
 exactly, and the jar's own reader accepted every file it was given (30 of 30:
 mt-071's 18, plus 12 more at mt-132). On a model whose instance is determinate,
 the whole document is byte-identical to the jar's, escaping and lazy ID
-numbering included. Three things still differ (the `m<i>` index divergence
-inside `util/ordering` closed 2026-08-26 with the mt-132 follow-up's stdlib
-declaration reorder). None affects a reader. The schema
-is in
+numbering included. Three things still differ. None affects a reader. The
+schema is in
 [docs/reference/alloy6-instance-xml.md](docs/reference/alloy6-instance-xml.md).
 
 - **`<source>` entries.** mettle writes the model path as given on the command
