@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "als-conform"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "als-core",
  "als-syntax",
@@ -17,7 +17,7 @@ dependencies = [
 
 [[package]]
 name = "als-core"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "als-solve",
  "als-syntax",
@@ -27,7 +27,7 @@ dependencies = [
 
 [[package]]
 name = "als-instance"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "als-core",
  "als-solve",
@@ -37,14 +37,14 @@ dependencies = [
 
 [[package]]
 name = "als-solve"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "cadical",
 ]
 
 [[package]]
 name = "als-sterling"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -53,7 +53,7 @@ dependencies = [
 
 [[package]]
 name = "als-syntax"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "insta",
  "thiserror 1.0.69",
@@ -61,7 +61,7 @@ dependencies = [
 
 [[package]]
 name = "als-types"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "als-syntax",
  "indexmap",
@@ -318,7 +318,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "mettle"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "als-core",
  "als-instance",
